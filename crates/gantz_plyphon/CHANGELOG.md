@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_plyphon-v0.3.0...gantz_plyphon-v0.4.0) - 2026-09-26
+
+### Added
+
+- *(gantz_plyphon)* add a kick drum demo
+- *(gantz_plyphon)* edit a ~envgen envelope in the node body
+- *(gantz_plyphon)* add the ~envgen node
+- *(gantz_plyphon)* add an envelope type with shapes and presets
+- *(gantz_plyphon)* add a wavetable demo
+- *(gantz_plyphon)* fill a ~buffer from a list on its control input
+- *(gantz_plyphon)* add a sample player demo
+- *(gantz_plyphon)* add a load button to the ~sample inspector
+- *(gantz_plyphon)* decode WAV files into audio assets
+- *(gantz_plyphon)* add a looper demo
+- *(gantz_plyphon)* add granular rows
+- *(gantz_plyphon)* add buffer delay and delay tap rows
+- *(gantz_plyphon)* add wavetable and table lookup rows
+- *(gantz_plyphon)* add buffer writer rows
+- *(gantz_plyphon)* [**breaking**] replace the bespoke ~playbuf with a table row fed by ~sample
+- *(gantz_plyphon)* list buffer bindings in the part description
+- *(gantz_plyphon)* add the ~sample and ~buffer source nodes
+- *(gantz_plyphon)* add buffer sockets and emit modes to the unit table
+- *(gantz_plyphon)* keep buffer sources local to each part
+- Improve layout of recently introduced demo graphs
+- *(gantz_plyphon)* add freeverb, pluck and sample-hold demos
+- *(gantz_plyphon)* add engine info rows
+- *(gantz_plyphon)* add amplitude compensation rows
+- *(gantz_plyphon)* add diagnostic rows
+- *(gantz_plyphon)* add range test and unwrap rows
+- *(gantz_plyphon)* add multichannel and ambisonic pan rows
+- *(gantz_plyphon)* add physical model rows
+- *(gantz_plyphon)* add compander and silence detector rows
+- *(gantz_plyphon)* add reverb, pitch shift, pluck and shift effect rows
+- *(gantz_plyphon)* add chaos generator rows
+- *(gantz_plyphon)* add dynamic noise, gauss and logistic rows
+- *(gantz_plyphon)* add asymmetric lag and ramp rows
+- *(gantz_plyphon)* add fixed-coefficient and section filter rows
+- *(gantz_plyphon)* add measurement unit rows
+- *(gantz_plyphon)* add timing unit rows
+- *(gantz_plyphon)* add trigger unit rows
+- *(gantz_plyphon)* add a rate constraint to unit descriptors
+- *(gantz_plyphon)* tag fade gains by the write they gate
+
+### Fixed
+
+- *(gantz_plyphon)* address the second round of ~envgen feedback
+- *(gantz_plyphon)* address ~envgen editor feedback
+- demo-looper layout
+
+### Other
+
+- *(gantz_plyphon)* check that a kr impulse retriggers ~envgen
+- simplify the buffer unit doc comments
+- *(gantz_plyphon)* document the buffer rows and the remaining exclusions
+- *(gantz_plyphon)* [**breaking**] bind buffers by source and scale playback rate in the def
+- *(gantz_plyphon)* simplify the docs of the new unit rows
+- *(gantz_plyphon)* list GVerb and the lifecycle units in the table exclusions
+- *(gantz_plyphon)* rename the ~ramp operator row to ~opramp
+- write socket, node and unit descriptions without semicolons
+- group settings sections with ui.group
+- trim the per-tab mute comments
+- apply review fixes to the comment cleanup
+- *(gantz_plyphon)* simplify comments in tests and egui nodes
+- *(gantz_plyphon)* simplify and prune src comments
+- *(gantz_plyphon)* strong headings without colons in DSP settings
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_plyphon-v0.2.0...gantz_plyphon-v0.3.0) - 2026-08-26
 
 ### Added

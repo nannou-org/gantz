@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.1](https://github.com/nannou-org/gantz/compare/gantz_pattern-v0.1.0...gantz_pattern-v0.1.1) - 2026-09-26
+
+### Added
+
+- Improve layout of recently introduced demo graphs
+- Improve layout and commentary in demo-pplot
+- *(gantz_pattern)* add demo-pplot
+- *(gantz_pattern)* add pplot keyword sugar
+- *(gantz_pattern)* plot labels, lanes and value channels in pplot
+- *(gantz_pattern)* add fit resolution and edge padding to pplot
+- *(gantz_pattern)* show pplot in demo-pattern
+- *(gantz_pattern)* add pplot node
+- *(gantz_pattern)* add pat/plot-data and pat/as-span
+
+### Fixed
+
+- *(gantz_pattern)* clamp out-of-range pplot sugar integers
+- *(gantz_pattern)* keep non-finite values off the plot value axis
+- *(gantz_pattern)* avoid a context deadlock in the pplot key editor
+
+### Other
+
+- *(gantz_pattern)* skip the event sort in pat/plot-data
+- use run_ui in headless egui tests
+- *(gantz_egui)* return the plot response from show_plot and share stacked rows
+- simplify comments in nix, trunk, web and workflow files
+- *(gantz_format)* simplify and prune comments in format, collab, pattern
+
 ## [0.1.0](https://github.com/nannou-org/gantz/compare/gantz_pattern-v0.0.2...gantz_pattern-v0.1.0) - 2026-08-26
 
 ### Added
