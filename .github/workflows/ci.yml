@@ -19,24 +19,28 @@ jobs:
     env:
       RUSTFLAGS: "-D warnings"
       RUSTDOCFLAGS: "-D warnings"
-      # Trim debuginfo to keep `target/` under the runner's ~14GB disk limit.
-      # Full debuginfo for this bevy-scale build fills the disk at link time.
-      CARGO_PROFILE_DEV_DEBUG: "line-tables-only"
-      CARGO_PROFILE_TEST_DEBUG: "line-tables-only"
     strategy:
       fail-fast: false
       matrix:
         include:
           - command: develop -c cargo check --locked --all
+            cache: check
           - command: develop -c cargo doc --all-features --locked --no-deps
+            cache: doc
           - command: develop -c cargo fmt --all -- --check
-          - command: develop -c cargo test --locked --all
-          - command: develop -c cargo test --no-default-features --locked --all
-          # Feature unification via the app re-enables gantz_plyphon's `egui`
-          # feature in the --all run above, so headless gantz_plyphon needs its
-          # own entry to stay verified.
-          - command: develop -c cargo test -p gantz_plyphon --no-default-features --locked
+          # No code is gated on a feature being off, so this also covers the
+          # default features.
           - command: develop -c cargo test --all-features --locked --all
+            cache: test
+          # In an `--all` build, feature unification turns every crate's default
+          # features back on. Each headless configuration needs its own run.
+          - command: >-
+              develop -c bash -c "
+              cargo check --locked --all-targets --no-default-features -p gantz &&
+              cargo check --locked --all-targets --no-default-features -p gantz_egui -p gantz_pattern -p gantz_plyphon &&
+              cargo check --locked --all-targets --no-default-features -p gantz_ui &&
+              cargo check --locked --all-targets --no-default-features --features datum -p gantz_ui"
+            cache: features
           - command: fmt -- --ci
           - command: flake check --no-update-lock-file
           - command: build --print-build-logs --no-update-lock-file .#gantz-website
@@ -47,7 +51,13 @@ jobs:
         with:
           name: mitchmindtree-gantz
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+      # One cache per cargo job. With a shared key, the first job to finish
+      # saves its target dir for all the others.
       - uses: Swatinem/rust-cache@v2
+        if: matrix.cache
+        with:
+          key: ${{ matrix.cache }}
+          save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: nix ${{ matrix.command }}
 
   upload-pr-preview-artifact:
