@@ -33,6 +33,7 @@ pub use dsp::{
     NodeDsp, NodeRate, ParamBinding, PortShape, PortShapes, ScopeOutBinding, Signal, ToNodeDsp,
     node_dsp_of, signal_rate,
 };
+pub use envelope::{Envelope, Segment, Shape};
 pub use flatten::{
     AsRefNode, Flat, FlattenError, RefKind, flatten, flatten_from_registry,
     flatten_instance_children,
@@ -61,6 +62,7 @@ pub mod describe;
 pub mod dsp;
 #[cfg(feature = "egui")]
 pub mod egui;
+pub mod envelope;
 pub mod flatten;
 pub mod instance;
 pub mod monitor;
