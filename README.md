@@ -51,22 +51,6 @@ file(s).
 | **`gantz_pattern`** | [![Crates.io](https://img.shields.io/crates/v/gantz_pattern.svg)](https://crates.io/crates/gantz_pattern) | ![GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blueviolet.svg) | Composable pattern generation as a Steel module. |
 | **`gantz`** | [![Crates.io](https://img.shields.io/crates/v/gantz.svg)](https://crates.io/crates/gantz) | ![GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blueviolet.svg) | The top-level gantz app. |
 
-## Command line
-
-The `gantz` binary opens the GUI when run with no arguments. Its subcommands
-work on `.gantz` files with no window, store or network, so any editor or tool
-can validate and canonicalize graphs.
-
-```
-gantz fmt [--check] <FILES>...          # rewrite to canonical form
-gantz check <FILES>...                  # parse and compile every named graph
-gantz compile <FILE> [--graph <NAME>] [--emit steel|source-map]
-```
-
-Names a file does not define resolve through the embedded base sources. Pass
-`--no-base` to omit them, or `--dep <FILE>` to resolve through other files.
-See `gantz <COMMAND> --help` for details.
-
 ## Design Overview
 
 gantz allows for constructing executable directed graphs by composing together
