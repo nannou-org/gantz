@@ -85,6 +85,16 @@
   (-> bang11 number2)
   (-> bang11 number3))
 
+(graph demo-sampler
+  (comment0 (comment "Sample player.\nSelect the ~sample and press Load.\nDial the playback speed." 230 45))
+  (number1 (number #:min 0.5))
+  (~sample2 ~sample)
+  (~playbuf3 ~playbuf)
+  (~out4 ~out)
+  (-> number1 (~playbuf3 1))
+  (-> ~sample2 ~playbuf3)
+  (-> ~playbuf3 ~out4))
+
 (graph demo-sine
   (~sinosc0 ~sinosc)
   (~out1 ~out)
@@ -108,6 +118,7 @@
   (demo-pluck "Noise bursts pluck a Karplus-Strong string. Dial the numbers for the pluck rate and the string period.")
   (demo-ringmod "Two sines multiplied. Dial the numbers to sweep from tremolo to ring modulation.")
   (demo-samplehold "A latch samples white noise on each impulse. The result sets the frequency of a sine. Dial the numbers for the step rate and the pitch range.")
+  (demo-sampler "A sample plays in a loop. Select the ~sample node and press Load in its inspector to pick a WAV file. Dial the number for the playback speed.")
   (demo-sine "A sine wave into the audio output - the simplest DSP graph.")
   (demo-waveshape "A sine into a tanh waveshaper. Dial the number to raise the drive."))
 
@@ -167,6 +178,14 @@
   (~sinosc8 0 280)
   (~whitenoise4 -70 0)
   (camera 0 180 1))
+
+(layout demo-sampler
+  (comment0 -270 0)
+  (number1 104 -3)
+  (~out4 0 160)
+  (~playbuf3 0 80)
+  (~sample2 0 0)
+  (camera 0 80 1))
 
 (layout demo-sine
   (~out1 0 80)
