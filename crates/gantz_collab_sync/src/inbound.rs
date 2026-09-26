@@ -182,10 +182,13 @@ pub fn handle_event(
             }
         },
         Event::Objects {
-            session, objects, ..
+            session,
+            want,
+            objects,
+            ..
         } => {
             if let Some(state) = sessions.get_mut(&session) {
-                feed_objects(&mut cx, state, session, objects);
+                feed_objects(&mut cx, state, session, want, objects);
             }
         }
         Event::PeerUp { session, peer } => {
@@ -450,9 +453,20 @@ fn start_fetch(
     });
 }
 
-/// Feed fetched objects into every pending tip of the session, applying and
-/// converging those whose closure completed.
-fn feed_objects(cx: &mut Cx<'_>, state: &mut SessionState, session: SessionId, objects: Objects) {
+/// Feed the objects fetched for `want` into the pending tips whose fetch it
+/// answers, applying and converging those whose closure completed.
+///
+/// Only those tips see the response. A staged set is applied whole, so an
+/// object staged for another name's closure would make it incomplete. Each
+/// name fetches its own closure. A response for a fetch no longer pending
+/// only contributes its section entries.
+fn feed_objects(
+    cx: &mut Cx<'_>,
+    state: &mut SessionState,
+    session: SessionId,
+    want: Want,
+    objects: Objects,
+) {
     let resolutions = state.session.resolutions;
     // Decode graphs once and split by kind. Verification happens per staged
     // insert. Section entries apply directly, because advisory metadata
@@ -491,7 +505,12 @@ fn feed_objects(cx: &mut Cx<'_>, state: &mut SessionState, session: SessionId, o
     // the other tip's view.
     let camera = local_camera(cx, state);
     apply_sections(cx.registry, sections, camera);
-    let names: Vec<ca::Name> = state.pending.keys().cloned().collect();
+    let names: Vec<ca::Name> = state
+        .pending
+        .iter()
+        .filter(|(_, p)| p.last_want.as_ref() == Some(&want.refs))
+        .map(|(name, _)| name.clone())
+        .collect();
     for name in names {
         let Some(mut pending) = state.pending.remove(&name) else {
             continue;
@@ -527,8 +546,8 @@ fn feed_objects(cx: &mut Cx<'_>, state: &mut SessionState, session: SessionId, o
         if poisoned {
             continue;
         }
-        let want = compute_want(cx.registry, &mut pending);
-        if want.is_empty() {
+        let next = compute_want(cx.registry, &mut pending);
+        if next.is_empty() {
             let tip = pending.tip;
             match pending.staged.apply(cx.registry) {
                 Ok(_) => resolve_tip(cx, state, session, &name, tip, resolutions),
@@ -538,17 +557,17 @@ fn feed_objects(cx: &mut Cx<'_>, state: &mut SessionState, session: SessionId, o
         }
         // No progress means the peer cannot supply the closure. Drop it and
         // let a future announcement retry.
-        if pending.last_want.as_ref() == Some(&want.refs) {
+        if pending.last_want.as_ref() == Some(&next.refs) {
             log::warn!("fetch: no progress on '{name}'; dropping");
             continue;
         }
-        pending.last_want = Some(want.refs.clone());
+        pending.last_want = Some(next.refs.clone());
         let from = pending.from;
         state.pending.insert(name, pending);
         let _ = cx.handle.cmds.try_send(Command::Fetch {
             session,
             from,
-            want,
+            want: next,
         });
     }
 }

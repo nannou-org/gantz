@@ -5,7 +5,7 @@ use crate::*;
 use gantz_ca::{self as ca, Commit, DataGraph, Datum, NodeData};
 use gantz_collab::{
     Access, Command, Event, GossipMsg, Handle, Object, Objects, PeerId, Role, Session, SessionId,
-    SessionTicket, proto,
+    SessionTicket, Want, proto,
 };
 use std::time::Duration;
 
@@ -32,6 +32,24 @@ fn fake() -> Fake {
 impl Fake {
     fn drain(&self) -> Vec<Command> {
         std::iter::from_fn(|| self.cmds.try_recv().ok()).collect()
+    }
+
+    /// Drain the commands and return the wants of the fetches among them.
+    fn fetch_wants(&self) -> Vec<Want> {
+        self.drain()
+            .into_iter()
+            .filter_map(|c| match c {
+                Command::Fetch { want, .. } => Some(want),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Drain the commands, expecting exactly one fetch. Returns its want.
+    fn fetch_want(&self) -> Want {
+        let mut wants = self.fetch_wants();
+        assert_eq!(wants.len(), 1, "one fetch");
+        wants.remove(0)
     }
 
     /// Deliver `event` and return the effects.
@@ -291,10 +309,10 @@ fn tips_start_a_fetch_and_objects_fast_forward_the_head() {
     );
     assert!(effects.is_empty(), "{effects:?}");
     let cmds = fake.drain();
-    assert!(
-        matches!(&cmds[..], [Command::Fetch { from, want, .. }] if *from == peer(2) && !want.is_empty()),
-        "{cmds:?}"
-    );
+    let want = match &cmds[..] {
+        [Command::Fetch { from, want, .. }] if *from == peer(2) && !want.is_empty() => want.clone(),
+        _ => panic!("{cmds:?}"),
+    };
     assert!(
         sessions.sessions[&session]
             .pending
@@ -308,6 +326,7 @@ fn tips_start_a_fetch_and_objects_fast_forward_the_head() {
         Event::Objects {
             session,
             from: peer(2),
+            want,
             objects: objects(&b_commit, &g),
         },
     );
@@ -341,6 +360,7 @@ fn open_head_routes_to_remote_tip_without_moving_the_head() {
         &open,
         tips(session, peer(2), name("jam"), b),
     );
+    let want = fake.fetch_want();
     let effects = fake.deliver(
         &mut sessions,
         &mut registry,
@@ -348,6 +368,7 @@ fn open_head_routes_to_remote_tip_without_moving_the_head() {
         Event::Objects {
             session,
             from: peer(2),
+            want,
             objects: objects(&b_commit, &g),
         },
     );
@@ -387,7 +408,7 @@ fn background_merge_marks_dirty_and_is_announced() {
         &OpenHeads::default(),
         tips(session, peer(2), name("jam"), c),
     );
-    fake.drain();
+    let want = fake.fetch_want();
     let effects = fake.deliver(
         &mut sessions,
         &mut registry,
@@ -395,6 +416,7 @@ fn background_merge_marks_dirty_and_is_announced() {
         Event::Objects {
             session,
             from: peer(2),
+            want,
             objects: objects(&c_commit, &g),
         },
     );
@@ -425,6 +447,101 @@ fn background_merge_marks_dirty_and_is_announced() {
     );
 }
 
+/// Two names announced together start two fetches. The first response
+/// answers one of them and must not drop the other, which is still waiting
+/// for its own response.
+#[test]
+fn a_response_for_one_name_leaves_the_other_fetch_pending() {
+    let fake = fake();
+    let mut sessions = Sessions::default();
+    let mut registry = ca::Registry::default();
+    let session = SessionId::generate();
+    guest(&mut sessions, session, "jam");
+    let (a, _) = commit(&mut registry, None, graph(&[1]), 1);
+    registry.set_head(name("jam"), a);
+    let child_g = graph(&[9]);
+    let child_commit = Commit::new(Duration::from_secs(2), None, ca::graph_addr(&child_g));
+    let child = ca::commit_addr(&child_commit);
+    let g = graph(&[1, 2]);
+    let b_commit = Commit::new(Duration::from_secs(2), Some(a), ca::graph_addr(&g));
+    let b = ca::commit_addr(&b_commit);
+
+    fake.deliver(
+        &mut sessions,
+        &mut registry,
+        &OpenHeads::default(),
+        Event::Gossip {
+            session,
+            from: peer(2),
+            msg: GossipMsg::Tips {
+                origin: peer(2),
+                seq: 1,
+                changed: vec![
+                    (name("jam"), b, ca::graph_addr(&g)),
+                    (name("jam:child"), child, ca::graph_addr(&child_g)),
+                ],
+            },
+        },
+    );
+    let wants = fake.fetch_wants();
+    assert_eq!(wants.len(), 2, "one fetch per name, in announcement order");
+
+    // The parent's commit arrives first. The child stays pending.
+    let effects = fake.deliver(
+        &mut sessions,
+        &mut registry,
+        &OpenHeads::default(),
+        Event::Objects {
+            session,
+            from: peer(2),
+            want: wants[0].clone(),
+            objects: Objects {
+                objects: vec![Object::Commit(b, b_commit.clone().into())],
+            },
+        },
+    );
+    assert!(effects.is_empty(), "{effects:?}");
+    let pending = &sessions.sessions[&session].pending;
+    assert!(
+        pending.contains_key(&name("jam")),
+        "the parent wants its graph next"
+    );
+    assert!(
+        pending.contains_key(&name("jam:child")),
+        "the child is unanswered"
+    );
+    let parent_want = fake.fetch_want();
+
+    // Both closures complete in any order.
+    fake.deliver(
+        &mut sessions,
+        &mut registry,
+        &OpenHeads::default(),
+        Event::Objects {
+            session,
+            from: peer(2),
+            want: wants[1].clone(),
+            objects: objects(&child_commit, &child_g),
+        },
+    );
+    fake.deliver(
+        &mut sessions,
+        &mut registry,
+        &OpenHeads::default(),
+        Event::Objects {
+            session,
+            from: peer(2),
+            want: parent_want,
+            objects: Objects {
+                objects: vec![Object::Graph(ca::graph_addr(&g), proto::encode_graph(&g))],
+            },
+        },
+    );
+    assert_eq!(registry.head(&name("jam")), Some(b));
+    assert_eq!(registry.head(&name("jam:child")), Some(child));
+    assert!(sessions.sessions[&session].pending.is_empty());
+}
+
 #[test]
 fn fetch_without_progress_is_dropped() {
     let fake = fake();
@@ -447,7 +564,7 @@ fn fetch_without_progress_is_dropped() {
         &OpenHeads::default(),
         tips(session, peer(2), name("jam"), b),
     );
-    assert_eq!(fake.drain().len(), 1, "one fetch");
+    let want = fake.fetch_want();
     let effects = fake.deliver(
         &mut sessions,
         &mut registry,
@@ -455,6 +572,7 @@ fn fetch_without_progress_is_dropped() {
         Event::Objects {
             session,
             from: peer(2),
+            want,
             objects: Objects { objects: vec![] },
         },
     );

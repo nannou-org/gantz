@@ -183,10 +183,12 @@ pub enum Event {
         from: PeerId,
         msg: GossipMsg,
     },
-    /// Objects fetched from a peer.
+    /// Objects fetched from a peer, answering the [`Command::Fetch`] for
+    /// `want`. The response holds the wanted objects the peer had.
     Objects {
         session: SessionId,
         from: PeerId,
+        want: Want,
         objects: Objects,
     },
     /// A peer became a direct gossip neighbour for a session.
@@ -501,11 +503,15 @@ async fn drive(
                 let evt_tx = evt_tx.clone();
                 let conns = conns.clone();
                 n0_future::task::spawn(async move {
-                    let req = SyncRequest::Want { session, want };
+                    let req = SyncRequest::Want {
+                        session,
+                        want: want.clone(),
+                    };
                     let evt = match request(&endpoint, &conns, addr, &req).await {
                         Ok(SyncResponse::Objects(objects)) => Event::Objects {
                             session,
                             from,
+                            want,
                             objects,
                         },
                         Ok(SyncResponse::Denied { reason }) => Event::Error {

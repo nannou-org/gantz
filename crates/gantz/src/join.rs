@@ -126,12 +126,10 @@ impl Peer {
         let mut changed = false;
         for effect in effects {
             match effect {
-                Effect::Joined {
-                    commits, graphs, ..
-                } => {
+                // The plane logs the snapshot itself.
+                Effect::Joined { .. } => {
                     self.joined = true;
                     changed = true;
-                    info!("joined: {commits} commits, {graphs} graphs");
                 }
                 Effect::Moved { name, to, .. } => {
                     changed = true;
