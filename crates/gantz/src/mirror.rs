@@ -612,4 +612,59 @@ mod tests {
 
         std::fs::remove_dir_all(&dir).unwrap();
     }
+
+    /// A file defining a root with nested graphs and a base reference. Every
+    /// reference resolves to the graph at its name's head, the session scope
+    /// covers all of them, and the served closure holds their graphs.
+    #[test]
+    fn nested_refs_are_in_scope_and_served() {
+        let mut registry = base_registry();
+        let mut file = FileState::default();
+        apply(
+            &mut registry,
+            &mut file,
+            "\
+(graph root
+  (number0 number)
+  (add1 (ref add #:sync))
+  (half2 (ref root:half #:sync))
+  (gain3 (ref root:gain #:sync))
+  (number4 number)
+  (inspect5 inspect)
+  (-> number0 add1) (-> number0 (add1 1)) (-> add1 half2)
+  (-> half2 gain3) (-> number4 (gain3 1)) (-> gain3 inspect5))
+(graph root:half
+  (inlet0 (inlet \"number\" \"value\"))
+  (expr1 (expr (/ $v 2)))
+  (outlet2 (outlet \"number\" \"half\"))
+  (-> inlet0 expr1) (-> expr1 outlet2))
+(graph root:gain
+  (inlet0 (inlet \"number\" \"value\"))
+  (inlet1 (inlet \"number\" \"gain\"))
+  (expr2 (expr (* $v $g)))
+  (outlet3 (outlet \"number\" \"scaled\"))
+  (-> inlet0 expr2) (-> inlet1 (expr2 1)) (-> expr2 outlet3))",
+            1,
+        );
+        let root = name("root");
+        let graph = registry
+            .head_graph(&ca::Head::Branch(root.clone()))
+            .unwrap();
+        let refs: Vec<_> = gantz_egui::sync::named_refs(graph).collect();
+        assert_eq!(refs.len(), 3);
+        for (n, ga, sync) in &refs {
+            assert!(sync);
+            assert_eq!(gantz_egui::reg::head_graph_addr(&registry, n), Some(*ga));
+        }
+        let scope = gantz_egui::sync::session_scope(&registry, &root);
+        let expected: BTreeSet<ca::Name> = ["add", "root", "root:gain", "root:half"]
+            .into_iter()
+            .map(name)
+            .collect();
+        assert_eq!(scope, expected);
+        let live = ca::closure_from(&registry, scope.iter().filter_map(|n| registry.head(n)));
+        for (_, ga, _) in &refs {
+            assert!(live.graphs.contains(ga));
+        }
+    }
 }
