@@ -75,10 +75,10 @@ pub struct SteelModule {
 /// The Steel modules provided by `gantz_core` itself.
 ///
 /// Always registered by [`new_engine`], ahead of any domain modules.
-const CORE_MODULES: &[SteelModule] = &[SteelModule::new(
-    "gantz/option",
-    include_str!("vm/option.scm"),
-)];
+const CORE_MODULES: &[SteelModule] = &[
+    SteelModule::new("gantz/option", include_str!("vm/option.scm")),
+    SteelModule::new("gantz/list", include_str!("vm/list.scm")),
+];
 
 impl SteelModule {
     /// A source module with the given name.
@@ -316,4 +316,175 @@ fn steel_err_spans(err: &SteelErr) -> impl Iterator<Item = Span> + '_ {
             .iter()
             .flat_map(|trace| trace.trace().iter().rev().filter_map(|frame| *frame.span())),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::new_engine;
+    use steel::SteelVal;
+
+    /// Values a partial graph eval can pass in place of a list or fn.
+    const JUNK: &[&str] = &["'()", "void", "7", "'sym", "\"str\""];
+
+    /// Values that are not usable as a count or bound.
+    const NUM_JUNK: &[&str] = &[
+        "'()", "void", "'sym", "\"str\"", "+nan.0", "+inf.0", "-inf.0",
+    ];
+
+    /// Assert that each `(expected, expr)` pair is `equal?` on one engine that
+    /// requires `gantz/list`.
+    fn assert_list_evals(cases: &[(String, String)]) {
+        let mut vm = new_engine(&[]);
+        vm.run("(require \"gantz/list\")".to_string())
+            .expect("require gantz/list");
+        for (expected, expr) in cases {
+            let equal = vm
+                .run(format!("(equal? {expected} {expr})"))
+                .unwrap_or_else(|e| panic!("`{expr}` errored: {e}"));
+            if equal.last() != Some(&SteelVal::BoolV(true)) {
+                let actual = vm.run(expr.clone()).expect("eval");
+                panic!("`{expr}`: expected `{expected}`, got `{actual:?}`");
+            }
+        }
+    }
+
+    fn cases(cases: &[(&str, &str)]) -> Vec<(String, String)> {
+        cases
+            .iter()
+            .map(|(e, x)| (e.to_string(), x.to_string()))
+            .collect()
+    }
+
+    /// Each case once per junk value, with the `J` in its expr replaced by
+    /// that value.
+    fn with_junk(cases: &[(&str, &str)], junk: &[&str]) -> Vec<(String, String)> {
+        junk.iter()
+            .flat_map(|j| {
+                cases
+                    .iter()
+                    .map(move |(e, x)| (e.to_string(), x.replace('J', j)))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn list_higher_order_fns() {
+        assert_list_evals(&cases(&[
+            ("'(2 4 6)", "(list/map (lambda (x) (* x 2)) '(1 2 3))"),
+            ("'(-1 -2)", "(list/map - '(1 2))"),
+            ("'(2 4)", "(list/filter even? '(1 2 3 4))"),
+            // `fold` calls `(f acc x)`, first to last.
+            ("-6", "(list/fold - 0 '(1 2 3))"),
+            (
+                "'(3 2 1)",
+                "(list/fold (lambda (acc x) (cons x acc)) '() '(1 2 3))",
+            ),
+            ("5", "(list/fold + 5 '())"),
+            (
+                "'(1 1 2 2)",
+                "(list/flat-map (lambda (x) (list x x)) '(1 2))",
+            ),
+            // A non-list result counts as one item, and only one level joins.
+            ("'(1 2 3)", "(list/flat-map (lambda (x) x) '(1 (2 3)))"),
+            ("'(1 (2))", "(list/flat-map (lambda (x) x) '((1 (2))))"),
+            ("#t", "(list/any even? '(1 2))"),
+            ("#f", "(list/any even? '(1 3))"),
+            ("#f", "(list/any even? '())"),
+            ("#t", "(list/all odd? '(1 3))"),
+            ("#f", "(list/all odd? '(1 2))"),
+            ("#t", "(list/all odd? '())"),
+            ("2", "(list/find even? '(1 2 4))"),
+            ("#f", "(list/find even? '(1 3))"),
+        ]));
+    }
+
+    #[test]
+    fn list_sort_is_ordered_and_stable() {
+        assert_list_evals(&cases(&[
+            ("'(1 2 3 4 5)", "(list/sort < '(5 3 1 4 2))"),
+            ("'(5 4 3 2 1)", "(list/sort > '(1 2 3 4 5))"),
+            ("'()", "(list/sort < '())"),
+            ("'(1)", "(list/sort < '(1))"),
+            (
+                "'((1 b) (1 d) (2 a) (2 c))",
+                "(list/sort (lambda (a b) (< (car a) (car b))) '((2 a) (1 b) (2 c) (1 d)))",
+            ),
+        ]));
+    }
+
+    #[test]
+    fn list_generator_slicing_and_combining_fns() {
+        assert_list_evals(&cases(&[
+            ("'(0 1 2)", "(list/range 0 3)"),
+            ("'(-2 -1 0)", "(list/range -2 1)"),
+            ("'()", "(list/range 3 3)"),
+            ("'()", "(list/range 3 1)"),
+            // Bounds round to exact integers.
+            ("'(1 2)", "(list/range 0.6 2.6)"),
+            ("'(1 2)", "(list/take '(1 2 3) 2)"),
+            ("'(1 2)", "(list/take '(1 2 3) 1.6)"),
+            ("'(1 2 3)", "(list/take '(1 2 3) 9)"),
+            ("'()", "(list/take '(1 2 3) -1)"),
+            ("'(3)", "(list/drop '(1 2 3) 2)"),
+            ("'()", "(list/drop '(1 2 3) 9)"),
+            ("'(1 2 3)", "(list/drop '(1 2 3) -1)"),
+            ("3", "(list/last '(1 2 3))"),
+            ("'()", "(list/last '())"),
+            ("'((1 a) (2 b))", "(list/zip '(1 2 3) '(a b))"),
+            ("'()", "(list/zip '() '(a))"),
+            ("'(1 2 3 4)", "(list/concat '((1 2) () (3) 4))"),
+        ]));
+    }
+
+    /// Junk in place of any argument evaluates to the empty result rather
+    /// than an error.
+    #[test]
+    fn list_fns_are_total() {
+        // Junk in place of a list counts as the empty list.
+        let mut all = with_junk(
+            &[
+                ("'()", "(list/map - J)"),
+                ("'()", "(list/filter even? J)"),
+                ("0", "(list/fold + 0 J)"),
+                ("'()", "(list/flat-map list J)"),
+                ("'()", "(list/concat J)"),
+                ("'()", "(list/zip J '(1))"),
+                ("'()", "(list/zip '(1) J)"),
+                ("#f", "(list/any even? J)"),
+                ("#t", "(list/all even? J)"),
+                ("#f", "(list/find even? J)"),
+                ("'()", "(list/sort < J)"),
+                ("'()", "(list/take J 1)"),
+                ("'()", "(list/drop J 1)"),
+                ("'()", "(list/last J)"),
+            ],
+            JUNK,
+        );
+        // Junk in place of a number counts as 0.
+        all.extend(with_junk(
+            &[
+                ("'()", "(list/take '(1 2) J)"),
+                ("'(1 2)", "(list/drop '(1 2) J)"),
+                ("'(0 1)", "(list/range J 2)"),
+                ("'()", "(list/range 0 J)"),
+            ],
+            NUM_JUNK,
+        ));
+        // `void` is itself a fn, so only the rest stand in for a fn.
+        let non_fns: Vec<_> = JUNK.iter().copied().filter(|j| *j != "void").collect();
+        all.extend(with_junk(
+            &[
+                ("'()", "(list/map J '(1 2))"),
+                ("'()", "(list/filter J '(1 2))"),
+                ("0", "(list/fold J 0 '(1 2))"),
+                ("'()", "(list/flat-map J '(1 2))"),
+                ("#f", "(list/any J '(1 2))"),
+                ("#f", "(list/all J '(1 2))"),
+                ("#f", "(list/find J '(1 2))"),
+                ("'()", "(list/sort J '(2 1))"),
+            ],
+            &non_fns,
+        ));
+        assert_list_evals(&all);
+    }
 }
