@@ -11,5 +11,6 @@ mod joins;
 mod mini;
 mod plot;
 mod pmini;
+mod rand;
 mod span;
 mod window;

@@ -1,8 +1,6 @@
 //! Seeded randomness tests for `pat/rand` and `pat/degrade-by`.
 
-mod common;
-
-use common::{assert_pinned, assert_steel_true};
+use crate::common::{assert_pinned, assert_steel_true, new_pin_engine};
 
 // The value of `(pat/rand 7)` at the instant `t`.
 fn rand_at(seed: &str, t: &str) -> String {
@@ -13,12 +11,19 @@ fn rand_at(seed: &str, t: &str) -> String {
 // the seed with `t` folded in.
 #[test]
 fn rand_is_a_seeded_signal() {
-    assert_steel_true(&format!(
-        "(require \"gantz/rng\")
-         (equal? {} (rng/uniform (rng/fold-in 7 1/4)))",
-        rand_at("7", "1/4"),
-    ));
+    let mut vm = new_pin_engine();
+    assert_steel_true(
+        &mut vm,
+        "rand at 1/4 is the seeded uniform draw",
+        &format!(
+            "(require \"gantz/rng\")
+             (equal? {} (rng/uniform (rng/fold-in 7 1/4)))",
+            rand_at("7", "1/4"),
+        ),
+    );
     assert_pinned(
+        &mut vm,
+        "rand is whole-less",
         "#f",
         "(pat/event-whole (car (pat/query (pat/rand 7) (pat/span 0 1))))",
     );
@@ -28,7 +33,10 @@ fn rand_is_a_seeded_signal() {
 // between seeds.
 #[test]
 fn rand_values() {
+    let mut vm = new_pin_engine();
     assert_steel_true(
+        &mut vm,
+        "rand values stay in [0, 1)",
         "(define (in-range n)
            (if (>= n 64)
                #t
@@ -37,32 +45,47 @@ fn rand_values() {
                  (if (>= v 0) (if (< v 1) (in-range (+ n 1)) #f) #f))))
          (in-range 0)",
     );
-    assert_steel_true(&format!(
-        "(equal? {} {})",
-        rand_at("7", "3/8"),
-        rand_at("7", "3/8")
-    ));
-    assert_steel_true(&format!(
-        "(not (equal? {} {}))",
-        rand_at("7", "3/8"),
-        rand_at("8", "3/8")
-    ));
+    assert_steel_true(
+        &mut vm,
+        "rand repeats for one seed and time",
+        &format!("(equal? {} {})", rand_at("7", "3/8"), rand_at("7", "3/8")),
+    );
+    assert_steel_true(
+        &mut vm,
+        "rand differs between seeds",
+        &format!(
+            "(not (equal? {} {}))",
+            rand_at("7", "3/8"),
+            rand_at("8", "3/8")
+        ),
+    );
 }
 
 // A probability of 0 keeps every event, and 1 drops every event. That
 // includes whole-less signal events.
 #[test]
 fn degrade_by_extremes() {
+    let mut vm = new_pin_engine();
     let p = "(pat/fast 8 (pat/pure 'x))";
-    assert_steel_true(&format!(
-        "(= 8 (length (pat/query (pat/degrade-by 7 0 {p}) (pat/span 0 1))))"
-    ));
+    assert_steel_true(
+        &mut vm,
+        "degrade-by 0 keeps every event",
+        &format!("(= 8 (length (pat/query (pat/degrade-by 7 0 {p}) (pat/span 0 1))))"),
+    );
     assert_pinned(
+        &mut vm,
+        "degrade-by 1 drops every event",
         "()",
         &format!("(pin-events (pat/query (pat/degrade-by 7 1 {p}) (pat/span 0 1)))"),
     );
-    assert_steel_true("(= 1 (length (pat/query (pat/degrade-by 7 0 pat/saw) (pat/span 0 1))))");
+    assert_steel_true(
+        &mut vm,
+        "degrade-by 0 keeps a signal event",
+        "(= 1 (length (pat/query (pat/degrade-by 7 0 pat/saw) (pat/span 0 1))))",
+    );
     assert_pinned(
+        &mut vm,
+        "degrade-by 1 drops a signal event",
         "()",
         "(pin-events (pat/query (pat/degrade-by 7 1 pat/saw) (pat/span 0 1)))",
     );
@@ -73,7 +96,10 @@ fn degrade_by_extremes() {
 // `pat/rand` at its whole's midpoint is at least the probability.
 #[test]
 fn degrade_by_is_consistent() {
+    let mut vm = new_pin_engine();
     assert_steel_true(
+        &mut vm,
+        "degrade-by halves agree with the whole",
         "(define X (pat/degrade-by 7 1/2 (pat/fast 4 (pat/pure 'x))))
          (define (n a b) (length (pat/query X (pat/span a b))))
          (define (rand-at t)
