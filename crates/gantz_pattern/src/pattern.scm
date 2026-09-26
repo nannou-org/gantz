@@ -43,6 +43,7 @@
          pat/fit-span
          pat/fit-cycle
          pat/map
+         pat/map-events
          pat/filter
          pat/filter-events
          pat/join
@@ -376,6 +377,16 @@
   (lambda (span)
     (if (function? f)
         (pat//map (lambda (e) (pat/event-map-value f e)) (pat//events p span))
+        '())))
+
+;; Map events with `f`, which takes an event and returns an event. Unlike
+;; [`pat/map`], `f` sees the event's spans. Results that are not events
+;; are dropped, so a partial eval of `f` stays silent. A non-fn `f`
+;; yields silence.
+(define (pat/map-events f p)
+  (lambda (span)
+    (if (function? f)
+        (pat//filter event? (pat//map f (pat//events p span)))
         '())))
 
 ;; Keep events whose value satisfies `keep?`. A non-fn `keep?` yields

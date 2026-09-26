@@ -157,6 +157,15 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph pmapevents
+  (expr0 (expr (pat/map-events $f $p) #:require "gantz/pattern"))
+  (inlet1 (inlet "function" "event mapping"))
+  (inlet2 (inlet "pattern" "input pattern"))
+  (outlet3 (outlet "pattern" "pattern of mapped events"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (graph ppure
   (expr0 (expr (pat/pure $v) #:require "gantz/pattern"))
   (inlet1 (inlet "value" "event value"))
@@ -258,6 +267,7 @@
   (pfilter "Keep events whose values satisfy a predicate.")
   (pindices "Each cycle's index, once per cycle.")
   (pmap "Map a function over a pattern's values.")
+  (pmapevents "Map a function over a pattern's events, spans included.")
   (ppure "Repeat a value once per cycle.")
   (pquery "Query a pattern over a span for its sorted events.")
   (psaw "A 0 to 1 ramp signal each cycle.")
