@@ -34,6 +34,7 @@ fn combinators_wrapping_junk_are_silent() {
         "(pat/stack (list J (pat/pure 'a)))",
         "(pat/fit-span (pat/span 0 1) (pat/span 0 1/2) J)",
         "(pat/map (lambda (v) v) J)",
+        "(pat/map-events (lambda (e) e) J)",
         "(pat/filter (lambda (v) #t) J)",
         "(pat/filter-events (lambda (e) #t) J)",
         "(pat/app J (pat/pure (lambda (v) v)))",
@@ -78,12 +79,34 @@ fn apply_drops_non_fn_values() {
     );
 }
 
+// map-events drops results that are not events, such as the junk of a
+// partial eval of the mapping fn. Events kept as they are stay.
+#[test]
+fn map_events_drops_non_event_results() {
+    for junk in JUNK {
+        assert_pinned(
+            "((a ((0 1) (1 2)) ((0 1) (1 2))))",
+            &format!(
+                "(pin-events (pat/query
+                   (pat/map-events
+                    (lambda (e) (if (equal? (pat/event-value e) 'a) e {junk}))
+                    (pat/fastcat (list (pat/pure 'a) (pat/pure 'b))))
+                   (pat/span 0 1)))"
+            ),
+        );
+    }
+}
+
 // Non-fn mapping and filtering fns yield silence.
 #[test]
 fn non_fn_map_and_filter_are_silent() {
     assert_pinned(
         "()",
         "(pin-events (pat/query (pat/map 'nope (pat/pure 1)) (pat/span 0 1)))",
+    );
+    assert_pinned(
+        "()",
+        "(pin-events (pat/query (pat/map-events 'nope (pat/pure 1)) (pat/span 0 1)))",
     );
     assert_pinned(
         "()",

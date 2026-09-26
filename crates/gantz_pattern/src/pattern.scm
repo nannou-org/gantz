@@ -25,6 +25,7 @@
          pat/event-map-value
          pat/event-map-spans
          pat/pure
+         pat/indices
          pat/silence
          pat/signal
          pat/steady
@@ -42,6 +43,7 @@
          pat/fit-span
          pat/fit-cycle
          pat/map
+         pat/map-events
          pat/filter
          pat/filter-events
          pat/join
@@ -205,13 +207,23 @@
 ;; A pattern is `(lambda (span) <list of events>)`. Combinators make no
 ;; ordering guarantee on the returned events. [`pat/query`] sorts.
 
-;; Repeats the given value once per cycle.
-(define (pat/pure v)
+;; One event per cycle of the span. Its value is `(f index)`, where
+;; `index` is the cycle's integer index.
+(define (pat//per-cycle f)
   (lambda (span)
     (pat//map (lambda (cyc)
                 (let ((start (floor (car cyc))))
-                  (pat/event v cyc (cons start (+ start 1)))))
+                  (pat/event (f start) cyc (cons start (+ start 1)))))
               (pat/span-cycles span))))
+
+;; Repeats the given value once per cycle.
+(define (pat/pure v)
+  (pat//per-cycle (lambda (i) v)))
+
+;; The index of each cycle, once per cycle. Indices are exact integers
+;; and are negative before cycle 0.
+(define pat/indices
+  (pat//per-cycle (lambda (i) i)))
 
 ;; The pattern producing no events.
 (define pat/silence (lambda (span) '()))
@@ -365,6 +377,16 @@
   (lambda (span)
     (if (function? f)
         (pat//map (lambda (e) (pat/event-map-value f e)) (pat//events p span))
+        '())))
+
+;; Map events with `f`, which takes an event and returns an event. Unlike
+;; [`pat/map`], `f` sees the event's spans. Results that are not events
+;; are dropped, so a partial eval of `f` stays silent. A non-fn `f`
+;; yields silence.
+(define (pat/map-events f p)
+  (lambda (span)
+    (if (function? f)
+        (pat//filter event? (pat//map f (pat//events p span)))
         '())))
 
 ;; Keep events whose value satisfies `keep?`. A non-fn `keep?` yields
