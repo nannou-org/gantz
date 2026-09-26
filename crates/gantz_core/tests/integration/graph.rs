@@ -1,6 +1,8 @@
 // Tests for the graph module.
 
-use gantz_core::compile::{entry_fn_name, entrypoint, push_pull_entrypoints, push_source};
+use gantz_core::compile::{
+    Entrypoint, entry_fn_name, entrypoint, push_pull_entrypoints, push_source,
+};
 use gantz_core::node::{self, Node, WithPullEval, WithPushEval};
 use gantz_core::{Edge, ROOT_STATE};
 use std::fmt::Debug;
@@ -40,6 +42,27 @@ impl<T> DebugNode for T where T: Debug + Node {}
 
 fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
+}
+
+// Compile `g` with `eps`, load the module into a fresh VM and call each of
+// `calls` in order. Returns the VM for state queries.
+fn compile_and_call(
+    g: &petgraph::graph::DiGraph<Box<dyn DebugNode>, Edge>,
+    eps: &[Entrypoint],
+    calls: &[&Entrypoint],
+) -> Engine {
+    let module = gantz_core::compile::module(&no_lookup, g, eps, &Default::default()).unwrap();
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, g, &[], &mut vm);
+    for f in &module {
+        vm.run(f.to_pretty(100)).unwrap();
+    }
+    for ep in calls {
+        vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+            .unwrap();
+    }
+    vm
 }
 
 // A simple test graph that adds two "one"s and checks that it equals "two".
@@ -1953,4 +1976,141 @@ fn test_graph_branch_optional_input_pd_add() {
         .expect("failed to extract")
         .expect("was None");
     assert_eq!(val, 8, "hot inlet should emit 5 + 3 = 8");
+}
+
+/// Two branches in one multi-source entrypoint reconverge at a shared add.
+/// The join of the first branch depends on the second branch's result. So
+/// the first branch must export its arm value past its own dispatch.
+#[test]
+fn test_graph_two_branch_shared_join() {
+    #[derive(Debug)]
+    struct Select;
+
+    impl Node for Select {
+        fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
+            1
+        }
+        fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
+            2
+        }
+        fn branches(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
+            vec![
+                node::EvalConf::Set([true, false].try_into().unwrap()),
+                node::EvalConf::Set([false, true].try_into().unwrap()),
+            ]
+        }
+        fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+            let x = ctx.inputs()[0].as_deref().expect("must have one input");
+            node::parse_expr(&format!("(if (equal? 0 {x}) (list 0 {x}) (list 1 {x}))"))
+        }
+    }
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let push_p = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_q = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let sel_p = g.add_node(Box::new(Select) as Box<_>);
+    let sel_q = g.add_node(Box::new(Select) as Box<_>);
+    let six = g.add_node(Box::new(node_int(6)) as Box<_>);
+    let seven = g.add_node(Box::new(node_int(7)) as Box<_>);
+    let eight = g.add_node(Box::new(node_int(8)) as Box<_>);
+    let nine = g.add_node(Box::new(node_int(9)) as Box<_>);
+    let add = g.add_node(Box::new(node_add()) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_p, sel_p, Edge::from((0, 0)));
+    g.add_edge(push_q, sel_q, Edge::from((0, 0)));
+    g.add_edge(sel_p, six, Edge::from((0, 0)));
+    g.add_edge(sel_p, seven, Edge::from((1, 0)));
+    g.add_edge(sel_q, eight, Edge::from((0, 0)));
+    g.add_edge(sel_q, nine, Edge::from((1, 0)));
+    // Both of sel_p's arms feed add input 0. Both of sel_q's feed input 1.
+    g.add_edge(six, add, Edge::from((0, 0)));
+    g.add_edge(seven, add, Edge::from((0, 0)));
+    g.add_edge(eight, add, Edge::from((0, 1)));
+    g.add_edge(nine, add, Edge::from((0, 1)));
+    g.add_edge(add, number, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let combined = entrypoint::from_sources([
+        push_source(vec![push_p.index()], g[push_p].n_outputs(ctx) as u8),
+        push_source(vec![push_q.index()], g[push_q].n_outputs(ctx) as u8),
+    ]);
+    let vm = compile_and_call(&g, std::slice::from_ref(&combined), &[&combined]);
+
+    // push_p emits 0, so sel_p takes arm 0 and six. push_q emits 1, so sel_q
+    // takes arm 1 and nine. add gives 6 + 9 = 15.
+    let val = node::state::extract::<u32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 15);
+}
+
+/// The classic feedback accumulator. `add` sums its input with the delayed
+/// previous sum. The cycle is legal because it passes through the delay. The
+/// value crosses between evaluations.
+///
+/// ```text
+///   push(5) -> add <----- delay
+///               |  \------^
+///               v
+///             number
+/// ```
+#[test]
+fn test_graph_delay_feedback_accumulator() {
+    let mut g = petgraph::graph::DiGraph::new();
+    let push = g.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
+    let add = g.add_node(Box::new(node::expr("(+ $x (if (number? $d) $d 0))").unwrap()) as Box<_>);
+    let delay = g.add_node(Box::new(node::Delay) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push, add, Edge::from((0, 0)));
+    g.add_edge(delay, add, Edge::from((0, 1)));
+    g.add_edge(add, delay, Edge::from((0, 0))); // the feedback edge
+    g.add_edge(add, number, Edge::from((0, 0)));
+
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let ep = entrypoint::push(vec![push.index()], 1);
+    let vm = compile_and_call(&g, &eps, &[&ep, &ep, &ep]);
+
+    // 5, then 5+5, then 5+10.
+    let val = node::state::extract::<i32>(&vm, &[number.index()])
+        .expect("failed to extract")
+        .expect("was None");
+    assert_eq!(val, 15);
+}
+
+/// A delay read without any write in the same evaluation. A separate
+/// entrypoint stores into the delay. The reader sees only the previous stored
+/// value.
+#[test]
+fn test_graph_delay_read_and_write_in_separate_entrypoints() {
+    let mut g = petgraph::graph::DiGraph::new();
+    // The writer chain pushes 7 into the delay.
+    let push_w = g.add_node(Box::new(node_int(7).with_push_eval()) as Box<dyn DebugNode>);
+    let delay = g.add_node(Box::new(node::Delay) as Box<_>);
+    g.add_edge(push_w, delay, Edge::from((0, 0)));
+    // The reader chain pushes through get, which reads the delay, into
+    // number.
+    let push_r = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let get = g
+        .add_node(Box::new(node::expr("(begin $bang (if (number? $d) $d -1))").unwrap()) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push_r, get, Edge::from((0, 0)));
+    g.add_edge(delay, get, Edge::from((0, 1)));
+    g.add_edge(get, number, Edge::from((0, 0)));
+
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let ep_w = entrypoint::push(vec![push_w.index()], 1);
+    let ep_r = entrypoint::push(vec![push_r.index()], 1);
+
+    // A read before any write gives -1. After writing 7, a read gives 7.
+    let vm = compile_and_call(&g, &eps, &[&ep_r]);
+    let val = node::state::extract::<i32>(&vm, &[number.index()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(val, -1, "read before any write sees the initial value");
+
+    let vm = compile_and_call(&g, &eps, &[&ep_w, &ep_r]);
+    let val = node::state::extract::<i32>(&vm, &[number.index()])
+        .unwrap()
+        .unwrap();
+    assert_eq!(val, 7, "read after a write sees the stored value");
 }

@@ -3005,3 +3005,65 @@ fn test_push_through_into_nested_optional_sideeffect() {
         Some(5),
     );
 }
+
+// Delay-cell feedback shapes in nested graphs.
+
+// The feedback accumulator inside a nested graph. `add` sums its input with
+// the delayed previous sum. The delay's state lives in the nested level's
+// state map and the feedback survives across pushes.
+#[test]
+fn test_graph_nested_delay_feedback() {
+    let mut ga = Nested::default();
+    let inlet = ga.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+    let add = ga.add_node(Box::new(node::expr("(+ $x (if (number? $d) $d 0))").unwrap()) as Box<_>);
+    let delay = ga.add_node(Box::new(node::Delay) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+    ga.add_edge(inlet, add, Edge::from((0, 0)));
+    ga.add_edge(delay, add, Edge::from((0, 1)));
+    ga.add_edge(add, delay, Edge::from((0, 0)));
+    ga.add_edge(add, outlet, Edge::from((0, 0)));
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let push = g.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
+    let graph_a = g.add_node(Box::new(ga) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push, graph_a, Edge::from((0, 0)));
+    g.add_edge(graph_a, number, Edge::from((0, 0)));
+
+    let mut vm = compile_only(&g);
+    for _ in 0..3 {
+        push_from(&mut vm, &g, push);
+    }
+    // 5, then 5+5, then 5+10.
+    assert_eq!(store_val(&vm, number), Some(15));
+}
+
+// An inner push whose value circulates through a delay cycle and also
+// reaches the outlet. Push-through-outlet bridging must work for cyclic
+// interiors.
+#[test]
+fn test_graph_nested_push_through_delay_feedback() {
+    let mut ga = Nested::default();
+    let push = ga.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
+    let add = ga.add_node(Box::new(node::expr("(+ $x (if (number? $d) $d 0))").unwrap()) as Box<_>);
+    let delay = ga.add_node(Box::new(node::Delay) as Box<_>);
+    let outlet = ga.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+    ga.add_edge(push, add, Edge::from((0, 0)));
+    ga.add_edge(delay, add, Edge::from((0, 1)));
+    ga.add_edge(add, delay, Edge::from((0, 0)));
+    ga.add_edge(add, outlet, Edge::from((0, 0)));
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let graph_a = g.add_node(Box::new(ga) as Box<dyn DebugNode>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(graph_a, number, Edge::from((0, 0)));
+
+    let mut vm = compile_only(&g);
+    let ep = entrypoint::push(vec![graph_a.index(), push.index()], 1);
+    for _ in 0..3 {
+        vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+            .unwrap();
+    }
+    // The accumulating value propagates through the outlet each push.
+    assert_eq!(store_val(&vm, number), Some(15));
+}

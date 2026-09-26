@@ -5,7 +5,6 @@ mod config;
 mod diagnostics;
 mod fn_apply;
 mod graph;
-mod ir_pipeline;
 mod modules;
 mod nested;
 mod rust_fn;
