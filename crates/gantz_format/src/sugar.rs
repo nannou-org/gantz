@@ -123,6 +123,27 @@ impl<'a> SugarArgs<'a> {
         }
     }
 
+    /// Find a `#:<key>` keyword and return the items of the list that follows
+    /// it, for example the segments in `#:segs ((1 0.1) (0 1))`.
+    pub fn keyword_list(&self, key: &str) -> Result<Option<SugarArgs<'a>>, FormatError> {
+        match self.keyword_at(key) {
+            Some((i, kw)) => Ok(Some(
+                self.args
+                    .get(i + 1)
+                    .and_then(sexpr::list_args)
+                    .map(|args| SugarArgs::new(args, self.src))
+                    .ok_or_else(|| {
+                        err_at(
+                            kw,
+                            self.src,
+                            ErrorKind::Malformed(format!("#:{key} requires a list")),
+                        )
+                    })?,
+            )),
+            None => Ok(None),
+        }
+    }
+
     /// Find every `#:<key>` keyword and return the string value following
     /// each occurrence.
     ///
@@ -179,6 +200,14 @@ impl<'a> SugarArgs<'a> {
     /// strings and the content addresses that hash them are preserved exactly.
     pub fn verbatim_at(&self, n: usize) -> Option<&'a str> {
         self.args.get(n).and_then(|e| span_src(e, self.src))
+    }
+
+    /// The items of the `n`-th positional argument, if it is a list.
+    pub fn list_at(&self, n: usize) -> Option<SugarArgs<'a>> {
+        self.args
+            .get(n)
+            .and_then(sexpr::list_args)
+            .map(|args| SugarArgs::new(args, self.src))
     }
 
     /// A malformed-form error located at the `n`-th argument. Unlocated if the
@@ -526,6 +555,27 @@ mod tests {
         sugar
             .read_spec(&head, SugarArgs::new(&args[1..], text))
             .expect("read_spec")
+    }
+
+    /// `keyword_list` and `list_at` read nested lists. Each item reads with
+    /// the positional readers. A keyword without a list is malformed.
+    #[test]
+    fn keyword_list_reads_nested_lists() {
+        let text = "(env #:segs ((1 0.5 lin) (0 2 -4)) #:bad 3)";
+        let exprs = sexpr::read(text).expect("read");
+        let args = sexpr::list_args(&exprs[0]).expect("list");
+        let args = SugarArgs::new(&args[1..], text);
+        let segs = args.keyword_list("segs").expect("ok").expect("present");
+        assert_eq!(segs.count(), 2);
+        let first = segs.list_at(0).expect("first segment");
+        assert_eq!(first.f64_at(0).expect("ok"), Some(1.0));
+        assert_eq!(first.f64_at(1).expect("ok"), Some(0.5));
+        assert_eq!(first.symbol_at(2).as_deref(), Some("lin"));
+        let second = segs.list_at(1).expect("second segment");
+        assert_eq!(second.f64_at(2).expect("ok"), Some(-4.0));
+        assert!(segs.list_at(2).is_none());
+        assert!(args.keyword_list("absent").expect("ok").is_none());
+        assert!(args.keyword_list("bad").is_err());
     }
 
     /// `keyword_symbol` reads a `#:<key> <symbol>` pair. A present pair gives
