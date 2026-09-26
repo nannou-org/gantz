@@ -13,14 +13,13 @@
 //! emitted unit and its `special_index`, while its [`unit`](UnitDesc::unit)
 //! field holds a unique per-operator identity such as `"Mul"` or `"TanH"`.
 //!
-//! Buffer units take a buffer on an [`In::Buffer`] socket, from a `~sample`
-//! or a `~buffer` source node. A unit that writes its buffer accepts only a
-//! `~buffer`. See [`Emit`] for how rows size their outputs from a buffer or
-//! an init value, and how writer rows become sinks.
+//! Buffer units take a buffer on an [`In::Buffer`] socket from a `~sample`
+//! or `~buffer` node. A unit that writes its buffer accepts only a
+//! `~buffer`. See [`Emit`] for how a row sets its outputs.
 //!
 //! The table excludes variable-arity units such as `EnvGen` and `Klang`,
 //! demand-rate units, FFT/PV units and IO/routing units. The bespoke nodes
-//! cover IO and routing. It excludes `VOsc` and `VOsc3`, which read a bank of
+//! cover IO and routing. It excludes `VOsc` and `VOsc3`, which read several
 //! buffers at consecutive bufnums. The table also excludes the
 //! node-lifecycle units such as `FreeSelf` and `Done`, because the audio
 //! driver controls the lifecycle of each synth. It excludes `GVerb` too. In
@@ -86,9 +85,9 @@ pub enum In {
         doc: &'static str,
     },
     /// A buffer socket. It takes the bufnum wire of one buffer source, such
-    /// as `~sample` or `~buffer`. Unconnected, fed any other wire, or fed a
-    /// source that `access` does not allow, it feeds `-1`, which reads an
-    /// empty buffer slot.
+    /// as `~sample` or `~buffer`. Otherwise it feeds `-1`, which reads an
+    /// empty buffer slot. This includes a source that `access` does not
+    /// allow.
     Buffer {
         /// The socket's name.
         name: &'static str,
@@ -97,11 +96,10 @@ pub enum In {
         /// Whether the unit only reads the buffer or also writes it.
         access: BufferAccess,
     },
-    /// A socket whose whole channel group feeds the unit as trailing inputs,
-    /// one input per channel, for example the signals `BufWr` writes. It
-    /// must be the last entry. If the row has a write buffer, the group is
-    /// cut or padded to the buffer's channel count, and a mono signal feeds
-    /// every channel.
+    /// A socket whose channels feed the unit as trailing inputs, one input
+    /// per channel. For example the signals that `BufWr` writes. It must be
+    /// the last entry. With a write buffer, the group is cut or padded to the
+    /// channel count of the buffer, and a mono signal feeds every channel.
     Group {
         /// The socket's name.
         name: &'static str,
@@ -138,13 +136,13 @@ pub enum Emit {
     /// One unit per channel of the widest connected input. Output port `j`
     /// groups every unit's `j`th output. Most rows use this.
     Expand,
-    /// One unit. Each wire feeds its first channel. Each output port is
-    /// mono. For units that write a buffer, where one unit per channel would
-    /// write the buffer more than once.
+    /// One unit. Each wire feeds only its first channel, and each output
+    /// port is mono. Rows that write a buffer use this, because one unit per
+    /// channel would write the buffer more than once.
     Single,
-    /// One unit whose output count is the channel count of the buffer at
-    /// the named buffer socket, one channel when the buffer is unknown. The
-    /// row has one output port, as wide as the buffer.
+    /// One unit with one output per channel of the buffer at the named
+    /// socket. The row has one output port, as wide as the buffer. The width
+    /// is 1 when the buffer is unknown.
     BufferChannels {
         /// The name of the [`In::Buffer`] entry.
         socket: &'static str,
@@ -161,13 +159,14 @@ pub enum Emit {
         /// The inspector row's doc line.
         doc: &'static str,
     },
-    /// One buffer-writing unit with one silent output and no output ports.
-    /// The node is a sink, so it runs without an `~out`.
+    /// One unit that writes a buffer, with no output ports. The node is a
+    /// sink, so it runs without an `~out`.
     Sink,
 }
 
-/// Scale a row's playback-rate input by `BufRateScale` of its buffer, so a
-/// rate of 1 plays the buffer at its own pitch at any engine sample rate.
+/// Scale the playback rate input of a row by `BufRateScale` of its buffer.
+/// A rate of 1 then plays the buffer at its own pitch at any engine sample
+/// rate.
 #[derive(Clone, Copy, Debug)]
 pub struct RateScale {
     /// The name of the rate input.
@@ -282,8 +281,8 @@ impl UnitDesc {
         })
     }
 
-    /// The init-only values as `(name, default)`. These are the
-    /// [`In::Init`] entries, then an [`Emit::InitChannels`] value.
+    /// The init-only values as `(name, default)`. This includes the value of
+    /// an [`Emit::InitChannels`] row.
     pub fn init_params(&self) -> impl Iterator<Item = (&'static str, f32)> + '_ {
         let channels = match self.emit {
             Emit::InitChannels { name, default, .. } => Some((name, default)),
@@ -3060,9 +3059,9 @@ pub static UNITS: &[UnitDesc] = &[
         &["semitones"],
         "Map a scale degree to semitones through a scale in a table",
     ),
-    // Buffer delays. The delay line is a `~buffer`, so its length is the
-    // buffer's largest power-of-two prefix. One unit writes the buffer, so a
-    // multichannel input feeds its first channel.
+    // Buffer delays. The delay line is a `~buffer`. The unit uses the largest
+    // power of two frames that fit. One unit writes the buffer, so it reads
+    // only the first channel of its input.
     single(u(
         "~bufdelayn",
         "BufDelayN",

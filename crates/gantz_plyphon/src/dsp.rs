@@ -191,31 +191,27 @@ pub trait NodeDsp {
     /// Whether this node is a buffer source, such as `~sample` or `~buffer`.
     /// A buffer source has no dsp inputs and emits a bufnum wire.
     ///
-    /// Buffer sources are local to each synthdef. They never join a region
-    /// and never cross a bus. The compiler emits a source again, on demand,
-    /// in each def that reads it, and feeds it only into buffer inputs, see
-    /// [`is_buffer_input`](Self::is_buffer_input). Each emission pushes its
-    /// own bufnum param with the same node path, so the driver binds one
-    /// buffer to all of them.
+    /// A buffer source is local to each synthdef. It never joins a region or
+    /// crosses a bus. The compiler emits it again in each def that reads it,
+    /// and feeds it only into buffer inputs. Each emission has its own bufnum
+    /// param with the same node path, so the driver binds one buffer to all.
     fn is_buffer_source(&self) -> bool {
         false
     }
 
-    /// Whether dsp input `input` takes a bufnum wire from a buffer source.
-    /// Such an input receives a signal only when exactly one buffer source
-    /// feeds it, directly or through a chain of `~bus` nodes. Any other
-    /// wiring reads as unconnected. Other inputs never receive a buffer
-    /// source's wire.
+    /// Whether dsp input `input` takes a bufnum wire. The input gets a signal
+    /// only when exactly one buffer source feeds it, directly or through
+    /// `~bus` nodes. Any other wiring reads as unconnected. Other inputs never
+    /// get a bufnum wire.
     fn is_buffer_input(&self, input: usize) -> bool {
         let _ = input;
         false
     }
 
-    /// Whether this node is a synthdef sink that writes to a buffer, such as
-    /// `RecordBuf`. Like [`is_output`](Self::is_output) it roots a pull, so
-    /// it runs even when nothing consumes it. In one synthdef, writers come
-    /// before the other sinks, so a reader in the same def sees the write in
-    /// the same block.
+    /// Whether this node writes to a buffer, such as `RecordBuf`. A writer is
+    /// a sink like [`is_output`](Self::is_output), so it runs even when
+    /// nothing reads it. Writers run before the other sinks of a def, so a
+    /// reader in the same def sees the write in the same block.
     fn is_writer(&self) -> bool {
         false
     }
@@ -353,10 +349,10 @@ pub struct ScopeOutBinding {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum BufferSource {
     /// A content-addressed audio asset. The driver installs it once and
-    /// shares it read-only across every synth that references it.
+    /// shares it read-only.
     Asset(gantz_ca::ContentAddr),
-    /// A zeroed scratch buffer of `frames` frames, owned by the node path.
-    /// Units can write to it.
+    /// A zeroed scratch buffer that belongs to the node path. Units can write
+    /// to it.
     Scratch {
         /// The number of frames.
         frames: usize,
@@ -373,24 +369,21 @@ pub enum BufferAccess {
     Write,
 }
 
-/// Records a buffer source node's buffer, so the audio driver can install
-/// it and set the node's bufnum param after spawning.
+/// The buffer of a buffer source node. The audio driver installs the buffer
+/// and sets `bufnum_param` to its index.
 ///
-/// This is the buffer analogue of [`ScopeOutBinding`]. `bufnum_param` is a
-/// no-lag control param, see
-/// [`push_control_param`](DspBuilder::push_control_param). The driver sets
-/// it via `set_control` after spawning, in the same command drain as the
-/// spawn, so unit init already sees it. A source that feeds several defs
-/// pushes one binding in each, all with the same `node_path`. The driver
-/// binds them all to one buffer.
+/// The driver sets the param in the same command drain as the spawn, so
+/// unit init already sees it. A source that feeds several defs has one
+/// binding in each, all with the same `node_path`. The driver binds them all
+/// to one buffer.
 #[derive(Clone, Debug)]
 pub struct BufferBinding {
     /// The source node's path within the graph.
     pub node_path: Vec<usize>,
     /// Where the buffer comes from.
     pub source: BufferSource,
-    /// The buffer's channel count. It sizes the output group of a unit that
-    /// outputs one channel per buffer channel.
+    /// The channel count of the buffer. Some units have one output per
+    /// buffer channel.
     pub channels: usize,
     /// The no-lag control param the driver sets to the bufnum.
     pub bufnum_param: usize,
@@ -535,10 +528,8 @@ impl DspBuilder {
         });
     }
 
-    /// Declare the buffer of the buffer source node at `path`. Push its
-    /// no-lag `bufnum` param, record a [`BufferBinding`] and return the
-    /// bufnum wire. The driver installs the buffer and sets the param after
-    /// spawning.
+    /// Declare the buffer of the buffer source node at `path` and return its
+    /// bufnum wire. This adds a `bufnum` param and a [`BufferBinding`].
     pub fn push_buffer(&mut self, path: &[usize], source: BufferSource, channels: usize) -> Signal {
         let bufnum_param = self.push_control_param(path, "bufnum");
         self.buffers.push(BufferBinding {
@@ -550,9 +541,9 @@ impl DspBuilder {
         Signal::mono(InputRef::Param(bufnum_param))
     }
 
-    /// The bufnum wire and binding behind a buffer input, if `input` is a
-    /// buffer source's wire that allows `access`. A write access rejects an
-    /// asset, so a writer never changes shared data.
+    /// The bufnum wire and binding behind a buffer input. `None` unless
+    /// `input` is the wire of a buffer source that allows `access`. Write
+    /// access rejects an asset.
     pub fn buffer_input(
         &self,
         input: Option<&Signal>,
@@ -576,9 +567,8 @@ impl DspBuilder {
         }
     }
 
-    /// `rate` scaled by `BufRateScale.kr(bufnum)`, the buffer's sample rate
-    /// over the engine's. A playback rate of 1 then plays the buffer at its
-    /// own pitch at any engine sample rate.
+    /// `rate` times `BufRateScale.kr(bufnum)`. A rate of 1 then plays the
+    /// buffer at its own pitch at any engine sample rate.
     pub fn rate_scaled(&mut self, bufnum: InputRef, rate: InputRef) -> InputRef {
         let scale = self.push_unit(UnitSpec::new(
             "BufRateScale",

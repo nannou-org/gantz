@@ -1,6 +1,6 @@
-//! Tests for local buffer sources. A buffer source never joins a region and
-//! never crosses a bus. Each def that reads it emits it on demand, and only
-//! buffer inputs receive its wire.
+//! Tests for local buffer sources. A buffer source never joins a region or
+//! crosses a bus. Each def that reads it emits it, and only buffer inputs get
+//! its wire.
 
 use std::collections::HashMap;
 

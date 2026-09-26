@@ -97,8 +97,7 @@ impl NodeUi for UnitNode {
                 In::Signal { .. } | In::Buffer { .. } | In::Group { .. } | In::Baked(_) => (),
             }
         }
-        // An init-sized output count changes the unit's outputs, so an edit is
-        // structural and re-derives.
+        // The channel count sets the outputs, so an edit is structural.
         if let Emit::InitChannels { name, max, .. } = desc.emit {
             let mut value = self.init_value(name);
             let dv = egui::DragValue::new(&mut value)

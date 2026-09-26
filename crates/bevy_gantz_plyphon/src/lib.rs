@@ -324,13 +324,10 @@ static EMPTY_BUFFERS: BufferBlobs = BufferBlobs::new();
 struct HeadSynths {
     heads: HashMap<Entity, HeadParts>,
     bus_alloc: BusAlloc,
-    /// Allocator of global buffer-table indices, for scope streams and held
-    /// buffers alike.
+    /// Allocates buffer table indices for scope streams and held buffers.
     bufnum_alloc: BufnumAlloc,
-    /// The buffers installed in the engine's buffer table, by key. Assets are
-    /// shared read-only across every synth that reads them. Scratch buffers
-    /// are owned by one source node in one head. Each is installed once,
-    /// refcounted per part, and freed when the last reference retires.
+    /// The buffers in the engine's buffer table, by key. Each is installed
+    /// once, refcounted per part, and freed when the last reference retires.
     held: HashMap<BufferKey, HeldBuffer>,
     /// Installed synthdef names to `(refcount, structural_sig)`. A def is
     /// installed once per name and reused while its structure is unchanged.
@@ -491,21 +488,18 @@ struct FadingSynth {
     deadline: Instant,
     /// The synth's cued scope streams, closed and freed only at `deadline`.
     scopes: Vec<ScopeSlot>,
-    /// The buffers whose refcount this synth still holds. Released at
-    /// `deadline`, not at fade-out, so each buffer stays installed through the
-    /// crossfade and a scratch buffer keeps its contents across a respawn.
+    /// The buffers this synth still holds a refcount on. They are released
+    /// at `deadline`, so each buffer stays installed through the crossfade.
     buffers: Vec<BufferKey>,
 }
 
-/// The size of the engine's buffer table, plyphon's `Options::max_buffers`.
-/// Scope streams and buffers share this one index space.
+/// The size of the engine's buffer table. Scope streams and buffers share
+/// it.
 const MAX_BUFFERS: usize = 1024;
 
-/// How long a freed index is quarantined before reuse. A just-retired
-/// synth's trailing blocks and its free command may still be in flight when
-/// the index is handed out again. A reuse must not install a buffer or cue a
-/// stream over an index that a fading synth can still see. Mirrors the
-/// bus-run graveyard.
+/// How long a freed index waits before reuse. The last blocks of a retired
+/// synth and its free command can still be in flight. A reuse must not put a
+/// new buffer or stream under an index that a fading synth can still see.
 const BUFFER_GRACE: Duration = Duration::from_millis(200);
 
 /// A buffer the driver holds in the engine's buffer table.
@@ -513,10 +507,10 @@ const BUFFER_GRACE: Duration = Duration::from_millis(200);
 enum BufferKey {
     /// A content-addressed asset, shared by every synth that reads it.
     Asset(ca::ContentAddr),
-    /// A zeroed scratch buffer, owned by one buffer source node in one open
-    /// head. Paths are head-relative, so the key needs the head. The shape is
-    /// part of the key, so a shape change gives a new zeroed buffer and never
-    /// replaces a buffer that a running synth holds.
+    /// A zeroed scratch buffer of one buffer source node in one open head.
+    /// Paths are head-relative, so the key needs the head. The shape is part
+    /// of the key, so a shape change gives a new buffer. A running synth
+    /// never sees its buffer replaced.
     Scratch {
         head: Entity,
         path: Vec<usize>,
@@ -525,8 +519,8 @@ enum BufferKey {
     },
 }
 
-/// A buffer installed in the engine's buffer table. The bufnum it occupies
-/// and how many live or fading parts still reference it. Freed at refcount 0.
+/// A buffer in the engine's buffer table, and the number of live or fading
+/// parts that use it. It is freed at refcount 0.
 struct HeldBuffer {
     bufnum: usize,
     refcount: usize,
@@ -537,21 +531,18 @@ enum Resolved {
     /// The buffer is installed at this bufnum.
     Bound(usize),
     /// The buffer cannot be installed, for example a missing asset or a full
-    /// table. The part reads `-1`, an empty slot, and plays silence.
+    /// table. The part reads `-1` and plays silence.
     Missing,
     /// The command ring was full. The spawn can retry next frame.
     Retry,
 }
 
-/// Allocates indices in the engine's buffer table for scope streams and
-/// held buffers, reusing freed ones. Both kinds share one allocator, since
-/// plyphon addresses them in one table.
+/// Allocates buffer table indices for scope streams and held buffers. Both
+/// use one allocator, because plyphon keeps them in one table.
 ///
-/// Index 0 is never handed out. plyphon units read a bufnum as
-/// `max(0) as usize`, so `-1` and an unset bufnum param both read slot 0.
-/// Keeping it empty makes them read silence. A freed index is quarantined for
-/// [`BUFFER_GRACE`] before reuse, so a fading synth never sees a new buffer
-/// or stream under an index it still holds.
+/// Index 0 is never used. plyphon units clamp a bufnum below 0 to 0, so `-1`
+/// and an unset bufnum param both read slot 0. An empty slot 0 makes them
+/// read silence. A freed index waits [`BUFFER_GRACE`] before reuse.
 struct BufnumAlloc {
     free: Vec<usize>,
     next: usize,
@@ -640,11 +631,9 @@ struct PartSynth {
     /// The def's driver-owned fade gains, one per sink. Used to fade the synth
     /// in on spawn and out across a crossfaded replacement.
     gains: Vec<GainRef>,
-    /// The distinct buffers this synth references, each holding one refcount
-    /// on its [`HeldBuffer`]. Released only when the synth is finally freed.
-    /// That is immediately if it has no fade, else at its [`FadingSynth`]
-    /// deadline. So a crossfade respawn keeps each buffer installed, with no
-    /// reload and no loss of scratch contents.
+    /// The distinct buffers this synth uses, with one refcount on each. They
+    /// are released when the synth is freed, so a crossfade respawn keeps
+    /// each buffer and its contents.
     buffers: Vec<BufferKey>,
 }
 
@@ -1398,9 +1387,7 @@ enum SpawnError {
 /// width and param, and every buffer binding. Combined with the def's
 /// structural sig for the keep or replace decision. A re-route that keeps
 /// the def, for example an instance inlet fed from a different source, still
-/// respawns, crossfading onto the new buses. So does a new buffer, for
-/// example a `~playbuf` given another asset. The driver never rebinds a
-/// running synth to another buffer.
+/// respawns, crossfading onto the new buses. A new buffer also respawns.
 fn wiring_hash(part: &ResolvedPart) -> u64 {
     use std::hash::{DefaultHasher, Hash, Hasher};
     let mut h = DefaultHasher::new();
@@ -1492,12 +1479,10 @@ fn spawn_part(
         }
     }
 
-    // Install each referenced buffer, shared and refcounted, and wire the
-    // source's driver-owned bufnum. The install lands in the same command
-    // drain as the spawn, so unit init already sees the buffer. A buffer that
-    // cannot be installed is wired to `-1`, which reads the always-empty slot
-    // 0, so the node plays silence rather than a wrong buffer. The def
-    // corrects the playback rate itself via `BufRateScale`.
+    // Install each buffer and set the bufnum param of its source. The install
+    // is in the same command drain as the spawn, so unit init already sees
+    // the buffer. A buffer that cannot be installed gets `-1`, so the node
+    // plays silence.
     let mut part_buffers: Vec<BufferKey> = Vec::new();
     for binding in &buffers {
         let key = match &binding.source {
@@ -1667,14 +1652,12 @@ fn free_scopes(
     }
 }
 
-/// Ensure the buffer at `key` is installed, take a refcount for the spawning
-/// part, and return its bufnum. On first use an asset's buffer is decoded
-/// from its content-addressed blob, and a scratch buffer is created zeroed at
-/// the engine's `sample_rate`.
+/// Install the buffer at `key` if needed, take a refcount for the spawning
+/// part, and return its bufnum. On first use, an asset is decoded from its
+/// blob and a scratch buffer is created zeroed.
 ///
-/// `part_buffers` records the distinct buffers this part already holds a
-/// refcount for, so a part with two nodes reading the same buffer shares one
-/// bufnum and takes one refcount, released once when the synth is freed.
+/// `part_buffers` holds the buffers that the part already has a refcount on.
+/// Two nodes of one part that read the same buffer take only one refcount.
 fn resolve_buffer(
     controller: &mut Controller,
     state: &mut HeadSynths,
@@ -1730,9 +1713,8 @@ fn resolve_buffer(
     Resolved::Bound(bufnum)
 }
 
-/// Release each buffer's refcount as a retired synth is freed. A buffer whose
-/// last reference is gone is freed from the engine and its bufnum quarantined
-/// before reuse. See [`BufnumAlloc::free`].
+/// Release the refcount of a freed synth on each buffer. A buffer with no
+/// references left is freed, and its bufnum waits before reuse.
 fn free_buffers(
     controller: &mut Controller,
     state: &mut HeadSynths,
@@ -2045,8 +2027,8 @@ mod tests {
         assert_eq!(a.alloc(), None);
     }
 
-    /// Resolve `key` for a part holding `refs`, at 48 kHz. The bufnum, or
-    /// `None` if the buffer is missing or must retry.
+    /// Resolve `key` for a part that holds `refs`, at 48 kHz. `None` if the
+    /// buffer is missing or must retry.
     fn resolve(
         controller: &mut Controller,
         state: &mut HeadSynths,
@@ -2527,10 +2509,8 @@ mod tests {
         );
     }
 
-    /// End-to-end. A `~sample -> ~playbuf -> ~out` graph plays a
-    /// content-addressed asset. Exercises the whole chain from node to derive
-    /// to `BufferBinding` to resident install to `PlayBuf` reading the buffer
-    /// to `Out`, and confirms it sounds.
+    /// End-to-end. A `~sample -> ~playbuf -> ~out` graph plays an asset and
+    /// sounds.
     #[test]
     fn playbuf_sounds_through_out() {
         // An alternating +/-0.5 waveform with nonzero RMS, content-addressed and
@@ -2565,7 +2545,7 @@ mod tests {
             false,
         )
         .expect("spawn_part");
-        // The asset was made resident with a single refcount, held by this synth.
+        // The asset has one refcount, held by this synth.
         let key = BufferKey::Asset(addr);
         assert_eq!(state.held.get(&key).map(|h| h.refcount), Some(1));
         assert_eq!(synth.buffers, vec![key]);
@@ -2769,9 +2749,9 @@ mod tests {
         instantiate(&template, &cache).into_iter().next().unwrap()
     }
 
-    /// A new asset on a `~playbuf` keeps the def, key and sig, since the
-    /// bufnum is a driver-set param. The wiring must still differ, or the
-    /// driver keeps the synth and it plays the old buffer.
+    /// A new asset on a `~playbuf` keeps the def, key and sig, because the
+    /// bufnum is a param. The wiring must differ, or the driver keeps the old
+    /// synth and buffer.
     #[test]
     fn asset_swap_changes_the_wiring() {
         let a = playbuf_part(ca::blob_addr(b"asset a"));

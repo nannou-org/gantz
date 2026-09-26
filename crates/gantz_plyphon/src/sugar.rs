@@ -6,9 +6,9 @@
 //! `(~scopeout #:size n)`, `(~pack #:count n)`, `(~sum #:count n)`,
 //! `(~unpack #:count n)` and `(~buffer #:frames n #:channels c)` carry the
 //! structural smoothing lag, ring length, socket count or buffer shape. A
-//! `~sample` with an asset has no keyword form and writes as a generic node,
-//! so its address survives. Every
-//! [`crate::units`] descriptor-table keyword reads and writes the same way.
+//! `~sample` with an asset writes as a generic node, which keeps its address.
+//! Every [`crate::units`] descriptor-table keyword reads and writes the same
+//! way.
 //! A bare form is `~sinosc` or `~lpf`. A full form such as
 //! `(~combc #:delay-lag s #:maxdelay v #:rate kr)` carries the structural
 //! per-param lags, init-only values and ugen rate. A fixed-rate row such as

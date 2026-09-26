@@ -10,15 +10,13 @@ use serde::{Deserialize, Serialize};
 
 use crate::dsp::{BufferSource, DspBuilder, NodeDsp, Signal, ToNodeDsp};
 
-/// A content-addressed audio asset as a buffer source. It emits the bufnum
-/// wire of the asset's buffer for buffer sockets such as `~playbuf`'s.
+/// An audio asset as a buffer source. It emits the bufnum wire of the asset
+/// for buffer sockets, such as the one on `~playbuf`.
 ///
-/// The node holds the asset's address plus a cache of its channel count,
-/// frame count and sample rate, so a reader can size its outputs without
-/// decoding the PCM. The samples live in the content-addressed asset store.
-/// The audio driver installs the asset once, shares it read-only across every
-/// synth that reads it, and sets this node's bufnum param after spawning.
-/// Writers cannot write to it, see [`BufferAccess`](crate::BufferAccess).
+/// The node holds the address of the asset and caches its channel count,
+/// frame count and sample rate. The samples live in the asset store. The
+/// audio driver installs the asset once and shares it read-only. Writers
+/// cannot use it.
 ///
 /// An unassigned node emits the bufnum `-1`, which reads an empty buffer.
 /// Steel-inert like the other dsp nodes.
@@ -27,13 +25,13 @@ pub struct Sample {
     /// The audio asset, or `None` until one is assigned.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     asset: Option<ContentAddr>,
-    /// The asset's cached channel count. It sizes a reader's output group.
+    /// The cached channel count. It sets the output count of a reader.
     #[serde(default, skip_serializing_if = "crate::node::is_default")]
     channels: usize,
-    /// The asset's cached frame count, for display.
+    /// The cached frame count, for display.
     #[serde(default, skip_serializing_if = "crate::node::is_default")]
     frames: usize,
-    /// The asset's cached sample rate in Hz, for display.
+    /// The cached sample rate in Hz, for display.
     #[serde(default, skip_serializing_if = "crate::node::is_default")]
     sample_rate: f64,
 }

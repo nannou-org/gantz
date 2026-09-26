@@ -7,14 +7,13 @@ use serde::{Deserialize, Serialize};
 use crate::dsp::{BufferSource, DspBuilder, NodeDsp, Signal, ToNodeDsp};
 
 /// A zeroed scratch buffer as a buffer source. It emits the bufnum wire of
-/// the buffer for buffer sockets, for example a `~recordbuf` that writes it
-/// and a `~playbuf` that reads it.
+/// the buffer, for example for a `~recordbuf` that writes it and a
+/// `~playbuf` that reads it.
 ///
-/// The audio driver allocates the buffer per open head and node path, so
-/// each instance of a nested graph gets its own buffer. The buffer and its
-/// contents survive a respawn of the synths that use it, as long as its
-/// shape does not change. A change of `frames` or `channels` gives a new
-/// zeroed buffer. Steel-inert like the other dsp nodes.
+/// The audio driver allocates one buffer per open head and node path, so
+/// each instance of a nested graph gets its own buffer. The buffer keeps its
+/// contents when the synths that use it respawn. A change of `frames` or
+/// `channels` gives a new zeroed buffer. Steel-inert like the other dsp nodes.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, Hash, NodeTag)]
 pub struct Buffer {
     #[serde(default = "default_frames", skip_serializing_if = "is_default_frames")]

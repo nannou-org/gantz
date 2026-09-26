@@ -111,8 +111,7 @@ pub struct Derived {
     /// The fade gains that gate the def's whole output. The driver ramps them
     /// on a crossfaded replacement.
     pub gains: Vec<GainRef>,
-    /// One binding per buffer source emitted in the def. The driver installs
-    /// each buffer and wires the source's `bufnum` param.
+    /// One binding per buffer source in the def.
     pub buffers: Vec<BufferBinding>,
     /// The width and rate each dsp output port carried, for diagnostics.
     pub shapes: PortShapes,
@@ -239,14 +238,13 @@ where
     })
 }
 
-/// Whether `d` roots a synthdef pull: an output, a monitor or a buffer writer.
+/// Whether `d` is a sink. Outputs, monitors and buffer writers are sinks.
 pub(crate) fn is_sink(d: &dyn NodeDsp) -> bool {
     d.is_output() || d.is_monitor() || d.is_writer()
 }
 
-/// Every dsp sink of `graph`, that is every `~out` output, `~scopeout`
-/// monitor and buffer writer. Writers come first, so that in one def a
-/// buffer write runs before the reads that follow it.
+/// Every dsp sink of `graph`. Writers come first, so a buffer write runs
+/// before the reads in the same def.
 pub(crate) fn dsp_sinks<N: ToNodeDsp>(graph: &Graph<N>) -> Vec<NodeIx> {
     let (mut writers, others): (Vec<NodeIx>, Vec<NodeIx>) = graph
         .node_indices()
@@ -269,11 +267,9 @@ pub(crate) fn is_buffer_source<N: ToNodeDsp>(graph: &Graph<N>, n: NodeIx) -> boo
     graph[n].to_node_dsp().is_some_and(|d| d.is_buffer_source())
 }
 
-/// The buffer source port that feeds buffer input `input` of `n`. The feed
-/// can pass through a chain of `~bus` nodes. A buffer wire never becomes a
-/// bus, so the source is emitted on the reading side instead. `None` unless
-/// exactly one edge feeds each step of the chain and the chain ends at a
-/// buffer source.
+/// The buffer source port that feeds buffer input `input` of `n`, directly
+/// or through `~bus` nodes. `None` unless each step has exactly one edge and
+/// the chain ends at a buffer source.
 pub(crate) fn buffer_feed<N: ToNodeDsp>(
     graph: &Graph<N>,
     n: NodeIx,
@@ -301,9 +297,8 @@ pub(crate) fn buffer_feed<N: ToNodeDsp>(
     }
 }
 
-/// The signal at output `port` of buffer source `s` in the def under
-/// construction. The source is emitted on its first use in a def and its
-/// outputs are cached in `outputs` for later uses.
+/// The signal at output `port` of buffer source `s` in the current def. The
+/// first use emits the source and caches its outputs in `outputs`.
 pub(crate) fn emit_local<N: ToNodeDsp>(
     graph: &Graph<N>,
     (s, port): (NodeIx, usize),
@@ -327,8 +322,8 @@ pub(crate) fn emit_local<N: ToNodeDsp>(
 /// its merged orders with this set to keep control-input feeds out of the
 /// defs.
 ///
-/// Buffer inputs and buffer sources are left out. A buffer source is emitted
-/// on demand per def instead, see [`emit_local`], so it never joins a region.
+/// Buffer inputs and buffer sources are left out. Each def emits its buffer
+/// sources itself with [`emit_local`].
 fn dsp_reachable<N: ToNodeDsp>(graph: &Graph<N>, sinks: &[NodeIx]) -> HashSet<NodeIx> {
     let mut reachable: HashSet<NodeIx> = sinks.iter().copied().collect();
     let mut stack: Vec<NodeIx> = sinks.to_vec();
@@ -355,7 +350,7 @@ fn dsp_reachable<N: ToNodeDsp>(graph: &Graph<N>, sinks: &[NodeIx]) -> HashSet<No
 /// summand and an empty list is an unconnected input. Summands sort by source
 /// node path and output port with duplicates kept, so the derived def is
 /// independent of edge insertion order. A buffer input always has an empty
-/// list. Its feed resolves through [`buffer_feed`].
+/// list, see [`buffer_feed`].
 #[allow(clippy::type_complexity)]
 fn resolved_sources<N: ToNodeDsp>(
     graph: &Graph<N>,

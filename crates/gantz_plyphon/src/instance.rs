@@ -313,9 +313,8 @@ enum Kind {
     Plain,
     /// A `~bus` boundary.
     Boundary,
-    /// A buffer source. It joins no region and sources no summand. Each
-    /// region that reads it emits it on demand, see
-    /// [`NodeDsp::is_buffer_source`](crate::NodeDsp::is_buffer_source).
+    /// A buffer source. It joins no region and feeds no summand. Each region
+    /// that reads it emits it itself.
     Local,
     /// An instance marker with its `n_inlets` and `n_outlets`.
     Instance(usize, usize),

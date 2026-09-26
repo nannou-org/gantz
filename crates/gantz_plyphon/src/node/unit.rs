@@ -221,9 +221,8 @@ impl UnitNode {
         (self.init_value(name).round().max(1.0) as usize).min(max.max(1))
     }
 
-    /// The Steel placeholder this node's expr evaluates to, one non-numeric
-    /// value per dsp output per the multi-output expr contract. A node with
-    /// no outputs still evaluates to one inert value.
+    /// The Steel placeholder of the node's expr. This is one non-numeric
+    /// value per dsp output, or one value for a node with no outputs.
     fn output_placeholder(&self) -> String {
         match self.desc().outputs.len() {
             0 | 1 => "'()".to_string(),
@@ -316,8 +315,8 @@ enum Feed {
     Wire(Signal),
     /// An unconnected hybrid input's shared control param.
     Param(u32),
-    /// A constant. Either an unconnected pure signal input as silence, an
-    /// unresolved buffer as `-1`, a baked value or an init-only value.
+    /// A constant. This is silence for an unconnected signal input, `-1` for
+    /// an unresolved buffer, a baked value or an init-only value.
     Const(f32),
     /// A group socket's signal, `None` when unconnected. It feeds one
     /// trailing input per channel.
@@ -338,7 +337,7 @@ struct ResolvedBuffer {
 
 impl NodeDsp for UnitNode {
     fn n_dsp_inputs(&self) -> usize {
-        // Every socket is dsp-capable, pure signal, hybrid, buffer or group.
+        // Every socket is a dsp input.
         self.desc().n_sockets()
     }
 
