@@ -9,7 +9,8 @@
 //! shape. A `~sample` with an asset writes as a generic node, which keeps its
 //! address. A bare `~envgen` is an ADSR. The form
 //! `(~envgen #:init l #:segs ((level time [shape])...) #:release k #:rate kr
-//! #:width w #:height h #:grid #:axes)` carries any other envelope or look.
+//! #:width w #:height h #:grid #:axes #:x-range (a b) #:y-range (a b)
+//! #:compact)` carries any other envelope or look.
 //! A segment shape is a
 //! name such as `exp`, or a number for a curve.
 //! Every [`crate::units`] descriptor-table keyword reads and writes the same
@@ -363,8 +364,8 @@ fn write_buffer(node: &Datum) -> String {
 }
 
 /// Read a `(~envgen [#:init l] [#:segs (seg...)] [#:release k] [#:rate kr]
-/// [#:width w] [#:height h] [#:grid] [#:axes])` form into an `Envgen` node
-/// datum.
+/// [#:width w] [#:height h] [#:grid] [#:axes] [#:x-range (a b)]
+/// [#:y-range (a b)] [#:compact])` form into an `Envgen` node datum.
 ///
 /// A segment is `(level time [shape])`. The shape is a name such as `lin` or
 /// `exp`, see [`Shape::name`], or a number for a [`Shape::Curve`] segment
@@ -412,7 +413,25 @@ fn envgen_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     node.set_size([width, height]);
     node.set_grid(args.has_flag("grid"));
     node.set_axes(args.has_flag("axes"));
+    if let Some(x_range) = read_range(&args, "x-range")? {
+        node.set_x_range(x_range);
+    }
+    if let Some(y_range) = read_range(&args, "y-range")? {
+        node.set_y_range(y_range);
+    }
+    node.set_compact(args.has_flag("compact"));
     envgen_datum(&node)
+}
+
+/// Read a `#:<key> (min max)` range.
+fn read_range(args: &SugarArgs<'_>, key: &str) -> Result<Option<[f32; 2]>, FormatError> {
+    let Some(list) = args.keyword_list(key)? else {
+        return Ok(None);
+    };
+    let malformed = || FormatError::malformed(format!("#:{key} requires `(min max)`"));
+    let min = list.f64_at(0)?.ok_or_else(malformed)?;
+    let max = list.f64_at(1)?.ok_or_else(malformed)?;
+    Ok(Some([min as f32, max as f32]))
 }
 
 /// Read segment `i` of a `#:segs` list, `(level time [shape])`.
@@ -469,6 +488,17 @@ fn write_envgen(node: &Datum) -> Option<String> {
     }
     if node.axes() {
         parts.push("#:axes".to_string());
+    }
+    if node.x_range() != default.x_range() {
+        let [min, max] = node.x_range();
+        parts.push(format!("#:x-range ({min} {max})"));
+    }
+    if node.y_range() != default.y_range() {
+        let [min, max] = node.y_range();
+        parts.push(format!("#:y-range ({min} {max})"));
+    }
+    if node.compact() {
+        parts.push("#:compact".to_string());
     }
     Some(write_form("~envgen", parts))
 }
@@ -834,7 +864,8 @@ mod tests {
         assert_eq!(s.write_spec("Envgen", &bare).as_deref(), Some("~envgen"));
         // Segments with the default shape, a curve and a named shape.
         let form = "(~envgen #:init 50 #:segs ((230 0.001) (50 0.15 -8) (0 1 exp)) \
-                    #:release 2 #:rate kr #:width 240 #:grid #:axes)";
+                    #:release 2 #:rate kr #:width 240 #:grid #:axes #:x-range (0 1.5) \
+                    #:y-range (-1 250) #:compact)";
         let d = read_spec(form).expect("form");
         let node = envgen(&d);
         let env = node.envelope();
@@ -845,7 +876,9 @@ mod tests {
         assert_eq!(env.release, Some(2));
         assert_eq!(node.rate(), NodeRate::Control);
         assert_eq!(node.size(), [240, Envgen::DEFAULT_HEIGHT]);
-        assert!(node.grid() && node.axes());
+        assert!(node.grid() && node.axes() && node.compact());
+        assert_eq!(node.x_range(), [0.0, 1.5]);
+        assert_eq!(node.y_range(), [-1.0, 250.0]);
         assert_eq!(s.write_spec("Envgen", &d).as_deref(), Some(form));
         // The default segments without their release point need `#:segs`.
         let mut no_release = Envelope::default();

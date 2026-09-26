@@ -41,6 +41,12 @@ pub struct Envgen {
     grid: bool,
     #[serde(default, skip_serializing_if = "is_default")]
     axes: bool,
+    #[serde(default = "default_range", skip_serializing_if = "is_default_range")]
+    x_range: [f32; 2],
+    #[serde(default = "default_range", skip_serializing_if = "is_default_range")]
+    y_range: [f32; 2],
+    #[serde(default, skip_serializing_if = "is_default")]
+    compact: bool,
 }
 
 /// A socket of the `~envgen` node, a hybrid param.
@@ -68,7 +74,9 @@ pub const SOCKETS: [Socket; 4] = [
     Socket {
         name: "gate",
         default: 1.0,
-        doc: "a rise above 0 starts the envelope, a fall to 0 releases it",
+        doc: "a rise above 0 starts the envelope from its current level. A fall \
+              to 0 or below lets a waiting envelope go on from its release point. \
+              Unconnected, it is 1, so the envelope plays once as the synth starts",
     },
     Socket {
         name: "scale",
@@ -106,6 +114,9 @@ impl Envgen {
             height: Self::DEFAULT_HEIGHT,
             grid: false,
             axes: false,
+            x_range: default_range(),
+            y_range: default_range(),
+            compact: false,
         }
     }
 
@@ -164,6 +175,36 @@ impl Envgen {
     /// Set whether the body plot draws axes.
     pub fn set_axes(&mut self, axes: bool) {
         self.axes = axes;
+    }
+
+    /// The time range of the plot in seconds, `[min, max]`.
+    pub fn x_range(&self) -> [f32; 2] {
+        self.x_range
+    }
+
+    /// Set the time range of the plot. See [`range`].
+    pub fn set_x_range(&mut self, x_range: [f32; 2]) {
+        self.x_range = range(x_range);
+    }
+
+    /// The level range of the plot, `[min, max]`.
+    pub fn y_range(&self) -> [f32; 2] {
+        self.y_range
+    }
+
+    /// Set the level range of the plot. See [`range`].
+    pub fn set_y_range(&mut self, y_range: [f32; 2]) {
+        self.y_range = range(y_range);
+    }
+
+    /// Whether the graph shows only the node name, with no editor.
+    pub fn compact(&self) -> bool {
+        self.compact
+    }
+
+    /// Set whether the graph shows only the node name.
+    pub fn set_compact(&mut self, compact: bool) {
+        self.compact = compact;
     }
 }
 
@@ -346,6 +387,20 @@ fn default_height() -> u16 {
 
 fn is_default_height(height: &u16) -> bool {
     *height == Envgen::DEFAULT_HEIGHT
+}
+
+/// `[min, max]` with a max above the min. An empty or reversed range keeps
+/// its min and spans at least 0.001.
+pub fn range([min, max]: [f32; 2]) -> [f32; 2] {
+    [min, max.max(min + 0.001)]
+}
+
+fn default_range() -> [f32; 2] {
+    [0.0, 1.0]
+}
+
+fn is_default_range(range: &[f32; 2]) -> bool {
+    *range == default_range()
 }
 
 #[cfg(test)]

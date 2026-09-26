@@ -1,18 +1,28 @@
 //! `~envgen`'s egui implementation.
 
-use crate::egui::envelope::envelope_editor;
+use crate::egui::envelope::{View, envelope_editor};
 use crate::egui::param::{params_state_row, rate_row};
 use crate::envelope::{Envelope, Shape};
 use crate::node::Envgen;
 use crate::node::envgen::{SOCKETS, envelope_params};
 use crate::param::{param_value_keyed, params_state, with_param_value};
 use gantz_egui::node::PlotLook;
-use gantz_egui::ui_tree::plot::PlotFrame;
 use gantz_egui::widget::node_inspector::table_row_h;
 use gantz_egui::{
-    Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind,
+    ContextMenuResponse, Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse,
+    NodeViewResponse, SocketDoc, SocketKind,
 };
 use std::borrow::Cow;
+
+/// One frame of the editor over a node's envelope.
+struct Edit {
+    /// The response of the editor.
+    response: egui::Response,
+    /// The envelope of a drag in progress, for the running synth.
+    live: Option<Envelope>,
+    /// The envelope to commit to the node.
+    commit: Option<Envelope>,
+}
 
 impl NodeUi for Envgen {
     fn name(&self, _: &Env<'_>) -> Cow<'_, str> {
@@ -24,66 +34,67 @@ impl NodeUi for Envgen {
     }
 
     fn ui(&mut self, mut ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
+        if self.compact() {
+            let framed =
+                uictx.framed(|ui, _sockets| ui.add(egui::Label::new("~envgen").selectable(false)));
+            return NodeUiResponse::new(framed);
+        }
         let id = uictx.egui_id().with("envgen");
-        let drag_id = id.with("drag");
         let [width, height] = self.size();
         let mut look = PlotLook {
             width,
             height,
             ..PlotLook::default()
         };
-        let frame = PlotFrame {
-            grid: self.grid(),
-            axes: self.axes(),
-            interactive: false,
-        };
-        let committed = self.envelope().clone();
-        let mut live = None;
-        let mut commit = None;
+        let mut edit_out = None;
         let mut resp = look.body_ui(uictx, |ui, _look| {
-            // A drag edits a copy in temp memory. The node data changes only
-            // when the drag ends, so a drag is one undo step.
-            let mut env = ui
-                .data(|d| d.get_temp::<Envelope>(drag_id))
-                .unwrap_or_else(|| committed.clone());
             let size = ui.available_size();
-            let editor = envelope_editor(ui, id, &mut env, size, frame);
-            let edits = editor.edits;
-            if edits.drag_stopped || edits.edited {
-                ui.data_mut(|d| d.remove::<Envelope>(drag_id));
-                commit = Some(env);
-            } else if edits.active {
-                if edits.dragged {
-                    live = Some(env.clone());
-                }
-                ui.data_mut(|d| d.insert_temp(drag_id, env));
-            } else {
-                ui.data_mut(|d| d.remove::<Envelope>(drag_id));
-            }
-            editor.response
+            let edit = edit(ui, id, self, size);
+            let response = edit.response.clone();
+            edit_out = Some(edit);
+            response
         });
-        if let Some(env) = live {
-            // The running synth follows the drag. The commit at the end of the
-            // drag carries the envelope to other peers, so this stays local.
-            let prev = ctx
-                .extract_value()
-                .ok()
-                .flatten()
-                .unwrap_or_else(|| params_state(&[]));
-            let state = envelope_params(&env)
-                .into_iter()
-                .fold(prev, |state, (name, value)| {
-                    with_param_value(state, &name, value)
-                });
-            let _ = ctx.update_value_local(state);
-        }
-        if let Some(env) = commit {
-            self.set_envelope(env);
-            resp.mark_changed();
+        if let Some(edit) = edit_out {
+            if apply(self, &mut ctx, edit) {
+                resp.mark_changed();
+            }
         }
         if [look.width, look.height] != self.size() {
             self.set_size([look.width, look.height]);
             resp.mark_changed();
+        }
+        resp
+    }
+
+    fn view_ui(&mut self, mut ctx: NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
+        // The view fills the pane and never writes back the body size. The id
+        // derives from `ui`, which the caller scopes per pane.
+        let id = ui.id().with("envgen");
+        let size = ui.available_size();
+        let edit = edit(ui, id, self, size);
+        let mut out = NodeViewResponse::default();
+        out.inner = Some(edit.response.clone());
+        if apply(self, &mut ctx, edit) {
+            out.mark_changed();
+        }
+        out
+    }
+
+    fn view_no_margin(&self) -> bool {
+        true
+    }
+
+    fn context_menu(&mut self, _ctx: &mut NodeCtx, ui: &mut egui::Ui) -> ContextMenuResponse {
+        let mut resp = ContextMenuResponse::default();
+        let mut compact = self.compact();
+        if ui
+            .checkbox(&mut compact, "compact")
+            .on_hover_text(COMPACT_DOC)
+            .clicked()
+        {
+            self.set_compact(compact);
+            resp.mark_changed();
+            ui.close();
         }
         resp
     }
@@ -121,7 +132,10 @@ impl NodeUi for Envgen {
             self.set_rate(rate);
             resp.mark_changed();
         }
-        if display_row(body, self) {
+        let changed = display_row(body, self)
+            | range_row(body, "x range", X_RANGE_DOC, self, Axis::X)
+            | range_row(body, "y range", Y_RANGE_DOC, self, Axis::Y);
+        if changed {
             resp.mark_changed();
         }
         // The envelope is node data, so each edit below is structural. The
@@ -129,10 +143,7 @@ impl NodeUi for Envgen {
         // node path.
         let path = ctx.path().to_vec();
         let mut env = self.envelope().clone();
-        let edited = preset_row(body, &mut env)
-            | init_row(body, &mut env)
-            | release_row(body, &path, &mut env)
-            | segment_rows(body, &path, &mut env);
+        let edited = release_row(body, &path, &mut env) | segment_rows(body, &path, &mut env);
         if edited {
             self.set_envelope(env);
             resp.mark_changed();
@@ -148,6 +159,87 @@ impl NodeUi for Envgen {
             }
             SocketKind::Output => Some(SocketDoc::ty("signal").with_description("the envelope")),
         }
+    }
+}
+
+/// An axis of the plot.
+#[derive(Clone, Copy)]
+enum Axis {
+    X,
+    Y,
+}
+
+const COMPACT_DOC: &str = "show only the node name in the graph, not the editor";
+
+const X_RANGE_DOC: &str = "the time range of the plot in seconds. It stays fixed while you edit";
+
+const Y_RANGE_DOC: &str = "the level range of the plot. It stays fixed while you edit";
+
+const RELEASE_DOC: &str = "where the envelope waits while the gate stays open. When the gate \
+                           closes, the envelope plays on from here. With none, the envelope \
+                           plays through without a wait";
+
+/// The view of the editor for `node`.
+fn view(node: &Envgen) -> View {
+    View {
+        grid: node.grid(),
+        axes: node.axes(),
+        x_range: node.x_range(),
+        y_range: node.y_range(),
+    }
+}
+
+/// Run one frame of the editor over the envelope of `node`. A drag edits a
+/// copy in temp memory. The node data changes only when the drag ends, so a
+/// drag is one undo step.
+fn edit(ui: &mut egui::Ui, id: egui::Id, node: &Envgen, size: egui::Vec2) -> Edit {
+    let drag_id = id.with("drag");
+    let mut env = ui
+        .data(|d| d.get_temp::<Envelope>(drag_id))
+        .unwrap_or_else(|| node.envelope().clone());
+    let editor = envelope_editor(ui, id, &mut env, size, view(node));
+    let edits = editor.edits;
+    let (live, commit) = if edits.drag_stopped || edits.edited {
+        ui.data_mut(|d| d.remove::<Envelope>(drag_id));
+        (None, Some(env))
+    } else if edits.active {
+        let live = edits.dragged.then(|| env.clone());
+        ui.data_mut(|d| d.insert_temp(drag_id, env));
+        (live, None)
+    } else {
+        ui.data_mut(|d| d.remove::<Envelope>(drag_id));
+        (None, None)
+    };
+    Edit {
+        response: editor.response,
+        live,
+        commit,
+    }
+}
+
+/// Apply `edit` to `node`. Returns whether the node data changed.
+fn apply(node: &mut Envgen, ctx: &mut NodeCtx, edit: Edit) -> bool {
+    if let Some(env) = edit.live {
+        // The running synth follows the drag. The commit at the end of the
+        // drag carries the envelope to other peers, so this stays local.
+        let prev = ctx
+            .extract_value()
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| params_state(&[]));
+        let state = envelope_params(&env)
+            .into_iter()
+            .fold(prev, |state, (name, value)| {
+                with_param_value(state, &name, value)
+            });
+        let _ = ctx.update_value_local(state);
+    }
+    match edit.commit {
+        Some(env) => {
+            node.set_envelope(env);
+            true
+        }
+        None => false,
     }
 }
 
@@ -172,73 +264,64 @@ fn row(
     changed
 }
 
-/// The grid and axes toggles of the body plot.
+/// The grid, axes and compact toggles.
 fn display_row(body: &mut egui_extras::TableBody, node: &mut Envgen) -> bool {
-    let (mut grid, mut axes) = (node.grid(), node.axes());
-    let changed = row(body, "display", "how the body plot looks", |ui| {
+    let (mut grid, mut axes, mut compact) = (node.grid(), node.axes(), node.compact());
+    let changed = row(body, "display", "how the node shows its envelope", |ui| {
         ui.horizontal(|ui| {
-            let grid_changed = ui
+            let grid = ui
                 .checkbox(&mut grid, "grid")
-                .on_hover_text("draw the background grid")
-                .changed();
-            let axes_changed = ui
+                .on_hover_text("draw the background grid");
+            let axes = ui
                 .checkbox(&mut axes, "axes")
-                .on_hover_text("draw the time and level axes")
-                .changed();
-            grid_changed | axes_changed
+                .on_hover_text("draw the time and level axes");
+            let compact = ui
+                .checkbox(&mut compact, "compact")
+                .on_hover_text(COMPACT_DOC);
+            grid.changed() | axes.changed() | compact.changed()
         })
         .inner
     });
     node.set_grid(grid);
     node.set_axes(axes);
+    node.set_compact(compact);
     changed
 }
 
-/// A row of buttons that replace the envelope with a preset.
-fn preset_row(body: &mut egui_extras::TableBody, env: &mut Envelope) -> bool {
-    let presets = [
-        (
-            "perc",
-            "rise to 1 and fall to 0, with no sustain",
-            Envelope::perc(0.01, 1.0),
-        ),
-        (
-            "adsr",
-            "attack, decay, sustain at 0.5 and release",
-            Envelope::adsr(0.01, 0.3, 0.5, 1.0),
-        ),
-        (
-            "asr",
-            "attack, sustain at 1 and release",
-            Envelope::asr(0.01, 1.0, 1.0),
-        ),
-        (
-            "triangle",
-            "a straight rise to 1 and fall to 0",
-            Envelope::triangle(1.0),
-        ),
-    ];
-    row(body, "preset", "replace the envelope with a preset", |ui| {
+/// The minimum and maximum of one plot axis.
+fn range_row(
+    body: &mut egui_extras::TableBody,
+    name: &str,
+    doc: &str,
+    node: &mut Envgen,
+    axis: Axis,
+) -> bool {
+    let [mut min, mut max] = match axis {
+        Axis::X => node.x_range(),
+        Axis::Y => node.y_range(),
+    };
+    let speed = ((max - min) * 0.005).max(0.0001);
+    let changed = row(body, name, doc, |ui| {
         ui.horizontal(|ui| {
-            let mut changed = false;
-            for (name, doc, preset) in presets {
-                if ui.small_button(name).on_hover_text(doc).clicked() {
-                    *env = preset;
-                    changed = true;
-                }
-            }
-            changed
+            let min_dv = egui::DragValue::new(&mut min)
+                .speed(speed)
+                .fixed_decimals(2);
+            let max_dv = egui::DragValue::new(&mut max)
+                .speed(speed)
+                .fixed_decimals(2);
+            let min_changed = ui.add(min_dv).on_hover_text("minimum").changed();
+            let max_changed = ui.add(max_dv).on_hover_text("maximum").changed();
+            min_changed | max_changed
         })
         .inner
-    })
-}
-
-/// The start level row.
-fn init_row(body: &mut egui_extras::TableBody, env: &mut Envelope) -> bool {
-    row(body, "start", "the level where the envelope starts", |ui| {
-        ui.add(egui::DragValue::new(&mut env.init).speed(0.01))
-            .changed()
-    })
+    });
+    if changed {
+        match axis {
+            Axis::X => node.set_x_range([min, max]),
+            Axis::Y => node.set_y_range([min, max]),
+        }
+    }
+    changed
 }
 
 /// The release point row.
@@ -247,9 +330,7 @@ fn release_row(body: &mut egui_extras::TableBody, path: &[usize], env: &mut Enve
         None => "none".to_string(),
         Some(k) => format!("point {k}"),
     };
-    let doc = "where a held gate sustains. When the gate closes, the envelope \
-               continues from here";
-    row(body, "release", doc, |ui| {
+    row(body, "release", RELEASE_DOC, |ui| {
         let mut changed = false;
         let n_points = env.n_points();
         egui::ComboBox::from_id_salt(("envgen-release", path))
@@ -282,6 +363,7 @@ fn segment_rows(body: &mut egui_extras::TableBody, path: &[usize], env: &mut Env
                 let time = egui::DragValue::new(&mut seg.time)
                     .range(0.0..=f32::MAX)
                     .speed(0.001)
+                    .fixed_decimals(2)
                     .suffix(" s");
                 changed |= ui.add(time).on_hover_text("time").changed();
                 let width = ui.spacing().combo_width * 0.6;
@@ -295,7 +377,9 @@ fn segment_rows(body: &mut egui_extras::TableBody, path: &[usize], env: &mut Env
                                 .changed();
                         }
                     });
-                let curve = egui::DragValue::new(&mut seg.curve).speed(0.05);
+                let curve = egui::DragValue::new(&mut seg.curve)
+                    .speed(0.05)
+                    .fixed_decimals(2);
                 let enabled = seg.shape == Shape::Curve;
                 changed |= ui
                     .add_enabled(enabled, curve)
