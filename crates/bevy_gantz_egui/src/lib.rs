@@ -1301,13 +1301,9 @@ pub fn on_duplicate_nodes(
     refresh_cache(&registry, &mut cache, &codec.0);
 }
 
-/// Seed `commit`'s stored view, ignoring empty layouts. An empty layout reads
-/// as never laid out to the scene, which then auto-layouts destructively, so
-/// it must never become a commit's baseline.
+/// Seed `commit`'s stored view. See [`gantz_egui::section::seed_view`].
 pub fn seed_view(registry: &mut Registry, commit: ca::CommitAddr, view: gantz_egui::SceneView) {
-    if !view.layout.is_empty() {
-        gantz_egui::section::set_view(&mut registry.0, commit, &view);
-    }
+    gantz_egui::section::seed_view(&mut registry.0, commit, &view);
 }
 
 /// Finish a locally-minted merge commit. The op has already committed with

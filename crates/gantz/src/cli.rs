@@ -42,6 +42,15 @@ pub enum Command {
     Check(CheckArgs),
     /// Print the Steel module compiled from one named graph.
     Compile(CompileArgs),
+    /// Join a collaborative session and mirror its graphs to a directory.
+    ///
+    /// Each top-level graph in the session becomes a .gantz file named after
+    /// it in the directory, holding it and its nested graphs. Saved edits
+    /// become commits announced to the session, and remote changes rewrite
+    /// the files. Blocks until interrupted. Nothing keeps running after it
+    /// exits.
+    #[cfg(feature = "collab")]
+    Join(JoinArgs),
 }
 
 /// How names a file does not define are resolved.
@@ -74,6 +83,25 @@ pub struct CheckArgs {
     /// The .gantz files to check.
     #[arg(required = true)]
     files: Vec<PathBuf>,
+}
+
+#[cfg(feature = "collab")]
+#[derive(Args)]
+pub struct JoinArgs {
+    /// The session invite ticket.
+    pub ticket: String,
+    /// The directory to mirror the session into, created if absent. Defaults
+    /// to a directory named after the session under the app data directory.
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
+    /// The peer identity file: 32 secret key bytes, created if absent. Gives
+    /// the peer a stable id across runs. Without it the identity is new
+    /// each run.
+    #[arg(long, value_name = "FILE")]
+    pub identity: Option<PathBuf>,
+    /// A self-hosted relay URL instead of the default infrastructure.
+    #[arg(long, value_name = "URL")]
+    pub relay: Option<String>,
 }
 
 #[derive(Args)]
@@ -143,9 +171,19 @@ pub fn parse() -> Option<Command> {
 /// Run a subcommand and return the process exit code.
 pub fn run(command: Command) -> i32 {
     // Library warnings, such as an unrecognised form a rewrite would drop,
-    // must reach the user. There is no Bevy log plugin here.
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    // must reach the user. Libraries log through `log` and `tracing`, and the
+    // subscriber bridges both. `RUST_LOG` overrides the default.
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,gantz=info"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .without_time()
+        .with_writer(std::io::stderr)
+        .init();
     let (files, mut output) = match command {
+        #[cfg(feature = "collab")]
+        Command::Join(args) => return crate::join::run(args),
         Command::Fmt(args) => {
             let output = with_sources(&args.seed, &args.files, |s, t| fmt(s, t, args.check));
             (args.files, output)
@@ -331,7 +369,7 @@ fn fmt(sources: &[Source], targets: Range<usize>, check: bool) -> Output {
 
 /// Render a parse failure as `label:line:col: message` when the error has a
 /// location, else `label: message`.
-fn parse_diagnostic(label: &str, err: &ParseExportError) -> String {
+pub(crate) fn parse_diagnostic(label: &str, err: &ParseExportError) -> String {
     match err {
         ParseExportError::Format(e) => match (e.line, e.col) {
             (Some(line), Some(col)) => format!("{label}:{line}:{col}: {}", e.kind),

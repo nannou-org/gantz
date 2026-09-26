@@ -42,6 +42,7 @@ file(s).
 | **`gantz_ui`** | [![Crates.io](https://img.shields.io/crates/v/gantz_ui.svg)](https://crates.io/crates/gantz_ui) | ![MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT_OR_Apache--2.0-blue.svg) | Declarative UI tree model and value codecs for user-defined gantz GUIs. |
 | **`gantz_egui`** | [![Crates.io](https://img.shields.io/crates/v/gantz_egui.svg)](https://crates.io/crates/gantz_egui) | ![MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT_OR_Apache--2.0-blue.svg) | UI traits and widgets that make up the gantz GUI. |
 | **`gantz_collab`** | [![Crates.io](https://img.shields.io/crates/v/gantz_collab.svg)](https://crates.io/crates/gantz_collab) | ![MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT_OR_Apache--2.0-blue.svg) | Peer-to-peer collaborative session networking for gantz. |
+| **`gantz_collab_sync`** | [![Crates.io](https://img.shields.io/crates/v/gantz_collab_sync.svg)](https://crates.io/crates/gantz_collab_sync) | ![MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT_OR_Apache--2.0-blue.svg) | The host-agnostic sync plane for collaborative sessions. |
 | **`bevy_gantz`** | [![Crates.io](https://img.shields.io/crates/v/bevy_gantz.svg)](https://crates.io/crates/bevy_gantz) | ![MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT_OR_Apache--2.0-blue.svg) | A bevy plugin for gantz. |
 | **`bevy_gantz_egui`** | [![Crates.io](https://img.shields.io/crates/v/bevy_gantz_egui.svg)](https://crates.io/crates/bevy_gantz_egui) | ![MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT_OR_Apache--2.0-blue.svg) | Bevy and egui integration for gantz. |
 | **`bevy_gantz_collab`** | [![Crates.io](https://img.shields.io/crates/v/bevy_gantz_collab.svg)](https://crates.io/crates/bevy_gantz_collab) | ![MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT_OR_Apache--2.0-blue.svg) | Bevy integration of gantz's peer-to-peer collaborative sessions. |
@@ -49,22 +50,6 @@ file(s).
 | **`bevy_gantz_plyphon`** | [![Crates.io](https://img.shields.io/crates/v/bevy_gantz_plyphon.svg)](https://crates.io/crates/bevy_gantz_plyphon) | ![GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blueviolet.svg) | Bevy + plyphon audio runtime for gantz (cpal stream, synth driver). |
 | **`gantz_pattern`** | [![Crates.io](https://img.shields.io/crates/v/gantz_pattern.svg)](https://crates.io/crates/gantz_pattern) | ![GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--2.0--or--later-blueviolet.svg) | Composable pattern generation as a Steel module. |
 | **`gantz`** | [![Crates.io](https://img.shields.io/crates/v/gantz.svg)](https://crates.io/crates/gantz) | ![GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blueviolet.svg) | The top-level gantz app. |
-
-## Command line
-
-The `gantz` binary opens the GUI when run with no arguments. Its subcommands
-work on `.gantz` files with no window, store or network, so any editor or tool
-can validate and canonicalize graphs.
-
-```
-gantz fmt [--check] <FILES>...          # rewrite to canonical form
-gantz check <FILES>...                  # parse and compile every named graph
-gantz compile <FILE> [--graph <NAME>] [--emit steel|source-map]
-```
-
-Names a file does not define resolve through the embedded base sources. Pass
-`--no-base` to omit them, or `--dep <FILE>` to resolve through other files.
-See `gantz <COMMAND> --help` for details.
 
 ## Design Overview
 

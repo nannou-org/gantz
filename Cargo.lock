@@ -1071,6 +1071,7 @@ dependencies = [
  "bevy_log",
  "gantz_ca",
  "gantz_collab",
+ "gantz_collab_sync",
  "gantz_core",
  "gantz_egui",
  "ron 0.10.1",
@@ -3890,11 +3891,12 @@ dependencies = [
  "bevy_gantz_plyphon",
  "bevy_pkv",
  "clap",
+ "directories",
  "egui_graph",
- "env_logger",
  "gantz_base",
  "gantz_ca",
  "gantz_collab",
+ "gantz_collab_sync",
  "gantz_core",
  "gantz_egui",
  "gantz_format",
@@ -3905,6 +3907,8 @@ dependencies = [
  "gantz_ui",
  "serde",
  "steel-core",
+ "tracing",
+ "tracing-subscriber",
  "web-time",
 ]
 
@@ -3951,6 +3955,18 @@ dependencies = [
  "tokio",
  "url",
  "wasm-bindgen-futures",
+]
+
+[[package]]
+name = "gantz_collab_sync"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "gantz_ca",
+ "gantz_collab",
+ "gantz_egui",
+ "log",
+ "web-time",
 ]
 
 [[package]]

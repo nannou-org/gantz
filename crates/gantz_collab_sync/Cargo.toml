@@ -1,0 +1,19 @@
+[package]
+name = "gantz_collab_sync"
+version = "0.1.0"
+description = "The host-agnostic sync plane for gantz collaborative sessions: join, fetch, converge and announce over gantz_collab."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+
+[dependencies]
+gantz_ca.workspace = true
+gantz_collab.workspace = true
+gantz_egui.workspace = true
+log.workspace = true
+web-time.workspace = true
+
+[dev-dependencies]
+async-channel.workspace = true

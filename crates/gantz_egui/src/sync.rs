@@ -84,6 +84,17 @@ fn named_ref_of(weight: &NodeData) -> Option<NamedRef> {
     }
 }
 
+/// Every [`NamedRef`] in `graph` as its name, the graph it points at and
+/// whether it follows the name's latest commit. Nodes that fail to decode
+/// are skipped.
+pub fn named_refs(graph: &DataGraph) -> impl Iterator<Item = (Name, GraphAddr, bool)> + '_ {
+    graph.node_weights().filter_map(|weight| {
+        let named_ref = named_ref_of(weight)?;
+        let graph = GraphAddr::from(named_ref.content_addr());
+        Some((named_ref.name().clone(), graph, named_ref.sync))
+    })
+}
+
 /// Apply `mutate` to every [`NamedRef`] weight of `graph`, returning whether
 /// any reference changed.
 fn rewrite_refs(graph: &mut DataGraph, mut mutate: impl FnMut(&mut NamedRef) -> bool) -> bool {

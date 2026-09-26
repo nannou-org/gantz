@@ -110,6 +110,15 @@ pub fn set_view(reg: &mut Registry, ca: CommitAddr, view: &SceneView) {
     }
 }
 
+/// Seed `ca`'s stored view, ignoring empty layouts. An empty layout reads as
+/// never laid out to the scene, which then auto-layouts destructively, so it
+/// must never become a commit's baseline.
+pub fn seed_view(reg: &mut Registry, ca: CommitAddr, view: &SceneView) {
+    if !view.layout.is_empty() {
+        set_view(reg, ca, view);
+    }
+}
+
 /// Remove the stored scene view for the given commit.
 pub fn remove_view(reg: &mut Registry, ca: &CommitAddr) -> Option<SceneView> {
     section_remove::<Views>(reg, ca)
