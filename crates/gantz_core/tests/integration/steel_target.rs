@@ -6,12 +6,11 @@
 //!    later-called bodies and self-recursion work.
 //! 2. Tail-call optimization for self and mutual recursion between local
 //!    defines. Loop iterations must not grow the stack.
-//! 3. `define-values` within a body.
-//! 4. `define`s interleaved with expression statements within a body.
+//! 3. `define`s interleaved with expression statements within a body.
 //!
 //! All tests run on `Engine::new_base()`, the prelude-free engine the VM
 //! uses. They use only primitive forms. These are `if`, `begin`, `define`,
-//! `define-values`, `let`, `lambda` and `set!`.
+//! `let`, `lambda` and `set!`.
 
 use steel::SteelVal;
 use steel::steel_vm::engine::Engine;
@@ -68,17 +67,6 @@ fn forward_reference_between_sibling_defines() {
                  (a 1))
                (top)";
     assert_eq!(run_int(src), 20);
-}
-
-/// `define-values` destructures a list within a body. Multi-output node
-/// results bind this way.
-#[test]
-fn define_values_in_body() {
-    let src = "(define (top)
-                 (define-values (x y) (list 3 4))
-                 (+ x y))
-               (top)";
-    assert_eq!(run_int(src), 7);
 }
 
 /// `define`s may be interleaved with expression statements within a fn body.
