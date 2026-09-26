@@ -13,10 +13,15 @@
 //! emitted unit and its `special_index`, while its [`unit`](UnitDesc::unit)
 //! field holds a unique per-operator identity such as `"Mul"` or `"TanH"`.
 //!
-//! The table excludes buffer-reading units, variable-arity units such as
-//! `EnvGen` and `Klang`, demand-rate units, FFT/PV units and IO/routing
-//! units. The bespoke nodes cover IO and routing. The table also excludes
-//! the node-lifecycle units such as `FreeSelf` and `Done`, because the audio
+//! Buffer units take a buffer on an [`In::Buffer`] socket from a `~sample`
+//! or `~buffer` node. A unit that writes its buffer accepts only a
+//! `~buffer`. See [`Emit`] for how a row sets its outputs.
+//!
+//! The table excludes variable-arity units such as `EnvGen` and `Klang`,
+//! demand-rate units, FFT/PV units and IO/routing units. The bespoke nodes
+//! cover IO and routing. It excludes `VOsc` and `VOsc3`, which read several
+//! buffers at consecutive bufnums. The table also excludes the
+//! node-lifecycle units such as `FreeSelf` and `Done`, because the audio
 //! driver controls the lifecycle of each synth. It excludes `GVerb` too. In
 //! plyphon 0.1.1, `GVerb` panics when its input is a constant or a control
 //! wire.
@@ -27,7 +32,7 @@
 //! [`UnitRate::Fixed`] rate. plyphon does not reject an incorrect rate, so
 //! the table must.
 
-use crate::dsp::NodeRate;
+use crate::dsp::{BufferAccess, NodeRate};
 
 /// How one plyphon input of a wrapped unit is fed.
 ///
@@ -79,21 +84,95 @@ pub enum In {
         /// The inspector row's doc line.
         doc: &'static str,
     },
+    /// A buffer socket. It takes the bufnum wire of one buffer source, such
+    /// as `~sample` or `~buffer`. Otherwise it feeds `-1`, which reads an
+    /// empty buffer slot. This includes a source that `access` does not
+    /// allow.
+    Buffer {
+        /// The socket's name.
+        name: &'static str,
+        /// The socket's doc line.
+        doc: &'static str,
+        /// Whether the unit only reads the buffer or also writes it.
+        access: BufferAccess,
+    },
+    /// A socket whose channels feed the unit as trailing inputs, one input
+    /// per channel. For example the signals that `BufWr` writes. It must be
+    /// the last entry. With a write buffer, the group is cut or padded to the
+    /// channel count of the buffer, and a mono signal feeds every channel.
+    Group {
+        /// The socket's name.
+        name: &'static str,
+        /// The socket's doc line.
+        doc: &'static str,
+    },
 }
 
 impl In {
     /// The entry's socket or inspector name. `Baked` has none.
     pub fn name(&self) -> Option<&'static str> {
         match self {
-            In::Signal { name, .. } | In::Param { name, .. } | In::Init { name, .. } => Some(name),
+            In::Signal { name, .. }
+            | In::Param { name, .. }
+            | In::Init { name, .. }
+            | In::Buffer { name, .. }
+            | In::Group { name, .. } => Some(name),
             In::Baked(_) => None,
         }
     }
 
     /// Whether this entry is a socket, a dsp input port.
     pub fn is_socket(&self) -> bool {
-        matches!(self, In::Signal { .. } | In::Param { .. })
+        matches!(
+            self,
+            In::Signal { .. } | In::Param { .. } | In::Buffer { .. } | In::Group { .. }
+        )
     }
+}
+
+/// How a row emits its unit and outputs.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Emit {
+    /// One unit per channel of the widest connected input. Output port `j`
+    /// groups every unit's `j`th output. Most rows use this.
+    Expand,
+    /// One unit. Each wire feeds only its first channel, and each output
+    /// port is mono. Rows that write a buffer use this, because one unit per
+    /// channel would write the buffer more than once.
+    Single,
+    /// One unit with one output per channel of the buffer at the named
+    /// socket. The row has one output port, as wide as the buffer. The width
+    /// is 1 when the buffer is unknown.
+    BufferChannels {
+        /// The name of the [`In::Buffer`] entry.
+        socket: &'static str,
+    },
+    /// One unit whose output count is an init-only value. The row has one
+    /// output port of that width. The value is not a unit input.
+    InitChannels {
+        /// The value's name, its inspector label and sugar keyword.
+        name: &'static str,
+        /// The value a fresh node starts at.
+        default: f32,
+        /// The largest allowed value.
+        max: usize,
+        /// The inspector row's doc line.
+        doc: &'static str,
+    },
+    /// One unit that writes a buffer, with no output ports. The node is a
+    /// sink, so it runs without an `~out`.
+    Sink,
+}
+
+/// Scale the playback rate input of a row by `BufRateScale` of its buffer.
+/// A rate of 1 then plays the buffer at its own pitch at any engine sample
+/// rate.
+#[derive(Clone, Copy, Debug)]
+pub struct RateScale {
+    /// The name of the rate input.
+    pub input: &'static str,
+    /// The name of the [`In::Buffer`] entry.
+    pub buffer: &'static str,
 }
 
 /// A [`UnitDesc`] emission override for scsynth's operator-selector units.
@@ -137,10 +216,15 @@ pub struct UnitDesc {
     pub rate: UnitRate,
     /// One entry per plyphon input, in plyphon input order.
     pub inputs: &'static [In],
-    /// One doc line per unit output (the node's dsp output ports).
+    /// One doc line per dsp output port. For [`Emit::Expand`] and
+    /// [`Emit::Single`] rows this is one line per unit output.
     pub outputs: &'static [&'static str],
     /// The palette/inspector description.
     pub doc: &'static str,
+    /// How the row emits its unit and outputs.
+    pub emit: Emit,
+    /// The rate input to scale by the buffer's rate, if any.
+    pub rate_scale: Option<RateScale>,
 }
 
 impl UnitDesc {
@@ -197,12 +281,25 @@ impl UnitDesc {
         })
     }
 
-    /// The init-only entries as `(name, default)`.
+    /// The init-only values as `(name, default)`. This includes the value of
+    /// an [`Emit::InitChannels`] row.
     pub fn init_params(&self) -> impl Iterator<Item = (&'static str, f32)> + '_ {
-        self.inputs.iter().filter_map(|i| match i {
-            In::Init { name, default, .. } => Some((*name, *default)),
+        let channels = match self.emit {
+            Emit::InitChannels { name, default, .. } => Some((name, default)),
             _ => None,
-        })
+        };
+        self.inputs
+            .iter()
+            .filter_map(|i| match i {
+                In::Init { name, default, .. } => Some((*name, *default)),
+                _ => None,
+            })
+            .chain(channels)
+    }
+
+    /// Whether the `ix`th socket is a buffer socket.
+    pub fn is_buffer_socket(&self, ix: usize) -> bool {
+        matches!(self.sockets().nth(ix), Some(In::Buffer { .. }))
     }
 
     /// The default value of the `name`d init-only entry, if any.
@@ -214,8 +311,11 @@ impl UnitDesc {
     /// The `ix`th input socket's doc line.
     pub fn socket_doc(&self, ix: usize) -> Option<&'static str> {
         self.sockets().nth(ix).map(|i| match i {
-            In::Signal { doc, .. } | In::Param { doc, .. } => *doc,
-            _ => unreachable!("sockets() yields only socketed entries"),
+            In::Signal { doc, .. }
+            | In::Param { doc, .. }
+            | In::Buffer { doc, .. }
+            | In::Group { doc, .. } => *doc,
+            In::Baked(_) | In::Init { .. } => unreachable!("sockets() yields only sockets"),
         })
     }
 }
@@ -264,6 +364,29 @@ const fn init(name: &'static str, default: f32, doc: &'static str) -> In {
     In::Init { name, default, doc }
 }
 
+/// A read-only [`In::Buffer`] row entry.
+const fn buf(name: &'static str, doc: &'static str) -> In {
+    In::Buffer {
+        name,
+        doc,
+        access: BufferAccess::Read,
+    }
+}
+
+/// A writable [`In::Buffer`] row entry. It accepts only a `~buffer`.
+const fn buf_mut(name: &'static str, doc: &'static str) -> In {
+    In::Buffer {
+        name,
+        doc,
+        access: BufferAccess::Write,
+    }
+}
+
+/// An [`In::Group`] row entry.
+const fn group(name: &'static str, doc: &'static str) -> In {
+    In::Group { name, doc }
+}
+
 /// A [`UnitDesc`] row.
 const fn u(
     keyword: &'static str,
@@ -280,6 +403,56 @@ const fn u(
         inputs,
         outputs,
         doc,
+        emit: Emit::Expand,
+        rate_scale: None,
+    }
+}
+
+/// Size the row's output port by the buffer at `socket`. See
+/// [`Emit::BufferChannels`].
+const fn buf_channels(socket: &'static str, desc: UnitDesc) -> UnitDesc {
+    UnitDesc {
+        emit: Emit::BufferChannels { socket },
+        ..desc
+    }
+}
+
+/// Emit one unit for the row. See [`Emit::Single`].
+const fn single(desc: UnitDesc) -> UnitDesc {
+    UnitDesc {
+        emit: Emit::Single,
+        ..desc
+    }
+}
+
+/// Size the row's output port by an init-only `channels` value. See
+/// [`Emit::InitChannels`].
+const fn init_channels(default: f32, max: usize, desc: UnitDesc) -> UnitDesc {
+    UnitDesc {
+        emit: Emit::InitChannels {
+            name: "channels",
+            default,
+            max,
+            doc: "output channel count. Set at spawn",
+        },
+        ..desc
+    }
+}
+
+/// Make the row a buffer-writing sink. See [`Emit::Sink`].
+const fn sink(desc: UnitDesc) -> UnitDesc {
+    UnitDesc {
+        emit: Emit::Sink,
+        ..desc
+    }
+}
+
+/// Scale the row's `input` by the rate of the buffer at `buffer`. See
+/// [`RateScale`].
+const fn rate_scaled(input: &'static str, buffer: &'static str, desc: UnitDesc) -> UnitDesc {
+    UnitDesc {
+        rate_scale: Some(RateScale { input, buffer }),
+        ..desc
     }
 }
 
@@ -319,6 +492,8 @@ macro_rules! bop {
             ],
             outputs: &[$out],
             doc: $doc,
+            emit: Emit::Expand,
+            rate_scale: None,
         }
     };
 }
@@ -338,6 +513,8 @@ macro_rules! uop {
             inputs: &[sig("in", "input signal")],
             outputs: &[$out],
             doc: $doc,
+            emit: Emit::Expand,
+            rate_scale: None,
         }
     };
 }
@@ -2601,6 +2778,530 @@ pub static UNITS: &[UnitDesc] = &[
         &["sub-sample start offset, from 0 to 1"],
         "Fractional sample offset at which the synth started. Control rate only",
     )),
+    // Buffer info. Values of the buffer at the `buf` socket, 0 without one.
+    kr_only(u(
+        "~bufframes",
+        "BufFrames",
+        &[buf("buf", "buffer to measure")],
+        &["frame count"],
+        "Number of frames in a buffer. Control rate only",
+    )),
+    kr_only(u(
+        "~bufsamples",
+        "BufSamples",
+        &[buf("buf", "buffer to measure")],
+        &["sample count"],
+        "Number of samples in a buffer, frames times channels. Control rate only",
+    )),
+    kr_only(u(
+        "~bufdur",
+        "BufDur",
+        &[buf("buf", "buffer to measure")],
+        &["duration in seconds"],
+        "Duration of a buffer at its own sample rate. Control rate only",
+    )),
+    kr_only(u(
+        "~bufchannels",
+        "BufChannels",
+        &[buf("buf", "buffer to measure")],
+        &["channel count"],
+        "Number of channels in a buffer. Control rate only",
+    )),
+    kr_only(u(
+        "~bufsamplerate",
+        "BufSampleRate",
+        &[buf("buf", "buffer to measure")],
+        &["sample rate in Hz"],
+        "Sample rate of a buffer. Control rate only",
+    )),
+    kr_only(u(
+        "~bufratescale",
+        "BufRateScale",
+        &[buf("buf", "buffer to measure")],
+        &["buffer sample rate / engine sample rate"],
+        "Playback rate that plays a buffer at its own pitch. Control rate only",
+    )),
+    // Buffer playback. One output channel per buffer channel.
+    buf_channels(
+        "buf",
+        rate_scaled(
+            "speed",
+            "buf",
+            u(
+                "~playbuf",
+                "PlayBuf",
+                &[
+                    buf("buf", "buffer to play"),
+                    par(
+                        "speed",
+                        1.0,
+                        -4.0,
+                        4.0,
+                        "",
+                        "playback speed. 1 is the buffer's own pitch, negative plays backward",
+                    ),
+                    sig("trigger", "jump to start on a rising edge"),
+                    par(
+                        "start",
+                        0.0,
+                        0.0,
+                        10_000_000.0,
+                        " frames",
+                        "start position after a trigger",
+                    ),
+                    par("loop", 1.0, 0.0, 1.0, "", "1 loops, 0 plays once"),
+                    baked(0.0),
+                ],
+                &["one channel per buffer channel"],
+                "Play a buffer, looping by default",
+            ),
+        ),
+    ),
+    buf_channels(
+        "buf",
+        u(
+            "~bufrd",
+            "BufRd",
+            &[
+                buf("buf", "buffer to read"),
+                sig(
+                    "phase",
+                    "read position in frames, for example from a `~phasor`",
+                ),
+                par(
+                    "loop",
+                    1.0,
+                    0.0,
+                    1.0,
+                    "",
+                    "1 wraps the position, 0 clamps it",
+                ),
+                init(
+                    "interp",
+                    2.0,
+                    "interpolation. 1 none, 2 linear, 4 cubic. Set at spawn",
+                ),
+            ],
+            &["one channel per buffer channel"],
+            "Read a buffer at a position that a signal sets",
+        ),
+    ),
+    // Buffer writers. They write a `~buffer` and run without an `~out`.
+    sink(u(
+        "~bufwr",
+        "BufWr",
+        &[
+            buf_mut("buf", "buffer to write"),
+            sig(
+                "phase",
+                "write position in frames, for example from a `~phasor`",
+            ),
+            par(
+                "loop",
+                1.0,
+                0.0,
+                1.0,
+                "",
+                "1 wraps the position, 0 clamps it",
+            ),
+            group(
+                "in",
+                "signal to write, one buffer channel per signal channel",
+            ),
+        ],
+        &[],
+        "Write a signal into a buffer at a position that a signal sets",
+    )),
+    sink(u(
+        "~recordbuf",
+        "RecordBuf",
+        &[
+            buf_mut("buf", "buffer to record into"),
+            init(
+                "offset",
+                0.0,
+                "frame to start at, and to jump to on a trigger. Set at spawn",
+            ),
+            par("reclevel", 1.0, 0.0, 2.0, "", "level of the new signal"),
+            par(
+                "prelevel",
+                0.0,
+                0.0,
+                2.0,
+                "",
+                "level of the existing contents. Above 0 overdubs",
+            ),
+            par(
+                "run",
+                1.0,
+                -1.0,
+                1.0,
+                "",
+                "1 records forward, 0 pauses, -1 records backward",
+            ),
+            par("loop", 1.0, 0.0, 1.0, "", "1 loops, 0 stops at the end"),
+            sig("trigger", "jump to the offset on a rising edge"),
+            baked(0.0),
+            group(
+                "in",
+                "signal to record, one buffer channel per signal channel",
+            ),
+        ],
+        &[],
+        "Record a signal into a buffer, looping by default",
+    )),
+    // Wavetable oscillators. The table is one cycle in a mono buffer.
+    u(
+        "~osc",
+        "Osc",
+        &[
+            buf(
+                "table",
+                "wavetable in (a, b) format, mono, with power-of-two frames",
+            ),
+            freq(440.0, "frequency"),
+            par("phase", 0.0, 0.0, 6.2832, "", "phase offset in radians"),
+        ],
+        &["wavetable signal"],
+        "Wavetable oscillator with linear interpolation",
+    ),
+    u(
+        "~oscn",
+        "OscN",
+        &[
+            buf("table", "one cycle of plain samples, mono, of any length"),
+            freq(440.0, "frequency"),
+            par("phase", 0.0, 0.0, 6.2832, "", "phase offset in radians"),
+        ],
+        &["wavetable signal"],
+        "Wavetable oscillator without interpolation, for a harder sound",
+    ),
+    u(
+        "~cosc",
+        "COsc",
+        &[
+            buf(
+                "table",
+                "wavetable in (a, b) format, mono, with power-of-two frames",
+            ),
+            freq(440.0, "frequency"),
+            par(
+                "beats",
+                0.5,
+                0.0,
+                20.0,
+                " Hz",
+                "detune between the two voices",
+            ),
+        ],
+        &["chorused wavetable signal, up to twice the level"],
+        "Two detuned wavetable oscillators summed, for a chorus effect",
+    ),
+    // Table lookup. The table is a buffer of values.
+    u(
+        "~index",
+        "Index",
+        &[
+            buf("table", "table of values"),
+            sig("in", "index into the table"),
+        ],
+        &["table value"],
+        "Read a table at an index, clipped to the table",
+    ),
+    u(
+        "~indexl",
+        "IndexL",
+        &[
+            buf("table", "table of values"),
+            sig("in", "index into the table"),
+        ],
+        &["table value"],
+        "Read a table at an index, with linear interpolation",
+    ),
+    u(
+        "~wrapindex",
+        "WrapIndex",
+        &[
+            buf("table", "table of values"),
+            sig("in", "index into the table"),
+        ],
+        &["table value"],
+        "Read a table at an index, wrapped to the table",
+    ),
+    u(
+        "~foldindex",
+        "FoldIndex",
+        &[
+            buf("table", "table of values"),
+            sig("in", "index into the table"),
+        ],
+        &["table value"],
+        "Read a table at an index, folded back into the table",
+    ),
+    u(
+        "~shaper",
+        "Shaper",
+        &[
+            buf("table", "transfer function in (a, b) wavetable format"),
+            sig("in", "signal to shape, from -1 to 1"),
+        ],
+        &["shaped signal"],
+        "Waveshape a signal through a transfer function in a table",
+    ),
+    u(
+        "~degreetokey",
+        "DegreeToKey",
+        &[
+            buf("scale", "scale, one semitone offset for each degree"),
+            sig("in", "scale degree"),
+            par("octave", 12.0, 0.0, 48.0, "", "semitones in one octave"),
+        ],
+        &["semitones"],
+        "Map a scale degree to semitones through a scale in a table",
+    ),
+    // Buffer delays. The delay line is a `~buffer`. The unit uses the largest
+    // power of two frames that fit. One unit writes the buffer, so it reads
+    // only the first channel of its input.
+    single(u(
+        "~bufdelayn",
+        "BufDelayN",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to delay"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+        ],
+        &["delayed signal"],
+        "Delay line in a buffer, no interpolation",
+    )),
+    single(u(
+        "~bufdelayl",
+        "BufDelayL",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to delay"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+        ],
+        &["delayed signal"],
+        "Delay line in a buffer, linear interpolation",
+    )),
+    single(u(
+        "~bufdelayc",
+        "BufDelayC",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to delay"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+        ],
+        &["delayed signal"],
+        "Delay line in a buffer, cubic interpolation",
+    )),
+    single(u(
+        "~bufcombn",
+        "BufCombN",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to comb-filter"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+            par("decay", 1.0, -60.0, 60.0, " s", "60 dB feedback decay time"),
+        ],
+        &["comb-filtered signal"],
+        "Comb delay in a buffer, no interpolation",
+    )),
+    single(u(
+        "~bufcombl",
+        "BufCombL",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to comb-filter"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+            par("decay", 1.0, -60.0, 60.0, " s", "60 dB feedback decay time"),
+        ],
+        &["comb-filtered signal"],
+        "Comb delay in a buffer, linear interpolation",
+    )),
+    single(u(
+        "~bufcombc",
+        "BufCombC",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to comb-filter"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+            par("decay", 1.0, -60.0, 60.0, " s", "60 dB feedback decay time"),
+        ],
+        &["comb-filtered signal"],
+        "Comb delay in a buffer, cubic interpolation",
+    )),
+    single(u(
+        "~bufallpassn",
+        "BufAllpassN",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to diffuse"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+            par("decay", 1.0, -60.0, 60.0, " s", "60 dB feedback decay time"),
+        ],
+        &["all-passed signal"],
+        "All-pass delay in a buffer, no interpolation",
+    )),
+    single(u(
+        "~bufallpassl",
+        "BufAllpassL",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to diffuse"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+            par("decay", 1.0, -60.0, 60.0, " s", "60 dB feedback decay time"),
+        ],
+        &["all-passed signal"],
+        "All-pass delay in a buffer, linear interpolation",
+    )),
+    single(u(
+        "~bufallpassc",
+        "BufAllpassC",
+        &[
+            buf_mut("buf", "buffer for the delay line"),
+            sig("in", "signal to diffuse"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay time"),
+            par("decay", 1.0, -60.0, 60.0, " s", "60 dB feedback decay time"),
+        ],
+        &["all-passed signal"],
+        "All-pass delay in a buffer, cubic interpolation",
+    )),
+    // Delay taps. One writer and any number of readers share a mono
+    // `~buffer` as one delay line.
+    ar_only(single(u(
+        "~deltapwr",
+        "DelTapWr",
+        &[
+            buf_mut("buf", "mono buffer for the delay line"),
+            sig("in", "signal to write"),
+        ],
+        &["write head, for the phase of `~deltaprd`"],
+        "Write a signal into a shared delay line. Audio rate only",
+    ))),
+    ar_only(u(
+        "~deltaprd",
+        "DelTapRd",
+        &[
+            buf("buf", "the buffer that `~deltapwr` writes"),
+            sig("phase", "write head, wired directly from `~deltapwr`"),
+            par("delay", 0.2, 0.0, 10.0, " s", "delay behind the write head"),
+            init(
+                "interp",
+                1.0,
+                "interpolation. 1 none, 2 linear, 4 cubic. Set at spawn",
+            ),
+        ],
+        &["delayed signal"],
+        "Read a shared delay line behind its write head. Audio rate only",
+    )),
+    // Granular. Grains read a mono buffer and pan across `channels` outputs.
+    // An unconnected `envbuf` uses a built-in Hann window.
+    init_channels(
+        2.0,
+        16,
+        ar_only(u(
+            "~grainbuf",
+            "GrainBuf",
+            &[
+                sig("trigger", "start a grain on each rising edge"),
+                par("dur", 0.1, 0.001, 10.0, " s", "grain length"),
+                buf("buf", "mono buffer to read grains from"),
+                par("speed", 1.0, -4.0, 4.0, "", "playback speed of each grain"),
+                par(
+                    "pos",
+                    0.0,
+                    0.0,
+                    1.0,
+                    "",
+                    "start position, 0 to 1 across the buffer",
+                ),
+                init(
+                    "interp",
+                    2.0,
+                    "interpolation. 1 none, 2 linear, 4 cubic. Set at spawn",
+                ),
+                par("pan", 0.0, -1.0, 1.0, "", "pan position across the outputs"),
+                buf("envbuf", "window buffer for each grain"),
+                init(
+                    "maxgrains",
+                    64.0,
+                    "most grains at one time, up to 64. Set at spawn",
+                ),
+            ],
+            &["grains panned across the output channels"],
+            "Granular synthesis from a buffer. Audio rate only",
+        )),
+    ),
+    init_channels(
+        2.0,
+        16,
+        ar_only(u(
+            "~tgrains",
+            "TGrains",
+            &[
+                sig("trigger", "start a grain on each rising edge"),
+                buf("buf", "mono buffer to read grains from"),
+                par("speed", 1.0, -4.0, 4.0, "", "playback speed of each grain"),
+                par("center", 0.0, 0.0, 3600.0, " s", "grain center position"),
+                par("dur", 0.1, 0.001, 10.0, " s", "grain length"),
+                par("pan", 0.0, -1.0, 1.0, "", "pan position across the outputs"),
+                par("amp", 0.1, 0.0, 1.0, "", "grain level"),
+                init(
+                    "interp",
+                    4.0,
+                    "interpolation. 1 none, 2 linear, 4 cubic. Set at spawn",
+                ),
+            ],
+            &["grains panned across the output channels"],
+            "Granular playback centered on a position in a buffer. Audio rate only",
+        )),
+    ),
+    init_channels(
+        1.0,
+        16,
+        ar_only(u(
+            "~warp1",
+            "Warp1",
+            &[
+                buf("buf", "mono buffer to stretch"),
+                par(
+                    "pointer",
+                    0.0,
+                    0.0,
+                    1.0,
+                    "",
+                    "read position, 0 to 1 across the buffer",
+                ),
+                par("freqscale", 1.0, 0.0, 4.0, "", "pitch ratio"),
+                par("windowsize", 0.2, 0.01, 2.0, " s", "grain length"),
+                buf("envbuf", "window buffer for each grain"),
+                par(
+                    "overlaps",
+                    8.0,
+                    1.0,
+                    32.0,
+                    "",
+                    "grains that overlap at one time",
+                ),
+                par(
+                    "windowrand",
+                    0.0,
+                    0.0,
+                    1.0,
+                    "",
+                    "random variation of the grain length",
+                ),
+                init(
+                    "interp",
+                    1.0,
+                    "interpolation. 1 none, 2 linear, 4 cubic. Set at spawn",
+                ),
+            ],
+            &["one independent grain cloud per output channel"],
+            "Granular time stretch and pitch shift of a buffer. Audio rate only",
+        )),
+    ),
     // Operators. One row per operator in plyphon's dispatch tables, which
     // follow SC's operator indices. Defaults for `b` are 1 for multiplicative
     // operators and 0 otherwise.
@@ -3292,12 +3993,72 @@ mod tests {
     #[test]
     fn rows_are_well_formed() {
         for desc in UNITS {
-            assert!(
-                !desc.outputs.is_empty(),
-                "{}: a unit node needs at least one output",
-                desc.unit
-            );
+            match desc.emit {
+                Emit::Sink => assert!(
+                    desc.outputs.is_empty(),
+                    "{}: a sink row has no output ports",
+                    desc.unit
+                ),
+                Emit::BufferChannels { .. } | Emit::InitChannels { .. } => assert_eq!(
+                    desc.outputs.len(),
+                    1,
+                    "{}: a channel-sized row has one output port",
+                    desc.unit
+                ),
+                Emit::Expand | Emit::Single => assert!(
+                    !desc.outputs.is_empty(),
+                    "{}: a unit node needs at least one output",
+                    desc.unit
+                ),
+            }
+            let is_buffer = |name: &str| {
+                desc.inputs
+                    .iter()
+                    .any(|i| matches!(i, In::Buffer { name: n, .. } if *n == name))
+            };
+            if let Emit::BufferChannels { socket } = desc.emit {
+                assert!(is_buffer(socket), "{}: `{socket}` is no buffer", desc.unit);
+            }
+            if let Emit::Sink = desc.emit {
+                let writes = desc.inputs.iter().any(|i| {
+                    matches!(
+                        i,
+                        In::Buffer {
+                            access: BufferAccess::Write,
+                            ..
+                        }
+                    )
+                });
+                assert!(writes, "{}: a sink row writes a buffer", desc.unit);
+            }
+            if let Some(rs) = desc.rate_scale {
+                assert!(
+                    is_buffer(rs.buffer),
+                    "{}: `{}` is no buffer",
+                    desc.unit,
+                    rs.buffer
+                );
+                let scales = desc.inputs.iter().any(|i| {
+                    matches!(i, In::Param { .. } | In::Signal { .. } if i.name() == Some(rs.input))
+                });
+                assert!(
+                    scales,
+                    "{}: `{}` is no signal or param",
+                    desc.unit, rs.input
+                );
+            }
+            // A group feeds trailing inputs, so it comes last, and it needs
+            // one unit.
+            for (ix, input) in desc.inputs.iter().enumerate() {
+                if let In::Group { .. } = input {
+                    assert_eq!(ix + 1, desc.inputs.len(), "{}: group is last", desc.unit);
+                    assert_ne!(desc.emit, Emit::Expand, "{}: group expands", desc.unit);
+                }
+            }
             let mut names = HashSet::new();
+            if let Emit::InitChannels { name, .. } = desc.emit {
+                names.insert(name);
+            }
             for input in desc.inputs {
                 let Some(name) = input.name() else { continue };
                 assert!(
@@ -3367,6 +4128,17 @@ mod tests {
             ("NumBuffers", Control),
             ("NumRunningSynths", Control),
             ("SubsampleOffset", Control),
+            ("BufFrames", Control),
+            ("BufSamples", Control),
+            ("BufDur", Control),
+            ("BufChannels", Control),
+            ("BufSampleRate", Control),
+            ("BufRateScale", Control),
+            ("DelTapWr", Audio),
+            ("DelTapRd", Audio),
+            ("GrainBuf", Audio),
+            ("TGrains", Audio),
+            ("Warp1", Audio),
         ];
         assert_eq!(fixed, expected);
         for (unit, rate) in expected {

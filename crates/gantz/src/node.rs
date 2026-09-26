@@ -54,7 +54,8 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             gantz_plyphon::Sum,
             gantz_plyphon::Unpack,
             gantz_plyphon::Bus,
-            gantz_plyphon::PlayBuf,
+            gantz_plyphon::Sample,
+            gantz_plyphon::Buffer,
             gantz_pattern::Pmini,
             gantz_pattern::Pplot,
         }
@@ -210,10 +211,11 @@ mod tests {
             "sleep",
             "tick!",
             "update!",
+            "~buffer",
             "~bus",
             "~out",
             "~pack",
-            "~playbuf",
+            "~sample",
             "~scopeout",
             "~sum",
             "~unpack",
@@ -629,11 +631,13 @@ mod tests {
                 gantz_core::node::Ref::new(gantz_ca::ContentAddr([1; 32])),
             ),
         )));
-        nodes.push(erased(&gantz_plyphon::PlayBuf::new(
-            gantz_ca::ContentAddr([2; 32]),
+        nodes.push(erased(&gantz_plyphon::Sample::new(
+            gantz_ca::ContentAddr([3; 32]),
             2,
+            48_000,
             48_000.0,
         )));
+        nodes.push(erased(&gantz_plyphon::Buffer::new(1024, 2)));
         nodes
     }
 
@@ -716,6 +720,10 @@ mod tests {
                 "dfd6ba15af40df9e11f89d8b89e895154ef8dc52249797399b326430c4f2f4e2",
             ),
             (
+                "Buffer",
+                "ea7bab6ba5b0acbd5f07b16b3e1cd1da636d24552cbeca6f5722a41f28df6344",
+            ),
+            (
                 "Bus",
                 "10ac84d365f318b5116af46dec6c5b400ebcbd3bff1751113096e43e766d791b",
             ),
@@ -780,10 +788,6 @@ mod tests {
                 "36a4fded818932c8bbfad7cba2748c3ea369d697398a3c1e506e46f4e10ecb42",
             ),
             (
-                "PlayBuf",
-                "80f30968c0021ac5a72c7c136c2d946f22768831414028672580cc629649ff99",
-            ),
-            (
                 "Plot",
                 "deb280956a42f29de5d9515537c19b57a8ccb1575e2620dd68ab2d66aaae4484",
             ),
@@ -794,6 +798,10 @@ mod tests {
             (
                 "Pplot",
                 "119aca31f290bbb848b66dc8f5130c7a21757b425e061596ea4940b7d93c22ba",
+            ),
+            (
+                "Sample",
+                "92a1cf270d69e1d782ec83778359d7897d572d0b523f42c7a05be3438c0863c5",
             ),
             (
                 "ScopeOut",
@@ -851,7 +859,7 @@ mod tests {
 
         let unit = |name: &str| gantz_plyphon::UnitNode::from_unit(name).expect("table row");
         let sugar = super::codec().sugars();
-        let cases: [(gantz_ca::NodeData, &str, &str); 9] = [
+        let cases: [(gantz_ca::NodeData, &str, &str); 11] = [
             (erased(&unit("SinOsc")), "Unit", "~sinosc"),
             (erased(&unit("Lag")), "Unit", "~lag"),
             (erased(&unit("LPF")), "Unit", "~lpf"),
@@ -869,6 +877,16 @@ mod tests {
                 "~unpack",
             ),
             (erased(&gantz_plyphon::Bus::default()), "Bus", "~bus"),
+            (
+                erased(&gantz_plyphon::Buffer::default()),
+                "Buffer",
+                "~buffer",
+            ),
+            (
+                erased(&gantz_plyphon::Sample::default()),
+                "Sample",
+                "~sample",
+            ),
         ];
         for (nd, tag, expected) in cases {
             let datum = tagged_datum(&nd);
@@ -2708,11 +2726,11 @@ mod tests {
         });
     }
 
-    /// A `~playbuf`'s buffer reference wires audio blobs into reachability.
+    /// A `~sample`'s asset reference wires audio blobs into reachability.
     /// Prune and export keep exactly the buffers live graphs reference and
     /// drop the rest.
     #[test]
-    fn playbuf_buffers_ride_reachability() {
+    fn sample_buffers_ride_reachability() {
         use std::time::Duration;
 
         let mut registry = DataReg::default();
@@ -2721,7 +2739,7 @@ mod tests {
         let used_addr = gantz_plyphon::add_audio_asset(&mut registry, &used);
         let unused_addr = gantz_plyphon::add_audio_asset(&mut registry, &unused);
 
-        let dg = data_graph([erased(&gantz_plyphon::PlayBuf::new(used_addr, 1, 48_000.0))]);
+        let dg = data_graph([erased(&gantz_plyphon::Sample::from_asset(&used))]);
         let g_addr = gantz_ca::graph_addr(&dg);
         registry.add_graph(dg);
         let commit = registry.commit_graph(Duration::from_secs(1), None, g_addr, || {
@@ -2898,17 +2916,68 @@ mod tests {
         };
         let a = parse();
         let b = parse();
-        for demo in [
-            "demo-sine",
-            "demo-ringmod",
-            "demo-waveshape",
-            "demo-freeverb",
-            "demo-pluck",
-            "demo-samplehold",
-        ] {
+        for demo in PLYPHON_DEMOS {
             let ca_a = a.head(&name(demo)).expect(demo);
             let ca_b = b.head(&name(demo)).expect(demo);
             assert_eq!(ca_a, ca_b, "reset must resolve the startup commit address");
+        }
+    }
+
+    /// The demos in the plyphon base source.
+    const PLYPHON_DEMOS: [&str; 7] = [
+        "demo-sine",
+        "demo-ringmod",
+        "demo-waveshape",
+        "demo-freeverb",
+        "demo-pluck",
+        "demo-samplehold",
+        "demo-looper",
+    ];
+
+    /// Every plyphon base demo derives synthdefs that build in the real
+    /// engine. This catches a demo wired to a wrong socket index. The
+    /// looper's writer and reader must also both bind its buffer.
+    #[test]
+    fn plyphon_base_demos_derive_and_build() {
+        use bevy_gantz_plyphon::plyphon;
+
+        let registry: DataReg = gantz_egui::export::parse_export_at(
+            gantz_plyphon::BASE_BYTES,
+            bevy_gantz_egui::base::BASE_TIMESTAMP,
+            &super::codec(),
+        )
+        .expect("parse");
+        let reified = reify_all(&registry);
+        let (mut controller, _nrt, _world) = plyphon::engine(plyphon::Options::default());
+        for demo in PLYPHON_DEMOS {
+            let head = gantz_ca::Head::Branch(name(demo));
+            let graph = head_graph(&reified, &registry, &head).expect(demo);
+            let flat = gantz_plyphon::flatten_from_registry(graph, &reified).expect(demo);
+            let mut cache = gantz_plyphon::DefCache::new();
+            let template = gantz_plyphon::derive_template(&flat, 2, &|_| None, &mut cache)
+                .unwrap_or_else(|e| panic!("{demo}: derive failed: {e}"));
+            let parts = gantz_plyphon::instantiate(&template, &cache);
+            for part in &parts {
+                controller.add_synthdef((*part.def).clone());
+                controller
+                    .ensure_compiled(&part.def.name)
+                    .unwrap_or_else(|e| panic!("{demo}: def failed to build: {e:?}"));
+            }
+            if demo != "demo-looper" {
+                continue;
+            }
+            for unit in ["RecordBuf", "PlayBuf"] {
+                let part = parts
+                    .iter()
+                    .find(|p| p.def.units.iter().any(|u| u.name == unit))
+                    .unwrap_or_else(|| panic!("the looper emits `{unit}`"));
+                let spec = part.def.units.iter().find(|u| u.name == unit).unwrap();
+                assert!(
+                    matches!(spec.inputs[0], plyphon::synthdef::InputRef::Param(_)),
+                    "the looper's `{unit}` binds its buffer",
+                );
+                assert_eq!(part.buffers.len(), 1, "one binding per part");
+            }
         }
     }
 

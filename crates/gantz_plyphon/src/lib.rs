@@ -29,9 +29,9 @@ pub use compile::{
 pub use config::{Config, DeriveStatus, Status};
 pub use describe::describe_parts;
 pub use dsp::{
-    BufferBinding, DspBuilder, FADE_LAG, FadeSink, Finished, GainRef, NodeDsp, NodeRate,
-    ParamBinding, PortShape, PortShapes, ScopeOutBinding, Signal, ToNodeDsp, node_dsp_of,
-    signal_rate,
+    BufferAccess, BufferBinding, BufferSource, DspBuilder, FADE_LAG, FadeSink, Finished, GainRef,
+    NodeDsp, NodeRate, ParamBinding, PortShape, PortShapes, ScopeOutBinding, Signal, ToNodeDsp,
+    node_dsp_of, signal_rate,
 };
 pub use flatten::{
     AsRefNode, Flat, FlattenError, RefKind, flatten, flatten_from_registry,
@@ -41,11 +41,11 @@ pub use instance::{
     BusKey, DefCache, GraphTemplate, InstancePart, Part, ResolvedBus, ResolvedPart, TemplateBus,
     TemplateRegion, VariantKey, derive_template, instantiate,
 };
-pub use node::{Bus, InvalidUnitNode, Out, Pack, PlayBuf, ScopeOut, Sum, UnitNode, Unpack};
+pub use node::{Buffer, Bus, InvalidUnitNode, Out, Pack, Sample, ScopeOut, Sum, UnitNode, Unpack};
 pub use port_info::{RootPortInfo, root_port_info};
 pub use ref_ext::{DSP_REF_EXT_KEY, DspRefExt, dsp_graphs, is_dsp_graph};
 pub use sugar::PlyphonSugar;
-pub use units::{In, UNITS, UnitDesc, UnitRate, unit_desc, unit_desc_by_keyword};
+pub use units::{Emit, In, RateScale, UNITS, UnitDesc, UnitRate, unit_desc, unit_desc_by_keyword};
 // `self::` disambiguates from the extern `egui` crate at the crate root.
 #[cfg(feature = "egui")]
 pub use self::egui::{

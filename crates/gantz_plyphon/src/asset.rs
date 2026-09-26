@@ -21,7 +21,7 @@ use thiserror::Error;
 /// The audio-buffer blob section, the DSP domain's content-addressed store
 /// of canonically encoded PCM.
 ///
-/// Blobs are kept alive by content references such as a `~playbuf` node's
+/// Blobs are kept alive by content references such as a `~sample` node's
 /// [`Node::required_blobs`](gantz_core::Node::required_blobs), so export and
 /// prune carry exactly the buffers live graphs use.
 pub struct AudioBuffers;

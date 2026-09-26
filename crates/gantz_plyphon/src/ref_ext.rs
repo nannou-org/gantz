@@ -34,11 +34,12 @@ pub const DSP_REF_EXT_KEY: &str = "plyphon.dsp-ref";
 /// [`node_dsp_of`](crate::node_dsp_of) matches is unconditionally DSP.
 /// Sourced from the types' [`NodeTag`] consts so a renamed tag cannot drift.
 /// Keep in step with [`node_dsp_of`](crate::node_dsp_of).
-const DSP_NODE_TAGS: [&str; 8] = [
+const DSP_NODE_TAGS: [&str; 9] = [
+    crate::Buffer::TAG,
     crate::Bus::TAG,
     crate::Out::TAG,
     crate::Pack::TAG,
-    crate::PlayBuf::TAG,
+    crate::Sample::TAG,
     crate::ScopeOut::TAG,
     crate::Sum::TAG,
     crate::UnitNode::TAG,

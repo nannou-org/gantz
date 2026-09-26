@@ -9,9 +9,9 @@ use gantz_nodetag::NodeTag;
 use plyphon::synthdef::{InputRef, UnitSpec};
 use serde::{Deserialize, Serialize};
 
-use crate::dsp::{DspBuilder, NodeDsp, NodeRate, Signal, ToNodeDsp};
+use crate::dsp::{BufferAccess, DspBuilder, NodeDsp, NodeRate, Signal, ToNodeDsp};
 use crate::param::{control_inputs_expr, param_name, params_state, plyphon_param};
-use crate::units::{In, UnitDesc, UnitRate, unit_desc};
+use crate::units::{Emit, In, UnitDesc, UnitRate, unit_desc};
 
 /// A node wrapping one plyphon unit generator, driven entirely by its
 /// [`UnitDesc`] descriptor row, see [`units`](crate::units). The descriptor
@@ -216,11 +216,16 @@ impl UnitNode {
         }
     }
 
-    /// The Steel placeholder this node's expr evaluates to, one non-numeric
-    /// value per dsp output per the multi-output expr contract.
+    /// The init-only channel count `name`, rounded and clamped to `1..=max`.
+    fn channels_value(&self, name: &str, max: usize) -> usize {
+        (self.init_value(name).round().max(1.0) as usize).min(max.max(1))
+    }
+
+    /// The Steel placeholder of the node's expr. This is one non-numeric
+    /// value per dsp output, or one value for a node with no outputs.
     fn output_placeholder(&self) -> String {
         match self.desc().outputs.len() {
-            1 => "'()".to_string(),
+            0 | 1 => "'()".to_string(),
             n => format!("(list {})", vec!["'()"; n].join(" ")),
         }
     }
@@ -310,14 +315,29 @@ enum Feed {
     Wire(Signal),
     /// An unconnected hybrid input's shared control param.
     Param(u32),
-    /// A constant. Either an unconnected pure signal input as silence, a
-    /// baked value or an init-only value.
+    /// A constant. This is silence for an unconnected signal input, `-1` for
+    /// an unresolved buffer, a baked value or an init-only value.
     Const(f32),
+    /// A group socket's signal, `None` when unconnected. It feeds one
+    /// trailing input per channel.
+    Group(Option<Signal>),
+}
+
+/// A buffer socket that resolved to a buffer source.
+struct ResolvedBuffer {
+    /// The [`In::Buffer`] entry's name.
+    name: &'static str,
+    /// The bufnum wire.
+    bufnum: InputRef,
+    /// Whether the unit writes the buffer.
+    access: BufferAccess,
+    /// The buffer's channel count.
+    channels: usize,
 }
 
 impl NodeDsp for UnitNode {
     fn n_dsp_inputs(&self) -> usize {
-        // Every socket is dsp-capable, pure signal or hybrid.
+        // Every socket is a dsp input.
         self.desc().n_sockets()
     }
 
@@ -325,20 +345,22 @@ impl NodeDsp for UnitNode {
         self.desc().outputs.len()
     }
 
+    fn is_buffer_input(&self, input: usize) -> bool {
+        self.desc().is_buffer_socket(input)
+    }
+
+    fn is_writer(&self) -> bool {
+        self.desc().emit == Emit::Sink
+    }
+
     fn ugens(&self, path: &[usize], inputs: &[Option<Signal>], b: &mut DspBuilder) -> Vec<Signal> {
         let desc = self.desc();
-        // The channel-group width, one unit per channel of the widest
-        // connected input, or a single unit when nothing is connected.
-        let width = inputs
-            .iter()
-            .flatten()
-            .map(Signal::width)
-            .max()
-            .unwrap_or(1);
         // Resolve each plyphon input's feed once. Connected sockets keep their
         // signal. Unconnected hybrids get one shared control param, broadcast
-        // across the group. Everything else is a constant.
+        // across the group. A buffer socket gets its source's bufnum, or `-1`.
+        // Everything else is a constant.
         let mut sockets = 0..;
+        let mut buffers: Vec<ResolvedBuffer> = Vec::new();
         let feeds: Vec<Feed> = desc
             .inputs
             .iter()
@@ -361,44 +383,135 @@ impl NodeDsp for UnitNode {
                         }
                     }
                 }
+                In::Buffer { name, access, .. } => {
+                    let socket = sockets.next().expect("infinite range");
+                    let input = inputs.get(socket).and_then(Option::as_ref);
+                    match b.buffer_input(input, *access) {
+                        Some((bufnum, binding)) => {
+                            buffers.push(ResolvedBuffer {
+                                name,
+                                bufnum,
+                                access: *access,
+                                channels: binding.channels,
+                            });
+                            Feed::Wire(Signal::mono(bufnum))
+                        }
+                        None => Feed::Const(-1.0),
+                    }
+                }
+                In::Group { .. } => {
+                    let socket = sockets.next().expect("infinite range");
+                    Feed::Group(inputs.get(socket).cloned().flatten())
+                }
                 In::Baked(v) => Feed::Const(*v),
                 In::Init { name, default, .. } => {
                     Feed::Const(self.init.get(*name).copied().unwrap_or(*default))
                 }
             })
             .collect();
-        // One unit per channel, then output port `j` groups every channel
-        // unit's `j`th output.
-        let units: Vec<u32> = (0..width)
-            .map(|c| {
-                let ins = feeds
+        let buffer = |name: &str| buffers.iter().find(|r| r.name == name);
+        // A group feeds as many channels as the buffer it writes.
+        let write_channels = buffers
+            .iter()
+            .find(|r| r.access == BufferAccess::Write)
+            .map(|r| r.channels);
+        // The input to scale by its buffer's rate, and that buffer's bufnum.
+        let scale = desc.rate_scale.and_then(|rs| {
+            let ix = desc
+                .inputs
+                .iter()
+                .position(|e| e.name() == Some(rs.input))?;
+            Some((ix, buffer(rs.buffer)?.bufnum))
+        });
+        // The inputs of the unit for channel `c`, in plyphon order.
+        let unit_inputs = |b: &mut DspBuilder, c: usize| -> Vec<InputRef> {
+            let mut ins = Vec::with_capacity(feeds.len());
+            for (ix, feed) in feeds.iter().enumerate() {
+                let input = match feed {
+                    Feed::Wire(signal) => channel_select(signal, c),
+                    Feed::Param(p) => InputRef::Param(*p),
+                    Feed::Const(v) => InputRef::Constant(*v),
+                    Feed::Group(signal) => {
+                        let width = write_channels
+                            .or(signal.as_ref().map(Signal::width))
+                            .unwrap_or(1);
+                        ins.extend((0..width).map(|ch| match signal {
+                            Some(signal) => channel_select(signal, ch),
+                            None => InputRef::Constant(0.0),
+                        }));
+                        continue;
+                    }
+                };
+                ins.push(match scale {
+                    Some((six, bufnum)) if six == ix => b.rate_scaled(bufnum, input),
+                    _ => input,
+                });
+            }
+            ins
+        };
+        let spec = |inputs: Vec<InputRef>, num_outputs: usize| UnitSpec {
+            name: desc.emitted_unit().to_string(),
+            rate: self.rate().to_plyphon(),
+            inputs,
+            num_outputs,
+            special_index: desc.special_index(),
+        };
+        let unit_outputs = |unit: u32, n: usize| -> Signal {
+            (0..n as u32)
+                .map(|output| InputRef::Unit { unit, output })
+                .collect()
+        };
+        match desc.emit {
+            Emit::Expand => {
+                // One unit per channel of the widest connected input, or a
+                // single unit when nothing is connected. Output port `j`
+                // groups every channel unit's `j`th output.
+                let width = inputs
                     .iter()
-                    .map(|feed| match feed {
-                        Feed::Wire(signal) => channel_select(signal, c),
-                        Feed::Param(ix) => InputRef::Param(*ix),
-                        Feed::Const(v) => InputRef::Constant(*v),
+                    .flatten()
+                    .map(Signal::width)
+                    .max()
+                    .unwrap_or(1);
+                let units: Vec<u32> = (0..width)
+                    .map(|c| {
+                        let ins = unit_inputs(b, c);
+                        b.push_unit(spec(ins, desc.outputs.len()))
                     })
                     .collect();
-                b.push_unit(UnitSpec {
-                    name: desc.emitted_unit().to_string(),
-                    rate: self.rate().to_plyphon(),
-                    inputs: ins,
-                    num_outputs: desc.outputs.len(),
-                    special_index: desc.special_index(),
-                })
-            })
-            .collect();
-        (0..desc.outputs.len())
-            .map(|output| {
-                units
-                    .iter()
-                    .map(|&unit| InputRef::Unit {
-                        unit,
-                        output: output as u32,
+                (0..desc.outputs.len() as u32)
+                    .map(|output| {
+                        units
+                            .iter()
+                            .map(|&unit| InputRef::Unit { unit, output })
+                            .collect()
                     })
                     .collect()
-            })
-            .collect()
+            }
+            Emit::Single => {
+                let ins = unit_inputs(b, 0);
+                let unit = b.push_unit(spec(ins, desc.outputs.len()));
+                (0..desc.outputs.len() as u32)
+                    .map(|output| Signal::mono(InputRef::Unit { unit, output }))
+                    .collect()
+            }
+            Emit::BufferChannels { socket } => {
+                let n = buffer(socket).map_or(1, |r| r.channels);
+                let ins = unit_inputs(b, 0);
+                let unit = b.push_unit(spec(ins, n));
+                vec![unit_outputs(unit, n)]
+            }
+            Emit::InitChannels { name, max, .. } => {
+                let n = self.channels_value(name, max);
+                let ins = unit_inputs(b, 0);
+                let unit = b.push_unit(spec(ins, n));
+                vec![unit_outputs(unit, n)]
+            }
+            Emit::Sink => {
+                let ins = unit_inputs(b, 0);
+                b.push_unit(spec(ins, 1));
+                vec![]
+            }
+        }
     }
 }
 
