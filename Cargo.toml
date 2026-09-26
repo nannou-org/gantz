@@ -107,6 +107,18 @@ tracing-subscriber = "0.3"
 web-sys = "0.3"
 web-time = "1"
 
+# Full debuginfo makes each bevy-linked test binary about 1 GB, and linking
+# them dominates build time and memory. Set `CARGO_PROFILE_DEV_DEBUG=true` to
+# get full debuginfo for workspace crates in a debugger session.
+[profile.dev]
+debug = "line-tables-only"
+
+# The Steel interpreter and compiler run several times faster with even light
+# optimisation, and most tests spend their time in them.
+[profile.dev.package."*"]
+debug = false
+opt-level = 1
+
 [profile.wasm_release]
 inherits = "release"
 opt-level = 'z'  # Optimize for size
