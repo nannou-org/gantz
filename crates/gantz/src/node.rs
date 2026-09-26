@@ -1976,17 +1976,14 @@ mod tests {
     }
 
     /// Every named graph shipped in `base.gantz` must compile to a valid Steel
-    /// module under the same `Engine::new_base()` the runtime uses. That
-    /// includes all primitives, the `demo-*` graphs and the unconnected
-    /// `demo-all` catalog. This guards against authoring a graph that relies
-    /// on a prelude-only binding such as `map` or `cond`, or otherwise emits
-    /// invalid Steel, which the base engine rejects. Mirrors the live compile
-    /// path in `bevy_gantz::vm`.
-    ///
-    /// Compiled under both configs. The default emits node fns on demand.
+    /// module with `emit_all_node_fns` and IR validation on. That includes all
+    /// primitives, the `demo-*` graphs and the unconnected `demo-all` catalog.
     /// `emit_all_node_fns` is the app's toggle to inspect every node's code.
     /// It emits each node's all-connected variant, which exercises the
     /// `demo-all` catalog's otherwise-unconnected `ref` nodes.
+    ///
+    /// `cli::tests::check_passes_on_base_sources` compiles every base graph
+    /// under the default config.
     #[test]
     fn base_graphs_all_compile() {
         let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &super::codec())
@@ -1996,13 +1993,10 @@ mod tests {
         let codec = super::codec();
         let reg_env = env(&base, &reified, &builtins, &codec);
         let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
-        let configs = [
-            gantz_core::compile::Config::default(),
-            gantz_core::compile::Config {
-                validate_ir: true,
-                emit_all_node_fns: true,
-            },
-        ];
+        let config = gantz_core::compile::Config {
+            validate_ir: true,
+            emit_all_node_fns: true,
+        };
 
         assert!(
             base.heads().next().is_some(),
@@ -2013,22 +2007,19 @@ mod tests {
             let graph = head_graph(&reified, &base, &head)
                 .unwrap_or_else(|| panic!("`{name}` has no head graph"));
             let entrypoints = gantz_core::compile::push_pull_entrypoints(&get_node, graph);
-            for config in &configs {
-                gantz_core::vm::init_with_modules(
-                    &get_node,
-                    graph,
-                    &entrypoints,
-                    config,
-                    &super::steel_modules(),
+            gantz_core::vm::init_with_modules(
+                &get_node,
+                graph,
+                &entrypoints,
+                &config,
+                &super::steel_modules(),
+            )
+            .unwrap_or_else(|e| {
+                panic!(
+                    "base graph `{name}` failed to compile:\n{}",
+                    gantz_core::vm::error_chain(&e),
                 )
-                .unwrap_or_else(|e| {
-                    panic!(
-                        "base graph `{name}` failed to compile (emit_all_node_fns={}):\n{}",
-                        config.emit_all_node_fns,
-                        gantz_core::vm::error_chain(&e),
-                    )
-                });
-            }
+            });
         }
     }
 
@@ -2850,46 +2841,6 @@ mod tests {
             text1, text2,
             "the plyphon base file must match the writer's canonical form",
         );
-    }
-
-    /// Every graph across all base sources compiles in the merged registry,
-    /// which is the registry every app assembles at startup. DSP graphs are
-    /// Steel-inert, so they compile like any other graph.
-    #[test]
-    fn merged_base_sources_all_compile() {
-        let loaded = crate::headless::load_sources(
-            &crate::headless::base_sources(),
-            bevy_gantz_egui::base::BASE_TIMESTAMP,
-            &super::codec(),
-        );
-        for (source, parsed) in crate::headless::base_sources().iter().zip(&loaded.parsed) {
-            assert!(
-                parsed.is_ok(),
-                "{}: {:?}",
-                source.label,
-                parsed.as_ref().err()
-            );
-        }
-        let merged = loaded.registry;
-        let builtins = builtins_with_instances();
-        let reified = reify_all(&merged);
-        let codec = super::codec();
-        let reg_env = env(&merged, &reified, &builtins, &codec);
-        let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
-        let names: Vec<gantz_ca::Name> = merged.heads().map(|(n, _)| n.clone()).collect();
-        assert!(names.contains(&name("demo-sine")), "plyphon demo loaded");
-        assert!(names.contains(&name("demo-pattern")), "pattern demo loaded");
-        for n in names {
-            let head = gantz_ca::Head::Branch(n.clone());
-            let graph = head_graph(&reified, &merged, &head)
-                .unwrap_or_else(|| panic!("`{n}` has no head graph"));
-            crate::headless::init(&get_node, graph).unwrap_or_else(|e| {
-                panic!(
-                    "merged base graph `{n}` failed to compile:\n{}",
-                    gantz_core::vm::error_chain(&e),
-                )
-            });
-        }
     }
 
     /// No base graph shares a name with a builtin. `Env::create_node` resolves
