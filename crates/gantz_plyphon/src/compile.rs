@@ -733,7 +733,7 @@ where
 
         // Emit the region's bus writes. Lift each channel to audio, apply one
         // driver fade gain per param path and write to a bus-index param.
-        let mut fades: HashMap<Vec<usize>, u32> = HashMap::new();
+        let mut fades: HashMap<Vec<usize>, InputRef> = HashMap::new();
         let mut bus_writes = Vec::with_capacity(writes.len());
         for (bus, (src, port)) in writes {
             let sig = outputs
@@ -752,7 +752,7 @@ where
                 let mul = builder.push_unit(UnitSpec {
                     name: "BinaryOpUGen".to_string(),
                     rate: Rate::Audio,
-                    inputs: vec![ch, InputRef::Param(fade)],
+                    inputs: vec![ch, fade],
                     num_outputs: 1,
                     special_index: 2,
                 });

@@ -305,11 +305,12 @@ pub enum FadeSink {
 }
 
 /// Records a synthdef fade gain, a driver-owned param scaling a sink's whole
-/// output. The audio driver fades the synth in and out across a crossfaded
-/// replacement to de-click the respawn. The default is baked at `0.0` so the
-/// synth spawns silent without any def mutation. The driver ramps it via the
-/// param's own `LagControl`, to `1.0` once the synth is up and to `0.0` ahead
-/// of a deferred free. [`structural_sig`](crate::structural_sig) excludes
+/// output. The def multiplies the param by a `Line` from 0 to 1 over
+/// [`FADE_LAG`], so each new synth fades in from its first block, whenever
+/// its controls land. The driver sets the param to `1.0` at spawn, or leaves
+/// it at its `0.0` default while the head is muted. It ramps the param
+/// through the param's own `LagControl` to `0.0` ahead of a deferred free and
+/// on a mute change. [`structural_sig`](crate::structural_sig) excludes
 /// defaults, so the baked `0.0` does not churn the sig. Fade gains have no
 /// [`ParamBinding`]. No node state feeds them, the driver alone drives them.
 #[derive(Clone, Copy, Debug)]
@@ -486,12 +487,13 @@ impl DspBuilder {
         index as u32
     }
 
-    /// Declare a driver-controlled fade gain for the sink at `path`. It is a
-    /// lagged param with a `0.0` default and a [`FADE_LAG`] ramp that must
-    /// scale the sink's whole output. It is recorded as a [`GainRef`] with no
-    /// [`ParamBinding`]. See [`GainRef`] for how the driver ramps it. Returns
-    /// the param's index for [`InputRef::Param`].
-    pub fn push_fade_gain(&mut self, path: &[usize], sink: FadeSink) -> u32 {
+    /// Declare a driver-controlled fade gain for the sink at `path` and return
+    /// the control-rate gain that must scale the sink's whole output. The
+    /// gain is a lagged param with a `0.0` default and a [`FADE_LAG`] ramp,
+    /// recorded as a [`GainRef`] with no [`ParamBinding`], times a `Line` from
+    /// 0 to 1 over [`FADE_LAG`]. See [`GainRef`] for how the driver moves the
+    /// param.
+    pub fn push_fade_gain(&mut self, path: &[usize], sink: FadeSink) -> InputRef {
         let index = self.params.len();
         self.params.push(Param::lag(
             crate::param::param_name(path, "fade"),
@@ -503,7 +505,30 @@ impl DspBuilder {
             lag: FADE_LAG,
             sink,
         });
-        index as u32
+        let fade_in = vec![
+            InputRef::Constant(0.0),
+            InputRef::Constant(1.0),
+            InputRef::Constant(FADE_LAG),
+            InputRef::Constant(0.0),
+        ];
+        let line = self.push_unit(UnitSpec::new("Line", Rate::Control, fade_in, 1));
+        let gain = self.push_unit(UnitSpec {
+            name: "BinaryOpUGen".to_string(),
+            rate: Rate::Control,
+            inputs: vec![
+                InputRef::Param(index as u32),
+                InputRef::Unit {
+                    unit: line,
+                    output: 0,
+                },
+            ],
+            num_outputs: 1,
+            special_index: 2,
+        });
+        InputRef::Unit {
+            unit: gain,
+            output: 0,
+        }
     }
 
     /// Declare a monitor for the dsp node at `path`, recording its

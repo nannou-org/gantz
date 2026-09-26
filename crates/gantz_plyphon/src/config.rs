@@ -46,6 +46,9 @@ pub enum DeriveStatus {
     /// Deriving the synthdef template failed. Carries the rendered
     /// [`crate::DeriveError`].
     DeriveError(String),
+    /// The engine could not start one of the head's synths, and the retries
+    /// failed too. For example, its memory pool ran out. Carries a message.
+    SpawnError(String),
 }
 
 /// Read-only DSP status, written by the DSP runtime for the GUI to display.
