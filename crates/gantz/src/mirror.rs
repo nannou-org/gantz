@@ -423,22 +423,6 @@ mod tests {
     }
 
     #[test]
-    fn nested_names_round_trip_through_the_named_format() {
-        let mut registry = base_registry();
-        let mut file = FileState::default();
-        apply(
-            &mut registry,
-            &mut file,
-            "(graph a (b bang))\n(graph a:b (c bang))",
-            1,
-        );
-        let text = render(&registry, &[name("a"), name("a:b")], &crate::node::codec()).unwrap();
-        assert!(text.contains("(graph a:b"), "{text}");
-        let applied = apply(&mut registry, &mut file, &text, 2);
-        assert!(applied.is_empty(), "{applied:?}");
-    }
-
-    #[test]
     fn apply_text_commits_an_edit_with_the_previous_head_as_parent() {
         let mut registry = base_registry();
         let mut file = FileState::default();
@@ -459,16 +443,33 @@ mod tests {
         assert_eq!(file.heads[&name("g")], *c2);
     }
 
+    /// Re-applying rendered text changes nothing. Nested names render inline
+    /// in the named format.
     #[test]
     fn reapplying_rendered_text_is_a_noop() {
-        let mut registry = base_registry();
-        let mut file = FileState::default();
-        apply(&mut registry, &mut file, G1, 1);
-        let head = registry.head(&name("g")).unwrap();
-        let text = render(&registry, &[name("g")], &crate::node::codec()).unwrap();
-        let applied = apply(&mut registry, &mut file, &text, 2);
-        assert!(applied.is_empty(), "{applied:?}");
-        assert_eq!(registry.head(&name("g")), Some(head));
+        let rows: [(&str, &str, &[&str]); 2] = [
+            (
+                "nested names",
+                "(graph a (b bang))\n(graph a:b (c bang))",
+                &["a", "a:b"],
+            ),
+            ("layout", G1, &["g"]),
+        ];
+        for (case, src, names) in rows {
+            let mut registry = base_registry();
+            let mut file = FileState::default();
+            apply(&mut registry, &mut file, src, 1);
+            let names: Vec<ca::Name> = names.iter().map(|n| name(n)).collect();
+            let heads: Vec<_> = names.iter().map(|n| registry.head(n)).collect();
+            let text = render(&registry, &names, &crate::node::codec()).unwrap();
+            for n in &names {
+                assert!(text.contains(&format!("(graph {n}")), "{case}: {text}");
+            }
+            let applied = apply(&mut registry, &mut file, &text, 2);
+            assert!(applied.is_empty(), "{case}: {applied:?}");
+            let after: Vec<_> = names.iter().map(|n| registry.head(n)).collect();
+            assert_eq!(after, heads, "{case}: heads unchanged");
+        }
     }
 
     #[test]

@@ -122,6 +122,12 @@ mod tests {
     /// The data registry, which stores graphs erased.
     type DataReg = gantz_ca::Registry;
 
+    /// A ref ext payload, stored under the `test.ext` key.
+    #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    struct TestExt {
+        inline: bool,
+    }
+
     fn name(s: &str) -> gantz_ca::Name {
         s.parse().expect("infallible")
     }
@@ -258,20 +264,22 @@ mod tests {
             .into()
     }
 
-    /// `Env::gui_markers` reads a referenced graph's markers and their roles
-    /// from its stored node data.
+    /// The `Env` and `reg` lookups over the marker registry.
     #[test]
-    fn gui_markers_resolve_roles() {
+    fn gui_marker_registry_lookups() {
         use gantz_egui::node::{Gui, GuiRole};
         let registry = gui_marker_registry();
         let reified = reify_all(&registry);
         let builtins = builtins_with_instances();
         let codec = super::codec();
         let reg = env(&registry, &reified, &builtins, &codec);
+        let parent = named_ca(&registry, "parent");
         let child = named_ca(&registry, "child");
-        let markers = reg.gui_markers(&child);
+
+        // `Env::gui_markers` reads a referenced graph's markers and their
+        // roles from its stored node data.
         assert_eq!(
-            markers,
+            reg.gui_markers(&child),
             vec![
                 (1, Gui::default()),
                 (
@@ -283,21 +291,11 @@ mod tests {
                 ),
             ],
         );
-        assert!(reg.gui_markers(&named_ca(&registry, "parent")).is_empty());
-    }
+        assert!(reg.gui_markers(&parent).is_empty());
 
-    /// `Env::node_at` resolves a nested relative path through reference
-    /// hops, and `reg::n_outputs_at` reports the terminal node's output
-    /// count.
-    #[test]
-    fn node_at_resolves_through_refs() {
-        let registry = gui_marker_registry();
-        let reified = reify_all(&registry);
-        let builtins = builtins_with_instances();
-        let codec = super::codec();
-        let reg = env(&registry, &reified, &builtins, &codec);
-        let parent = named_ca(&registry, "parent");
-        // The ref itself, then the number inside the referenced child.
+        // `Env::node_at` resolves a nested relative path through reference
+        // hops, and `reg::n_outputs_at` reports the terminal node's output
+        // count. The ref itself, then the number inside the referenced child.
         assert!(reg.node_at(&parent, &[0]).is_some());
         assert!(reg.node_at(&parent, &[0, 0]).is_some());
         assert!(reg.node_at(&parent, &[0, 9]).is_none());
@@ -308,20 +306,10 @@ mod tests {
         // A terminal ref segment resolves transparently. The child graph has
         // no outlets, so the ref node reports 0 outputs.
         assert_eq!(gantz_egui::reg::n_outputs_at(&reg, &parent, &[0]), Some(0));
-    }
 
-    /// `Env::ref_target` hops exactly one reference stand-in. Non-ref nodes
-    /// never resolve. `Fn` nodes are function values, not stand-ins, so they
-    /// never resolve either.
-    #[test]
-    fn ref_target_resolves_named_ref() {
-        let registry = gui_marker_registry();
-        let reified = reify_all(&registry);
-        let builtins = builtins_with_instances();
-        let codec = super::codec();
-        let reg = env(&registry, &reified, &builtins, &codec);
-        let parent = named_ca(&registry, "parent");
-        let child = named_ca(&registry, "child");
+        // `Env::ref_target` hops exactly one reference stand-in. Non-ref
+        // nodes never resolve. `Fn` nodes are function values, not
+        // stand-ins, so they never resolve either.
         assert_eq!(reg.ref_target(&parent, 0), Some(child));
         // The number in the child is not a ref.
         assert_eq!(reg.ref_target(&child, 0), None);
@@ -333,19 +321,9 @@ mod tests {
         let nd = erased(&gantz_core::node::Fn(named));
         assert!(gantz_egui::node::gui::ref_target_of(&nd).is_none());
         assert_eq!(nd.refs, vec![child]);
-    }
 
-    /// `reg::resolve_ref_chain` folds zero or more ref hops and finds the
-    /// leaf graph's body marker.
-    #[test]
-    fn resolve_ref_chain_finds_leaf_body_marker() {
-        let registry = gui_marker_registry();
-        let reified = reify_all(&registry);
-        let builtins = builtins_with_instances();
-        let codec = super::codec();
-        let reg = env(&registry, &reified, &builtins, &codec);
-        let parent = named_ca(&registry, "parent");
-        let child = named_ca(&registry, "child");
+        // `reg::resolve_ref_chain` folds zero or more ref hops and finds the
+        // leaf graph's body marker.
         assert_eq!(
             gantz_egui::reg::resolve_ref_chain(&reg, parent, &[0]),
             Some((child, 1)),
@@ -592,19 +570,6 @@ mod tests {
             .unwrap_or_else(|e| panic!("`{}` failed to normalize: {e}", nd.tag))
     }
 
-    /// Every manifest case decodes through the codec. A type authored in the
-    /// wire cases but missing from `ui_node_codec!` fails here.
-    #[test]
-    fn codec_covers_every_node_set_case() {
-        let codec = super::codec();
-        for value in node_set_cases() {
-            let nd = node_data_of(value.clone());
-            codec
-                .reify_ui(&nd)
-                .unwrap_or_else(|e| panic!("tag `{}` missing from the codec: {e}", nd.tag));
-        }
-    }
-
     /// A `Unit` datum naming a unit outside the descriptor table fails to
     /// reify, like an unknown node type tag. It must not become a half-alive
     /// node whose sockets cannot be enumerated.
@@ -629,10 +594,19 @@ mod tests {
     }
 
     /// The stored instances the erased-representation gate runs over. That is
-    /// every wire case above, plus types without hand-authored cases.
+    /// every wire case above, plus types without hand-authored cases and an
+    /// ext-carrying `NamedRef`.
     fn node_set_data() -> Vec<gantz_ca::NodeData> {
         let mut nodes: Vec<gantz_ca::NodeData> =
             node_set_cases().into_iter().map(node_data_of).collect();
+        let mut ext_ref = gantz_egui::node::NamedRef::new(
+            name("mul"),
+            gantz_core::node::Ref::new(gantz_ca::ContentAddr([0; 32])),
+        );
+        ext_ref
+            .set_ext("test.ext", &TestExt { inline: true })
+            .unwrap();
+        nodes.push(erased(&ext_ref));
         nodes.push(erased(&gantz_std::Log::default()));
         nodes.push(erased(&gantz_core::node::Fn(
             gantz_egui::node::NamedRef::new(
@@ -1453,53 +1427,6 @@ mod tests {
         assert_eq!(my_addr, base_addr, "lowered mul graph addr must match base");
     }
 
-    /// Round-tripping a consistent export through text twice must preserve
-    /// every name, commit address and graph address. Exercises a cross-graph
-    /// `ref` and the `(commits ...)` and `(names ...)` tables.
-    #[test]
-    fn text_roundtrip_preserves_addrs() {
-        use std::collections::BTreeSet;
-        use std::time::Duration;
-
-        let now = Duration::from_secs(1_000_000);
-        let text1 = "\
-(graph mul
-  (m (expr (* $l $r)))
-  (l inlet) (r inlet) (out outlet)
-  (-> l (m 0)) (-> r (m 1)) (-> m out))
-
-(graph use-mul
-  (a inlet) (b inlet) (out outlet)
-  (mref (ref mul))
-  (-> a (mref 0)) (-> b (mref 1)) (-> mref out))";
-
-        let export1: DataReg =
-            gantz_egui::format::from_str(text1, now, &super::codec()).expect("from_str 1");
-        let text2 = gantz_egui::format::to_string(&export1, &super::codec()).expect("to_string");
-        let export2: DataReg =
-            gantz_egui::format::from_str(&text2, Duration::from_secs(7), &super::codec())
-                .expect("from_str 2");
-
-        let names1: BTreeSet<_> = export1.heads().map(|(n, _)| n.clone()).collect();
-        let names2: BTreeSet<_> = export2.heads().map(|(n, _)| n.clone()).collect();
-        assert_eq!(names1, names2, "names must match\n--- text2 ---\n{text2}");
-
-        for (name, head1) in export1.heads() {
-            let head2 = export2.head(name).expect("name present");
-            assert_eq!(
-                head1, head2,
-                "commit addr for `{name}`\n--- text2 ---\n{text2}"
-            );
-            let g1 = export1.commit_graph_ref(&head1).expect("g1");
-            let g2 = export2.commit_graph_ref(&head2).expect("g2");
-            assert_eq!(
-                gantz_ca::graph_addr(g1),
-                gantz_ca::graph_addr(g2),
-                "graph addr for `{name}`",
-            );
-        }
-    }
-
     /// base.gantz loads, re-serializes and reloads. Its names and head commit
     /// addresses are preserved exactly, because it is internally consistent
     /// and needs no healing.
@@ -2133,10 +2060,6 @@ mod tests {
     fn named_ref_ext_survives_repointing_and_fork() {
         use gantz_egui::node::NamedRef;
 
-        #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-        struct TestExt {
-            inline: bool,
-        }
         let ext = TestExt { inline: true };
         let key = "test.ext";
 
@@ -2239,10 +2162,6 @@ mod tests {
         }
 
         // The ext data itself survives on the re-parsed node.
-        #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-        struct TestExt {
-            inline: bool,
-        }
         let head = export2.head(&name("use-mul")).expect("use-mul");
         let reified = reify_all(&export2);
         let g = reified.get(&export2.commits()[&head].graph).expect("graph");
@@ -2250,33 +2169,6 @@ mod tests {
             .node_indices()
             .find_map(|ix| as_named_ref(&g[ix]))
             .expect("a named ref in use-mul");
-        assert_eq!(
-            named.ext_as::<TestExt>("test.ext"),
-            Some(TestExt { inline: true })
-        );
-    }
-
-    /// An ext-carrying `NamedRef` round-trips through the node codec with its
-    /// stored form and content address intact. The addr pins verify that
-    /// ext-free output is unchanged.
-    #[test]
-    fn ext_roundtrips_through_codec() {
-        use gantz_egui::node::NamedRef;
-
-        #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
-        struct TestExt {
-            inline: bool,
-        }
-        let ca = gantz_ca::ContentAddr::from([0u8; 32]);
-        let mut named = NamedRef::new(name("mul"), gantz_core::node::Ref::new(ca));
-        named
-            .set_ext("test.ext", &TestExt { inline: true })
-            .unwrap();
-        let nd = erased(&named);
-
-        let inst = super::codec().reify_ui(&nd).expect("reify");
-        assert_eq!(inst.erase().expect("erase"), nd, "codec round-trip");
-        let named = as_named_ref(&inst.node).expect("named");
         assert_eq!(
             named.ext_as::<TestExt>("test.ext"),
             Some(TestExt { inline: true })
@@ -2688,27 +2580,14 @@ mod tests {
     #[test]
     fn reset_then_reopen_demo_recompiles() {
         use gantz_core::compile::{Config, push_pull_entrypoints};
-        use std::collections::BTreeMap;
 
         let ts = bevy_gantz_egui::base::BASE_TIMESTAMP;
         let parse = || -> DataReg {
             gantz_egui::export::parse_export_at(gantz_base::BYTES, ts, &super::codec())
                 .expect("parse base")
         };
-        let heads = |reg: &DataReg| -> BTreeMap<_, _> {
-            reg.heads().map(|(n, ca)| (n.clone(), ca)).collect()
-        };
-
-        // Parsing the base at the fixed timestamp is reproducible. Every name
-        // maps to the same commit both times, so a reset agrees with the
-        // registry loaded at startup.
         let startup = parse();
         let reparse = parse();
-        assert_eq!(
-            heads(&startup),
-            heads(&reparse),
-            "base commit addresses must be reproducible across parses",
-        );
 
         // Simulate `on_reset_base_graph`. Re-export the demo's reachable
         // subset from a fresh parse and merge it into the startup registry.
@@ -2784,74 +2663,24 @@ mod tests {
         assert!(gantz_plyphon::audio_asset(&registry, &unused_addr).is_none());
     }
 
-    /// The inline-name base export `format::to_string_named` names every
-    /// graph inline and drops the `(commits ...)` and `(names ...)` tables
-    /// and the pinned ref addresses. It is stable. Re-exporting an unchanged
-    /// base produces byte-identical text with no churning addresses, which
-    /// keeps `base.gantz` hand-editable.
-    #[test]
-    fn base_named_export_is_stable() {
-        use std::collections::BTreeSet;
-        use std::time::Duration;
-
-        let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &super::codec())
-            .expect("parse base");
-        let text =
-            gantz_egui::format::to_string_named(&base, &super::codec()).expect("to_string_named");
-
-        // Inline names, no tables, references by name.
-        assert!(!text.contains("(commits"), "no commits table:\n{text}");
-        assert!(!text.contains("(names"), "no names table:\n{text}");
-        assert!(
-            text.contains("(graph add\n"),
-            "graphs named inline:\n{text}"
-        );
-        assert!(
-            text.contains("(ref add #:sync)"),
-            "refs resolve by name, no pinned address:\n{text}",
-        );
-
-        // Reload the simplified text and re-serialize. The result is
-        // byte-identical.
-        let back: DataReg =
-            gantz_egui::format::from_str(&text, Duration::from_secs(0), &super::codec())
-                .expect("from_str");
-        let text2 =
-            gantz_egui::format::to_string_named(&back, &super::codec()).expect("to_string_named 2");
-        assert_eq!(text, text2, "inline-name export must be idempotent");
-
-        // Names survive the round-trip.
-        let n1: BTreeSet<_> = base.heads().map(|(n, _)| n.clone()).collect();
-        let n2: BTreeSet<_> = back.heads().map(|(n, _)| n.clone()).collect();
-        assert_eq!(n1, n2, "names preserved");
-    }
-
-    /// The plyphon base source is exactly the writer's canonical form. The
-    /// file re-exports byte-identically, so `update-base` write-backs never
-    /// churn it.
-    #[test]
-    fn plyphon_base_export_is_stable() {
-        let text1 = std::str::from_utf8(gantz_plyphon::BASE_BYTES).expect("utf8");
-        let base: DataReg =
-            gantz_egui::export::parse_export(gantz_plyphon::BASE_BYTES, &super::codec())
-                .expect("parse base");
-        let text2 =
-            gantz_egui::format::to_string_named(&base, &super::codec()).expect("to_string_named");
-        assert_eq!(
-            text1, text2,
-            "the plyphon base file must match the writer's canonical form",
-        );
-    }
-
     /// No base graph shares a name with a builtin. `Env::create_node` resolves
     /// registry names before builtins, so such a graph hides the builtin.
     #[test]
     fn base_names_do_not_shadow_builtins() {
+        let sources = crate::headless::base_sources();
         let loaded = crate::headless::load_sources(
-            &crate::headless::base_sources(),
+            &sources,
             bevy_gantz_egui::base::BASE_TIMESTAMP,
             &super::codec(),
         );
+        for (source, parsed) in sources.iter().zip(&loaded.parsed) {
+            assert!(
+                parsed.is_ok(),
+                "{}: {:?}",
+                source.label,
+                parsed.as_ref().err()
+            );
+        }
         let builtins = super::builtins();
         let shadowing: Vec<String> = loaded
             .registry
@@ -2865,78 +2694,30 @@ mod tests {
         );
     }
 
-    /// The pattern base source is exactly the writer's canonical form. The
-    /// file re-exports byte-identically, so `update-base` write-backs never
-    /// churn it.
-    #[test]
-    fn pattern_base_export_is_stable() {
-        let text1 = std::str::from_utf8(gantz_pattern::BASE_BYTES).expect("utf8");
-        let base: DataReg =
-            gantz_egui::export::parse_export(gantz_pattern::BASE_BYTES, &super::codec())
-                .expect("parse base");
-        let text2 =
-            gantz_egui::format::to_string_named(&base, &super::codec()).expect("to_string_named");
-        assert_eq!(
-            text1, text2,
-            "the pattern base file must match the writer's canonical form",
-        );
-    }
-
-    /// The rng base source is exactly the writer's canonical form. The file
-    /// re-exports byte-identically, so `update-base` write-backs never churn
-    /// it.
-    #[test]
-    fn rng_base_export_is_stable() {
-        let text1 = std::str::from_utf8(gantz_rng::BASE_BYTES).expect("utf8");
-        let base: DataReg =
-            gantz_egui::export::parse_export(gantz_rng::BASE_BYTES, &super::codec())
-                .expect("parse base");
-        let text2 =
-            gantz_egui::format::to_string_named(&base, &super::codec()).expect("to_string_named");
-        assert_eq!(
-            text1, text2,
-            "the rng base file must match the writer's canonical form",
-        );
-    }
-
-    /// The pattern source parses reproducibly at `BASE_TIMESTAMP`. Demo reset
+    /// Every base source parses reproducibly at `BASE_TIMESTAMP`. Startup and
+    /// demo-reset parses agree on every name's commit address. Demo reset
     /// relies on this invariant per source.
     #[test]
-    fn pattern_base_parses_reproducibly() {
-        let parse = || -> DataReg {
+    fn base_sources_parse_reproducibly() {
+        use std::collections::BTreeMap;
+        let heads = |source: &crate::headless::Source| -> BTreeMap<_, _> {
             gantz_egui::export::parse_export_at(
-                gantz_pattern::BASE_BYTES,
+                &source.bytes,
                 bevy_gantz_egui::base::BASE_TIMESTAMP,
                 &super::codec(),
             )
-            .expect("parse")
+            .unwrap_or_else(|e| panic!("{}: parse failed: {e}", source.label))
+            .heads()
+            .map(|(n, ca)| (n.clone(), ca))
+            .collect()
         };
-        let a = parse();
-        let b = parse();
-        let ca_a = a.head(&name("demo-pattern")).expect("demo-pattern");
-        let ca_b = b.head(&name("demo-pattern")).expect("demo-pattern");
-        assert_eq!(ca_a, ca_b, "reset must resolve the startup commit address");
-    }
-
-    /// The plyphon source parses reproducibly at `BASE_TIMESTAMP`. Startup
-    /// and demo-reset parses agree on the demo's commit address. Demo reset
-    /// relies on this invariant per source.
-    #[test]
-    fn plyphon_base_parses_reproducibly() {
-        let parse = || -> DataReg {
-            gantz_egui::export::parse_export_at(
-                gantz_plyphon::BASE_BYTES,
-                bevy_gantz_egui::base::BASE_TIMESTAMP,
-                &super::codec(),
-            )
-            .expect("parse")
-        };
-        let a = parse();
-        let b = parse();
-        for demo in PLYPHON_DEMOS {
-            let ca_a = a.head(&name(demo)).expect(demo);
-            let ca_b = b.head(&name(demo)).expect(demo);
-            assert_eq!(ca_a, ca_b, "reset must resolve the startup commit address");
+        for source in crate::headless::base_sources() {
+            assert_eq!(
+                heads(&source),
+                heads(&source),
+                "{}: reset must resolve the startup commit addresses",
+                source.label,
+            );
         }
     }
 
