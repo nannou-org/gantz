@@ -88,7 +88,7 @@ impl Mirror {
         let mut written = Vec::new();
         for (root, names) in write_set(registry, scope) {
             let Some(filename) = filename(&root) else {
-                log::warn!("mirror: `{root}` is not a usable file name; not mirrored");
+                tracing::warn!("mirror: `{root}` is not a usable file name; not mirrored");
                 continue;
             };
             let path = self.dir.join(filename);
@@ -157,7 +157,7 @@ impl Mirror {
             let bytes = match std::fs::read(&path) {
                 Ok(bytes) => bytes,
                 Err(e) => {
-                    log::warn!("mirror: {}: {e}", path.display());
+                    tracing::warn!("mirror: {}: {e}", path.display());
                     continue;
                 }
             };

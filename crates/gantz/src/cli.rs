@@ -167,8 +167,16 @@ pub fn parse() -> Option<Command> {
 /// Run a subcommand and return the process exit code.
 pub fn run(command: Command) -> i32 {
     // Library warnings, such as an unrecognised form a rewrite would drop,
-    // must reach the user. There is no Bevy log plugin here.
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    // must reach the user. Libraries log through `log` and `tracing`, and the
+    // subscriber bridges both. `RUST_LOG` overrides the default.
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,gantz=info"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .without_time()
+        .with_writer(std::io::stderr)
+        .init();
     let (files, mut output) = match command {
         #[cfg(feature = "collab")]
         Command::Join(args) => return crate::join::run(args),

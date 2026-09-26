@@ -13,6 +13,7 @@ use gantz_collab_sync::{Effect, JoinError, OpenHeads, Sessions};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
+use tracing::{debug, info, warn};
 
 /// How often runtime events are drained.
 const TICK: Duration = Duration::from_millis(50);
@@ -110,13 +111,12 @@ impl Peer {
     }
 
     /// One tick: drain the runtime, mirror moved names to disk, read edited
-    /// files when `poll_files`, and announce local commits. Returns the
-    /// lines to report.
-    pub fn step(&mut self, now: ca::Timestamp, poll_files: bool) -> Result<Vec<String>, Stop> {
+    /// files when `poll_files`, and announce local commits. Progress is
+    /// logged at `info`, head moves at `debug`.
+    pub fn step(&mut self, now: ca::Timestamp, poll_files: bool) -> Result<(), Stop> {
         if self.handle.events.is_closed() {
             return Err(Stop::RuntimeGone);
         }
-        let mut lines = Vec::new();
         let effects = gantz_collab_sync::poll(
             &mut self.sessions,
             &mut self.registry,
@@ -131,40 +131,36 @@ impl Peer {
                 } => {
                     self.joined = true;
                     changed = true;
-                    lines.push(format!("joined: {commits} commits, {graphs} graphs"));
+                    info!("joined: {commits} commits, {graphs} graphs");
                 }
                 Effect::Moved { name, to, .. } => {
                     changed = true;
-                    lines.push(format!("{name} -> {}", to.display_short()));
+                    debug!("{name} -> {}", to.display_short());
                 }
                 Effect::ResyncRefs => {
                     for m in gantz_collab_sync::resync_headless(&mut self.registry, now) {
                         changed = true;
-                        lines.push(format!(
-                            "{} follows -> {}",
-                            m.name,
-                            m.new_commit.display_short()
-                        ));
+                        debug!("{} follows -> {}", m.name, m.new_commit.display_short());
                     }
                 }
-                Effect::PeerUp { peer, .. } => lines.push(format!("peer up {peer}")),
-                Effect::PeerDown { peer, .. } => lines.push(format!("peer down {peer}")),
+                Effect::PeerUp { peer, .. } => info!("peer up {peer}"),
+                Effect::PeerDown { peer, .. } => info!("peer down {peer}"),
                 Effect::Error { message, .. } => {
                     if !self.joined {
                         return Err(Stop::Failed(message));
                     }
-                    lines.push(format!("error: {message}"));
+                    warn!("{message}");
                 }
                 // Nothing is open here, so the plane never routes a tip to
                 // an open head.
                 Effect::RemoteTip { name, .. } => {
-                    log::warn!("remote tip for `{name}` routed to an open head with none open")
+                    warn!("remote tip for `{name}` routed to an open head with none open")
                 }
                 Effect::Open(_) | Effect::Action { .. } => {}
             }
         }
         if self.joined && changed {
-            self.write(&mut lines)?;
+            self.write()?;
         }
         if self.joined && poll_files {
             let mut edited = false;
@@ -173,31 +169,27 @@ impl Peer {
                 match result {
                     Ok(applied) => {
                         for (name, commit) in &applied.committed {
-                            lines.push(format!(
-                                "{label}: committed {name} {}",
-                                commit.display_short()
-                            ));
+                            info!("{label}: committed {name} {}", commit.display_short());
                         }
                         for (name, commit) in &applied.layout_only {
-                            lines
-                                .push(format!("{label}: layout {name} {}", commit.display_short()));
+                            info!("{label}: layout {name} {}", commit.display_short());
                         }
                         for m in &applied.moved {
-                            lines.push(format!(
+                            debug!(
                                 "{label}: {} follows -> {}",
                                 m.name,
                                 m.new_commit.display_short()
-                            ));
+                            );
                         }
                         edited |= !applied.is_empty();
                     }
-                    Err(e) => lines.push(crate::cli::parse_diagnostic(&label, &e)),
+                    Err(e) => warn!("{}", crate::cli::parse_diagnostic(&label, &e)),
                 }
             }
             if edited {
                 self.sessions.dirty = true;
                 // Referrers a resync moved may live in other files.
-                self.write(&mut lines)?;
+                self.write()?;
             }
         }
         let announced = gantz_collab_sync::announce(
@@ -207,19 +199,19 @@ impl Peer {
             self.peer,
         );
         for (_, name, tip) in announced {
-            lines.push(format!("announced {name} {}", tip.display_short()));
+            info!("announced {name} {}", tip.display_short());
         }
-        Ok(lines)
+        Ok(())
     }
 
     /// Rewrite the files of every scoped name that moved.
-    fn write(&mut self, lines: &mut Vec<String>) -> std::io::Result<()> {
+    fn write(&mut self) -> std::io::Result<()> {
         let Some(branch) = &self.branch else {
             return Ok(());
         };
         let scope = gantz_egui::sync::session_scope(&self.registry, branch);
         for path in self.mirror.write_all(&self.registry, &scope)? {
-            lines.push(format!("wrote {}", path.display()));
+            info!("wrote {}", path.display());
         }
         Ok(())
     }
@@ -245,12 +237,12 @@ pub fn run(args: JoinArgs) -> i32 {
     }
     let infra = gantz_collab_sync::infra(args.relay.as_deref());
     let mut peer = Peer::new(identity, infra, args.dir.clone(), crate::node::codec());
-    println!("peer {}", peer.peer_id());
+    info!("peer {}", peer.peer_id());
     if let Err(e) = peer.join(&args.ticket, now()) {
         eprintln!("{e}");
         return 2;
     }
-    println!(
+    info!(
         "joining `{}` into {}",
         peer.branch().expect("joined"),
         args.dir.display()
@@ -262,11 +254,7 @@ pub fn run(args: JoinArgs) -> i32 {
             next_poll = Instant::now() + FILE_POLL;
         }
         match peer.step(now(), poll_files) {
-            Ok(lines) => {
-                for line in lines {
-                    println!("{line}");
-                }
-            }
+            Ok(()) => {}
             Err(e @ Stop::Failed(_)) => {
                 eprintln!("{e}");
                 return 2;
@@ -340,14 +328,12 @@ mod tests {
         }
     }
 
-    /// Step the peer until `done`, printing its lines.
+    /// Step the peer until `done`.
     fn step_until(peer: &mut Peer, mut done: impl FnMut() -> bool) {
         let deadline = Instant::now() + Duration::from_secs(30);
         while !done() {
             assert!(Instant::now() < deadline, "timed out stepping the peer");
-            for line in peer.step(now(), true).unwrap() {
-                eprintln!("peer: {line}");
-            }
+            peer.step(now(), true).unwrap();
             std::thread::sleep(Duration::from_millis(50));
         }
     }
