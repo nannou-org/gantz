@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2](https://github.com/nannou-org/gantz/compare/gantz_format-v0.4.1...gantz_format-v0.4.2) - 2026-09-26
+
+### Added
+
+- *(gantz_format)* read a keyword's list value in sugar
+- *(gantz_pattern)* add pplot keyword sugar
+
+### Other
+
+- *(gantz_format)* expose line_col
+- *(gantz_format)* simplify and prune comments in format, collab, pattern
+
 ## [0.4.1](https://github.com/nannou-org/gantz/compare/gantz_format-v0.4.0...gantz_format-v0.4.1) - 2026-08-26
 
 ### Added

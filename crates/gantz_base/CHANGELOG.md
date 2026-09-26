@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_base-v0.2.3...gantz_base-v0.3.0) - 2026-09-26
+
+### Added
+
+- *(gantz_base)* build the gui demos from nodes
+- *(gantz_base)* add element and layout base nodes for gui trees
+- *(gantz_base)* add the gui marker demo graphs
+
+### Fixed
+
+- *(gantz_base)* [**breaking**] prefix the gui element base graphs with ui
+- Improve layout for new demo-gui graphs
+- Slight layout tweaks to demo-gui
+- Improve layout and comments of new demo gui graphs
+
+### Other
+
+- *(gantz_base)* point the gui demos at the new panes
+- *(gantz_ca)* simplify and prune comments in ca, nodetag and std
+
 ## [0.2.3](https://github.com/nannou-org/gantz/compare/gantz_base-v0.2.2...gantz_base-v0.2.3) - 2026-07-12
 
 ### Added

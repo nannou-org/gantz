@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.2.1...bevy_gantz_plyphon-v0.3.0) - 2026-09-26
+
+### Added
+
+- *(bevy_gantz_plyphon)* write the table of a ~buffer into its buffers
+- *(gantz_plyphon)* fill a ~buffer from a list on its control input
+- *(bevy_gantz_plyphon)* load a WAV file into a ~sample
+- *(gantz_plyphon)* add buffer delay and delay tap rows
+- *(gantz_plyphon)* add buffer writer rows
+- *(gantz_plyphon)* [**breaking**] replace the bespoke ~playbuf with a table row fed by ~sample
+- *(bevy_gantz_plyphon)* allocate refcounted scratch buffers per head and node path
+- *(bevy_gantz_plyphon)* mute a head's out writes from its tab
+
+### Fixed
+
+- *(bevy_gantz_plyphon)* respawn a part when its buffer bindings change
+- *(bevy_gantz_plyphon)* allocate every buffer table index from one allocator
+- *(bevy_gantz_plyphon)* anchor web audio clock to the eval epoch
+
+### Other
+
+- simplify the buffer unit doc comments
+- *(gantz_plyphon)* [**breaking**] bind buffers by source and scale playback rate in the def
+- trim the per-tab mute comments
+- apply review fixes to the comment cleanup
+- *(bevy_gantz_egui)* simplify comments in bevy egui and plyphon crates
+
 ## [0.2.1](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.2.0...bevy_gantz_plyphon-v0.2.1) - 2026-08-26
 
 ### Fixed

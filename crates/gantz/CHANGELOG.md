@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz-v0.3.1...gantz-v0.4.0) - 2026-09-26
+
+### Added
+
+- *(gantz_plyphon)* add a kick drum demo
+- *(gantz_plyphon)* add the ~envgen node
+- *(gantz)* default the join directory to the app data directory
+- *(gantz)* add the join subcommand
+- *(gantz)* mirror a session scope to .gantz files
+- *(gantz_plyphon)* add a wavetable demo
+- *(gantz_plyphon)* add a sample player demo
+- *(gantz_plyphon)* add a looper demo
+- *(gantz_plyphon)* [**breaking**] replace the bespoke ~playbuf with a table row fed by ~sample
+- *(gantz_plyphon)* add the ~sample and ~buffer source nodes
+- *(gantz)* add the compile subcommand
+- *(gantz)* add the fmt subcommand
+- *(gantz)* add the check subcommand
+- *(gantz)* load base sources to a fixpoint headlessly
+- *(gantz_plyphon)* add freeverb, pluck and sample-hold demos
+- *(gantz_pattern)* add demo-pplot
+- *(gantz_pattern)* plot labels, lanes and value channels in pplot
+- *(gantz_pattern)* add fit resolution and edge padding to pplot
+- *(gantz_pattern)* add pplot node
+- *(gantz_base)* build the gui demos from nodes
+- *(gantz_base)* add element and layout base nodes for gui trees
+- *(gantz_egui)* add a bind node holding a node path
+- *(gantz_std)* add a list node with a configurable input count
+
+### Fixed
+
+- *(gantz_collab_sync)* feed a fetch response only to the fetch it answers
+- *(gantz)* repair the NodeSet doc comment
+- *(gantz)* stop Safari trackpad pinch from zooming the web page
+- *(gantz)* stop ctrl+wheel from zooming the web page
+
+### Other
+
+- *(gantz)* check that no base graph name shadows a builtin
+- *(gantz)* keep angle brackets out of the join help
+- *(gantz)* nested references are in scope and served
+- *(gantz)* log the CLI through tracing
+- add clap to the workspace
+- *(gantz)* lift headless env helpers out of node tests
+- fire every tick in the demo-pplot test
+- drop bang-less demo-gui-compose from demos_evaluate
+- *(gantz)* decode every base gui marker tree
+- apply review fixes to the comment cleanup
+- *(bevy_gantz)* simplify comments in bevy_gantz, collab and the app
+- simplify comments in nix, trunk, web and workflow files
+
 ## [0.3.1](https://github.com/nannou-org/gantz/compare/gantz-v0.3.0...gantz-v0.3.1) - 2026-08-26
 
 ### Added
