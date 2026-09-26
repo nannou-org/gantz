@@ -3903,6 +3903,7 @@ dependencies = [
  "gantz_nodetag",
  "gantz_pattern",
  "gantz_plyphon",
+ "gantz_rng",
  "gantz_std",
  "gantz_ui",
  "serde",
@@ -4065,6 +4066,7 @@ dependencies = [
  "gantz_egui",
  "gantz_format",
  "gantz_nodetag",
+ "gantz_rng",
  "num-rational",
  "num-traits",
  "petgraph",
@@ -4091,6 +4093,16 @@ dependencies = [
  "ron 0.10.1",
  "serde",
  "thiserror 2.0.17",
+]
+
+[[package]]
+name = "gantz_rng"
+version = "0.1.0"
+dependencies = [
+ "gantz_core",
+ "num-bigint",
+ "num-rational",
+ "num-traits",
 ]
 
 [[package]]

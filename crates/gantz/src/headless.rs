@@ -31,6 +31,7 @@ pub fn base_sources() -> Vec<Source> {
     [
         ("<base:gantz>", gantz_base::BYTES),
         ("<base:plyphon>", gantz_plyphon::BASE_BYTES),
+        ("<base:rng>", gantz_rng::BASE_BYTES),
         ("<base:pattern>", gantz_pattern::BASE_BYTES),
     ]
     .into_iter()

@@ -62,6 +62,10 @@ fn main() {
                     concat!(env!("CARGO_MANIFEST_DIR"), "/../gantz_plyphon/base.gantz"),
                 ),
                 (
+                    "rng",
+                    concat!(env!("CARGO_MANIFEST_DIR"), "/../gantz_rng/base.gantz"),
+                ),
+                (
                     "pattern",
                     concat!(env!("CARGO_MANIFEST_DIR"), "/../gantz_pattern/base.gantz"),
                 ),

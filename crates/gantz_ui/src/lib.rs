@@ -185,10 +185,8 @@ pub mod sexpr;
 /// collection, then `(require "gantz/ui")` to use. It provides `ui-elem`,
 /// `ui-int` and `ui-id`, the helpers the element base graphs are built on.
 #[cfg(feature = "steel")]
-pub const MODULE: gantz_core::vm::SteelModule = gantz_core::vm::SteelModule {
-    name: "gantz/ui",
-    src: include_str!("ui.scm"),
-};
+pub const MODULE: gantz_core::vm::SteelModule =
+    gantz_core::vm::SteelModule::new("gantz/ui", include_str!("ui.scm"));
 
 /// The Steel modules provided by this crate.
 #[cfg(feature = "steel")]

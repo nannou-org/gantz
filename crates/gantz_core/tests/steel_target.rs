@@ -124,10 +124,7 @@ fn required_module_provides_bind_unmangled() {
 /// accepted silently. The error surfaces only at the first `require`.
 #[test]
 fn module_registration_is_lazy() {
-    let broken = gantz_core::vm::SteelModule {
-        name: "gantz/test-broken",
-        src: "(define (broken",
-    };
+    let broken = gantz_core::vm::SteelModule::new("gantz/test-broken", "(define (broken");
     let mut vm = gantz_core::vm::new_engine(&[broken]);
     assert_eq!(run_int_vm(&mut vm, "(+ 1 2)"), 3);
     assert!(
@@ -140,13 +137,13 @@ fn module_registration_is_lazy() {
 /// cache. The module's top-level defines run once per engine, not per run.
 #[test]
 fn required_module_is_cached_across_runs() {
-    let counting = gantz_core::vm::SteelModule {
-        name: "gantz/test-counting",
-        src: "(provide get-count)
-              (define count (box 0))
-              (set-box! count (+ (unbox count) 1))
-              (define (get-count) (unbox count))",
-    };
+    let counting = gantz_core::vm::SteelModule::new(
+        "gantz/test-counting",
+        "(provide get-count)
+         (define count (box 0))
+         (set-box! count (+ (unbox count) 1))
+         (define (get-count) (unbox count))",
+    );
     let mut vm = gantz_core::vm::new_engine(&[counting]);
     let src = "(require \"gantz/test-counting\") (get-count)";
     assert_eq!(run_int_vm(&mut vm, src), 1);

@@ -46,6 +46,10 @@ fn combinators_wrapping_junk_are_silent() {
         "(pat/inner-join J)",
         "(pat/outer-join J)",
         "(pat/euclid-with J 3 8 0)",
+        "(pat/degrade-by 7 1/2 J)",
+        "(pat/degrade-by J 1/2 (pat/pure 'a))",
+        // Any value is a seed, so a junk seed still gives values.
+        "(pat/rand J)",
     ];
     for junk in ["'()", "void"] {
         for wrap in wraps {
@@ -111,6 +115,10 @@ fn non_fn_map_and_filter_are_silent() {
     assert_pinned(
         "()",
         "(pin-events (pat/query (pat/filter 'nope (pat/pure 1)) (pat/span 0 1)))",
+    );
+    assert_pinned(
+        "()",
+        "(pin-events (pat/query (pat/degrade-by 7 'nope (pat/pure 1)) (pat/span 0 1)))",
     );
     assert_pinned(
         "()",
