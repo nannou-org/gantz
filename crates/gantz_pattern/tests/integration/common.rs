@@ -42,33 +42,33 @@ pub fn new_pin_engine() -> Engine {
 }
 
 /// Evaluate a snippet on an engine prepared by [`new_pin_engine`],
-/// returning the final value.
-pub fn eval(vm: &mut Engine, snippet: &str) -> SteelVal {
+/// returning the final value. `case` names the table row in a failure.
+pub fn eval(vm: &mut Engine, case: &str, snippet: &str) -> SteelVal {
     let vals = vm
         .run(snippet.to_string())
-        .unwrap_or_else(|e| panic!("steel error: {e}\nin snippet:\n{snippet}"));
+        .unwrap_or_else(|e| panic!("{case}: steel error: {e}\nin snippet:\n{snippet}"));
     vals.last()
-        .unwrap_or_else(|| panic!("snippet evaluated to no value:\n{snippet}"))
+        .unwrap_or_else(|| panic!("{case}: snippet evaluated to no value:\n{snippet}"))
         .clone()
 }
 
 /// Assert the snippet evaluates to `#t`.
-pub fn assert_steel_true(vm: &mut Engine, snippet: &str) {
-    match eval(vm, snippet) {
+pub fn assert_steel_true(vm: &mut Engine, case: &str, snippet: &str) {
+    match eval(vm, case, snippet) {
         SteelVal::BoolV(true) => (),
-        other => panic!("expected #t, got {other:?} for:\n{snippet}"),
+        other => panic!("{case}: expected #t, got {other:?} for:\n{snippet}"),
     }
 }
 
 /// Assert `expr` evaluates to the quoted `expected` pinned literal,
 /// re-evaluating `expr` for a readable actual value on failure.
-pub fn assert_pinned(vm: &mut Engine, expected: &str, expr: &str) {
+pub fn assert_pinned(vm: &mut Engine, case: &str, expected: &str, expr: &str) {
     let check = format!("(equal? '{expected} {expr})");
-    match eval(vm, &check) {
+    match eval(vm, case, &check) {
         SteelVal::BoolV(true) => (),
         _ => {
-            let actual = eval(vm, expr);
-            panic!("expected {expected}\n     got {actual:?}\n     for {expr}");
+            let actual = eval(vm, case, expr);
+            panic!("{case}: expected {expected}\n     got {actual:?}\n     for {expr}");
         }
     }
 }

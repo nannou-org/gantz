@@ -74,64 +74,55 @@ fn bjorklund_table() {
             "(equal? {} (pat/euclid-bools {k} {n} 0))",
             steel_bools(onsets),
         );
-        match eval(&mut vm, &check) {
+        match eval(&mut vm, &format!("bjorklund ({k}, {n})"), &check) {
             SteelVal::BoolV(true) => (),
             other => panic!("bjorklund ({k}, {n}) mismatch: {other:?}"),
         }
     }
 }
 
-// euclid 3 8 has onsets at slots 0, 3 and 6, each one slot long.
 #[test]
-fn euclid_3_8_events() {
+fn euclid_events() {
     let mut vm = new_pin_engine();
-    assert_pinned(
-        &mut vm,
-        "((#t ((0 1) (1 8)) ((0 1) (1 8))) \
-          (#t ((3 8) (1 2)) ((3 8) (1 2))) \
-          (#t ((3 4) (7 8)) ((3 4) (7 8))))",
-        "(pin-events (pat/query (pat/euclid 3 8) (pat/span 0 1)))",
-    );
-}
-
-// A rotation of one slot moves the onsets left.
-#[test]
-fn euclid_off_rotates() {
-    let mut vm = new_pin_engine();
-    assert_pinned(
-        &mut vm,
-        "((#t ((1 4) (3 8)) ((1 4) (3 8))) \
-          (#t ((5 8) (3 4)) ((5 8) (3 4))) \
-          (#t ((7 8) (1 1)) ((7 8) (1 1))))",
-        "(pin-events (pat/query (pat/euclid-off 3 8 1) (pat/span 0 1)))",
-    );
-}
-
-// euclid-full elongates each onset to fill the silence before the next.
-#[test]
-fn euclid_full_elongates() {
-    let mut vm = new_pin_engine();
-    assert_pinned(
-        &mut vm,
-        "((#t ((0 1) (3 8)) ((0 1) (3 8))) \
-          (#t ((3 8) (3 4)) ((3 8) (3 4))) \
-          (#t ((3 4) (1 1)) ((3 4) (1 1))))",
-        "(pin-events (pat/query (pat/euclid-full 3 8) (pat/span 0 1)))",
-    );
-}
-
-// No onsets yields silence from every variant.
-#[test]
-fn euclid_zero_onsets() {
-    let mut vm = new_pin_engine();
-    assert_pinned(
-        &mut vm,
-        "()",
-        "(pin-events (pat/query (pat/euclid 0 8) (pat/span 0 1)))",
-    );
-    assert_pinned(
-        &mut vm,
-        "()",
-        "(pin-events (pat/query (pat/euclid-full 0 8) (pat/span 0 1)))",
-    );
+    let rows: &[(&str, &str, &str)] = &[
+        // euclid 3 8 has onsets at slots 0, 3 and 6, each one slot long.
+        (
+            "euclid_3_8",
+            "((#t ((0 1) (1 8)) ((0 1) (1 8))) \
+              (#t ((3 8) (1 2)) ((3 8) (1 2))) \
+              (#t ((3 4) (7 8)) ((3 4) (7 8))))",
+            "(pin-events (pat/query (pat/euclid 3 8) (pat/span 0 1)))",
+        ),
+        // A rotation of one slot moves the onsets left.
+        (
+            "euclid_off_rotates",
+            "((#t ((1 4) (3 8)) ((1 4) (3 8))) \
+              (#t ((5 8) (3 4)) ((5 8) (3 4))) \
+              (#t ((7 8) (1 1)) ((7 8) (1 1))))",
+            "(pin-events (pat/query (pat/euclid-off 3 8 1) (pat/span 0 1)))",
+        ),
+        // euclid-full elongates each onset to fill the silence before the
+        // next.
+        (
+            "euclid_full_elongates",
+            "((#t ((0 1) (3 8)) ((0 1) (3 8))) \
+              (#t ((3 8) (3 4)) ((3 8) (3 4))) \
+              (#t ((3 4) (1 1)) ((3 4) (1 1))))",
+            "(pin-events (pat/query (pat/euclid-full 3 8) (pat/span 0 1)))",
+        ),
+        // No onsets yields silence from every variant.
+        (
+            "euclid_zero_onsets",
+            "()",
+            "(pin-events (pat/query (pat/euclid 0 8) (pat/span 0 1)))",
+        ),
+        (
+            "euclid_full_zero_onsets",
+            "()",
+            "(pin-events (pat/query (pat/euclid-full 0 8) (pat/span 0 1)))",
+        ),
+    ];
+    for (case, expected, expr) in rows {
+        assert_pinned(&mut vm, case, expected, expr);
+    }
 }

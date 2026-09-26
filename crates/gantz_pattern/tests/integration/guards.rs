@@ -8,16 +8,74 @@ use crate::common::{assert_pinned, assert_steel_true, new_pin_engine};
 // The junk values a partial eval can produce in place of a pattern.
 const JUNK: &[&str] = &["'()", "void", "7", "'sym", "\"str\""];
 
-// Querying junk directly yields no events.
+// Junk patterns, junk inner patterns and junk fns all query silently.
 #[test]
-fn query_of_junk_is_silent() {
+fn junk_patterns_and_fns_are_silent() {
     let mut vm = new_pin_engine();
+    // Querying junk directly yields no events.
     for junk in JUNK {
         assert_pinned(
             &mut vm,
+            &format!("query of {junk}"),
             "()",
             &format!("(pin-events (pat/query {junk} (pat/span 0 1)))"),
         );
+    }
+    // Joins with junk inner values, a pattern of non-patterns, are silent.
+    for join in ["pat/join", "pat/inner-join", "pat/outer-join"] {
+        assert_pinned(
+            &mut vm,
+            &format!("{join} of a junk inner"),
+            "()",
+            &format!("(pin-events (pat/query ({join} (pat/pure 'not-a-pattern)) (pat/span 0 1)))"),
+        );
+    }
+    // map-events drops results that are not events, such as the junk of a
+    // partial eval of the mapping fn. Events kept as they are stay.
+    for junk in JUNK {
+        assert_pinned(
+            &mut vm,
+            &format!("map-events to {junk}"),
+            "((a ((0 1) (1 2)) ((0 1) (1 2))))",
+            &format!(
+                "(pin-events (pat/query
+                   (pat/map-events
+                    (lambda (e) (if (equal? (pat/event-value e) 'a) e {junk}))
+                    (pat/fastcat (list (pat/pure 'a) (pat/pure 'b))))
+                   (pat/span 0 1)))"
+            ),
+        );
+    }
+    let rows: &[(&str, &str)] = &[
+        // The apply family drops events whose "function" is not applicable.
+        (
+            "app_drops_non_fn_values",
+            "(pin-events (pat/query (pat/app (pat/pure 1) (pat/pure 'not-a-fn)) (pat/span 0 1)))",
+        ),
+        // Non-fn mapping and filtering fns yield silence.
+        (
+            "map_with_non_fn",
+            "(pin-events (pat/query (pat/map 'nope (pat/pure 1)) (pat/span 0 1)))",
+        ),
+        (
+            "map_events_with_non_fn",
+            "(pin-events (pat/query (pat/map-events 'nope (pat/pure 1)) (pat/span 0 1)))",
+        ),
+        (
+            "filter_with_non_fn",
+            "(pin-events (pat/query (pat/filter 'nope (pat/pure 1)) (pat/span 0 1)))",
+        ),
+        (
+            "degrade_by_with_non_fn",
+            "(pin-events (pat/query (pat/degrade-by 7 'nope (pat/pure 1)) (pat/span 0 1)))",
+        ),
+        (
+            "signal_with_non_fn",
+            "(pin-events (pat/query (pat/signal 'nope) (pat/span 0 1)))",
+        ),
+    ];
+    for (case, expr) in rows {
+        assert_pinned(&mut vm, case, "()", expr);
     }
 }
 
@@ -59,121 +117,64 @@ fn combinators_wrapping_junk_are_silent() {
             // Only assert it evaluates without error and stays a list
             // length. Silent legs may still leave the non-junk legs
             // producing events, as in stack.
-            assert_steel_true(&mut vm, &format!("(>= {src} 0)"));
+            assert_steel_true(&mut vm, &p, &format!("(>= {src} 0)"));
         }
     }
 }
 
-// Joins with junk inner values, a pattern of non-patterns, are silent.
+// The windower and delivery helpers hold or stay silent on junk inputs.
 #[test]
-fn joins_with_junk_inner_values_are_silent() {
+fn junk_window_and_delivery_inputs() {
     let mut vm = new_pin_engine();
-    for join in ["pat/join", "pat/inner-join", "pat/outer-join"] {
-        assert_pinned(
-            &mut vm,
+    let rows: &[(&str, &str, &str)] = &[
+        // The windower holds position on junk time or cps, leaving state
+        // alone.
+        (
+            "window_with_junk_cps_holds",
+            "(((0 1) (0 1)) (1 2))",
+            "(let ((r (pat/window 1/2 0.5 '())))
+               (list (pin-span (car r)) (pin-num (car (cdr r)))))",
+        ),
+        (
+            "window_with_junk_time_holds",
+            "(((0 1) (0 1)) (1 2))",
+            "(let ((r (pat/window 1/2 '() 1)))
+               (list (pin-span (car r)) (pin-num (car (cdr r)))))",
+        ),
+        // Delivery with junk inputs emits nothing.
+        (
+            "events_to_secs_with_empty_events",
             "()",
-            &format!("(pin-events (pat/query ({join} (pat/pure 'not-a-pattern)) (pat/span 0 1)))"),
-        );
+            "(pat/events->secs '() (pat/span 0 1) 0.0 1.0)",
+        ),
+        (
+            "events_to_secs_with_junk_events",
+            "()",
+            "(pat/events->secs 'junk (pat/span 0 1) 0.0 1.0)",
+        ),
+        (
+            "events_to_secs_with_junk_span",
+            "()",
+            "(pat/events->secs (pat/query (pat/pure 1) (pat/span 0 1)) '() 0.0 1.0)",
+        ),
+        (
+            "events_to_secs_with_junk_time",
+            "()",
+            "(pat/events->secs (pat/query (pat/pure 1) (pat/span 0 1)) (pat/span 0 1) '() 1.0)",
+        ),
+        (
+            "events_to_secs_with_junk_cps",
+            "()",
+            "(pat/events->secs (pat/query (pat/pure 1) (pat/span 0 1)) (pat/span 0 1) 0.0 '())",
+        ),
+    ];
+    for (case, expected, expr) in rows {
+        assert_pinned(&mut vm, case, expected, expr);
     }
-}
-
-// The apply family drops events whose "function" is not applicable.
-#[test]
-fn apply_drops_non_fn_values() {
-    let mut vm = new_pin_engine();
-    assert_pinned(
+    // rationalize passes non-numbers through for downstream guards.
+    assert_steel_true(
         &mut vm,
-        "()",
-        "(pin-events (pat/query (pat/app (pat/pure 1) (pat/pure 'not-a-fn)) (pat/span 0 1)))",
+        "rationalize_passes_junk_through",
+        "(equal? '() (pat/rationalize '()))",
     );
-}
-
-// map-events drops results that are not events, such as the junk of a
-// partial eval of the mapping fn. Events kept as they are stay.
-#[test]
-fn map_events_drops_non_event_results() {
-    let mut vm = new_pin_engine();
-    for junk in JUNK {
-        assert_pinned(
-            &mut vm,
-            "((a ((0 1) (1 2)) ((0 1) (1 2))))",
-            &format!(
-                "(pin-events (pat/query
-                   (pat/map-events
-                    (lambda (e) (if (equal? (pat/event-value e) 'a) e {junk}))
-                    (pat/fastcat (list (pat/pure 'a) (pat/pure 'b))))
-                   (pat/span 0 1)))"
-            ),
-        );
-    }
-}
-
-// Non-fn mapping and filtering fns yield silence.
-#[test]
-fn non_fn_map_and_filter_are_silent() {
-    let mut vm = new_pin_engine();
-    assert_pinned(
-        &mut vm,
-        "()",
-        "(pin-events (pat/query (pat/map 'nope (pat/pure 1)) (pat/span 0 1)))",
-    );
-    assert_pinned(
-        &mut vm,
-        "()",
-        "(pin-events (pat/query (pat/map-events 'nope (pat/pure 1)) (pat/span 0 1)))",
-    );
-    assert_pinned(
-        &mut vm,
-        "()",
-        "(pin-events (pat/query (pat/filter 'nope (pat/pure 1)) (pat/span 0 1)))",
-    );
-    assert_pinned(
-        &mut vm,
-        "()",
-        "(pin-events (pat/query (pat/degrade-by 7 'nope (pat/pure 1)) (pat/span 0 1)))",
-    );
-    assert_pinned(
-        "()",
-        "(pin-events (pat/query (pat/signal 'nope) (pat/span 0 1)))",
-    );
-}
-
-// The windower holds position on junk time or cps, leaving state alone.
-#[test]
-fn window_with_junk_inputs_holds() {
-    let mut vm = new_pin_engine();
-    assert_pinned(
-        &mut vm,
-        "(((0 1) (0 1)) (1 2))",
-        "(let ((r (pat/window 1/2 0.5 '())))
-           (list (pin-span (car r)) (pin-num (car (cdr r)))))",
-    );
-    assert_pinned(
-        &mut vm,
-        "(((0 1) (0 1)) (1 2))",
-        "(let ((r (pat/window 1/2 '() 1)))
-           (list (pin-span (car r)) (pin-num (car (cdr r)))))",
-    );
-}
-
-// Delivery with junk inputs emits nothing.
-#[test]
-fn events_to_secs_with_junk_is_silent() {
-    let mut vm = new_pin_engine();
-    for src in [
-        "(pat/events->secs '() (pat/span 0 1) 0.0 1.0)",
-        "(pat/events->secs 'junk (pat/span 0 1) 0.0 1.0)",
-        "(pat/events->secs (pat/query (pat/pure 1) (pat/span 0 1)) '() 0.0 1.0)",
-        "(pat/events->secs (pat/query (pat/pure 1) (pat/span 0 1)) (pat/span 0 1) '() 1.0)",
-        "(pat/events->secs (pat/query (pat/pure 1) (pat/span 0 1)) (pat/span 0 1) 0.0 '())",
-    ] {
-        assert_pinned(&mut vm, "()", src);
-    }
-}
-
-// rationalize passes non-numbers through for downstream guards.
-#[test]
-fn rationalize_passes_junk_through() {
-    let mut vm = new_pin_engine();
-    assert_steel_true(&mut vm, "(equal? '() (pat/rationalize '()))");
 }
