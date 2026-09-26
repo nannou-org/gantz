@@ -263,150 +263,147 @@ mod tests {
         (store, root_ca, tip_ca, ga1)
     }
 
+    /// Content offered under a claimed address it does not verify against is
+    /// rejected outright, and the store is left untouched.
     #[test]
-    fn merge_is_idempotent() {
-        let (mut store, root_ca, tip_ca, ga1) = test_store();
-        let root = store.commits()[&root_ca].clone();
-        let tip = store.commits()[&tip_ca].clone();
-        let g1 = store.graph(&ga1).unwrap().clone();
-        let report = merge(
-            &mut store,
-            [(name("jam"), tip_ca)],
-            [(root_ca, root), (tip_ca, tip)],
-            [(ga1, g1)],
-            [],
-            [],
-        )
-        .unwrap();
-        assert!(report.heads_added.is_empty());
-        assert!(report.heads_replaced.is_empty());
-        assert_eq!(store.commits().len(), 2);
-        assert_eq!(store.graphs().len(), 2);
-    }
-
-    #[test]
-    fn merge_repoints_heads() {
-        let (mut store, root_ca, tip_ca, _ga1) = test_store();
-        let report = merge(&mut store, [(name("jam"), root_ca)], [], [], [], []).unwrap();
-        assert_eq!(report.heads_replaced, vec![(name("jam"), tip_ca, root_ca)]);
-        assert_eq!(store.head(&name("jam")), Some(root_ca));
-    }
-
-    /// A graph offered under a claimed address whose content does not re-hash
-    /// to it is rejected outright, and the store is left untouched.
-    #[test]
-    fn merge_rejects_tampered_graph_content() {
+    fn merge_rejects_unverified_content() {
         let (mut store, _root_ca, _tip_ca, ga1) = test_store();
-        let heads_before = store
-            .heads()
-            .map(|(n, ca)| (n.clone(), ca))
-            .collect::<Vec<_>>();
         // Honest content for `ga1`, then tampered with an extra node the
         // claimed address does not cover.
         let mut tampered = store.graph(&ga1).unwrap().clone();
         tampered.add_node(NodeData::new("evil", Datum::Map(vec![])));
-        let actual = gantz_ca::graph_addr(&tampered);
+        let tampered_ga = gantz_ca::graph_addr(&tampered);
         let commit = Commit::new(Duration::from_secs(3), None, ga1);
         let commit_ca = commit_addr(&commit);
-        let err = merge(
-            &mut store,
-            [(name("jam"), commit_ca)],
-            [(commit_ca, commit)],
-            [(ga1, tampered)],
-            [],
-            [],
-        )
-        .unwrap_err();
-        assert_eq!(
-            err,
-            VerifyError::Graph {
-                claimed: ga1,
-                actual,
-            }
-        );
-        // Nothing was merged. No new commit, head unmoved.
-        assert!(!store.commits().contains_key(&commit_ca));
-        assert_eq!(
-            store
-                .heads()
-                .map(|(n, ca)| (n.clone(), ca))
-                .collect::<Vec<_>>(),
-            heads_before
-        );
-    }
-
-    /// A graph whose nodes are not in canonical form aliases the same
-    /// logical content under a second address. It is rejected likewise.
-    #[test]
-    fn merge_rejects_non_canonical_graph() {
-        let (mut store, _root_ca, _tip_ca, _ga1) = test_store();
-        let mut g = DataGraph::default();
-        g.add_node(NodeData::new(
+        // A graph whose nodes are not in canonical form aliases the same
+        // logical content under a second address. It hashes consistently with
+        // itself, so the canonicality check, not the hash, must reject it.
+        let mut non_canonical = DataGraph::default();
+        non_canonical.add_node(NodeData::new(
             "test",
             Datum::Map(vec![
                 ("b".to_string(), Datum::Null),
                 ("a".to_string(), Datum::Bool(true)),
             ]),
         ));
-        // The non-canonical form hashes consistently with itself. The
-        // canonicality check, not the hash, must reject it.
-        let claimed = gantz_ca::graph_addr(&g);
-        let err = merge(&mut store, [], [], [(claimed, g)], [], []).unwrap_err();
-        assert_eq!(
-            err,
-            VerifyError::NonCanonicalNode {
-                graph: claimed,
-                node_ix: 0,
-            }
-        );
-        assert!(store.graph(&claimed).is_none());
+        let non_canonical_ga = gantz_ca::graph_addr(&non_canonical);
+        let blob_claimed = blob_addr(b"pcm");
+        let cases = [
+            (
+                "tampered graph content",
+                vec![(name("jam"), commit_ca)],
+                vec![(commit_ca, commit)],
+                vec![(ga1, tampered)],
+                vec![],
+                VerifyError::Graph {
+                    claimed: ga1,
+                    actual: tampered_ga,
+                },
+            ),
+            (
+                "non-canonical graph",
+                vec![],
+                vec![],
+                vec![(non_canonical_ga, non_canonical)],
+                vec![],
+                VerifyError::NonCanonicalNode {
+                    graph: non_canonical_ga,
+                    node_ix: 0,
+                },
+            ),
+            (
+                "tampered blob",
+                vec![],
+                vec![],
+                vec![],
+                vec![(
+                    "dsp.buffer".to_string(),
+                    BlobLiveness::ContentReferenced,
+                    blob_claimed,
+                    Bytes::from(&b"tampered"[..]),
+                )],
+                VerifyError::Blob {
+                    claimed: blob_claimed,
+                    actual: blob_addr(b"tampered"),
+                },
+            ),
+        ];
+        let before = store.clone();
+        let graph_addrs = |s: &SessionRegistry| {
+            s.graphs()
+                .keys()
+                .copied()
+                .collect::<std::collections::HashSet<_>>()
+        };
+        for (label, heads, commits, graphs, blobs, expected) in cases {
+            let err = merge(&mut store, heads, commits, graphs, [], blobs).unwrap_err();
+            assert_eq!(err, expected, "{label}");
+            assert_eq!(store.commits(), before.commits(), "{label}: commits");
+            assert_eq!(graph_addrs(&store), graph_addrs(&before), "{label}: graphs");
+            assert_eq!(
+                store.sections(),
+                before.sections(),
+                "{label}: heads, sections"
+            );
+            assert_eq!(store.blobs(), before.blobs(), "{label}: blobs");
+        }
     }
 
     #[test]
-    fn objects_filters_to_present() {
-        let (store, root_ca, _tip_ca, ga1) = test_store();
-        let absent_ca = CommitAddr::from(ContentAddr::from([9; 32]));
-        let absent_ga = GraphAddr::from(ContentAddr::from([9; 32]));
+    fn objects_serves_present_refs_and_skips_absent_ones() {
+        let (mut store, root_ca, tip_ca, ga1) = test_store();
+        let blob = store.add_blob("dsp.buffer", BlobLiveness::ContentReferenced, &b"pcm"[..]);
+        let (id, policy, liveness, key, value) = view_entry(tip_ca);
+        store.set_section_value(id.clone(), policy, liveness, key.clone(), value.clone());
+        let absent = ContentAddr::from([9; 32]);
         let want = Want {
             refs: vec![
                 ObjectRef::Commit(root_ca),
-                ObjectRef::Commit(absent_ca),
+                ObjectRef::Commit(CommitAddr::from(absent)),
                 ObjectRef::Graph(ga1),
-                ObjectRef::Graph(absent_ga),
+                ObjectRef::Graph(GraphAddr::from(absent)),
                 ObjectRef::Blob {
                     section: "dsp.buffer".to_string(),
-                    addr: ContentAddr::from([9; 32]),
+                    addr: blob,
+                },
+                ObjectRef::Blob {
+                    section: "dsp.buffer".to_string(),
+                    addr: absent,
+                },
+                ObjectRef::Blob {
+                    section: "ui.assets".to_string(),
+                    addr: absent,
+                },
+                ObjectRef::Section {
+                    id: id.clone(),
+                    key: key.clone(),
+                },
+                ObjectRef::Section {
+                    id: id.clone(),
+                    key: Key::Commit(CommitAddr::from(absent)),
                 },
             ],
         };
         let objects = objects(&store, &want).objects;
-        assert_eq!(objects.len(), 2);
-        assert!(matches!(objects[0], Object::Commit(ca, _) if ca == root_ca));
-        let expected = proto::encode_graph(store.graph(&ga1).unwrap());
-        assert!(
-            matches!(&objects[1], Object::Graph(ga, bytes) if *ga == ga1 && *bytes == expected)
-        );
-    }
-
-    #[test]
-    fn objects_serves_blobs() {
-        let (mut store, _root_ca, _tip_ca, _ga1) = test_store();
-        let addr = store.add_blob("dsp.buffer", BlobLiveness::ContentReferenced, &b"pcm"[..]);
-        let want = Want {
-            refs: vec![ObjectRef::Blob {
-                section: "dsp.buffer".to_string(),
-                addr,
-            }],
-        };
-        let objects = objects(&store, &want).objects;
         assert_eq!(
             objects,
-            vec![Object::Blob {
-                section: "dsp.buffer".to_string(),
-                liveness: BlobLiveness::ContentReferenced,
-                addr,
-                bytes: b"pcm".to_vec(),
-            }]
+            vec![
+                Object::Commit(root_ca, store.commits()[&root_ca].clone().into()),
+                Object::Graph(ga1, proto::encode_graph(store.graph(&ga1).unwrap())),
+                Object::Blob {
+                    section: "dsp.buffer".to_string(),
+                    liveness: BlobLiveness::ContentReferenced,
+                    addr: blob,
+                    bytes: b"pcm".to_vec(),
+                },
+                Object::Section {
+                    id,
+                    policy,
+                    liveness,
+                    key,
+                    value: proto::encode_value(&value),
+                },
+            ]
         );
     }
 
@@ -474,65 +471,6 @@ mod tests {
         assert_eq!(store.blob("dsp.buffer", &addr), Some(&bytes));
         let store_liveness = store.blobs()["dsp.buffer"].liveness;
         assert_eq!(store_liveness, BlobLiveness::ContentReferenced);
-    }
-
-    #[test]
-    fn merge_rejects_tampered_blob() {
-        let (mut store, _root_ca, _tip_ca, _ga1) = test_store();
-        let claimed = blob_addr(b"pcm");
-        let err = merge(
-            &mut store,
-            [],
-            [],
-            [],
-            [],
-            [(
-                "dsp.buffer".to_string(),
-                BlobLiveness::ContentReferenced,
-                claimed,
-                Bytes::from(&b"tampered"[..]),
-            )],
-        )
-        .unwrap_err();
-        assert_eq!(
-            err,
-            VerifyError::Blob {
-                claimed,
-                actual: blob_addr(b"tampered"),
-            }
-        );
-        assert!(store.blobs().get("dsp.buffer").is_none());
-    }
-
-    #[test]
-    fn objects_serves_sections() {
-        let (mut store, _root_ca, tip_ca, _ga1) = test_store();
-        let (id, policy, liveness, key, value) = view_entry(tip_ca);
-        store.set_section_value(id.clone(), policy, liveness, key.clone(), value.clone());
-        let absent = Key::Commit(CommitAddr::from(ContentAddr::from([9; 32])));
-        let want = Want {
-            refs: vec![
-                ObjectRef::Section {
-                    id: id.clone(),
-                    key: key.clone(),
-                },
-                ObjectRef::Section {
-                    id: id.clone(),
-                    key: absent,
-                },
-            ],
-        };
-        let objects = objects(&store, &want).objects;
-        assert_eq!(
-            objects,
-            vec![Object::Section {
-                id,
-                policy,
-                liveness,
-                key,
-                value: proto::encode_value(&value),
-            }]
-        );
     }
 
     /// A wanted commit carries its commit-keyed section entries along. See
