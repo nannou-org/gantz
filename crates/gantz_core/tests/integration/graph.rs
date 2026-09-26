@@ -905,87 +905,6 @@ fn test_graph_eval_should_panic() {
         .unwrap();
 }
 
-// Push evaluation with a subset of outputs enabled.
-#[test]
-#[ignore = "Originally attempted to get this working with push/pull eval \
-    configurations, but realising it would be cleaner to get general conditional \
-    eval working first."]
-fn test_graph_push_eval_subset() {
-    let mut g = petgraph::graph::DiGraph::new();
-
-    // Source node with two outputs, one for each value.
-    #[derive(Debug)]
-    struct Src(u32, u32);
-
-    impl Node for Src {
-        fn push_eval(&self, _ctx: node::MetaCtx) -> Vec<node::EvalConf> {
-            vec![
-                // Push only the first output.
-                node::EvalConf::Set([true, false].try_into().unwrap()),
-                // Push only the second output.
-                node::EvalConf::Set([false, true].try_into().unwrap()),
-                // Push both outputs.
-                node::EvalConf::Set([true, true].try_into().unwrap()),
-            ]
-        }
-
-        fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
-            2
-        }
-
-        fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
-            let Src(a, b) = *self;
-            let outputs = ctx.outputs();
-            let expr = match (outputs.get(0).unwrap(), outputs.get(1).unwrap()) {
-                // Only return left if only left is connected.
-                (true, false) => format!("(begin {a})"),
-                // Only return right if only right is connected.
-                (false, true) => format!("(begin {b})"),
-                // Otherwise return both in a list.
-                _ => format!("(list {a} {b})"),
-            };
-            node::parse_expr(&expr)
-        }
-    }
-
-    let source = Src(6, 7);
-    let store_a = node::expr("(begin (set! state $x) state)").unwrap();
-    let store_b = node::expr("(begin (set! state $x) state)").unwrap();
-
-    let source = g.add_node(Box::new(source) as Box<dyn DebugNode>);
-    let store_a = g.add_node(Box::new(store_a) as Box<_>);
-    let store_b = g.add_node(Box::new(store_b) as Box<_>);
-
-    g.add_edge(source, store_a, Edge::from((0, 0)));
-    g.add_edge(source, store_b, Edge::from((1, 0)));
-
-    let eps = push_pull_entrypoints(&no_lookup, &g);
-    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
-
-    let mut vm = Engine::new_base();
-
-    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
-
-    for f in module {
-        vm.run(f.to_pretty(100)).unwrap();
-    }
-
-    let ep = &eps[0]; // first push eval conf: only first output
-    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
-        .unwrap();
-
-    let store_a_val = node::state::extract::<i32>(&vm, &[store_a.index()]).unwrap();
-    let store_b_val = node::state::extract::<i32>(&vm, &[store_b.index()]).unwrap();
-
-    // The first output was enabled for push, so its state is 6.
-    assert_eq!(store_a_val, Some(6));
-
-    // The second output was not enabled for push, so it was never evaluated
-    // and its state is None.
-    assert_eq!(store_b_val, None);
-}
-
 // A multi-source entrypoint combines two push nodes into one eval fn.
 //
 //    ----------   ----------
@@ -1048,30 +967,6 @@ fn test_graph_multi_source_push() {
         .expect("num_b state was None");
     assert_eq!(a, 42);
     assert_eq!(b, 7);
-}
-
-// `entrypoint::push` must produce the same EntrypointId as
-// `push_pull_entrypoints` for the same node.
-#[test]
-fn test_entrypoint_naming_consistency() {
-    let mut g = petgraph::graph::DiGraph::new();
-    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
-    let int = g.add_node(Box::new(node_int(1)) as Box<_>);
-    g.add_edge(push, int, Edge::from((0, 0)));
-
-    let ctx = node::MetaCtx::new(&no_lookup);
-
-    let eps = push_pull_entrypoints(&no_lookup, &g);
-    let manual = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
-
-    // The default planner produces a singleton push entrypoint for the push
-    // node. Its id must match a manually constructed one.
-    let default_ep = eps
-        .iter()
-        .find(|ep| ep.0.iter().any(|s| s.path == vec![push.index()]))
-        .expect("push_pull_entrypoints should contain push node");
-    assert_eq!(default_ep.id(), manual.id());
-    assert_eq!(entry_fn_name(&default_ep.id()), entry_fn_name(&manual.id()));
 }
 
 // A 2-output expr node returns `(list 6 7)`. Each output is wired to a
@@ -1509,28 +1404,40 @@ fn test_graph_multi_edge_in_branch_arm() {
     assert_eq!(val, 8);
 }
 
-/// An Expr node with an optional `$?var` input.
+/// An Expr node with an optional `$?var` input, unconnected and connected.
 ///
 /// ```text
-///   push ----> add_opt ----> store
+///   push --------------------> add_unconnected ----> store_unconnected
+///     |----------------------> add_connected ------> store_connected
+///     \----> three ----------/
 /// ```
 ///
-/// `add_opt` uses `(if (Some? $?b) (Some->value $?b) 0)` to default to 0
-/// when `$?b` is unconnected. When `$?b` is unconnected, `(None)` is
-/// substituted. `(Some? (None))` is false, so the result is `5 + 0 = 5`.
+/// Each add uses `(if (Some? $?b) (Some->value $?b) 0)` to default to 0 when
+/// `$?b` is unconnected. When `$?b` is unconnected, `(None)` is substituted.
+/// `(Some? (None))` is false, so the result is `5 + 0 = 5`. When `$?b` is
+/// connected, `(Some 3)` is substituted. `(Some? (Some 3))` is true, so the
+/// result is `5 + 3 = 8`.
 #[test]
-fn test_graph_optional_input_unconnected() {
+fn test_graph_optional_input() {
+    let add_opt = || node::expr("(+ $a (if (Some? $?b) (Some->value $?b) 0))").unwrap();
+
     let mut g = petgraph::graph::DiGraph::new();
 
     let push = g.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
-    let add_opt = g.add_node(Box::new(
-        node::expr("(+ $a (if (Some? $?b) (Some->value $?b) 0))").unwrap(),
-    ) as Box<_>);
-    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    let add_unconnected = g.add_node(Box::new(add_opt()) as Box<_>);
+    let store_unconnected = g.add_node(Box::new(node_number()) as Box<_>);
+    let three = g.add_node(Box::new(node_int(3)) as Box<_>);
+    let add_connected = g.add_node(Box::new(add_opt()) as Box<_>);
+    let store_connected = g.add_node(Box::new(node_number()) as Box<_>);
 
-    // Only connect $a at input 0. $?b at input 1 stays unconnected.
-    g.add_edge(push, add_opt, Edge::from((0, 0)));
-    g.add_edge(add_opt, store, Edge::from((0, 0)));
+    // Only connect $a at input 0 of `add_unconnected`. $?b at input 1 stays
+    // unconnected.
+    g.add_edge(push, add_unconnected, Edge::from((0, 0)));
+    g.add_edge(add_unconnected, store_unconnected, Edge::from((0, 0)));
+    g.add_edge(push, add_connected, Edge::from((0, 0)));
+    g.add_edge(push, three, Edge::from((0, 0)));
+    g.add_edge(three, add_connected, Edge::from((0, 1)));
+    g.add_edge(add_connected, store_connected, Edge::from((0, 0)));
 
     let ctx = node::MetaCtx::new(&no_lookup);
     let eps = push_pull_entrypoints(&no_lookup, &g);
@@ -1548,57 +1455,16 @@ fn test_graph_optional_input_unconnected() {
         .unwrap();
 
     // 5 + 0 = 5.
-    let val = node::state::extract::<u32>(&vm, &[store.index()])
-        .expect("failed to extract")
-        .expect("was None");
-    assert_eq!(val, 5);
-}
-
-/// An Expr node with an optional `$?var` input that is connected.
-///
-/// ```text
-///   push ----> three ----> add_opt ----> store
-///                    \--/
-/// ```
-///
-/// When `$?b` is connected, `(Some 3)` is substituted. `(Some? (Some 3))`
-/// is true, so the result is `5 + 3 = 8`.
-#[test]
-fn test_graph_optional_input_connected() {
-    let mut g = petgraph::graph::DiGraph::new();
-
-    let push = g.add_node(Box::new(node_int(5).with_push_eval()) as Box<dyn DebugNode>);
-    let three = g.add_node(Box::new(node_int(3)) as Box<_>);
-    let add_opt = g.add_node(Box::new(
-        node::expr("(+ $a (if (Some? $?b) (Some->value $?b) 0))").unwrap(),
-    ) as Box<_>);
-    let store = g.add_node(Box::new(node_number()) as Box<_>);
-
-    g.add_edge(push, add_opt, Edge::from((0, 0)));
-    g.add_edge(push, three, Edge::from((0, 0)));
-    g.add_edge(three, add_opt, Edge::from((0, 1)));
-    g.add_edge(add_opt, store, Edge::from((0, 0)));
-
-    let ctx = node::MetaCtx::new(&no_lookup);
-    let eps = push_pull_entrypoints(&no_lookup, &g);
-    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
-
-    let mut vm = Engine::new_base();
-    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
-    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
-    for f in &module {
-        vm.run(format!("{f}")).unwrap();
-    }
-
-    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
-    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
-        .unwrap();
+    let val = node::state::extract::<u32>(&vm, &[store_unconnected.index()])
+        .expect("unconnected: failed to extract")
+        .expect("unconnected: was None");
+    assert_eq!(val, 5, "unconnected $?b");
 
     // 5 + 3 = 8.
-    let val = node::state::extract::<u32>(&vm, &[store.index()])
-        .expect("failed to extract")
-        .expect("was None");
-    assert_eq!(val, 8);
+    let val = node::state::extract::<u32>(&vm, &[store_connected.index()])
+        .expect("connected: failed to extract")
+        .expect("connected: was None");
+    assert_eq!(val, 8, "connected $?b");
 }
 
 /// A three-way branch with reconvergence. The other branch tests use 2-arm
