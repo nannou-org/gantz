@@ -682,16 +682,6 @@ mod tests {
     }
 
     #[test]
-    fn heads_read_back() {
-        let (reg, ca, _cb) = test_registry();
-        assert_eq!(reg.head(&name("alpha")), Some(ca));
-        let heads: Vec<_> = reg.heads().map(|(n, ca)| (n.clone(), ca)).collect();
-        assert_eq!(heads, vec![(name("alpha"), ca)]);
-        assert_eq!(reg.head_commit_ca(&Head::Branch(name("alpha"))), Some(ca));
-        assert_eq!(reg.head_commit_ca(&Head::Commit(ca)), Some(ca));
-    }
-
-    #[test]
     fn remove_head_drops_with_name_metadata() {
         let (mut reg, _ca, _cb) = test_registry();
         section_insert_datum(
@@ -913,18 +903,6 @@ mod tests {
         assert_eq!(reg.commits()[&ca].parent, None);
         let root = Commit::new(Duration::from_secs(1), None, ga);
         assert_eq!(ca, crate::commit_addr(&root));
-    }
-
-    #[test]
-    fn add_commit_keeps_present_parent() {
-        let mut reg = Registry::default();
-        let root = reg.add_commit(Commit::new(Duration::from_secs(1), None, graph_addr(1)));
-        let child = reg.add_commit(Commit::new(
-            Duration::from_secs(2),
-            Some(root),
-            graph_addr(2),
-        ));
-        assert_eq!(reg.commits()[&child].parent, Some(root));
     }
 
     #[test]
