@@ -2122,6 +2122,7 @@ fn demos_evaluate() {
         "demo-gui",
         "demo-logic",
         "demo-list",
+        "demo-list-fn",
         "demo-predicate",
     ];
     for demo in demos {
@@ -2162,8 +2163,11 @@ fn demos_evaluate() {
 }
 
 /// The `gantz/list` base nodes give the expected results through `ref`s.
-/// Counts and bounds are floats, as a `number` node emits them. Each
-/// `assert!` expr checks one output, so a wrong result errors the push.
+/// Counts and bounds are floats, as a `number` node emits them. The
+/// function inputs are both `fn-ref` lambdas over base graphs and `expr`
+/// lambdas. `fold` over `sub` pins the `(f acc item)` argument order.
+/// Each `assert!` expr checks one output, so a wrong result errors the
+/// push.
 #[test]
 fn base_list_nodes_evaluate() {
     use std::time::Duration;
@@ -2186,7 +2190,39 @@ fn base_list_nodes_evaluate() {
   (lst-ok (expr (assert! (equal? $x 4))))
   (zp-ok (expr (assert! (equal? $x '((2 2) (3 3) (4 4))))))
   (cc-ok (expr (assert! (equal? $x '(2 3 4 2)))))
+  (xs (expr (list 3 1 2)))
+  (fneg (fn-ref neg))
+  (fsub (fn-ref sub))
+  (flt (fn-ref lt))
+  (odd (expr (lambda (v) (odd? v))))
+  (dup (expr (lambda (v) (list v v))))
+  (zero (expr 0))
+  (mp (ref map))
+  (fl (ref filter))
+  (fd (ref fold))
+  (fm (ref flat-map))
+  (an (ref any))
+  (al (ref all))
+  (fi (ref find))
+  (st (ref sort))
+  (mp-ok (expr (assert! (equal? $x '(-3 -1 -2)))))
+  (fl-ok (expr (assert! (equal? $x '(3 1)))))
+  (fd-ok (expr (assert! (equal? $x -6))))
+  (fm-ok (expr (assert! (equal? $x '(3 3 1 1 2 2)))))
+  (an-ok (expr (assert! (equal? $x #t))))
+  (al-ok (expr (assert! (equal? $x #f))))
+  (fi-ok (expr (assert! (equal? $x 3))))
+  (st-ok (expr (assert! (equal? $x '(1 2 3)))))
   (-> b start) (-> b end) (-> b n)
+  (-> b xs) (-> b fneg) (-> b fsub) (-> b flt) (-> b odd) (-> b dup) (-> b zero)
+  (-> fneg mp) (-> xs (mp 1)) (-> mp mp-ok)
+  (-> odd fl) (-> xs (fl 1)) (-> fl fl-ok)
+  (-> fsub fd) (-> zero (fd 1)) (-> xs (fd 2)) (-> fd fd-ok)
+  (-> dup fm) (-> xs (fm 1)) (-> fm fm-ok)
+  (-> odd an) (-> xs (an 1)) (-> an an-ok)
+  (-> odd al) (-> xs (al 1)) (-> al al-ok)
+  (-> odd fi) (-> xs (fi 1)) (-> fi fi-ok)
+  (-> flt st) (-> xs (st 1)) (-> st st-ok)
   (-> start rng) (-> end (rng 1)) (-> rng rng-ok)
   (-> rng tk) (-> n (tk 1)) (-> tk tk-ok)
   (-> rng dr) (-> n (dr 1)) (-> dr dr-ok)

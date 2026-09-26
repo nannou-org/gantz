@@ -14,11 +14,29 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph all
+  (expr0 (expr (list/all $f $list) #:require "gantz/list"))
+  (inlet1 (inlet "function" "item predicate"))
+  (inlet2 (inlet "list" "input list"))
+  (outlet3 (outlet "boolean" "true if every item satisfies the predicate"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (graph and
   (expr0 (expr (if $l $r #f)))
   (inlet1 (inlet "boolean" "left operand"))
   (inlet2 (inlet "boolean" "right operand"))
   (outlet3 (outlet "boolean" "true if both are truthy"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph any
+  (expr0 (expr (list/any $f $list) #:require "gantz/list"))
+  (inlet1 (inlet "function" "item predicate"))
+  (inlet2 (inlet "list" "input list"))
+  (outlet3 (outlet "boolean" "true if any item satisfies the predicate"))
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
@@ -103,7 +121,16 @@
   (ref51 (ref drop #:sync))
   (ref52 (ref last #:sync))
   (ref53 (ref zip #:sync))
-  (ref54 (ref concat #:sync)))
+  (ref54 (ref concat #:sync))
+  (comment55 (comment "List functions" 110 15))
+  (ref56 (ref map #:sync))
+  (ref57 (ref filter #:sync))
+  (ref58 (ref fold #:sync))
+  (ref59 (ref flat-map #:sync))
+  (ref60 (ref any #:sync))
+  (ref61 (ref all #:sync))
+  (ref62 (ref find #:sync))
+  (ref63 (ref sort #:sync)))
 
 (graph demo-arithmetic
   (comment0 (comment "Arithmetic operations.\nChange `a` and `b` below.\nPress `!` to evaluate." 150 45))
@@ -451,6 +478,71 @@
   (-> expr51 ref54)
   (-> ref54 inspect55))
 
+(graph demo-list-fn
+  (comment0 (comment "Functions over lists. Bang to run every row.\nA `fn` node turns a graph into a function value.\nAn `expr` can make one with `lambda`." 300 45))
+  (bang1 bang)
+  (expr2 (expr (list 3 1 4 1 5 9 2 6)))
+  (fnref3 (fn-ref neg #:sync))
+  (ref4 (ref map #:sync))
+  (inspect5 inspect)
+  (comment6 (comment "map: negate each item with `fn neg`." 150 30))
+  (expr7 (expr (lambda (x) (> x 2))))
+  (ref8 (ref filter #:sync))
+  (inspect9 inspect)
+  (comment10 (comment "filter: keep the items greater than 2." 150 30))
+  (fnref11 (fn-ref add #:sync))
+  (expr12 (expr 0))
+  (ref13 (ref fold #:sync))
+  (inspect14 inspect)
+  (comment15 (comment "fold: sum the items with `fn add`, from 0." 150 30))
+  (fnref16 (fn-ref lt #:sync))
+  (ref17 (ref sort #:sync))
+  (inspect18 inspect)
+  (comment19 (comment "sort: ascending with `fn lt`." 110 30))
+  (ref20 (ref any #:sync))
+  (inspect21 inspect)
+  (ref22 (ref all #:sync))
+  (inspect23 inspect)
+  (ref24 (ref find #:sync))
+  (inspect25 inspect)
+  (comment26 (comment "any, all, find: test the items with the same predicate as filter." 250 30))
+  (expr27 (expr (lambda (x) (list x x))))
+  (ref28 (ref flat-map #:sync))
+  (inspect29 inspect)
+  (comment30 (comment "flat-map: map each item to a list and join the lists." 150 30))
+  (-> bang1 expr2)
+  (-> bang1 fnref3)
+  (-> bang1 expr7)
+  (-> bang1 fnref11)
+  (-> bang1 expr12)
+  (-> bang1 fnref16)
+  (-> bang1 expr27)
+  (-> fnref3 ref4)
+  (-> expr2 (ref4 1))
+  (-> ref4 inspect5)
+  (-> expr7 ref8)
+  (-> expr2 (ref8 1))
+  (-> ref8 inspect9)
+  (-> fnref11 ref13)
+  (-> expr12 (ref13 1))
+  (-> expr2 (ref13 2))
+  (-> ref13 inspect14)
+  (-> fnref16 ref17)
+  (-> expr2 (ref17 1))
+  (-> ref17 inspect18)
+  (-> expr7 ref20)
+  (-> expr2 (ref20 1))
+  (-> ref20 inspect21)
+  (-> expr7 ref22)
+  (-> expr2 (ref22 1))
+  (-> ref22 inspect23)
+  (-> expr7 ref24)
+  (-> expr2 (ref24 1))
+  (-> ref24 inspect25)
+  (-> expr27 ref28)
+  (-> expr2 (ref28 1))
+  (-> ref28 inspect29))
+
 (graph demo-logic
   (comment0 (comment "p = a<b, q = a>b. Bang to evaluate." 152 30))
   (bang1 bang)
@@ -587,12 +679,50 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph filter
+  (expr0 (expr (list/filter $f $list) #:require "gantz/list"))
+  (inlet1 (inlet "function" "item predicate"))
+  (inlet2 (inlet "list" "input list"))
+  (outlet3 (outlet "list" "items that satisfy the predicate"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph find
+  (expr0 (expr (list/find $f $list) #:require "gantz/list"))
+  (inlet1 (inlet "function" "item predicate"))
+  (inlet2 (inlet "list" "input list"))
+  (outlet3 (outlet "value" "first item that satisfies the predicate, or false"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (graph first
   (expr0 (expr (car $list)))
   (inlet1 (inlet "list" "input list"))
   (outlet2 (outlet "value" "first element"))
   (-> inlet1 expr0)
   (-> expr0 outlet2))
+
+(graph flat-map
+  (expr0 (expr (list/flat-map $f $list) #:require "gantz/list"))
+  (inlet1 (inlet "function" "maps an item to a list"))
+  (inlet2 (inlet "list" "input list"))
+  (outlet3 (outlet "list" "mapped lists joined in order"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph fold
+  (expr0 (expr (list/fold $f $init $list) #:require "gantz/list"))
+  (inlet1 (inlet "function" "combines, called as (f acc item)"))
+  (inlet2 (inlet "value" "initial accumulator"))
+  (inlet3 (inlet "list" "input list"))
+  (outlet4 (outlet "value" "final accumulator"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
 
 (graph gt
   (expr0 (expr (> $l $r)))
@@ -656,6 +786,15 @@
   (inlet1 (inlet "number" "left operand"))
   (inlet2 (inlet "number" "right operand"))
   (outlet3 (outlet "boolean" "true if left <= right"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph map
+  (expr0 (expr (list/map $f $list) #:require "gantz/list"))
+  (inlet1 (inlet "function" "item mapping"))
+  (inlet2 (inlet "list" "input list"))
+  (outlet3 (outlet "list" "list of mapped items"))
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
@@ -753,6 +892,15 @@
   (-> inlet2 (expr0 1))
   (-> inlet3 (expr0 2))
   (-> expr0 outlet4))
+
+(graph sort
+  (expr0 (expr (list/sort $f $list) #:require "gantz/list"))
+  (inlet1 (inlet "function" "less-than comparator"))
+  (inlet2 (inlet "list" "input list"))
+  (outlet3 (outlet "list" "sorted items, equal items kept in order"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
 
 (graph string?
   (expr0 (expr (string? $x)))
@@ -949,7 +1097,9 @@
 (descriptions
   (abs "Absolute value of a number")
   (add "Add two numbers")
+  (all "Whether every item of a list satisfies a predicate")
   (and "Logical AND of two booleans")
+  (any "Whether any item of a list satisfies a predicate")
   (append "Concatenate two lists")
   (concat "Join a list of lists into one list")
   (cons "Prepend an item to a list")
@@ -959,13 +1109,18 @@
   (demo-gui "Demo: declare a graph's GUI with a gui marker")
   (demo-gui-compose "Demo: compose GUIs across graph instances")
   (demo-list "Demo: list operations")
+  (demo-list-fn "Demo: functions over lists")
   (demo-logic "Demo: boolean logic")
   (demo-predicate "Demo: type predicates")
   (div "Divide one number by another")
   (drop "A list without its first n items")
   (empty? "Whether a list is empty")
   (eq "Whether two values are equal")
+  (filter "The items of a list that satisfy a predicate")
+  (find "The first item of a list that satisfies a predicate")
   (first "The first item of a list")
+  (flat-map "Map each item of a list to a list and join the lists")
+  (fold "Combine the items of a list into one value")
   (gt "Whether the left is greater than the right")
   (gte "Whether the left is greater than or equal to the right")
   (last "The last item of a list")
@@ -974,6 +1129,7 @@
   (list? "Whether a value is a list")
   (lt "Whether the left is less than the right")
   (lte "Whether the left is less than or equal to the right")
+  (map "Apply a function to each item of a list")
   (mod "Remainder after division")
   (mul "Multiply two numbers")
   (neg "Negate a number")
@@ -985,6 +1141,7 @@
   (rest "A list without its first item")
   (reverse "Reverse a list")
   (select "Choose between two values by a condition")
+  (sort "Sort a list with a less-than function")
   (string? "Whether a value is a string")
   (sub "Subtract one number from another")
   (take "The first n items of a list")
@@ -1017,11 +1174,25 @@
   (outlet3 -39.625 106.59375)
   (camera 26.5 26.5 1))
 
+(layout all
+  (expr0 -66 13.40625)
+  (inlet1 -66 -75.78125)
+  (inlet2 33.6 -75.78125)
+  (outlet3 -66 106.59375)
+  (camera 26.5 26.5 1))
+
 (layout and
   (expr0 -39.625 13.40625)
   (inlet1 -39.625 -75.78125)
   (inlet2 60.002007 -75.78125)
   (outlet3 -39.625 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout any
+  (expr0 -66 13.40625)
+  (inlet1 -66 -75.78125)
+  (inlet2 33.6 -75.78125)
+  (outlet3 -66 106.59375)
   (camera 26.5 26.5 1))
 
 (layout append
@@ -1051,6 +1222,7 @@
   (comment21 534 -32)
   (comment30 714 -32)
   (comment34 894 -32)
+  (comment55 1074 -32)
   (comment9 174 -32)
   (ref10 180 30)
   (ref11 180 90)
@@ -1097,10 +1269,18 @@
   (ref52 540 690)
   (ref53 540 750)
   (ref54 540 810)
+  (ref56 1080 30)
+  (ref57 1080 90)
+  (ref58 1080 150)
+  (ref59 1080 210)
   (ref6 0 270)
+  (ref60 1080 270)
+  (ref61 1080 330)
+  (ref62 1080 390)
+  (ref63 1080 450)
   (ref7 0 330)
   (ref8 0 390)
-  (camera 428.4524 151.87439 1))
+  (camera 540 151.87439 1))
 
 (layout demo-arithmetic
   (bang1 445 -303)
@@ -1306,6 +1486,40 @@
   (ref7 47 453)
   (camera 740 250 1))
 
+(layout demo-list-fn
+  (bang1 0 -60)
+  (comment0 60 -130)
+  (comment10 200 180)
+  (comment15 420 180)
+  (comment19 600 180)
+  (comment26 720 180)
+  (comment30 1060 180)
+  (comment6 0 180)
+  (expr12 520 0)
+  (expr2 0 0)
+  (expr27 1060 0)
+  (expr7 220 0)
+  (fnref11 420 0)
+  (fnref16 620 0)
+  (fnref3 120 0)
+  (inspect14 420 130)
+  (inspect18 600 130)
+  (inspect21 720 130)
+  (inspect23 810 130)
+  (inspect25 900 130)
+  (inspect29 1060 130)
+  (inspect5 0 130)
+  (inspect9 200 130)
+  (ref13 420 80)
+  (ref17 600 80)
+  (ref20 720 80)
+  (ref22 810 80)
+  (ref24 900 80)
+  (ref28 1060 80)
+  (ref4 0 80)
+  (ref8 200 80)
+  (camera 540 40 1))
+
 (layout demo-logic
   (bang1 -36 -220)
   (bang25 268 -184)
@@ -1393,11 +1607,40 @@
   (outlet3 -39.625 106.59375)
   (camera 26.5 26.5 1))
 
+(layout filter
+  (expr0 -77 13.40625)
+  (inlet1 -77 -75.78125)
+  (inlet2 22.6 -75.78125)
+  (outlet3 -77 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout find
+  (expr0 -70 13.40625)
+  (inlet1 -70 -75.78125)
+  (inlet2 29.6 -75.78125)
+  (outlet3 -70 106.59375)
+  (camera 26.5 26.5 1))
+
 (layout first
   (expr0 -27.21775 13.40625)
   (inlet1 -27.21775 -75.78125)
   (outlet2 -27.21775 106.59375)
   (camera 26.500002 26.5 1))
+
+(layout flat-map
+  (expr0 -84 13.40625)
+  (inlet1 -84 -75.78125)
+  (inlet2 15.6 -75.78125)
+  (outlet3 -84 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout fold
+  (expr0 -91 13.40625)
+  (inlet1 -91 -75.78125)
+  (inlet2 8.6 -75.78125)
+  (inlet3 108.2 -75.78125)
+  (outlet4 -91 106.59375)
+  (camera 26.5 26.5 1))
 
 (layout gt
   (expr0 -39.625 13.40625)
@@ -1450,6 +1693,13 @@
   (inlet1 -39.625 -75.78125)
   (inlet2 60.002007 -75.78125)
   (outlet3 -39.625 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout map
+  (expr0 -66 13.40625)
+  (inlet1 -66 -75.78125)
+  (inlet2 33.6 -75.78125)
+  (outlet3 -66 106.59375)
   (camera 26.5 26.5 1))
 
 (layout mod
@@ -1524,6 +1774,13 @@
   (inlet3 109.815506 -75.78125)
   (outlet4 -89.4385 106.59375)
   (camera 26.499996 26.499996 1))
+
+(layout sort
+  (expr0 -70 13.40625)
+  (inlet1 -70 -75.78125)
+  (inlet2 29.6 -75.78125)
+  (outlet3 -70 106.59375)
+  (camera 26.5 26.5 1))
 
 (layout string?
   (expr0 -31.21775 13.40625)
@@ -1670,7 +1927,11 @@
 
 (demo add "demo-arithmetic")
 
+(demo all "demo-list-fn")
+
 (demo and "demo-logic")
+
+(demo any "demo-list-fn")
 
 (demo append "demo-list")
 
@@ -1686,7 +1947,15 @@
 
 (demo eq "demo-comparison")
 
+(demo filter "demo-list-fn")
+
+(demo find "demo-list-fn")
+
 (demo first "demo-list")
+
+(demo flat-map "demo-list-fn")
+
+(demo fold "demo-list-fn")
 
 (demo gt "demo-comparison")
 
@@ -1703,6 +1972,8 @@
 (demo lt "demo-comparison")
 
 (demo lte "demo-comparison")
+
+(demo map "demo-list-fn")
 
 (demo mul "demo-arithmetic")
 
@@ -1723,6 +1994,8 @@
 (demo reverse "demo-list")
 
 (demo select "demo-logic")
+
+(demo sort "demo-list-fn")
 
 (demo string? "demo-predicate")
 
