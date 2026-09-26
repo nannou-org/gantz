@@ -13,12 +13,19 @@ default = ["egui"]
 # The egui-flavoured impls (`NodeUi`, the DSP settings tab, the reference
 # inspector's `inline` toggle). Without it the crate is headless: DSP nodes,
 # the synthdef compiler and the domain config, with no egui in the tree.
-egui = ["dep:egui", "dep:egui_extras", "dep:egui_graph", "dep:gantz_egui"]
+egui = [
+    "dep:egui",
+    "dep:egui_extras",
+    "dep:egui_graph",
+    "dep:egui_plot",
+    "dep:gantz_egui",
+]
 
 [dependencies]
 egui = { workspace = true, optional = true }
 egui_extras = { workspace = true, optional = true }
 egui_graph = { workspace = true, optional = true }
+egui_plot = { workspace = true, optional = true }
 gantz_ca.workspace = true
 gantz_core.workspace = true
 gantz_egui = { workspace = true, optional = true }

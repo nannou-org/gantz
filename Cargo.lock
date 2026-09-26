@@ -4078,6 +4078,7 @@ dependencies = [
  "egui",
  "egui_extras",
  "egui_graph",
+ "egui_plot",
  "gantz_ca",
  "gantz_core",
  "gantz_egui",

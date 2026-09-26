@@ -9,7 +9,8 @@
 //! shape. A `~sample` with an asset writes as a generic node, which keeps its
 //! address. A bare `~envgen` is an ADSR. The form
 //! `(~envgen #:init l #:segs ((level time [shape])...) #:release k #:rate kr
-//! #:width w #:height h)` carries any other envelope. A segment shape is a
+//! #:width w #:height h #:grid #:axes)` carries any other envelope or look.
+//! A segment shape is a
 //! name such as `exp`, or a number for a curve.
 //! Every [`crate::units`] descriptor-table keyword reads and writes the same
 //! way.
@@ -362,7 +363,8 @@ fn write_buffer(node: &Datum) -> String {
 }
 
 /// Read a `(~envgen [#:init l] [#:segs (seg...)] [#:release k] [#:rate kr]
-/// [#:width w] [#:height h])` form into an `Envgen` node datum.
+/// [#:width w] [#:height h] [#:grid] [#:axes])` form into an `Envgen` node
+/// datum.
 ///
 /// A segment is `(level time [shape])`. The shape is a name such as `lin` or
 /// `exp`, see [`Shape::name`], or a number for a [`Shape::Curve`] segment
@@ -408,6 +410,8 @@ fn envgen_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
         height = h.clamp(0, i64::from(u16::MAX)) as u16;
     }
     node.set_size([width, height]);
+    node.set_grid(args.has_flag("grid"));
+    node.set_axes(args.has_flag("axes"));
     envgen_datum(&node)
 }
 
@@ -459,6 +463,12 @@ fn write_envgen(node: &Datum) -> Option<String> {
     }
     if height != dh {
         parts.push(format!("#:height {height}"));
+    }
+    if node.grid() {
+        parts.push("#:grid".to_string());
+    }
+    if node.axes() {
+        parts.push("#:axes".to_string());
     }
     Some(write_form("~envgen", parts))
 }
@@ -824,7 +834,7 @@ mod tests {
         assert_eq!(s.write_spec("Envgen", &bare).as_deref(), Some("~envgen"));
         // Segments with the default shape, a curve and a named shape.
         let form = "(~envgen #:init 50 #:segs ((230 0.001) (50 0.15 -8) (0 1 exp)) \
-                    #:release 2 #:rate kr #:width 240)";
+                    #:release 2 #:rate kr #:width 240 #:grid #:axes)";
         let d = read_spec(form).expect("form");
         let node = envgen(&d);
         let env = node.envelope();
@@ -835,6 +845,7 @@ mod tests {
         assert_eq!(env.release, Some(2));
         assert_eq!(node.rate(), NodeRate::Control);
         assert_eq!(node.size(), [240, Envgen::DEFAULT_HEIGHT]);
+        assert!(node.grid() && node.axes());
         assert_eq!(s.write_spec("Envgen", &d).as_deref(), Some(form));
         // The default segments without their release point need `#:segs`.
         let mut no_release = Envelope::default();

@@ -16,7 +16,7 @@ use crate::param::{control_inputs_expr, param_name, plyphon_param, sync_params_s
 /// A rising gate starts the envelope from its current level. A held gate
 /// sustains at the release point, if there is one. A falling gate then
 /// continues from the release point. The output is
-/// `level * scale + bias`, and `timescale` scales every segment time.
+/// `level * scale + bias`, and `tscale` scales every segment time.
 ///
 /// The envelope is node data, so it is saved and an edit is an undo step.
 /// Each segment value is also a synth param. An edit to a level, time,
@@ -37,6 +37,10 @@ pub struct Envgen {
     width: u16,
     #[serde(default = "default_height", skip_serializing_if = "is_default_height")]
     height: u16,
+    #[serde(default, skip_serializing_if = "is_default")]
+    grid: bool,
+    #[serde(default, skip_serializing_if = "is_default")]
+    axes: bool,
 }
 
 /// A socket of the `~envgen` node, a hybrid param.
@@ -77,7 +81,7 @@ pub const SOCKETS: [Socket; 4] = [
         doc: "adds to the scaled level",
     },
     Socket {
-        name: "timescale",
+        name: "tscale",
         default: 1.0,
         doc: "multiplies every segment time",
     },
@@ -100,6 +104,8 @@ impl Envgen {
             rate: NodeRate::default(),
             width: Self::DEFAULT_WIDTH,
             height: Self::DEFAULT_HEIGHT,
+            grid: false,
+            axes: false,
         }
     }
 
@@ -138,6 +144,26 @@ impl Envgen {
     pub fn set_size(&mut self, [width, height]: [u16; 2]) {
         self.width = width;
         self.height = height;
+    }
+
+    /// Whether the body plot draws a grid.
+    pub fn grid(&self) -> bool {
+        self.grid
+    }
+
+    /// Set whether the body plot draws a grid.
+    pub fn set_grid(&mut self, grid: bool) {
+        self.grid = grid;
+    }
+
+    /// Whether the body plot draws axes with time and level labels.
+    pub fn axes(&self) -> bool {
+        self.axes
+    }
+
+    /// Set whether the body plot draws axes.
+    pub fn set_axes(&mut self, axes: bool) {
+        self.axes = axes;
     }
 }
 
