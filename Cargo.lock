@@ -6803,9 +6803,9 @@ dependencies = [
 
 [[package]]
 name = "plyphon"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8085c589735e1a52344cf679d3fdad370175fa4fdb5fe473e32e452dd3845b58"
+checksum = "ce582a7d8133bacccef0edc6767d5af83bcd23375eb1959bd86868a3f45db544"
 dependencies = [
  "hashbrown 0.17.1",
  "plyphon-dsp",
@@ -6818,9 +6818,9 @@ dependencies = [
 
 [[package]]
 name = "plyphon-dsp"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2102551fce13b41b8a14ffc3042cb7e58be3632e8508bdba0ab4441ac91afe17"
+checksum = "51681fd8afbc15e071e09cb37586fd3521310469991145abac09ba9ac39f1b76"
 dependencies = [
  "bytemuck",
  "libm",
@@ -6830,9 +6830,9 @@ dependencies = [
 
 [[package]]
 name = "plyphon-rt"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1825e58ab6fd6fbfd27d2422331b1c29f2025491dc572f019f0c97ec74f87ddf"
+checksum = "8da530e73c97682b39410fa6c0be721bd99b3d08cb4145236cdbda237e163301"
 dependencies = [
  "bytemuck",
  "hashbrown 0.17.1",
@@ -6844,9 +6844,9 @@ dependencies = [
 
 [[package]]
 name = "plyphon-unit"
-version = "0.1.1"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c33037f71f01c5ce639ef4baa4219c1a6ebe57a2ea367285b0c12f6ede6cb615"
+checksum = "69f5859c719dd880ddfc2e35f18db412fc98186b320698bb7623b0fbd7241148"
 dependencies = [
  "bytemuck",
  "hashbrown 0.17.1",
