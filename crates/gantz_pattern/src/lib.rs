@@ -30,10 +30,7 @@ use gantz_core::vm::SteelModule;
 /// Register via [`gantz_core::vm::new_engine`] or the app's steel-module
 /// collection, then `(require "gantz/pattern")` to use. All provided
 /// names carry the `pat/` prefix.
-pub const MODULE: SteelModule = SteelModule {
-    name: "gantz/pattern",
-    src: include_str!("pattern.scm"),
-};
+pub const MODULE: SteelModule = SteelModule::new("gantz/pattern", include_str!("pattern.scm"));
 
 /// The Steel modules provided by this domain.
 pub fn modules() -> &'static [SteelModule] {

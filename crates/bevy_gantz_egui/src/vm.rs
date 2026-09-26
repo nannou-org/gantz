@@ -204,10 +204,10 @@ mod tests {
         app.world_mut()
             .get_resource_or_init::<SteelModules>()
             .0
-            .push(gantz_core::vm::SteelModule {
-                name: "test/module",
-                src: "(provide nothing) (define nothing '())",
-            });
+            .push(gantz_core::vm::SteelModule::new(
+                "test/module",
+                "(provide nothing) (define nothing '())",
+            ));
         app.add_plugins(bevy_gantz::GantzPlugin);
         let modules = app.world().resource::<SteelModules>();
         assert_eq!(modules.0.len(), 1, "the pre-pushed module must survive");

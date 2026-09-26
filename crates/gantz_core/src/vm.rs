@@ -12,7 +12,7 @@ use petgraph::visit::{Data, IntoEdgesDirected, IntoNodeReferences, NodeIndexable
 use steel::{
     SteelErr, SteelVal,
     parser::{ast::ExprKind, span::Span},
-    steel_vm::engine::Engine,
+    steel_vm::{builtin::BuiltInModule, engine::Engine},
 };
 
 /// A compiled gantz module.
@@ -57,21 +57,45 @@ pub enum CompileError {
 /// minimal prelude string first. Steel prepends its prelude string to a
 /// module's source at registration time. The default prelude would drag
 /// the entire steel stdlib into the module's first `(require ...)`.
+///
+/// A module can also carry a Rust [`BuiltInModule`], registered with the
+/// source. The source then `(require-builtin ...)`s it by its name and
+/// `provide`s the Rust fns that it wants to expose.
 #[derive(Clone, Copy, Debug)]
+#[non_exhaustive]
 pub struct SteelModule {
     /// The name used to `(require ...)` the module.
     pub name: &'static str,
     /// The module's Steel source.
     pub src: &'static str,
+    /// Constructs the Rust builtin module that the source requires, if any.
+    pub builtin: Option<fn() -> BuiltInModule>,
 }
 
 /// The Steel modules provided by `gantz_core` itself.
 ///
 /// Always registered by [`new_engine`], ahead of any domain modules.
-const CORE_MODULES: &[SteelModule] = &[SteelModule {
-    name: "gantz/option",
-    src: include_str!("vm/option.scm"),
-}];
+const CORE_MODULES: &[SteelModule] = &[SteelModule::new(
+    "gantz/option",
+    include_str!("vm/option.scm"),
+)];
+
+impl SteelModule {
+    /// A source module with the given name.
+    pub const fn new(name: &'static str, src: &'static str) -> Self {
+        Self {
+            name,
+            src,
+            builtin: None,
+        }
+    }
+
+    /// Carry the Rust builtin module constructed by `builtin`.
+    pub const fn with_builtin(mut self, builtin: fn() -> BuiltInModule) -> Self {
+        self.builtin = Some(builtin);
+        self
+    }
+}
 
 impl CompileError {
     /// The generated module, when compilation got far enough to produce one.
@@ -102,11 +126,24 @@ pub fn modules() -> &'static [SteelModule] {
 /// any module is registered. See [`SteelModule`]. Module sources get the
 /// base primitives and must `(require-builtin ...)` anything further
 /// themselves.
+///
+/// Each module name is registered once, and the first module with a name
+/// wins. A domain's module list can then include the modules it depends
+/// on, and frontends can chain several such lists.
 pub fn new_engine(extra_modules: &[SteelModule]) -> Engine {
     let mut vm = Engine::new_base();
     vm.set_prelude_string(std::borrow::Cow::Borrowed("(require-builtin steel/base)\n"));
+    let mut registered: Vec<&SteelModule> = vec![];
     for m in modules().iter().chain(extra_modules) {
+        if let Some(prev) = registered.iter().find(|prev| prev.name == m.name) {
+            debug_assert_eq!(prev.src, m.src, "two modules named `{}`", m.name);
+            continue;
+        }
+        if let Some(builtin) = m.builtin {
+            vm.register_module(builtin());
+        }
         vm.register_steel_module(m.name.to_string(), m.src.to_string());
+        registered.push(m);
     }
     vm.register_value(crate::ROOT_STATE, SteelVal::empty_hashmap());
     vm.register_value(crate::ARGS, crate::args::default());

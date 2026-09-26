@@ -6,8 +6,11 @@ use gantz_core::{
     Edge,
     compile::{Config, ModuleError, SourceMap, entry_fn_name, push_pull_entrypoints},
     node::{self, ExprCtx, ExprResult, MetaCtx, Node, RegCtx, WithPushEval},
+    steel::steel_vm::{builtin::BuiltInModule, register_fn::RegisterFn},
+    vm::SteelModule,
 };
 use std::fmt::Debug;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
@@ -192,6 +195,74 @@ fn expr_requires_field_evaluates() {
     let fn_name = entry_fn_name(&eps[0].id());
     vm.call_function_by_name_with_args(&fn_name, vec![])
         .unwrap();
+}
+
+/// The builtin module behind [`NATIVE`].
+fn native_builtin() -> BuiltInModule {
+    let mut module = BuiltInModule::new("#%test/native");
+    module.register_fn("native-double", |x: isize| x * 2);
+    module
+}
+
+/// A source module that provides a Rust fn from its builtin module.
+const NATIVE: SteelModule = SteelModule::new(
+    "test/native",
+    "(require-builtin #%test/native) (provide native-double)",
+)
+.with_builtin(native_builtin);
+
+/// Constructions of the builtin behind [`COUNTED`]. Only
+/// `duplicate_module_names_register_once` uses it, so parallel tests do
+/// not race on it.
+static COUNTED_BUILDS: AtomicUsize = AtomicUsize::new(0);
+
+fn counted_builtin() -> BuiltInModule {
+    COUNTED_BUILDS.fetch_add(1, Ordering::SeqCst);
+    let mut module = BuiltInModule::new("#%test/counted");
+    module.register_fn("counted-triple", |x: isize| x * 3);
+    module
+}
+
+const COUNTED: SteelModule = SteelModule::new(
+    "test/counted",
+    "(require-builtin #%test/counted) (provide counted-triple)",
+)
+.with_builtin(counted_builtin);
+
+// A node that requires a module carrying a builtin can call the Rust fn
+// that the module's source provides.
+#[test]
+fn builtin_module_fns_evaluate() {
+    let mut g = petgraph::graph::DiGraph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let double = g.add_node(Box::new(node_requires(
+        "(begin $push (native-double 21))",
+        &["test/native"],
+    )) as Box<_>);
+    let check = g.add_node(Box::new(node::expr("(assert! (equal? $x 42))").unwrap()) as Box<_>);
+    g.add_edge(push, double, Edge::from((0, 0)));
+    g.add_edge(double, check, Edge::from((0, 0)));
+
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let (mut vm, _compiled) =
+        gantz_core::vm::init_with_modules(&no_lookup, &g, &eps, &Config::default(), &[NATIVE])
+            .unwrap();
+    let fn_name = entry_fn_name(&eps[0].id());
+    vm.call_function_by_name_with_args(&fn_name, vec![])
+        .unwrap();
+}
+
+// A module listed twice, or listed again after the core modules, is
+// registered once. Its builtin is constructed once.
+#[test]
+fn duplicate_module_names_register_once() {
+    let core = gantz_core::vm::modules()[0];
+    let mut vm = gantz_core::vm::new_engine(&[COUNTED, core, COUNTED]);
+    assert_eq!(COUNTED_BUILDS.load(Ordering::SeqCst), 1);
+    let vals = vm
+        .run("(require \"test/counted\") (counted-triple 4)".to_string())
+        .unwrap();
+    assert_eq!(vals.last(), Some(&gantz_core::steel::SteelVal::IntV(12)));
 }
 
 // A declared name that cannot be emitted as a `(require ...)` string
