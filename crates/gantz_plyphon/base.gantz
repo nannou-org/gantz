@@ -146,8 +146,8 @@
 
 (layout demo-looper
   (comment0 -240 0)
-  (number1 120 160)
-  (~buffer4 -80 160)
+  (number1 174 160)
+  (~buffer4 -84 80)
   (~dust2 0 0)
   (~out7 0 320)
   (~playbuf6 0 240)
@@ -221,4 +221,4 @@
   (~buffer3 0 160)
   (~osc4 0 240)
   (~out5 0 320)
-  (camera 0 160 1))
+  (camera 72.36194 159.99997 0.9999999))
