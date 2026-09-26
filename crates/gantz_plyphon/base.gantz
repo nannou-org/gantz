@@ -10,6 +10,23 @@
   (-> ~ringz3 ~freeverb4)
   (-> ~freeverb4 ~out5))
 
+(graph demo-kick
+  (comment0 (comment "Kick drum.\nDial the tempo, then shape the envelopes." 180 30))
+  (number1 (number #:min 0.5 #:max 8))
+  (~impulse2 (~impulse #:rate kr))
+  (~envgen3 (~envgen #:init 50 #:segs ((230 0.001) (50 0.15 -8)) #:rate kr))
+  (~envgen4 (~envgen #:segs ((1 0.001) (0 0.4 -4)) #:rate kr))
+  (~sinosc5 ~sinosc)
+  (~mul6 ~mul)
+  (~out7 ~out)
+  (-> number1 ~impulse2)
+  (-> ~impulse2 ~envgen3)
+  (-> ~impulse2 ~envgen4)
+  (-> ~envgen3 ~sinosc5)
+  (-> ~sinosc5 ~mul6)
+  (-> ~envgen4 (~mul6 1))
+  (-> ~mul6 ~out7))
+
 (graph demo-looper
   (comment0 (comment "Looper.\nDial the playback speed." 110 30))
   (number1 (number #:min 0.5))
@@ -126,6 +143,7 @@
 
 (descriptions
   (demo-freeverb "Random impulses ring a resonator into a reverb. Dial the number for the wet mix.")
+  (demo-kick "A kick drum. Each impulse starts a pitch envelope on a sine and an amp envelope that shapes it. Dial the number for the tempo. Drag the envelope points to reshape the kick while it plays.")
   (demo-looper "Random impulses record into a buffer that plays back at another speed. Dial the number for the playback speed.")
   (demo-pluck "Noise bursts pluck a Karplus-Strong string. Dial the numbers for the pluck rate and the string period.")
   (demo-ringmod "Two sines multiplied. Dial the numbers to sweep from tremolo to ring modulation.")
@@ -143,6 +161,17 @@
   (~out5 0 240)
   (~ringz3 0 80)
   (camera 0 120 1))
+
+(layout demo-kick
+  (comment0 -280 0)
+  (number1 0 0)
+  (~envgen3 -240 140)
+  (~envgen4 20 140)
+  (~impulse2 0 70)
+  (~mul6 0 340)
+  (~out7 0 410)
+  (~sinosc5 -240 270)
+  (camera 0 200 1))
 
 (layout demo-looper
   (comment0 -240 0)

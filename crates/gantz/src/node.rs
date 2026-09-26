@@ -2958,7 +2958,7 @@ mod tests {
     }
 
     /// The demos in the plyphon base source.
-    const PLYPHON_DEMOS: [&str; 9] = [
+    const PLYPHON_DEMOS: [&str; 10] = [
         "demo-sine",
         "demo-ringmod",
         "demo-waveshape",
@@ -2968,6 +2968,7 @@ mod tests {
         "demo-looper",
         "demo-sampler",
         "demo-wavetable",
+        "demo-kick",
     ];
 
     /// Every plyphon base demo derives synthdefs that build in the real
@@ -3000,6 +3001,20 @@ mod tests {
                 controller
                     .ensure_compiled(&part.def.name)
                     .unwrap_or_else(|e| panic!("{demo}: def failed to build: {e:?}"));
+            }
+            if demo == "demo-kick" {
+                let envs: Vec<_> = parts
+                    .iter()
+                    .flat_map(|p| p.def.units.iter())
+                    .filter(|u| u.name == "EnvGen")
+                    .collect();
+                assert_eq!(envs.len(), 2, "a pitch and an amp envelope");
+                for env in envs {
+                    assert!(
+                        matches!(env.inputs[0], plyphon::synthdef::InputRef::Unit { .. }),
+                        "the impulse gates each envelope",
+                    );
+                }
             }
             if demo == "demo-sampler" {
                 let spec = parts
