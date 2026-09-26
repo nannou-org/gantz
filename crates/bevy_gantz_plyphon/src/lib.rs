@@ -124,6 +124,11 @@ const FADE_GRACE: Duration = Duration::from_millis(100);
 /// been decaying for at least a frame.
 const MAX_FADING_PER_HEAD: usize = 2;
 
+/// The first node id the driver gives a synth. plyphon hands out automatic
+/// node ids from 1000, and the two must not mix, so the driver's ids start
+/// well above them.
+const FIRST_NODE_ID: i32 = 1 << 20;
+
 /// The most timestamped param updates scheduled per frame across all heads.
 /// The engine's control ring holds 1024 commands and only drains at audio
 /// callbacks. This flood guard keeps a burst, such as a huge pattern window
@@ -338,6 +343,8 @@ struct HeadSynths {
     bus_alloc: BusAlloc,
     /// Allocates buffer table indices for scope streams and held buffers.
     bufnum_alloc: BufnumAlloc,
+    /// Allocates the node id of each spawned synth.
+    node_ids: NodeIds,
     /// The buffers in the engine's buffer table, by key. Each is installed
     /// once, refcounted per part, and freed when the last reference retires.
     held: HashMap<BufferKey, HeldBuffer>,
@@ -620,6 +627,30 @@ impl BufnumAlloc {
 impl Default for BufnumAlloc {
     fn default() -> Self {
         BufnumAlloc::new(MAX_BUFFERS)
+    }
+}
+
+/// Allocates the node id of each synth the driver spawns. An id is never
+/// reused while the driver runs, so a stale command can never reach a newer
+/// synth.
+struct NodeIds {
+    next: i32,
+}
+
+impl NodeIds {
+    /// A fresh node id.
+    fn alloc(&mut self) -> i32 {
+        let id = self.next;
+        self.next = self.next.checked_add(1).unwrap_or(FIRST_NODE_ID);
+        id
+    }
+}
+
+impl Default for NodeIds {
+    fn default() -> Self {
+        NodeIds {
+            next: FIRST_NODE_ID,
+        }
     }
 }
 
@@ -1163,9 +1194,9 @@ fn buffer_blobs(reg: &ca::Registry) -> &BufferBlobs {
 ///
 /// A replacement fades in from its first block through the `Line` in each of
 /// its fade gains, while the old synth's fades ramp to zero ahead of a
-/// deferred free. The overlap is the crossfade. On a bus, `Out` sums the two ramps. Placement
-/// follows the region DAG. A spawned synth lands `Before` the first kept synth
-/// later in topo order, else at the tail. Bus readers hear only writers
+/// deferred free. The overlap is the crossfade. On a bus, `Out` sums the two
+/// ramps. Placement follows the region DAG. A spawned synth lands `Before` the
+/// first kept synth later in topo order, else at the tail. Bus readers hear only writers
 /// computed earlier in the node tree. On install or spawn failure the old
 /// synth is left playing, which is better than going silent.
 ///
@@ -1431,11 +1462,11 @@ fn wiring_hash(part: &ResolvedPart) -> u64 {
 /// Cue scope streams and allocate buses so their indices are known, then
 /// install and spawn one part's def. It spawns `Before` the given anchor when
 /// present, else at the root group's tail. The synth fades in from its first
-/// block through the `Line` in each fade gain. Bus indices, scope bufnums and
-/// the unbound fade params at unity are then set via `set_control` in one
-/// command-ring drain. While `muted`, the `~out` fade params stay at their
-/// silent `0.0` default. Bound params re-send from node state via
-/// the same-frame param sync. On failure, cleans up after itself and reports
+/// block through the `Line` in each fade gain. The spawn carries the bus
+/// indices, scope bufnums, bufnums and unbound fade params in one batch, so
+/// all are in place before the synth's first block. While `muted`, the `~out`
+/// fade params stay at their silent `0.0` default. Bound params re-send from
+/// node state via the same-frame param sync. On failure, cleans up after itself and reports
 /// whether retrying next frame can converge. See [`SpawnError`].
 fn spawn_part(
     controller: &mut Controller,
@@ -1463,19 +1494,19 @@ fn spawn_part(
     } = part;
 
     // Allocate buses and cue scope streams up front so their indices are known
-    // for the post-spawn `set_control` drain below. No def mutation is needed.
+    // for the spawn's controls below. No def mutation is needed.
     // The bus indices and bufnums are no-lag control params, set live per
     // block. Whichever side of a bus spawns first allocates. The counterpart,
     // spawned later in topo order or kept from a previous sync, looks the run
     // up by the same key.
-    let mut set_after_spawn: Vec<(usize, f32)> = Vec::new();
+    let mut controls: Vec<(usize, f32)> = Vec::new();
     for binding in bus_writes.iter().chain(&bus_reads) {
         let bus_key = (entity, binding.key.clone());
         let Some(run) = state.bus_alloc.get_or_alloc(bus_key, binding.channels, now) else {
             log::error!("bevy_gantz_plyphon: private audio buses exhausted; part not spawned");
             return Err(SpawnError::Permanent);
         };
-        set_after_spawn.push((binding.param, run.start as f32));
+        controls.push((binding.param, run.start as f32));
     }
 
     // A monitor that gets no index keeps its bufnum param at 0, the empty
@@ -1488,7 +1519,7 @@ fn spawn_part(
         let channels = m.channels.max(1);
         match controller.cue_scope(index, channels, sample_rate, CHUNK_FRAMES, NUM_CHUNKS) {
             Ok(consumer) => {
-                set_after_spawn.push((m.bufnum_param, index as f32));
+                controls.push((m.bufnum_param, index as f32));
                 scopes.push(ScopeSlot {
                     node_path: m.node_path.clone(),
                     size: m.size,
@@ -1505,9 +1536,8 @@ fn spawn_part(
     }
 
     // Install each buffer and set the bufnum param of its source. The install
-    // is in the same command drain as the spawn, so unit init already sees
-    // the buffer. A buffer that cannot be installed gets `-1`, so the node
-    // plays silence.
+    // is sent before the spawn, so unit init already sees the buffer. A buffer
+    // that cannot be installed gets `-1`, so the node plays silence.
     let mut part_buffers: Vec<BufferKey> = Vec::new();
     for binding in &buffers {
         let key = match &binding.source {
@@ -1536,7 +1566,7 @@ fn spawn_part(
                 return Err(SpawnError::Transient);
             }
         };
-        set_after_spawn.push((binding.bufnum_param, value));
+        controls.push((binding.bufnum_param, value));
     }
 
     let def_name = def.name.clone();
@@ -1570,24 +1600,17 @@ fn spawn_part(
         Some(node) => (node, AddAction::Before),
         None => (ROOT_GROUP_ID, AddAction::Tail),
     };
-    match backend.spawn(&def_name, target, action) {
-        Ok(node_id) => {
-            // Wire the synth in one command-ring drain. Bus indices, scope
-            // bufnums, then the unbound fade params at unity. The fade lines
-            // ramp the synth in from its first block.
-            for (param, value) in &set_after_spawn {
-                if let Err(e) = backend.set_control(node_id, *param, *value) {
-                    log::error!("bevy_gantz_plyphon: post-spawn set_control failed: {e:?}");
-                }
-            }
-            for g in &gains {
-                let held_muted = muted && g.sink == FadeSink::Output;
-                if !held_muted && !params.iter().any(|b| b.index == g.index) {
-                    if let Err(e) = backend.set_control(node_id, g.index, 1.0) {
-                        log::error!("bevy_gantz_plyphon: fade-gain restore failed: {e:?}");
-                    }
-                }
-            }
+    // The unbound fade params at unity. The fade lines ramp the synth in from
+    // its first block.
+    for g in &gains {
+        let held_muted = muted && g.sink == FadeSink::Output;
+        if !held_muted && !params.iter().any(|b| b.index == g.index) {
+            controls.push((g.index, 1.0));
+        }
+    }
+    let node_id = state.node_ids.alloc();
+    match backend.spawn(node_id, &def_name, target, action, &controls) {
+        Ok(()) => {
             let params = params
                 .iter()
                 .map(|b| ParamSlot {
@@ -2117,6 +2140,18 @@ mod tests {
         assert_eq!(a.alloc(), Some(1));
         assert_eq!(a.alloc(), Some(2));
         assert_eq!(a.alloc(), None);
+    }
+
+    /// Node ids start above plyphon's automatic ids and never repeat, and the
+    /// counter wraps back to the start rather than overflow.
+    #[test]
+    fn node_ids_start_high_and_do_not_repeat() {
+        let mut ids = NodeIds::default();
+        assert_eq!(ids.alloc(), FIRST_NODE_ID);
+        assert_eq!(ids.alloc(), FIRST_NODE_ID + 1);
+        let mut last = NodeIds { next: i32::MAX };
+        assert_eq!(last.alloc(), i32::MAX);
+        assert_eq!(last.alloc(), FIRST_NODE_ID);
     }
 
     /// Resolve `key` for a part that holds `refs`, at 48 kHz. `None` if the
