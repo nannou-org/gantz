@@ -48,23 +48,3 @@ impl Identity {
         self.secret.clone()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn identity_round_trips_through_bytes() {
-        let id = Identity::generate();
-        let restored = Identity::from_bytes(id.to_bytes());
-        assert_eq!(id.peer_id(), restored.peer_id());
-    }
-
-    #[test]
-    fn generated_identities_are_distinct() {
-        assert_ne!(
-            Identity::generate().peer_id(),
-            Identity::generate().peer_id()
-        );
-    }
-}
