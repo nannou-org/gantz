@@ -86,117 +86,100 @@ mod tests {
     use super::*;
     use gantz_core::steel::steel_vm::engine::Engine;
 
-    fn test_vm() -> Engine {
+    /// A `(values, size, channels)` batch for [`push_ring`].
+    type Push = (&'static [f32], usize, usize);
+
+    /// Each case seeds its own node path, pushes its batches in order, then
+    /// reads back the per-channel rings. An empty seed is the empty outer list
+    /// that the node's `register` seeds.
+    #[test]
+    fn push_ring_keeps_capped_per_channel_rings() {
+        let cases: &[(&str, &[f64], &[Push], &[&[f64]])] = &[
+            // Only the newest `size` samples survive, oldest dropped first.
+            (
+                "fill past capacity",
+                &[],
+                &[(&[1.0, 2.0, 3.0], 4, 1), (&[4.0, 5.0], 4, 1)],
+                &[&[2.0, 3.0, 4.0, 5.0]],
+            ),
+            // The fast path drops the prior ring rather than appending to it.
+            (
+                "a full frame replaces the ring",
+                &[],
+                &[(&[1.0, 2.0], 2, 1), (&[3.0, 4.0, 5.0], 2, 1)],
+                &[&[4.0, 5.0]],
+            ),
+            (
+                "a size of 0 keeps the latest sample",
+                &[],
+                &[(&[1.0, 2.0, 3.0], 0, 1)],
+                &[&[3.0]],
+            ),
+            (
+                "stereo lands in one ring per channel",
+                &[],
+                &[(&[1.0, -1.0, 2.0, -2.0, 3.0, -3.0], 4, 2)],
+                &[&[1.0, 2.0, 3.0], &[-1.0, -2.0, -3.0]],
+            ),
+            (
+                "each channel caps independently",
+                &[],
+                &[(&[1.0, -1.0, 2.0, -2.0], 2, 2), (&[3.0, -3.0], 2, 2)],
+                &[&[2.0, 3.0], &[-2.0, -3.0]],
+            ),
+            // A width change, a respawn after a rewire, reshapes the outer
+            // list. Surviving channels keep their ring tails and new channels
+            // start fresh.
+            (
+                "narrowing to mono keeps channel 0",
+                &[],
+                &[(&[1.0, -1.0, 2.0, -2.0], 4, 2), (&[3.0], 4, 1)],
+                &[&[1.0, 2.0, 3.0]],
+            ),
+            (
+                "widening back to stereo restarts channel 1",
+                &[],
+                &[
+                    (&[1.0, -1.0, 2.0, -2.0], 4, 2),
+                    (&[3.0], 4, 1),
+                    (&[4.0, -4.0], 4, 2),
+                ],
+                &[&[1.0, 2.0, 3.0, 4.0], &[-4.0]],
+            ),
+            // A partial frame must not scramble the deinterleave.
+            (
+                "a trailing partial frame is dropped",
+                &[],
+                &[(&[1.0, -1.0, 2.0], 4, 2)],
+                &[&[1.0], &[-1.0]],
+            ),
+            (
+                "a channels of 0 clamps to 1",
+                &[],
+                &[(&[1.0, 2.0], 4, 0)],
+                &[&[1.0, 2.0]],
+            ),
+            // Its elements are numbers, not rings.
+            (
+                "a flat single-ring list reads as empty",
+                &[1.0, 2.0],
+                &[(&[3.0], 4, 1)],
+                &[&[3.0]],
+            ),
+        ];
         let mut vm = Engine::new_base();
         vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
-        state::init_value_if_absent(&mut vm, &[0], || SteelVal::ListV(Default::default())).unwrap();
-        vm
-    }
-
-    /// Seed an empty ring at `[0]`, then push mono samples in batches. The
-    /// ring keeps only the most recent `size`, oldest dropped first.
-    #[test]
-    fn push_ring_caps_and_drops_oldest() {
-        let mut vm = test_vm();
-
-        // Fill past capacity in two batches. Only the last `size` survive.
-        push_ring(&mut vm, &[0], &[1.0, 2.0, 3.0], 4, 1);
-        push_ring(&mut vm, &[0], &[4.0, 5.0], 4, 1);
-
-        let got = ring_values(&mut vm, &[0]);
-        assert_eq!(
-            got,
-            vec![vec![2.0, 3.0, 4.0, 5.0]],
-            "ring keeps the newest `size`"
-        );
-    }
-
-    /// A frame at least as long as `size` replaces the ring with its own last
-    /// `size` samples. The fast path drops the prior ring rather than
-    /// appending to it.
-    #[test]
-    fn push_ring_full_frame_replaces() {
-        let mut vm = test_vm();
-        push_ring(&mut vm, &[0], &[1.0, 2.0], 2, 1);
-        push_ring(&mut vm, &[0], &[3.0, 4.0, 5.0], 2, 1);
-        assert_eq!(ring_values(&mut vm, &[0]), vec![vec![4.0, 5.0]]);
-    }
-
-    /// A `size` of 0 is clamped to 1, so each ring keeps the single latest
-    /// sample.
-    #[test]
-    fn push_ring_size_zero_keeps_latest() {
-        let mut vm = test_vm();
-        push_ring(&mut vm, &[0], &[1.0, 2.0, 3.0], 0, 1);
-        assert_eq!(ring_values(&mut vm, &[0]), vec![vec![3.0]]);
-    }
-
-    /// Interleaved stereo samples land in one ring per channel.
-    #[test]
-    fn push_ring_deinterleaves() {
-        let mut vm = test_vm();
-        push_ring(&mut vm, &[0], &[1.0, -1.0, 2.0, -2.0, 3.0, -3.0], 4, 2);
-        assert_eq!(
-            ring_values(&mut vm, &[0]),
-            vec![vec![1.0, 2.0, 3.0], vec![-1.0, -2.0, -3.0]],
-        );
-    }
-
-    /// Each channel's ring caps at `size` frames independently, oldest first.
-    #[test]
-    fn push_ring_caps_per_channel() {
-        let mut vm = test_vm();
-        push_ring(&mut vm, &[0], &[1.0, -1.0, 2.0, -2.0], 2, 2);
-        push_ring(&mut vm, &[0], &[3.0, -3.0], 2, 2);
-        assert_eq!(
-            ring_values(&mut vm, &[0]),
-            vec![vec![2.0, 3.0], vec![-2.0, -3.0]],
-        );
-    }
-
-    /// A width change, a respawn after a rewire, reshapes the outer list.
-    /// Surviving channels keep their ring tails and new channels start fresh.
-    #[test]
-    fn push_ring_width_change_reuses_surviving_rings() {
-        let mut vm = test_vm();
-        // Stereo, then the tap narrows to mono. Channel 0's ring survives.
-        push_ring(&mut vm, &[0], &[1.0, -1.0, 2.0, -2.0], 4, 2);
-        push_ring(&mut vm, &[0], &[3.0], 4, 1);
-        assert_eq!(ring_values(&mut vm, &[0]), vec![vec![1.0, 2.0, 3.0]]);
-
-        // Widening back to stereo restarts channel 1 empty, then filled.
-        push_ring(&mut vm, &[0], &[4.0, -4.0], 4, 2);
-        assert_eq!(
-            ring_values(&mut vm, &[0]),
-            vec![vec![1.0, 2.0, 3.0, 4.0], vec![-4.0]],
-        );
-    }
-
-    /// A trailing partial frame is dropped rather than scrambling the deinterleave.
-    #[test]
-    fn push_ring_truncates_partial_frame() {
-        let mut vm = test_vm();
-        push_ring(&mut vm, &[0], &[1.0, -1.0, 2.0], 4, 2);
-        assert_eq!(ring_values(&mut vm, &[0]), vec![vec![1.0], vec![-1.0]]);
-    }
-
-    /// A `channels` of 0 is clamped to 1.
-    #[test]
-    fn push_ring_channels_zero_clamped() {
-        let mut vm = test_vm();
-        push_ring(&mut vm, &[0], &[1.0, 2.0], 4, 0);
-        assert_eq!(ring_values(&mut vm, &[0]), vec![vec![1.0, 2.0]]);
-    }
-
-    /// A flat single-ring list is treated as empty, since its elements are
-    /// numbers, not rings.
-    #[test]
-    fn push_ring_legacy_flat_state_treated_as_empty() {
-        let mut vm = test_vm();
-        let flat = [1.0, 2.0].iter().map(|&v| SteelVal::NumV(v)).collect();
-        state::update_value(&mut vm, &[0], SteelVal::ListV(flat)).unwrap();
-        push_ring(&mut vm, &[0], &[3.0], 4, 1);
-        assert_eq!(ring_values(&mut vm, &[0]), vec![vec![3.0]]);
+        for (ix, (label, seed, pushes, expected)) in cases.iter().enumerate() {
+            let path = [ix];
+            state::init_value_if_absent(&mut vm, &path, || {
+                SteelVal::ListV(seed.iter().map(|&v| SteelVal::NumV(v)).collect())
+            })
+            .unwrap();
+            for &(values, size, channels) in pushes.iter() {
+                push_ring(&mut vm, &path, values, size, channels);
+            }
+            assert_eq!(ring_values(&mut vm, &path), *expected, "{label}");
+        }
     }
 
     /// Read the per-channel rings at `path` back as `f64`s.

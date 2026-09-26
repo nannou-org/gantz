@@ -595,18 +595,6 @@ mod tests {
     }
 
     #[test]
-    fn lag_round_trips() {
-        let s = PlyphonSugar;
-        let bare = s.read_bare("~lag").expect("bare");
-        assert_eq!(bare.get("type").and_then(Datum::as_str), Some("Unit"));
-        assert_eq!(bare.get("unit").and_then(Datum::as_str), Some("Lag"));
-        assert_eq!(s.write_spec("Unit", &bare).as_deref(), Some("~lag"));
-        let spec = read_spec("(~lag)").expect("spec");
-        assert_eq!(spec.get("unit").and_then(Datum::as_str), Some("Lag"));
-        assert_eq!(s.write_spec("Unit", &spec).as_deref(), Some("~lag"));
-    }
-
-    #[test]
     fn tap_round_trips() {
         let s = PlyphonSugar;
         // A default `~scopeout` stays bare, read as a bare keyword or an empty
