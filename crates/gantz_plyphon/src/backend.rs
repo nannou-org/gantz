@@ -6,7 +6,7 @@
 //! unaffected.
 
 use plyphon::synthdef::SynthDef;
-use plyphon::{CommandTime, Controller};
+use plyphon::{CommandTime, Controller, ControllerBatchCommand};
 
 pub use plyphon::{AddAction, ROOT_GROUP_ID};
 
@@ -17,16 +17,21 @@ pub trait Backend {
     fn install_synthdef(&mut self, def: SynthDef) -> Result<(), BackendError>;
     /// Free a previously installed synth definition by name.
     fn free_synthdef(&mut self, name: &str) -> Result<(), BackendError>;
-    /// Spawn a synth from the named def at `action` relative to the node or
-    /// group `target`, returning its node id. Placement matters across
-    /// synthdef boundaries. A bus reader hears only writers computed earlier
-    /// in the node tree this block, so writers must precede their readers.
+    /// Spawn a synth with the node id `id` from the named def, at `action`
+    /// relative to the node or group `target`. Each `(param, value)` in
+    /// `controls` is in place before the synth's first block, so unit init
+    /// sees it. The caller owns the node ids and must not reuse the id of a
+    /// running synth. Placement matters across synthdef boundaries. A bus
+    /// reader hears only writers computed earlier in the node tree this block,
+    /// so writers must precede their readers.
     fn spawn(
         &mut self,
+        id: i32,
         def_name: &str,
         target: i32,
         action: AddAction,
-    ) -> Result<i32, BackendError>;
+        controls: &[(usize, f32)],
+    ) -> Result<(), BackendError>;
     /// Free a running synth or group by node id.
     fn free_node(&mut self, node: i32) -> Result<(), BackendError>;
     /// Set control parameter `param`, by index, of `node` to `value`
@@ -92,18 +97,40 @@ impl Backend for Embedded<'_> {
 
     fn spawn(
         &mut self,
+        id: i32,
         def_name: &str,
         target: i32,
         action: AddAction,
-    ) -> Result<i32, BackendError> {
-        self.controller
-            .synth_new(def_name, target, action)
+        controls: &[(usize, f32)],
+    ) -> Result<(), BackendError> {
+        // Compiling sends the def install ahead of the batch. The batch then
+        // lands the create and its controls in one block, all or none.
+        let def_id = self
+            .controller
+            .ensure_compiled(def_name)
             .map_err(|e| match e {
                 // Transient. The ring drains within a block, so the caller can
                 // retry next frame rather than treat the spawn as broken.
                 plyphon::SynthNewError::QueueFull => BackendError::QueueFull,
                 e => BackendError::Spawn(format!("{e:?}")),
-            })
+            })?;
+        let create = ControllerBatchCommand::AddSynth {
+            id,
+            def_id,
+            target,
+            action,
+        };
+        let sets = controls
+            .iter()
+            .map(|&(param, value)| ControllerBatchCommand::SetControl {
+                node: id,
+                param,
+                value,
+            });
+        let batch: Vec<ControllerBatchCommand> = std::iter::once(create).chain(sets).collect();
+        self.controller
+            .try_send_batch(&batch)
+            .map_err(|_| BackendError::QueueFull)
     }
 
     fn free_node(&mut self, node: i32) -> Result<(), BackendError> {
@@ -190,10 +217,12 @@ mod tests {
         }
         fn spawn(
             &mut self,
+            _id: i32,
             _def_name: &str,
             _target: i32,
             _action: AddAction,
-        ) -> Result<i32, BackendError> {
+            _controls: &[(usize, f32)],
+        ) -> Result<(), BackendError> {
             unreachable!()
         }
         fn free_node(&mut self, _node: i32) -> Result<(), BackendError> {
@@ -271,6 +300,40 @@ mod tests {
         let dropped = schedule_batch(&mut fake, 1, 0, &batch(5), &mut budget);
         assert_eq!(dropped, 5);
         assert!(fake.calls.is_empty());
+    }
+
+    /// A spawn's controls are in place before the synth's first block. The
+    /// def plays its control param, so the first sample is the spawn value,
+    /// not the def default.
+    #[test]
+    fn spawn_sets_controls_before_the_first_block() {
+        use plyphon::synthdef::{InputRef, Param, UnitSpec};
+        use plyphon::{Options, Rate, engine};
+
+        let (mut controller, _nrt, mut world) = engine(Options {
+            sample_rate: 48_000.0,
+            output_channels: 1,
+            ..Options::default()
+        });
+        let k2a = UnitSpec::new("K2A", Rate::Audio, vec![InputRef::Param(0)], 1);
+        let out_inputs = vec![
+            InputRef::Constant(0.0),
+            InputRef::Unit { unit: 0, output: 0 },
+        ];
+        let out = UnitSpec::new("Out", Rate::Audio, out_inputs, 0);
+        let def = SynthDef {
+            name: "level".to_string(),
+            params: vec![Param::control("level", 0.0)],
+            units: vec![k2a, out],
+        };
+        let mut backend = Embedded::new(&mut controller);
+        backend.install_synthdef(def).unwrap();
+        backend
+            .spawn(7_000, "level", ROOT_GROUP_ID, AddAction::Tail, &[(0, 0.5)])
+            .expect("spawn");
+        let mut block = [0.0f32; 64];
+        world.fill(&mut block, 1);
+        assert_eq!(block[0], 0.5, "the first sample plays the spawn control");
     }
 
     /// Rejected sends count as dropped without panicking.

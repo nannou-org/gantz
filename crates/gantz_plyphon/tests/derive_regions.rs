@@ -61,11 +61,15 @@ fn sine_bus_out_splits_two_regions() {
     assert!(writer.derived.def.name.starts_with("head-"));
     assert_ne!(writer.key, reader.key);
 
-    // The writer is `SinOsc(0) -> fade mul(1) -> Out(2, bus placeholder)`.
+    // The writer is `SinOsc(0)`, the fade gain `Line(1) * param(2)`, the
+    // channel fade mul(3) and `Out(4, bus placeholder)`.
     let wdef = &writer.derived.def;
-    assert_eq!(wdef.units.len(), 3, "SinOsc + fade mul + bus Out");
-    assert_eq!(wdef.units[0].name, "SinOsc");
-    assert_eq!(wdef.units[2].name, "Out");
+    let names: Vec<&str> = wdef.units.iter().map(|u| u.name.as_str()).collect();
+    let expected = ["SinOsc", "Line", "BinaryOpUGen", "BinaryOpUGen", "Out"];
+    assert_eq!(
+        names, expected,
+        "SinOsc, the fade gain, the fade mul and the bus Out"
+    );
     assert_eq!(writer.bus_writes.len(), 1);
     assert!(writer.bus_reads.is_empty());
     let w = &writer.bus_writes[0];
@@ -92,9 +96,14 @@ fn sine_bus_out_splits_two_regions() {
         "a bus write gain is never muted",
     );
 
-    // The reader is `In(0) -> level mul(1) -> channel mul(2) -> Out(3)`.
+    // The reader is `In(0)`, the fade gain `Line(1) * param(2)`, the level
+    // mul(3), the channel mul(4) and `Out(5)`.
     let rdef = &reader.derived.def;
-    assert_eq!(rdef.units.len(), 4, "In + level/channel muls + Out");
+    assert_eq!(
+        rdef.units.len(),
+        6,
+        "In + fade gain + level/channel muls + Out"
+    );
     assert_eq!(reader.bus_reads.len(), 1);
     assert!(reader.bus_writes.is_empty());
     let r = &reader.bus_reads[0];

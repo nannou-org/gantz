@@ -5,8 +5,8 @@
 use gantz_core::edge::Edge;
 use gantz_core::node::graph::Graph;
 use gantz_plyphon::{
-    Backend, DeriveError, Derived, DspBuilder, Embedded, Finished, NodeDsp, NodeRate, Out, Pack,
-    PortShape, ScopeOut, Signal, Sum, ToNodeDsp, UNITS, UnitNode, UnitRate, Unpack,
+    Backend, DeriveError, Derived, DspBuilder, Embedded, FADE_LAG, Finished, NodeDsp, NodeRate,
+    Out, Pack, PortShape, ScopeOut, Signal, Sum, ToNodeDsp, UNITS, UnitNode, UnitRate, Unpack,
     derive_synthdef, structural_sig,
 };
 use plyphon::synthdef::{InputRef, SynthDef, UnitSpec};
@@ -71,7 +71,19 @@ fn derives_expected_units() {
     let derived = derive_synthdef(&g, 1, "test").expect("derive");
     let def = &derived.def;
 
-    assert_eq!(def.units.len(), 4, "SinOsc + level-mul + channel-mul + Out");
+    let names: Vec<&str> = def.units.iter().map(|u| u.name.as_str()).collect();
+    let expected = [
+        "SinOsc",
+        "Line",
+        "BinaryOpUGen",
+        "BinaryOpUGen",
+        "BinaryOpUGen",
+        "Out",
+    ];
+    assert_eq!(
+        names, expected,
+        "SinOsc, the fade gain, the level mul, the channel mul and Out"
+    );
 
     // Three control params. The sine's freq is 0 and the out's gain is 1. Each
     // carries the node's nominal default. The live value lives in node state
@@ -88,10 +100,7 @@ fn derives_expected_units() {
         "gain has a default de-click lag"
     );
     assert!(def.params[2].name.ends_with("/fade"));
-    assert_eq!(
-        def.params[2].default, 0.0,
-        "fade defaults to silence (driver ramps in)"
-    );
+    assert_eq!(def.params[2].default, 0.0, "fade defaults to silence");
 
     // Bindings map each param back to its dsp node, the sine at `[0]` and the
     // out at `[1]`. The fade has no binding. The driver alone drives it.
@@ -105,33 +114,46 @@ fn derives_expected_units() {
     assert_eq!(def.units[0].name, "SinOsc");
     assert!(matches!(def.units[0].inputs[0], InputRef::Param(0)));
 
-    // Unit 1 is the control-rate multiply `level = gain * fade`, emitted once.
-    assert_eq!(def.units[1].name, "BinaryOpUGen");
-    assert_eq!(def.units[1].special_index, 2, "multiply selector");
+    // Unit 1 is `Line.kr(0, 1, FADE_LAG)`, the fade-in from spawn. Unit 2 is
+    // the fade gain, the control-rate multiply `fade * line`.
     assert!(matches!(def.units[1].rate, Rate::Control));
-    assert!(matches!(def.units[1].inputs[0], InputRef::Param(1)));
-    assert!(matches!(def.units[1].inputs[1], InputRef::Param(2)));
-
-    // Unit 2 is the audio-rate multiply `SinOsc * level`.
-    assert_eq!(def.units[2].name, "BinaryOpUGen");
+    assert!(matches!(def.units[1].inputs[2], InputRef::Constant(d) if d == FADE_LAG));
     assert_eq!(def.units[2].special_index, 2, "multiply selector");
-    assert!(matches!(def.units[2].rate, Rate::Audio));
-    assert!(matches!(
-        def.units[2].inputs[0],
-        InputRef::Unit { unit: 0, output: 0 }
-    ));
+    assert!(matches!(def.units[2].rate, Rate::Control));
+    assert!(matches!(def.units[2].inputs[0], InputRef::Param(2)));
     assert!(matches!(
         def.units[2].inputs[1],
         InputRef::Unit { unit: 1, output: 0 }
     ));
 
-    // Unit 3 is `Out.ar(0, levelled)`.
-    assert_eq!(def.units[3].name, "Out");
-    assert_eq!(def.units[3].num_outputs, 0);
-    assert!(matches!(def.units[3].inputs[0], InputRef::Constant(b) if b == 0.0));
+    // Unit 3 is the control-rate multiply `level = gain * fade gain`, emitted
+    // once.
+    assert_eq!(def.units[3].special_index, 2, "multiply selector");
+    assert!(matches!(def.units[3].rate, Rate::Control));
+    assert!(matches!(def.units[3].inputs[0], InputRef::Param(1)));
     assert!(matches!(
         def.units[3].inputs[1],
         InputRef::Unit { unit: 2, output: 0 }
+    ));
+
+    // Unit 4 is the audio-rate multiply `SinOsc * level`.
+    assert_eq!(def.units[4].special_index, 2, "multiply selector");
+    assert!(matches!(def.units[4].rate, Rate::Audio));
+    assert!(matches!(
+        def.units[4].inputs[0],
+        InputRef::Unit { unit: 0, output: 0 }
+    ));
+    assert!(matches!(
+        def.units[4].inputs[1],
+        InputRef::Unit { unit: 3, output: 0 }
+    ));
+
+    // Unit 5 is `Out.ar(0, levelled)`.
+    assert_eq!(def.units[5].num_outputs, 0);
+    assert!(matches!(def.units[5].inputs[0], InputRef::Constant(b) if b == 0.0));
+    assert!(matches!(
+        def.units[5].inputs[1],
+        InputRef::Unit { unit: 4, output: 0 }
     ));
 }
 
@@ -184,8 +206,8 @@ fn fans_output_across_channels() {
     let g = sine_to_out();
     let def = derive_synthdef(&g, 2, "test").expect("derive").def;
     // `Out` gets the bus index followed by one signal input per channel.
-    assert_eq!(def.units[3].name, "Out");
-    assert_eq!(def.units[3].inputs.len(), 1 + 2);
+    let out = def.units.iter().find(|u| u.name == "Out").expect("Out");
+    assert_eq!(out.inputs.len(), 1 + 2);
 }
 
 #[test]
@@ -200,8 +222,9 @@ fn lag_node_wired_into_chain() {
     g.add_edge(l, o, Edge::new(0.into(), 0.into()));
     let def = derive_synthdef(&g, 1, "t").expect("derive").def;
 
-    // The units are SinOsc(0), Lag(1), level-mul(2), channel-mul(3) and Out(4).
-    assert_eq!(def.units.len(), 5);
+    // The units are SinOsc(0), Lag(1), the fade gain Line(2) and mul(3), the
+    // level mul(4), the channel mul(5) and Out(6).
+    assert_eq!(def.units.len(), 7);
     assert_eq!(def.units[1].name, "Lag");
     // Lag input 0 is the SinOsc output. Input 1 is the dur param.
     assert!(matches!(
@@ -210,10 +233,10 @@ fn lag_node_wired_into_chain() {
     ));
     assert!(matches!(def.units[1].inputs[1], InputRef::Param(_)));
     // The channel mul reads the Lag output.
-    assert_eq!(def.units[3].name, "BinaryOpUGen");
-    assert!(matches!(def.units[3].rate, Rate::Audio));
+    assert_eq!(def.units[5].name, "BinaryOpUGen");
+    assert!(matches!(def.units[5].rate, Rate::Audio));
     assert!(matches!(
-        def.units[3].inputs[0],
+        def.units[5].inputs[0],
         InputRef::Unit { unit: 1, output: 0 }
     ));
 
@@ -240,15 +263,15 @@ fn control_edge_on_root_does_not_panic() {
     g.add_edge(ctrl, o, Edge::new(0.into(), 1.into())); // control -> ~out gain (input 1)
 
     let derived = derive_synthdef(&g, 1, "t").expect("derive must not panic");
-    // The control source is filtered out. The dsp graph is still SinOsc, muls
-    // and Out.
+    // The control source is filtered out. The dsp graph is still SinOsc, the
+    // fade gain, the muls and Out.
     assert_eq!(
         derived.def.units.len(),
-        4,
-        "SinOsc + level/channel muls + Out"
+        6,
+        "SinOsc + fade gain + level/channel muls + Out"
     );
     assert_eq!(derived.def.units[0].name, "SinOsc");
-    assert_eq!(derived.def.units[3].name, "Out");
+    assert_eq!(derived.def.units[5].name, "Out");
 }
 
 #[test]
@@ -267,8 +290,9 @@ fn dsp_wire_into_freq_drives_fm() {
 
     let derived = derive_synthdef(&g, 1, "t").expect("derive");
     let def = &derived.def;
-    // The units are Lag(0), SinOsc(1), level-mul, channel-mul and Out.
-    assert_eq!(def.units.len(), 5);
+    // The units are Lag(0), SinOsc(1), the fade gain, the level mul, the
+    // channel mul and Out.
+    assert_eq!(def.units.len(), 7);
     assert_eq!(def.units[0].name, "Lag");
     assert_eq!(def.units[1].name, "SinOsc");
     assert!(
@@ -648,13 +672,18 @@ fn out_writes_multichannel_channel_per_bus() {
     assert!(outs.is_empty());
 
     let Finished { def, .. } = b.finish("t");
-    // One control-rate level mul, `gain * fade`, shared by two per-channel muls.
+    // Two control-rate muls, the fade gain and the level `gain * fade gain`.
+    // The level is shared by two per-channel muls.
     let kr_muls: Vec<_> = def
         .units
         .iter()
         .filter(|u| u.name == "BinaryOpUGen" && matches!(u.rate, Rate::Control))
         .collect();
-    assert_eq!(kr_muls.len(), 1, "one shared level (gain * fade) multiply");
+    assert_eq!(
+        kr_muls.len(),
+        2,
+        "the fade gain and one shared level multiply"
+    );
     let muls: Vec<_> = def
         .units
         .iter()
@@ -670,10 +699,11 @@ fn out_writes_multichannel_channel_per_bus() {
         .find(|u| u.name == "Out")
         .expect("Out unit");
     assert_eq!(out.inputs.len(), 1 + 2);
-    // The level mul is unit 0 and the channel multiplies are units 1 and 2 in
-    // this builder. Bus channel 0 reads the first and bus channel 1 the second.
-    assert!(matches!(out.inputs[1], InputRef::Unit { unit: 1, .. }));
-    assert!(matches!(out.inputs[2], InputRef::Unit { unit: 2, .. }));
+    // The fade gain is units 0 and 1, the level mul is unit 2 and the channel
+    // multiplies are units 3 and 4 in this builder. Bus channel 0 reads the
+    // first and bus channel 1 the second.
+    assert!(matches!(out.inputs[1], InputRef::Unit { unit: 3, .. }));
+    assert!(matches!(out.inputs[2], InputRef::Unit { unit: 4, .. }));
 }
 
 #[test]
@@ -751,8 +781,8 @@ fn pack_to_out_writes_two_device_channels() {
     let def = derive_synthdef(&g, 2, "t").expect("derive").def;
     assert_eq!(
         def.units.len(),
-        6,
-        "2 SinOsc + level mul + 2 channel muls + Out",
+        8,
+        "2 SinOsc + fade gain + level mul + 2 channel muls + Out",
     );
     let muls: Vec<_> = def
         .units
@@ -803,8 +833,8 @@ fn pack_unpack_routes_a_channel() {
     let def = &derived.def;
     assert_eq!(
         def.units.len(),
-        5,
-        "2 SinOsc + level/channel muls + Out; no routing units"
+        7,
+        "2 SinOsc + fade gain + level/channel muls + Out; no routing units"
     );
 
     // The channel mul's signal input is a SinOsc unit output.

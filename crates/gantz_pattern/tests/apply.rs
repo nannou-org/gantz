@@ -96,3 +96,18 @@ fn map_and_filters() {
            (pat/span 0 1)))",
     );
 }
+
+// pat/map-events sees each event's spans. Here each value becomes the
+// start of its event's whole.
+#[test]
+fn map_events_sees_spans() {
+    assert_pinned(
+        "(((0 1) ((0 1) (1 2)) ((0 1) (1 2))) \
+          ((1 2) ((1 2) (1 1)) ((1 2) (1 1))))",
+        "(pin-events (pat/query
+           (pat/map-events
+            (lambda (e) (pat/event-map-value (lambda (v) (car (pat/event-whole e))) e))
+            (pat/fast 2 (pat/pure 'x)))
+           (pat/span 0 1)))",
+    );
+}

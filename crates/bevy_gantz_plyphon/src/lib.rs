@@ -124,6 +124,16 @@ const FADE_GRACE: Duration = Duration::from_millis(100);
 /// been decaying for at least a frame.
 const MAX_FADING_PER_HEAD: usize = 2;
 
+/// The first node id the driver gives a synth. plyphon hands out automatic
+/// node ids from 1000, and the two must not mix, so the driver's ids start
+/// well above them.
+const FIRST_NODE_ID: i32 = 1 << 20;
+
+/// The most times the driver spawns a head's synths again after the engine
+/// fails to start one, before it stops until the graph changes. A lasting
+/// failure such as a full memory pool would otherwise retry every frame.
+const MAX_SPAWN_RETRIES: u32 = 2;
+
 /// The most timestamped param updates scheduled per frame across all heads.
 /// The engine's control ring holds 1024 commands and only drains at audio
 /// callbacks. This flood guard keeps a burst, such as a huge pattern window
@@ -338,6 +348,8 @@ struct HeadSynths {
     bus_alloc: BusAlloc,
     /// Allocates buffer table indices for scope streams and held buffers.
     bufnum_alloc: BufnumAlloc,
+    /// Allocates the node id of each spawned synth.
+    node_ids: NodeIds,
     /// The buffers in the engine's buffer table, by key. Each is installed
     /// once, refcounted per part, and freed when the last reference retires.
     held: HashMap<BufferKey, HeldBuffer>,
@@ -363,14 +375,17 @@ struct HeadSynths {
 /// their node-tree order. Empty when the head's graph has no dsp sink.
 struct HeadParts {
     graph: ca::GraphAddr,
-    /// Re-run the structural sync next frame even though `graph` is current,
-    /// because a spawn failed transiently on a full command ring. The ring
-    /// drains within a block and the re-run is convergent. Already-spawned
+    /// Re-run the structural sync next frame even though `graph` is current.
+    /// A spawn failed transiently on a full command ring, or the engine
+    /// failed to start a synth. See [`drop_failed_synths`]. Already-spawned
     /// parts match by key, sig and wiring and are kept.
     retry: bool,
     parts: Vec<PartSynth>,
     /// The mute applied to the parts' `~out` fade gains.
     muted: bool,
+    /// The number of syncs of `graph` in which the engine failed to start a
+    /// synth. See [`drop_failed_synths`].
+    failures: u32,
 }
 
 /// A run of consecutive private audio-bus channels.
@@ -623,6 +638,30 @@ impl Default for BufnumAlloc {
     }
 }
 
+/// Allocates the node id of each synth the driver spawns. An id is never
+/// reused while the driver runs, so a stale command can never reach a newer
+/// synth.
+struct NodeIds {
+    next: i32,
+}
+
+impl NodeIds {
+    /// A fresh node id.
+    fn alloc(&mut self) -> i32 {
+        let id = self.next;
+        self.next = self.next.checked_add(1).unwrap_or(FIRST_NODE_ID);
+        id
+    }
+}
+
+impl Default for NodeIds {
+    fn default() -> Self {
+        NodeIds {
+            next: FIRST_NODE_ID,
+        }
+    }
+}
+
 /// The installed synthdef and running synth for one resolved part of a head.
 /// A top-level region, or one instance's spawn of a shared child region.
 struct PartSynth {
@@ -842,7 +881,8 @@ fn provide_dsp_edge_style(
 /// - Scope sync, every frame. Drain each `~scopeout`'s scope stream and append
 ///   its samples into the node's ring state, capped at the tap's `size`.
 ///
-/// Also tears down synths for closed heads.
+/// Also tears down synths for closed heads, and drops the synths the engine
+/// failed to start so their heads retry. See [`drop_failed_synths`].
 fn drive_synths(
     registry: Res<Registry>,
     reified: Res<GraphCache>,
@@ -877,7 +917,21 @@ fn drive_synths(
     // Tick NRT cleanup off the audio thread. Drops freed synths and surfaces
     // events.
     dsp.nrt.process();
-    while dsp.nrt.poll().is_some() {}
+    let failed = poll_failed_synths(&mut dsp.nrt);
+    for entity in drop_failed_synths(&mut dsp.controller, state, &failed) {
+        let msg = format!(
+            "the engine could not start a synth after {} tries. Its memory \
+             pool or node tree can be full",
+            MAX_SPAWN_RETRIES + 1,
+        );
+        log::error!("bevy_gantz_plyphon: {msg}");
+        cmds.entity(entity).insert(DspHead {
+            status: DeriveStatus::SpawnError(msg.clone()),
+            outputs: 0,
+            view: msg.into(),
+            shapes: Default::default(),
+        });
+    }
     // Drop retired compiled defs once the audio thread is done with them.
     // Frees without a follow-up install would otherwise linger in `retiring`.
     dsp.controller.reap_retired_defs();
@@ -1080,6 +1134,58 @@ fn drive_synths(
     state.bufnum_alloc.sweep(Instant::now());
 }
 
+/// Drain the engine's events. Returns the node ids of the synths it failed to
+/// start and drops the other events.
+fn poll_failed_synths(nrt: &mut Nrt) -> Vec<i32> {
+    std::iter::from_fn(|| nrt.poll())
+        .filter_map(|event| match event {
+            plyphon::Event::SynthFailed { id } => Some(id),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Drop each synth that the engine failed to start, by node id, from its head.
+/// For example, the engine's memory pool was full. No free is sent, since the
+/// node never existed. The part's def, buffer and scope references are
+/// released. Its bus runs stay allocated, as the respawn reuses them by key.
+/// A failed synth that was already replaced is left to its fade.
+///
+/// Each head with a dropped part respawns it next frame through a structural
+/// sync, at most [`MAX_SPAWN_RETRIES`] times per graph. Returns the heads that
+/// ran out of retries. They stay parked until their graph changes.
+fn drop_failed_synths(
+    controller: &mut Controller,
+    state: &mut HeadSynths,
+    failed: &[i32],
+) -> Vec<Entity> {
+    let now = Instant::now();
+    let mut failed_heads: Vec<Entity> = Vec::new();
+    for &id in failed {
+        let found = state.heads.iter_mut().find_map(|(&entity, head)| {
+            let ix = head.parts.iter().position(|p| p.node_id == id)?;
+            Some((entity, head.parts.remove(ix)))
+        });
+        let Some((entity, part)) = found else {
+            continue;
+        };
+        release_def(controller, &mut state.shared_defs, &part.def_name);
+        free_scopes(controller, &mut state.bufnum_alloc, part.scopes, now);
+        free_buffers(controller, state, &part.buffers, now);
+        if !failed_heads.contains(&entity) {
+            failed_heads.push(entity);
+        }
+    }
+    // Parts of one sync that fail together count as one failure.
+    failed_heads.retain(|entity| {
+        let head = state.heads.get_mut(entity).expect("found above");
+        head.failures += 1;
+        head.retry = head.failures <= MAX_SPAWN_RETRIES;
+        !head.retry
+    });
+    failed_heads
+}
+
 /// Split the fade backlog. Drains and returns the entries due for freeing.
 /// Those past their deadline, plus the oldest entries of any head whose
 /// backlog exceeds [`MAX_FADING_PER_HEAD`]. Entries are pushed in replacement
@@ -1136,6 +1242,7 @@ fn park_head(state: &mut HeadSynths, entity: Entity, graph_ca: ca::GraphAddr) {
                     retry: false,
                     parts: Vec::new(),
                     muted: false,
+                    failures: 0,
                 },
             );
         }
@@ -1161,12 +1268,11 @@ fn buffer_blobs(reg: &ca::Registry) -> &BufferBlobs {
 /// graph therefore never spuriously respawns, and the driver never mutates a
 /// def copy.
 ///
-/// A replacement spawns silent, with fade defaults patched to `0.0`. Defaults
-/// seed both the control wire and the lag state. It ramps its fades to unity
-/// once up, while the old synth's fades ramp to zero ahead of a deferred free.
-/// The overlap is the crossfade. On a bus, `Out` sums the two ramps. Placement
-/// follows the region DAG. A spawned synth lands `Before` the first kept synth
-/// later in topo order, else at the tail. Bus readers hear only writers
+/// A replacement fades in from its first block through the `Line` in each of
+/// its fade gains, while the old synth's fades ramp to zero ahead of a
+/// deferred free. The overlap is the crossfade. On a bus, `Out` sums the two
+/// ramps. Placement follows the region DAG. A spawned synth lands `Before` the
+/// first kept synth later in topo order, else at the tail. Bus readers hear only writers
 /// computed earlier in the node tree. On install or spawn failure the old
 /// synth is left playing, which is better than going silent.
 ///
@@ -1216,6 +1322,7 @@ where
                     retry: false,
                     parts: Vec::new(),
                     muted,
+                    failures: 0,
                 },
             );
             return DspHead {
@@ -1283,6 +1390,12 @@ where
     }
     let prev = state.heads.remove(&entity);
     let prev_muted = prev.as_ref().map_or(muted, |h| h.muted);
+    // A retry of the same graph keeps counting failed spawns. A new graph
+    // starts again from zero.
+    let failures = prev
+        .as_ref()
+        .filter(|h| h.graph == graph_ca)
+        .map_or(0, |h| h.failures);
     let mut prev = prev.map(|h| h.parts).unwrap_or_default();
     let mut plans: Vec<Plan> = Vec::with_capacity(derived.len());
     for r in derived {
@@ -1388,6 +1501,7 @@ where
             retry: transient_failure,
             parts,
             muted: prev_muted,
+            failures,
         },
     );
 
@@ -1431,12 +1545,12 @@ fn wiring_hash(part: &ResolvedPart) -> u64 {
 
 /// Cue scope streams and allocate buses so their indices are known, then
 /// install and spawn one part's def. It spawns `Before` the given anchor when
-/// present, else at the root group's tail. The synth spawns silent behind its
-/// fade gains' baked `0.0` defaults. Bus indices, scope bufnums and unbound
-/// fade-to-unity are then set via `set_control` in one command-ring drain,
-/// landing before the first audible block. While `muted`, the `~out` fades
-/// stay at their silent default. Bound params re-send from node state via
-/// the same-frame param sync. On failure, cleans up after itself and reports
+/// present, else at the root group's tail. The synth fades in from its first
+/// block through the `Line` in each fade gain. The spawn carries the bus
+/// indices, scope bufnums, bufnums and unbound fade params in one batch, so
+/// all are in place before the synth's first block. While `muted`, the `~out`
+/// fade params stay at their silent `0.0` default. Bound params re-send from
+/// node state via the same-frame param sync. On failure, cleans up after itself and reports
 /// whether retrying next frame can converge. See [`SpawnError`].
 fn spawn_part(
     controller: &mut Controller,
@@ -1464,19 +1578,19 @@ fn spawn_part(
     } = part;
 
     // Allocate buses and cue scope streams up front so their indices are known
-    // for the post-spawn `set_control` drain below. No def mutation is needed.
+    // for the spawn's controls below. No def mutation is needed.
     // The bus indices and bufnums are no-lag control params, set live per
     // block. Whichever side of a bus spawns first allocates. The counterpart,
     // spawned later in topo order or kept from a previous sync, looks the run
     // up by the same key.
-    let mut set_after_spawn: Vec<(usize, f32)> = Vec::new();
+    let mut controls: Vec<(usize, f32)> = Vec::new();
     for binding in bus_writes.iter().chain(&bus_reads) {
         let bus_key = (entity, binding.key.clone());
         let Some(run) = state.bus_alloc.get_or_alloc(bus_key, binding.channels, now) else {
             log::error!("bevy_gantz_plyphon: private audio buses exhausted; part not spawned");
             return Err(SpawnError::Permanent);
         };
-        set_after_spawn.push((binding.param, run.start as f32));
+        controls.push((binding.param, run.start as f32));
     }
 
     // A monitor that gets no index keeps its bufnum param at 0, the empty
@@ -1489,7 +1603,7 @@ fn spawn_part(
         let channels = m.channels.max(1);
         match controller.cue_scope(index, channels, sample_rate, CHUNK_FRAMES, NUM_CHUNKS) {
             Ok(consumer) => {
-                set_after_spawn.push((m.bufnum_param, index as f32));
+                controls.push((m.bufnum_param, index as f32));
                 scopes.push(ScopeSlot {
                     node_path: m.node_path.clone(),
                     size: m.size,
@@ -1506,9 +1620,8 @@ fn spawn_part(
     }
 
     // Install each buffer and set the bufnum param of its source. The install
-    // is in the same command drain as the spawn, so unit init already sees
-    // the buffer. A buffer that cannot be installed gets `-1`, so the node
-    // plays silence.
+    // is sent before the spawn, so unit init already sees the buffer. A buffer
+    // that cannot be installed gets `-1`, so the node plays silence.
     let mut part_buffers: Vec<BufferKey> = Vec::new();
     for binding in &buffers {
         let key = match &binding.source {
@@ -1537,7 +1650,7 @@ fn spawn_part(
                 return Err(SpawnError::Transient);
             }
         };
-        set_after_spawn.push((binding.bufnum_param, value));
+        controls.push((binding.bufnum_param, value));
     }
 
     let def_name = def.name.clone();
@@ -1571,25 +1684,17 @@ fn spawn_part(
         Some(node) => (node, AddAction::Before),
         None => (ROOT_GROUP_ID, AddAction::Tail),
     };
-    match backend.spawn(&def_name, target, action) {
-        Ok(node_id) => {
-            // Wire the synth in one command-ring drain. Bus indices, scope
-            // bufnums, then the unbound fade gains ramped to unity. All land
-            // before the synth's first audible block. It spawns silent behind
-            // the fade's baked `0.0` default.
-            for (param, value) in &set_after_spawn {
-                if let Err(e) = backend.set_control(node_id, *param, *value) {
-                    log::error!("bevy_gantz_plyphon: post-spawn set_control failed: {e:?}");
-                }
-            }
-            for g in &gains {
-                let held_muted = muted && g.sink == FadeSink::Output;
-                if !held_muted && !params.iter().any(|b| b.index == g.index) {
-                    if let Err(e) = backend.set_control(node_id, g.index, 1.0) {
-                        log::error!("bevy_gantz_plyphon: fade-gain restore failed: {e:?}");
-                    }
-                }
-            }
+    // The unbound fade params at unity. The fade lines ramp the synth in from
+    // its first block.
+    for g in &gains {
+        let held_muted = muted && g.sink == FadeSink::Output;
+        if !held_muted && !params.iter().any(|b| b.index == g.index) {
+            controls.push((g.index, 1.0));
+        }
+    }
+    let node_id = state.node_ids.alloc();
+    match backend.spawn(node_id, &def_name, target, action, &controls) {
+        Ok(()) => {
             let params = params
                 .iter()
                 .map(|b| ParamSlot {
@@ -2121,6 +2226,18 @@ mod tests {
         assert_eq!(a.alloc(), None);
     }
 
+    /// Node ids start above plyphon's automatic ids and never repeat, and the
+    /// counter wraps back to the start rather than overflow.
+    #[test]
+    fn node_ids_start_high_and_do_not_repeat() {
+        let mut ids = NodeIds::default();
+        assert_eq!(ids.alloc(), FIRST_NODE_ID);
+        assert_eq!(ids.alloc(), FIRST_NODE_ID + 1);
+        let mut last = NodeIds { next: i32::MAX };
+        assert_eq!(last.alloc(), i32::MAX);
+        assert_eq!(last.alloc(), FIRST_NODE_ID);
+    }
+
     /// Resolve `key` for a part that holds `refs`, at 48 kHz. `None` if the
     /// buffer is missing or must retry.
     fn resolve(
@@ -2465,6 +2582,65 @@ mod tests {
             rms > 0.05,
             "sin -> out must sound via spawn_part: rms={rms}"
         );
+    }
+
+    /// A spawned part fades in. Its first block is near silent, and its level
+    /// rises over the fade lag to full. The ramp comes from the def, so it
+    /// holds even when the driver's fade param lands before the first block.
+    #[test]
+    fn spawn_part_fades_in() {
+        use gantz_core::edge::Edge;
+        use gantz_core::node::graph::Graph;
+        use gantz_plyphon::flatten::{Flat, RefKind, flatten};
+
+        let mut g = Graph::<TestN>::default();
+        let s = g.add_node(sinosc());
+        let o = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
+        g.add_edge(s, o, Edge::new(0.into(), 0.into()));
+        let resolve =
+            |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> { None };
+        let flat: Graph<Flat<&TestN>> = flatten(&|_| None, &g, &resolve).expect("flatten");
+        let mut cache = DefCache::new();
+        let template = derive_template(&flat, 1, &|_| None, &mut cache).expect("derive");
+        let part = instantiate(&template, &cache).into_iter().next().unwrap();
+        let wiring = wiring_hash(&part);
+
+        let (mut controller, _nrt, mut world) = test_engine();
+        let mut state = HeadSynths::default();
+        let entity = entities(1)[0];
+        spawn_part(
+            &mut controller,
+            &mut state,
+            &EMPTY_BUFFERS,
+            entity,
+            part,
+            wiring,
+            48_000.0,
+            None,
+            false,
+        )
+        .expect("spawn_part");
+
+        // The peak of each 64-frame block, over the fade and well past it.
+        let fade_blocks = (gantz_plyphon::FADE_LAG * 48_000.0 / 64.0).ceil() as usize;
+        let peaks: Vec<f32> = (0..fade_blocks * 3)
+            .map(|_| {
+                let mut block = [0.0f32; 64];
+                world.fill(&mut block, 1);
+                block.iter().fold(0.0f32, |peak, v| peak.max(v.abs()))
+            })
+            .collect();
+        let full = peaks[fade_blocks * 2..]
+            .iter()
+            .fold(0.0f32, |peak, &v| peak.max(v));
+        assert!(full > 0.15, "the tone reaches full level: {full}");
+        assert!(
+            peaks[0] < full * 0.1,
+            "the first block is near silent: {peaks:?}"
+        );
+        let mid = peaks[fade_blocks / 2];
+        let ramps = mid > full * 0.2 && mid < full * 0.8;
+        assert!(ramps, "the level ramps over the fade: {peaks:?}");
     }
 
     /// A part spawned muted is silent until its `~out` fade ramps to unity.
@@ -3205,6 +3381,68 @@ mod tests {
         render_rms(&mut world, 48_000 / 4);
         let rms4 = render_rms(&mut world, 48_000 / 4);
         assert!(rms4 < 1e-3, "muted again, it must fall silent: rms={rms4}");
+    }
+
+    /// A synth the engine fails to start, here on a memory pool too small for
+    /// any synth, is dropped from its head, and the head retries with a new
+    /// node id. After `MAX_SPAWN_RETRIES` failed retries the head parks. A new
+    /// graph starts to count again from zero.
+    #[test]
+    fn failed_spawn_retries_then_parks() {
+        let g = sine_out_child();
+        let mut edited = sine_out_child();
+        edited.add_node(sinosc());
+        let map = HashMap::new();
+        let (mut controller, mut nrt, mut world) = plyphon::engine(plyphon::Options {
+            sample_rate: 48_000.0,
+            output_channels: 1,
+            pool_bytes: 16,
+            ..plyphon::Options::default()
+        });
+        let mut state = HeadSynths::default();
+        let entity = entities(1)[0];
+        let mut sync_and_fail = |g: &gantz_core::node::graph::Graph<TestN>| {
+            let (flat, children) = flatten_head(g, &map);
+            structural_sync(
+                &mut controller,
+                &mut state,
+                &Default::default(),
+                entity,
+                graph_addr(g),
+                &flat,
+                &children,
+                1,
+                48_000.0,
+                false,
+            );
+            let node_id = state.heads[&entity].parts[0].node_id;
+            world.fill(&mut [0.0; 64], 1);
+            nrt.process();
+            let failed = poll_failed_synths(&mut nrt);
+            assert_eq!(failed, [node_id], "the engine rejects the synth");
+            let parked = drop_failed_synths(&mut controller, &mut state, &failed);
+            let head = &state.heads[&entity];
+            assert!(head.parts.is_empty(), "the failed part is dropped");
+            assert!(state.shared_defs.is_empty(), "its def is released");
+            (node_id, head.failures, head.retry, parked)
+        };
+
+        let mut ids = HashSet::new();
+        for attempt in 1..=MAX_SPAWN_RETRIES {
+            let (id, failures, retry, parked) = sync_and_fail(&g);
+            assert!(ids.insert(id), "each retry spawns with a new node id");
+            assert_eq!(failures, attempt);
+            assert!(retry, "the head retries");
+            assert!(parked.is_empty());
+        }
+        let (_, failures, retry, parked) = sync_and_fail(&g);
+        assert_eq!(failures, MAX_SPAWN_RETRIES + 1);
+        assert!(!retry, "out of retries, the head parks");
+        assert_eq!(parked, [entity]);
+
+        let (_, failures, retry, _) = sync_and_fail(&edited);
+        assert_eq!(failures, 1, "a new graph counts from zero");
+        assert!(retry);
     }
 
     /// A structural edit within a stable-key region re-installs the def and
