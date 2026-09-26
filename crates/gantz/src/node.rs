@@ -2924,7 +2924,7 @@ mod tests {
     }
 
     /// The demos in the plyphon base source.
-    const PLYPHON_DEMOS: [&str; 8] = [
+    const PLYPHON_DEMOS: [&str; 9] = [
         "demo-sine",
         "demo-ringmod",
         "demo-waveshape",
@@ -2933,12 +2933,14 @@ mod tests {
         "demo-samplehold",
         "demo-looper",
         "demo-sampler",
+        "demo-wavetable",
     ];
 
     /// Every plyphon base demo derives synthdefs that build in the real
     /// engine. This catches a demo wired to a wrong socket index. The
-    /// looper's writer and reader must also both bind its buffer. The
-    /// sampler starts with no sample, so its reader feeds `-1`.
+    /// buffer units of the looper and the wavetable demo must also bind
+    /// their buffers. The sampler starts with no sample, so its reader feeds
+    /// `-1`.
     #[test]
     fn plyphon_base_demos_derive_and_build() {
         use bevy_gantz_plyphon::plyphon;
@@ -2977,18 +2979,20 @@ mod tests {
                 );
                 assert!(parts.iter().all(|p| p.buffers.is_empty()));
             }
-            if demo != "demo-looper" {
-                continue;
-            }
-            for unit in ["RecordBuf", "PlayBuf"] {
+            let units: &[&str] = match demo {
+                "demo-looper" => &["RecordBuf", "PlayBuf"],
+                "demo-wavetable" => &["Osc"],
+                _ => &[],
+            };
+            for &unit in units {
                 let part = parts
                     .iter()
                     .find(|p| p.def.units.iter().any(|u| u.name == unit))
-                    .unwrap_or_else(|| panic!("the looper emits `{unit}`"));
+                    .unwrap_or_else(|| panic!("{demo} emits `{unit}`"));
                 let spec = part.def.units.iter().find(|u| u.name == unit).unwrap();
                 assert!(
                     matches!(spec.inputs[0], plyphon::synthdef::InputRef::Param(_)),
-                    "the looper's `{unit}` binds its buffer",
+                    "the `{unit}` of {demo} binds its buffer",
                 );
                 assert_eq!(part.buffers.len(), 1, "one binding per part");
             }

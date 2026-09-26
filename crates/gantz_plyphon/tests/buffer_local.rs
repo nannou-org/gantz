@@ -30,7 +30,14 @@ impl NodeDsp for Src {
     }
 
     fn ugens(&self, path: &[usize], _: &[Option<Signal>], b: &mut DspBuilder) -> Vec<Signal> {
-        vec![b.push_buffer(path, BufferSource::Scratch { frames: 64 }, 2)]
+        vec![b.push_buffer(
+            path,
+            BufferSource::Scratch {
+                frames: 64,
+                wavetable: false,
+            },
+            2,
+        )]
     }
 }
 

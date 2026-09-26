@@ -342,7 +342,7 @@ fn drain_sub(sub: &SteelVal) -> Option<(f64, Vec<(f64, f64)>, Option<SteelVal>)>
 
 /// A symbol [`SteelVal`] for a state key, matching the Steel `'value` and
 /// `'pending`.
-fn sym(name: &str) -> SteelVal {
+pub(crate) fn sym(name: &str) -> SteelVal {
     SteelVal::SymbolV(name.into())
 }
 
@@ -352,7 +352,7 @@ fn empty_list() -> SteelVal {
 }
 
 /// Convert a `NumV` or `IntV` [`SteelVal`] to `f64`.
-fn steel_num(val: &SteelVal) -> Option<f64> {
+pub(crate) fn steel_num(val: &SteelVal) -> Option<f64> {
     match val {
         SteelVal::NumV(f) => Some(*f),
         SteelVal::IntV(i) => Some(*i as f64),

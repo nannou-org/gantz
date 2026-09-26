@@ -112,6 +112,18 @@
   (-> ~mul3 ~tanh4)
   (-> ~tanh4 ~out5))
 
+(graph demo-wavetable
+  (comment0 (comment "Wavetable.\nDial the number of harmonics." 150 30))
+  (number1 (number #:min 1 #:max 32))
+  (expr2 (expr (transduce (range 0 512) (mapping (lambda (i) (* 0.5 (apply + (transduce (range 1 (+ (exact (round $h)) 1)) (mapping (lambda (k) (/ (sin (/ (* 6.283185307179586 k i) 512)) k))) (into-list)))))) (into-list))))
+  (~buffer3 (~buffer #:frames 1024 #:wavetable))
+  (~osc4 ~osc)
+  (~out5 ~out)
+  (-> number1 expr2)
+  (-> expr2 ~buffer3)
+  (-> ~buffer3 ~osc4)
+  (-> ~osc4 ~out5))
+
 (descriptions
   (demo-freeverb "Random impulses ring a resonator into a reverb. Dial the number for the wet mix.")
   (demo-looper "Random impulses record into a buffer that plays back at another speed. Dial the number for the playback speed.")
@@ -120,7 +132,8 @@
   (demo-samplehold "A latch samples white noise on each impulse. The result sets the frequency of a sine. Dial the numbers for the step rate and the pitch range.")
   (demo-sampler "A sample plays in a loop. Select the ~sample node and press Load in its inspector to pick a WAV file. Dial the number for the playback speed.")
   (demo-sine "A sine wave into the audio output - the simplest DSP graph.")
-  (demo-waveshape "A sine into a tanh waveshaper. Dial the number to raise the drive."))
+  (demo-waveshape "A sine into a tanh waveshaper. Dial the number to raise the drive.")
+  (demo-wavetable "A list of numbers fills a wavetable buffer for an oscillator. Dial the number of harmonics to fill the table and hear the tone change."))
 
 (layout demo-freeverb
   (comment0 -220 0)
@@ -133,8 +146,8 @@
 
 (layout demo-looper
   (comment0 -240 0)
-  (number1 120 160)
-  (~buffer4 -80 160)
+  (number1 174 160)
+  (~buffer4 -84 80)
   (~dust2 0 0)
   (~out7 0 320)
   (~playbuf6 0 240)
@@ -200,3 +213,12 @@
   (~sinosc2 0 0)
   (~tanh4 0 160)
   (camera 0 120 1))
+
+(layout demo-wavetable
+  (comment0 -240 0)
+  (expr2 0 80)
+  (number1 0 0)
+  (~buffer3 0 160)
+  (~osc4 0 240)
+  (~out5 0 320)
+  (camera 72.36194 159.99997 0.9999999))
