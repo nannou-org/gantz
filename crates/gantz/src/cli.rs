@@ -44,10 +44,11 @@ pub enum Command {
     Compile(CompileArgs),
     /// Join a collaborative session and mirror its graphs to a directory.
     ///
-    /// Each top-level graph in the session becomes <DIR>/<NAME>.gantz. Saved
-    /// edits become commits announced to the session, and remote changes
-    /// rewrite the files. Blocks until interrupted. Nothing keeps running
-    /// after it exits.
+    /// Each top-level graph in the session becomes a .gantz file named after
+    /// it in the directory, holding it and its nested graphs. Saved edits
+    /// become commits announced to the session, and remote changes rewrite
+    /// the files. Blocks until interrupted. Nothing keeps running after it
+    /// exits.
     #[cfg(feature = "collab")]
     Join(JoinArgs),
 }
@@ -90,7 +91,7 @@ pub struct JoinArgs {
     /// The session invite ticket.
     pub ticket: String,
     /// The directory to mirror the session into, created if absent. Defaults
-    /// to the app data directory, then sessions/<NAME>-<SESSION>.
+    /// to a directory named after the session under the app data directory.
     #[arg(long, value_name = "DIR")]
     pub dir: Option<PathBuf>,
     /// The peer identity file: 32 secret key bytes, created if absent. Gives
