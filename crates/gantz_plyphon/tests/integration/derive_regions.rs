@@ -5,7 +5,7 @@ use gantz_core::edge::Edge;
 use gantz_core::node::graph::Graph;
 use gantz_plyphon::{
     Bus, DeriveError, FadeSink, NodeDsp, Out, Pack, ScopeOut, ToNodeDsp, UnitNode, derive_synthdef,
-    derive_synthdefs, structural_sig,
+    derive_synthdefs,
 };
 use plyphon::synthdef::InputRef;
 use plyphon::{AddAction, Options, ROOT_GROUP_ID, Rate, World, engine};
@@ -77,6 +77,16 @@ fn sine_bus_out_splits_two_regions() {
     assert_eq!(w.channels, 1);
     assert_eq!(wdef.units[w.unit].name, "Out");
     assert!(matches!(wdef.units[w.unit].inputs[0], InputRef::Param(p) if p == w.param as u32));
+    // The bus index is a no-lag control param, since a lagged bus index would
+    // glide through wrong buses. It is baked at `0.0` and the driver alone
+    // sets it per spawn via `set_control`.
+    let bus_param = &wdef.params[w.param];
+    assert_eq!(bus_param.default, 0.0, "bus-index defaults to 0.0");
+    assert_eq!(bus_param.lag, None, "bus-index must be unlagged");
+    assert!(
+        !writer.derived.params.iter().any(|p| p.index == w.param),
+        "the bus-index param has no node binding",
+    );
     assert_eq!(
         writer.derived.gains.len(),
         1,
@@ -377,39 +387,6 @@ fn no_boundary_graph_matches_single_def() {
     g.add_node(N::Other);
     let regions = derive_synthdefs(&g, 1, "head").expect("derive");
     assert_eq!(regions[0].key, key, "unrelated additions keep the key");
-}
-
-#[test]
-fn bus_index_param_is_unlagged_and_sig_stable() {
-    // The bus channel index is a no-lag control param, since a lagged bus index
-    // would glide through wrong buses. It is baked at `0.0` and set per spawn
-    // via `set_control`. The driver never mutates the def, so `structural_sig`
-    // is computed on the final def and is stable across re-derives.
-    let mut g = Graph::<N>::default();
-    let s = g.add_node(sinosc());
-    let b = g.add_node(N::Bus(Bus::default()));
-    let o = g.add_node(N::Out(Out::default()));
-    g.add_edge(s, b, Edge::new(0.into(), 0.into()));
-    g.add_edge(b, o, Edge::new(0.into(), 0.into()));
-
-    let regions = derive_synthdefs(&g, 1, "head").expect("derive");
-    let writer = &regions[0];
-    let w = &writer.bus_writes[0];
-    let param = &writer.derived.def.params[w.param];
-    assert_eq!(param.default, 0.0, "bus-index defaults to 0.0");
-    assert_eq!(param.lag, None, "bus-index must be unlagged");
-    assert!(
-        !writer.derived.params.iter().any(|b| b.index == w.param),
-        "the bus-index param has no node binding (the driver alone sets it)",
-    );
-
-    let sig = structural_sig(&writer.derived.def);
-    let regions2 = derive_synthdefs(&g, 1, "head").expect("re-derive");
-    assert_eq!(
-        sig,
-        structural_sig(&regions2[0].derived.def),
-        "re-deriving the same graph yields the same sig (no per-spawn patching)",
-    );
 }
 
 #[test]

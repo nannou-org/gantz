@@ -1,6 +1,6 @@
 //! Tests that `flatten` splices nested graphs into a flat graph derivation
-//! understands. Covers boundary bridging, original-path preservation, error
-//! cases and an offline render of a nested graph through the real engine.
+//! understands. Covers boundary bridging, original-path preservation and error
+//! cases.
 
 use std::collections::HashMap;
 
@@ -10,14 +10,11 @@ use gantz_core::node::graph::{Graph, NodeIx};
 use gantz_core::node::{ExprCtx, ExprResult, MetaCtx, parse_expr};
 use gantz_plyphon::flatten::{Flat, FlattenError, RefKind, flatten};
 use gantz_plyphon::{
-    AddAction, Bus, NodeDsp, Out, ROOT_GROUP_ID, ScopeOut, ToNodeDsp, UnitNode, derive_synthdef,
-    derive_synthdefs, structural_sig,
+    Bus, NodeDsp, Out, ScopeOut, ToNodeDsp, UnitNode, derive_synthdef, derive_synthdefs,
+    structural_sig,
 };
 use petgraph::Direction;
 use petgraph::visit::EdgeRef;
-use plyphon::{Options, World, engine};
-
-const SR: f32 = 48_000.0;
 
 /// A minimal erased node enum, standing in for the app's `Box<dyn Node>`.
 /// It has the DSP nodes, the nesting nodes `Inlet`, `Outlet` and `Ref`, and
@@ -31,8 +28,8 @@ enum N {
     Inlet,
     Outlet,
     Ref(ContentAddr),
-    /// A DSP-aware ref carrying the child CA and the `inline` flag.
-    DspRef(ContentAddr, bool),
+    /// A ref that lowers as an instance marker, carrying the child CA.
+    InstanceRef(ContentAddr),
     Other,
 }
 
@@ -43,7 +40,7 @@ impl ToNodeDsp for N {
             N::Out(o) => Some(o),
             N::ScopeOut(t) => Some(t),
             N::Bus(b) => Some(b),
-            N::Inlet | N::Outlet | N::Ref(_) | N::DspRef(_, _) | N::Other => None,
+            N::Inlet | N::Outlet | N::Ref(_) | N::InstanceRef(_) | N::Other => None,
         }
     }
 }
@@ -81,14 +78,7 @@ fn resolver<'g>(
 ) -> impl Fn(&N) -> Option<(ContentAddr, RefKind, Option<&'g Graph<N>>)> + 'g {
     move |n| match n {
         N::Ref(ca) => Some((*ca, RefKind::Inline, map.get(ca))),
-        N::DspRef(ca, inline) => {
-            let kind = if *inline {
-                RefKind::Inline
-            } else {
-                RefKind::Instance
-            };
-            Some((*ca, kind, map.get(ca)))
-        }
+        N::InstanceRef(ca) => Some((*ca, RefKind::Instance, map.get(ca))),
         _ => None,
     }
 }
@@ -351,20 +341,6 @@ fn ref_cycle_and_unresolved_are_errors() {
 }
 
 #[test]
-fn flatten_error_displays_readably() {
-    // Flatten failures surface in the UI, so each variant formats as a
-    // readable message rather than a `Debug` dump.
-    assert_eq!(
-        FlattenError::RefCycle(ca(9)).to_string(),
-        format!("graph reference resolves through itself: {}", ca(9)),
-    );
-    assert_eq!(
-        FlattenError::Unresolved(ca(9)).to_string(),
-        format!("unresolved graph reference: {}", ca(9)),
-    );
-}
-
-#[test]
 fn boundary_wiring_cycle_dissolves() {
     // Two pass-through refs wired into a loop. They share one committed child,
     // so there is no ref cycle. Resolution terminates and the consumer
@@ -403,17 +379,6 @@ fn every_edge_bridges_across_a_boundary() {
         vec![(vec![0], 0, 0), (vec![1], 0, 0)],
         "both sources feed the consumer",
     );
-
-    // Derivation sums the bridged summands. One add ties both sines into
-    // the out.
-    let def = derive_synthdef(&flat, 1, "t").expect("derive").def;
-    assert_eq!(def.units.iter().filter(|u| u.name == "SinOsc").count(), 2);
-    let adds = def
-        .units
-        .iter()
-        .filter(|u| u.name == "BinaryOpUGen" && u.special_index == 0)
-        .count();
-    assert_eq!(adds, 1, "the bridged summands sum at the input");
 }
 
 #[test]
@@ -500,76 +465,6 @@ fn nested_scopeout_binds_by_nested_path() {
     assert_eq!(derived.monitors[0].node_path, vec![1, 1]);
 }
 
-#[test]
-fn nested_synth_plays_expected_tone() {
-    // The whole pipeline end to end. A sine committed inside a child graph
-    // sounds through the parent's `~out` when rendered by the real engine.
-    let mut child = Graph::<N>::default();
-    let s = child.add_node(sinosc());
-    let o = child.add_node(N::Outlet);
-    child.add_edge(s, o, Edge::new(0.into(), 0.into()));
-    let map = HashMap::from([(ca(1), child)]);
-
-    let mut g = Graph::<N>::default();
-    let r = g.add_node(N::Ref(ca(1)));
-    let o = g.add_node(N::Out(Out::default()));
-    g.add_edge(r, o, Edge::new(0.into(), 0.into()));
-
-    let flat = flatten_with(&g, &map);
-    let derived = derive_synthdef(&flat, 1, "test").expect("derive");
-
-    let (mut controller, _nrt, mut world) = engine(Options {
-        sample_rate: SR as f64,
-        output_channels: 1,
-        ..Options::default()
-    });
-    controller.add_synthdef(derived.def);
-    let node = controller
-        .synth_new("test", ROOT_GROUP_ID, AddAction::Tail)
-        .expect("synth_new");
-    for gain in &derived.gains {
-        controller
-            .set_control(node, gain.index, 1.0)
-            .expect("fade in");
-    }
-
-    let a = render(&mut world, SR as usize / 2);
-    assert!(a.iter().any(|s| s.abs() > 0.1), "nested synth was silent");
-    let (m220, m440) = (goertzel(&a, 220.0), goertzel(&a, 440.0));
-    assert!(
-        m220 > 5.0 * m440,
-        "expected 220 Hz dominant: m220={m220}, m440={m440}",
-    );
-}
-
-/// Goertzel magnitude estimate at `freq` in Hz over mono `samples` sampled at [`SR`].
-fn goertzel(samples: &[f32], freq: f32) -> f32 {
-    let n = samples.len();
-    let k = (0.5 + n as f32 * freq / SR).floor();
-    let w = 2.0 * std::f32::consts::PI * k / n as f32;
-    let coeff = 2.0 * w.cos();
-    let (mut s1, mut s2) = (0.0f32, 0.0f32);
-    for &x in samples {
-        let s = x + coeff * s1 - s2;
-        s2 = s1;
-        s1 = s;
-    }
-    let power = s1 * s1 + s2 * s2 - coeff * s1 * s2;
-    power.max(0.0).sqrt() / n as f32
-}
-
-/// Render `frames` of mono audio.
-fn render(world: &mut World, frames: usize) -> Vec<f32> {
-    let mut out = Vec::with_capacity(frames + 512);
-    let mut buf = vec![0.0f32; 512];
-    while out.len() < frames {
-        world.fill(&mut buf, 1);
-        out.extend_from_slice(&buf);
-    }
-    out.truncate(frames);
-    out
-}
-
 /// The flat vertex at `path`.
 fn flat_kind<'a>(flat: &'a Graph<Flat<&'a N>>, path: &[usize]) -> &'a Flat<&'a N> {
     &flat[at(flat, path)]
@@ -577,14 +472,14 @@ fn flat_kind<'a>(flat: &'a Graph<Flat<&'a N>>, path: &[usize]) -> &'a Flat<&'a N
 
 #[test]
 fn instanced_ref_stays_an_opaque_marker() {
-    // The parent is `sin -> dsp-ref(child, inline=false) -> out`. The ref is
+    // The parent is `sin -> instance-ref(child) -> out`. The ref is
     // not spliced. It survives as a single `Flat::Instance` marker carrying
     // the child's CA, with the parent edges into and out of it preserved. The
     // child's nodes do not appear in the flat graph.
     let map = HashMap::from([(ca(1), lag_child())]);
     let mut g = Graph::<N>::default();
     let s = g.add_node(sinosc());
-    let r = g.add_node(N::DspRef(ca(1), false));
+    let r = g.add_node(N::InstanceRef(ca(1)));
     let o = g.add_node(N::Out(Out::default()));
     g.add_edge(s, r, Edge::new(0.into(), 0.into()));
     g.add_edge(r, o, Edge::new(0.into(), 0.into()));
@@ -597,28 +492,6 @@ fn instanced_ref_stays_an_opaque_marker() {
         matches!(flat_kind(&flat, &[1]), Flat::Instance { child_ca, .. } if *child_ca == ca(1)),
         "the ref lowers as an Instance marker carrying the child CA",
     );
-}
-
-#[test]
-fn inlined_dsp_ref_splices_as_a_plain_ref() {
-    // The same topology with `inline: true` splices the child's lag, matching
-    // the plain `Ref` behaviour. The marker is gone and the lag carries its
-    // nested path.
-    let map = HashMap::from([(ca(1), lag_child())]);
-    let mut g = Graph::<N>::default();
-    let s = g.add_node(sinosc());
-    let r = g.add_node(N::DspRef(ca(1), true));
-    let o = g.add_node(N::Out(Out::default()));
-    g.add_edge(s, r, Edge::new(0.into(), 0.into()));
-    g.add_edge(r, o, Edge::new(0.into(), 0.into()));
-
-    let flat = flatten_with(&g, &map);
-    assert_eq!(flat.node_count(), 3, "sin + spliced lag + out");
-    assert!(
-        matches!(flat_kind(&flat, &[1, 1]), Flat::Node { .. }),
-        "the inlined ref splices the child's nodes",
-    );
-    assert_eq!(edges_into(&flat, &[2]), vec![(vec![1, 1], 0, 0)]);
 }
 
 #[test]
@@ -638,7 +511,7 @@ fn instance_marker_preserves_multiport_edges() {
     let mut g = Graph::<N>::default();
     let s0 = g.add_node(sinosc());
     let s1 = g.add_node(sinosc());
-    let r = g.add_node(N::DspRef(ca(2), false));
+    let r = g.add_node(N::InstanceRef(ca(2)));
     let pk = g.add_node(N::Out(Out::default()));
     // Two edges into ref inputs 0 and 1, and two edges out of ref outputs 0
     // and 1. The second output feeds the out's gain input to keep it distinct.

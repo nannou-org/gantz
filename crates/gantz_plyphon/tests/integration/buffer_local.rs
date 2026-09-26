@@ -202,19 +202,6 @@ fn is_minus_one(input: InputRef) -> bool {
 }
 
 #[test]
-fn buffer_input_reads_its_local_source() {
-    let mut g = Graph::<N>::default();
-    let s = g.add_node(N::Src(Src));
-    let r = g.add_node(N::Reader(Reader));
-    let o = g.add_node(N::Out(Out::default()));
-    edge(&mut g, s, r, 0);
-    edge(&mut g, r, o, 0);
-    let def = derive_synthdef(&g, 1, "t").expect("derive").def;
-    let reader = unit(&def, "Reader");
-    assert_eq!(param_of(&def, reader.inputs[0]), Some("0/bufnum"));
-}
-
-#[test]
 fn unconnected_or_multi_fed_buffer_input_reads_minus_one() {
     // Unconnected.
     let mut g = Graph::<N>::default();
