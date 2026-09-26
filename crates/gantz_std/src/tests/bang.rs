@@ -1,19 +1,12 @@
 //! Tests for the bang node's trigger input. A `Bang` ignores its input value
 //! and emits a bang, `'()`, downstream when pushed.
 
+use super::{DebugNode, no_lookup};
 use gantz_core::{
-    Edge, Node,
+    Edge,
     compile::{EvalKind, entry_fn_name, push_pull_entrypoints},
     node::{self, WithPushEval},
 };
-use std::fmt::Debug;
-
-trait DebugNode: Debug + Node {}
-impl<T> DebugNode for T where T: Debug + Node {}
-
-fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
-    None
-}
 
 // Firing a value into a bang's trigger input emits `'()` downstream. The
 // downstream `check` asserts it received an empty list, so a successful fire

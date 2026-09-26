@@ -1,19 +1,12 @@
 //! Tests for the log node's provenance. The emitted expression carries the
 //! node's own path, so log entries identify their emitting node.
 
+use super::{DebugNode, no_lookup};
 use gantz_core::{
-    Edge, Node,
+    Edge,
     compile::push_pull_entrypoints,
     node::{self, WithPushEval},
 };
-use std::fmt::Debug;
-
-trait DebugNode: Debug + Node {}
-impl<T> DebugNode for T where T: Debug + Node {}
-
-fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
-    None
-}
 
 // The emitted module passes the log node's path as a quoted literal to the
 // registered log fn.
