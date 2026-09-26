@@ -23,7 +23,7 @@ fn log_expr_carries_node_path() {
     let push =
         g.add_node(Box::new(node::expr("'()").unwrap().with_push_eval()) as Box<dyn DebugNode>);
     let int = g.add_node(Box::new(node::expr("(begin $push 7)").unwrap()) as Box<_>);
-    let log = g.add_node(Box::new(gantz_std::Log::default()) as Box<_>);
+    let log = g.add_node(Box::new(crate::Log::default()) as Box<_>);
     g.add_edge(push, int, Edge::from((0, 0)));
     g.add_edge(int, log, Edge::from((0, 0)));
 

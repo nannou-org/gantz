@@ -2164,6 +2164,8 @@ where
 mod tests {
     use super::*;
 
+    mod plugin_order;
+
     /// A fading entry with no scope streams, due at `deadline`.
     fn fade(entity: Entity, deadline: Instant) -> FadingSynth {
         FadingSynth {

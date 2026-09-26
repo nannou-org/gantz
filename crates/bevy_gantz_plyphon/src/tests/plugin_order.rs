@@ -2,10 +2,10 @@
 //! shared `EvalEpoch` in `Plugin::finish`, so adding it before `GantzPlugin`
 //! must work identically.
 
+use crate::{DspConfig, DspStatus, PlyphonPlugin};
 use bevy::MinimalPlugins;
 use bevy::app::App;
 use bevy_gantz::GantzPlugin;
-use bevy_gantz_plyphon::{DspConfig, DspStatus, PlyphonPlugin};
 
 /// A headless app with the gantz plugins added in reversed order builds,
 /// finishes and ticks without panicking, with the DSP resources present.

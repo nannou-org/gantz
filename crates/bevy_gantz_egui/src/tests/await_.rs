@@ -1,8 +1,8 @@
 //! End-to-end tests for the `await` node: the state/branch protocol in a bare
 //! VM, and result delivery through the bevy driver in a headless app.
 
+use crate::node::{Await, Sleep, await_};
 use bevy_gantz::task::{GantzTask, TaskHandle};
-use bevy_gantz_egui::node::{Await, Sleep, await_};
 use gantz_core::{
     Edge, Node,
     compile::{Entrypoint, EvalKind, entry_fn_name, push_pull_entrypoints},
@@ -155,8 +155,8 @@ impl gantz_format::NodeSugar for NodeSet {
 fn codec() -> gantz_egui::node::NodeCodec {
     gantz_egui::ui_node_codec! {
         NodeSet {
-            bevy_gantz_egui::node::Await,
-            bevy_gantz_egui::node::Sleep,
+            crate::node::Await,
+            crate::node::Sleep,
             gantz_egui::node::Inspect,
         }
     }
@@ -172,18 +172,18 @@ fn task_test_app() -> bevy_app::App {
     let mut app = App::new();
     app.add_plugins(TaskPoolPlugin::default())
         .add_plugins(GantzPlugin)
-        .insert_resource(bevy_gantz_egui::NodeCodecRes(codec()))
-        .init_resource::<bevy_gantz_egui::GraphCache>()
-        .init_resource::<bevy_gantz_egui::BuiltinNodes>()
+        .insert_resource(crate::NodeCodecRes(codec()))
+        .init_resource::<crate::GraphCache>()
+        .init_resource::<crate::BuiltinNodes>()
         .add_systems(
             Update,
             (
-                bevy_gantz_egui::vm::sync.in_set(VmSet),
+                crate::vm::sync.in_set(VmSet),
                 await_::drive_awaits.after(VmSet).in_set(EntrypointSet),
             ),
         );
     app.world_mut()
-        .get_resource_or_init::<bevy_gantz_egui::vm::EntrypointFns>()
+        .get_resource_or_init::<crate::vm::EntrypointFns>()
         .0
         .push(Box::new(|get_node, graph| {
             gantz_core::compile::push_pull_entrypoints(get_node, graph)
@@ -194,9 +194,9 @@ fn task_test_app() -> bevy_app::App {
 /// Reify the registry's committed graphs into the app's graph cache.
 fn refresh_app_cache(app: &mut bevy_app::App) {
     app.world_mut()
-        .resource_scope::<bevy_gantz_egui::GraphCache, _>(|world, mut cache| {
+        .resource_scope::<crate::GraphCache, _>(|world, mut cache| {
             let registry = world.resource::<bevy_gantz::Registry>();
-            bevy_gantz_egui::refresh_cache(registry, &mut cache, &codec());
+            crate::refresh_cache(registry, &mut cache, &codec());
         });
 }
 

@@ -26,7 +26,7 @@ fn bang_trigger_input_emits_bang() {
     // A constant value, fired by the push via its own trigger input.
     let val = g.add_node(Box::new(node::expr("42").unwrap()) as Box<_>);
     // The bang ignores `val`'s output and emits `'()`.
-    let bang = g.add_node(Box::new(gantz_std::Bang::default()) as Box<_>);
+    let bang = g.add_node(Box::new(crate::Bang::default()) as Box<_>);
     let check = g.add_node(Box::new(node::expr("(assert! (equal? $b '()))").unwrap()) as Box<_>);
     g.add_edge(push, val, Edge::from((0, 0)));
     g.add_edge(val, bang, Edge::from((0, 0)));

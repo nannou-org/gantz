@@ -2,12 +2,12 @@
 
 #![cfg(feature = "datum")]
 
-use gantz_core::datum::Datum;
-use gantz_ui::codec::datum::{decode, encode};
-use gantz_ui::{
+use crate::codec::datum::{decode, encode};
+use crate::{
     BindPath, Col, Decoded, Dialer, Element, ErrorReason, Frame, Label, Limits, Rgba, Sep, Toggle,
     WarningKind,
 };
+use gantz_core::datum::Datum;
 
 fn s(text: &str) -> Datum {
     Datum::Str(text.to_string())

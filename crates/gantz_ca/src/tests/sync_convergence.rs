@@ -1,4 +1,4 @@
-//! Simulated-peer convergence tests for `gantz_ca::sync`.
+//! Simulated-peer convergence tests for `crate::sync`.
 //!
 //! Each test drives a small fleet of in-process peers exchanging tip
 //! announcements over a network with a seeded, adversarial delivery order.
@@ -10,7 +10,7 @@
 //! peer holds the identical tip commit address, not merely an equivalent
 //! graph, with no further announcements pending.
 
-use gantz_ca::{
+use crate::{
     BothModified, CommitAddr, DataGraph, Datum, EditOrDelete, Head, NodeData, Registry,
     Resolutions, SyncStep, commit_addr, graph_addr, history, merge::MergeResolution, merge_commits,
     monotonic_timestamp, plan_sync_step, sync::Staged,
@@ -265,7 +265,7 @@ fn assert_converged(peers: &[Peer]) -> CommitAddr {
 /// A graph's node weights in index order plus its sorted edge triples.
 /// Equality here is stronger than address equality. It pins node indices,
 /// which cross-peer layout coherence relies on.
-fn graph_value(g: &Graph) -> (Vec<NodeData>, Vec<(usize, usize, gantz_ca::Edge)>) {
+fn graph_value(g: &Graph) -> (Vec<NodeData>, Vec<(usize, usize, crate::Edge)>) {
     let nodes = g.node_weights().cloned().collect();
     let mut edges: Vec<_> = g
         .edge_references()
@@ -490,12 +490,12 @@ fn join_snapshot_tolerates_pruned_history() {
         g.add_node(node("b"));
     });
     let tip = host.tip;
-    let live = gantz_ca::LiveSet {
+    let live = crate::LiveSet {
         commits: [tip].into_iter().collect(),
         graphs: [host.reg.commits()[&tip].graph].into_iter().collect(),
         blobs: Default::default(),
     };
-    gantz_ca::prune(&mut host.reg, &live);
+    crate::prune(&mut host.reg, &live);
     assert_ne!(
         commit_addr(&host.reg.commits()[&tip]),
         tip,

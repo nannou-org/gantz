@@ -2,11 +2,11 @@
 
 #![cfg(all(feature = "steel", feature = "datum"))]
 
-use gantz_ui::elem::{
+use crate::elem::{
     Align, BindPath, Button, Col, Dialer, DialerStyle, Element, Frame, Grid, Key, Label, Matrix,
     Plot, PlotMode, PlotStyle, RefGui, Rgba, Row, Scope, Sep, Space, Toggle, Value,
 };
-use gantz_ui::{Decoded, Limits, SExpr, codec};
+use crate::{Decoded, Limits, SExpr, codec};
 
 /// One tree exercising every vocabulary element and attribute.
 fn full_tree() -> Element {

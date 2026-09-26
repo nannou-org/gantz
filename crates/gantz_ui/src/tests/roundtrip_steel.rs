@@ -2,8 +2,8 @@
 
 #![cfg(feature = "steel")]
 
-use gantz_ui::codec::steel::{decode, encode, lower};
-use gantz_ui::{
+use crate::codec::steel::{decode, encode, lower};
+use crate::{
     Align, BindPath, Col, Decoded, Dialer, Element, ErrorReason, Frame, Label, Limits, Row, SExpr,
     Sep, Toggle, WarningKind,
 };

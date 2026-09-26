@@ -2,12 +2,12 @@
 //! `Number` clamps every value it stores, including a value pushed into its
 //! input.
 
+use crate::number::Number;
 use gantz_core::{
     Edge, Node,
     compile::{EvalKind, entry_fn_name, push_pull_entrypoints},
     node::{self, WithPushEval},
 };
-use gantz_std::number::Number;
 use std::fmt::Debug;
 
 trait DebugNode: Debug + Node {}

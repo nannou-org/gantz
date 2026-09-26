@@ -6,7 +6,7 @@ use gantz_core::steel::SteelVal;
 use gantz_core::steel::steel_vm::engine::Engine;
 
 fn engine() -> Engine {
-    let mut vm = gantz_core::vm::new_engine(gantz_ui::modules());
+    let mut vm = gantz_core::vm::new_engine(crate::modules());
     vm.run("(require \"gantz/ui\")".to_string())
         .expect("require gantz/ui");
     vm
