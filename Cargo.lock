@@ -4094,6 +4094,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gantz_rng"
+version = "0.1.0"
+dependencies = [
+ "gantz_core",
+ "num-bigint",
+ "num-rational",
+ "num-traits",
+]
+
+[[package]]
 name = "gantz_std"
 version = "0.5.2"
 dependencies = [

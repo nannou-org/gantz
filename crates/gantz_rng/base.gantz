@@ -1,0 +1,71 @@
+(graph rngbernoulli
+  (expr0 (expr (rng/bernoulli $seed $p) #:require "gantz/rng"))
+  (inlet1 (inlet "seed" "seed to draw from"))
+  (inlet2 (inlet "number" "probability of true"))
+  (outlet3 (outlet "boolean" "true with the given probability"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph rngchoose
+  (expr0 (expr (rng/choose $seed $list) #:require "gantz/rng"))
+  (inlet1 (inlet "seed" "seed to draw from"))
+  (inlet2 (inlet "list" "values to choose from"))
+  (outlet3 (outlet "value" "the chosen value"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph rngfoldin
+  (expr0 (expr (rng/fold-in $seed $key) #:require "gantz/rng"))
+  (inlet1 (inlet "seed" "seed to derive from"))
+  (inlet2 (inlet "value" "key to fold in"))
+  (outlet3 (outlet "seed" "the derived seed"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph rnginteger
+  (expr0 (expr (rng/integer $seed (exact (round $lo)) (exact (round $hi))) #:require "gantz/rng"))
+  (inlet1 (inlet "seed" "seed to draw from"))
+  (inlet2 (inlet "number" "lowest value"))
+  (inlet3 (inlet "number" "end of the range, excluded"))
+  (outlet4 (outlet "number" "an integer in the range"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
+
+(graph rngshuffle
+  (expr0 (expr (rng/shuffle $seed $list) #:require "gantz/rng"))
+  (inlet1 (inlet "seed" "seed to draw from"))
+  (inlet2 (inlet "list" "values to shuffle"))
+  (outlet3 (outlet "list" "the values in a random order"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph rngsplit
+  (expr0 (expr (rng/split $seed (exact (round $n))) #:require "gantz/rng"))
+  (inlet1 (inlet "seed" "seed to split"))
+  (inlet2 (inlet "number" "number of seeds"))
+  (outlet3 (outlet "list" "the new seeds"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph rnguniform
+  (expr0 (expr (rng/uniform $seed) #:require "gantz/rng"))
+  (inlet1 (inlet "seed" "seed to draw from"))
+  (outlet2 (outlet "number" "a float in [0, 1)"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(descriptions
+  (rngbernoulli "True with a given probability, drawn from a seed.")
+  (rngchoose "Choose a list value, drawn from a seed.")
+  (rngfoldin "Derive a new seed from a seed and a key.")
+  (rnginteger "An integer in a range, drawn from a seed.")
+  (rngshuffle "Shuffle a list, drawn from a seed.")
+  (rngsplit "Split a seed into a list of new seeds.")
+  (rnguniform "A float in [0, 1), drawn from a seed."))

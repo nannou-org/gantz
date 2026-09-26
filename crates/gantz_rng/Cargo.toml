@@ -1,0 +1,15 @@
+[package]
+name = "gantz_rng"
+version = "0.1.0"
+description = "Seeded, stateless random numbers for gantz, as a Rust core and a Steel module."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+
+[dependencies]
+gantz_core.workspace = true
+num-bigint.workspace = true
+num-rational.workspace = true
+num-traits.workspace = true
