@@ -413,12 +413,62 @@ mod tests {
         assert!(!bare.contains("rate") && !bare.contains("width"), "{bare}");
     }
 
+    /// The sample rate of the engine tests.
+    const SR: f32 = 48_000.0;
+
+    /// Render `frames` of `node` into a mono `Out`. `gate` builds the gate
+    /// wire, if any.
+    fn render(
+        node: &Envgen,
+        gate: impl FnOnce(&mut DspBuilder) -> Option<Signal>,
+        frames: usize,
+    ) -> Vec<f32> {
+        use plyphon::{AddAction, Options, ROOT_GROUP_ID, Rate, engine};
+        let mut b = DspBuilder::new(1);
+        let gate = gate(&mut b);
+        let out = node.ugens(&[0], &[gate], &mut b)[0].channel(0).unwrap();
+        let out_ins = vec![InputRef::Constant(0.0), out];
+        b.push_unit(UnitSpec::new("Out", Rate::Audio, out_ins, 0));
+        let (mut controller, _nrt, mut world) = engine(Options {
+            sample_rate: SR as f64,
+            output_channels: 1,
+            ..Options::default()
+        });
+        controller.add_synthdef(b.finish("env").def);
+        controller
+            .synth_new("env", ROOT_GROUP_ID, AddAction::Tail)
+            .expect("synth_new");
+        let mut got = Vec::with_capacity(frames + 64);
+        let mut block = vec![0.0f32; 64];
+        while got.len() < frames {
+            world.fill(&mut block, 1);
+            got.extend_from_slice(&block);
+        }
+        got.truncate(frames);
+        got
+    }
+
+    /// A `kr` impulse into the gate restarts a percussive envelope on each
+    /// impulse.
+    #[test]
+    fn a_kr_impulse_retriggers_the_envelope() {
+        use plyphon::Rate;
+        let node = Envgen::new(Envelope::perc(0.001, 0.02));
+        let impulse = |b: &mut DspBuilder| {
+            let freq = vec![InputRef::Constant(10.0), InputRef::Constant(0.0)];
+            let unit = b.push_unit(UnitSpec::new("Impulse", Rate::Control, freq, 1));
+            Some(Signal::mono(InputRef::Unit { unit, output: 0 }))
+        };
+        let got = render(&node, impulse, (0.35 * SR) as usize);
+        // Each envelope rises above 0.9 once. Count the rises.
+        let rises = got.windows(2).filter(|w| w[0] <= 0.9 && w[1] > 0.9).count();
+        assert_eq!(rises, 4, "one peak per impulse at 0, 0.1, 0.2 and 0.3 s");
+    }
+
     /// The engine plays the envelope as `Envelope::level_at` draws it, for
     /// every shape. So the editor's plot shows what the node sounds like.
     #[test]
     fn the_engine_plays_level_at() {
-        use plyphon::{AddAction, Options, ROOT_GROUP_ID, Rate, engine};
-        const SR: f32 = 48_000.0;
         let seg = |level, shape| Segment::new(level, 0.01, shape);
         let env = Envelope {
             init: 0.1,
@@ -433,28 +483,9 @@ mod tests {
             ],
             release: None,
         };
-        let node = Envgen::new(env.clone());
-        let mut b = DspBuilder::new(1);
-        let out = node.ugens(&[0], &[], &mut b)[0].channel(0).unwrap();
-        let out_ins = vec![InputRef::Constant(0.0), out];
-        b.push_unit(UnitSpec::new("Out", Rate::Audio, out_ins, 0));
-        let (mut controller, _nrt, mut world) = engine(Options {
-            sample_rate: SR as f64,
-            output_channels: 1,
-            ..Options::default()
-        });
-        controller.add_synthdef(b.finish("env").def);
-        controller
-            .synth_new("env", ROOT_GROUP_ID, AddAction::Tail)
-            .expect("synth_new");
         let frames = (env.total_time() * SR) as usize + 256;
-        let mut got = Vec::with_capacity(frames + 64);
-        let mut block = vec![0.0f32; 64];
-        while got.len() < frames {
-            world.fill(&mut block, 1);
-            got.extend_from_slice(&block);
-        }
-        for (i, &sample) in got[..frames].iter().enumerate() {
+        let got = render(&Envgen::new(env.clone()), |_| None, frames);
+        for (i, &sample) in got.iter().enumerate() {
             let expected = env.level_at(i as f32 / SR);
             assert!(
                 (sample - expected).abs() < 1e-3,
