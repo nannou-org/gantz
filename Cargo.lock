@@ -3903,6 +3903,7 @@ dependencies = [
  "gantz_nodetag",
  "gantz_pattern",
  "gantz_plyphon",
+ "gantz_rng",
  "gantz_std",
  "gantz_ui",
  "serde",

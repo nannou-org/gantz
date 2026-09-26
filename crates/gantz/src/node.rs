@@ -83,6 +83,7 @@ pub fn builtins() -> gantz_core::Builtins {
 pub fn steel_modules() -> Vec<gantz_core::vm::SteelModule> {
     gantz_ui::modules()
         .iter()
+        .chain(gantz_rng::modules())
         .chain(gantz_pattern::modules())
         .copied()
         .collect()
@@ -90,9 +91,9 @@ pub fn steel_modules() -> Vec<gantz_core::vm::SteelModule> {
 
 /// Contribute the domains that have no bevy plugin of their own.
 ///
-/// The ui and pattern domains are steel modules, and the pattern domain a
-/// base source, with no systems, so the app pushes its contributions
-/// directly.
+/// The ui, rng and pattern domains are steel modules, and the rng and
+/// pattern domains base sources, with no systems, so the app pushes their
+/// contributions directly.
 pub fn push_plain_domains(app: &mut bevy::app::App) {
     app.world_mut()
         .get_resource_or_init::<bevy_gantz::vm::SteelModules>()
@@ -101,10 +102,16 @@ pub fn push_plain_domains(app: &mut bevy::app::App) {
     app.world_mut()
         .get_resource_or_init::<bevy_gantz_egui::base::BaseSources>()
         .0
-        .push(bevy_gantz_egui::base::BaseSource {
-            name: "pattern",
-            bytes: gantz_pattern::BASE_BYTES,
-        });
+        .extend([
+            bevy_gantz_egui::base::BaseSource {
+                name: "rng",
+                bytes: gantz_rng::BASE_BYTES,
+            },
+            bevy_gantz_egui::base::BaseSource {
+                name: "pattern",
+                bytes: gantz_pattern::BASE_BYTES,
+            },
+        ]);
 }
 
 #[cfg(test)]
@@ -2921,6 +2928,23 @@ mod tests {
         assert_eq!(
             text1, text2,
             "the pattern base file must match the writer's canonical form",
+        );
+    }
+
+    /// The rng base source is exactly the writer's canonical form. The file
+    /// re-exports byte-identically, so `update-base` write-backs never churn
+    /// it.
+    #[test]
+    fn rng_base_export_is_stable() {
+        let text1 = std::str::from_utf8(gantz_rng::BASE_BYTES).expect("utf8");
+        let base: DataReg =
+            gantz_egui::export::parse_export(gantz_rng::BASE_BYTES, &super::codec())
+                .expect("parse base");
+        let text2 =
+            gantz_egui::format::to_string_named(&base, &super::codec()).expect("to_string_named");
+        assert_eq!(
+            text1, text2,
+            "the rng base file must match the writer's canonical form",
         );
     }
 

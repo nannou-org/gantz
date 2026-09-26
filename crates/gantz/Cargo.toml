@@ -29,6 +29,7 @@ gantz_format.workspace = true
 gantz_nodetag.workspace = true
 gantz_pattern = { workspace = true, features = ["egui"] }
 gantz_plyphon = { workspace = true, features = ["egui"] }
+gantz_rng.workspace = true
 gantz_std.workspace = true
 gantz_ui.workspace = true
 serde.workspace = true
