@@ -25,6 +25,7 @@
          pat/event-map-value
          pat/event-map-spans
          pat/pure
+         pat/indices
          pat/silence
          pat/signal
          pat/steady
@@ -217,6 +218,11 @@
 ;; Repeats the given value once per cycle.
 (define (pat/pure v)
   (pat//per-cycle (lambda (i) v)))
+
+;; The index of each cycle, once per cycle. Indices are exact integers
+;; and are negative before cycle 0.
+(define pat/indices
+  (pat//per-cycle (lambda (i) i)))
 
 ;; The pattern producing no events.
 (define pat/silence (lambda (span) '()))

@@ -37,6 +37,30 @@ fn pure_empty_span() {
     );
 }
 
+// indices yields each cycle's index, negative before cycle 0, with the
+// same structure as pure.
+#[test]
+fn indices_values_per_cycle() {
+    assert_pinned(
+        "(((-1 1) ((-1 1) (0 1)) ((-1 1) (0 1))) \
+          ((0 1) ((0 1) (1 1)) ((0 1) (1 1))) \
+          ((1 1) ((1 1) (2 1)) ((1 1) (2 1))) \
+          ((2 1) ((2 1) (5 2)) ((2 1) (3 1))))",
+        "(pin-events (pat/query pat/indices (pat/span -1 5/2)))",
+    );
+}
+
+// Indices count the cycles of the pattern's own time, so a faster
+// pattern yields more of them per cycle.
+#[test]
+fn indices_follow_pattern_time() {
+    assert_pinned(
+        "(((0 1) ((0 1) (1 2)) ((0 1) (1 2))) \
+          ((1 1) ((1 2) (1 1)) ((1 2) (1 1))))",
+        "(pin-events (pat/query (pat/fast 2 pat/indices) (pat/span 0 1)))",
+    );
+}
+
 // A signal yields exactly one whole-less event for any query, sampling
 // the midpoint. That includes a zero-width instant query.
 #[test]

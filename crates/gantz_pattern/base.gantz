@@ -141,6 +141,13 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph pindices
+  (expr0 (expr (begin $b pat/indices) #:require "gantz/pattern"))
+  (inlet1 (inlet "bang" "trigger"))
+  (outlet2 (outlet "pattern" "each cycle's index once per cycle"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
 (graph pmap
   (expr0 (expr (pat/map $f $p) #:require "gantz/pattern"))
   (inlet1 (inlet "function" "value mapping"))
@@ -249,6 +256,7 @@
   (pfast "Speed a pattern up by a factor.")
   (pfastcat "Concatenate patterns within a single cycle.")
   (pfilter "Keep events whose values satisfy a predicate.")
+  (pindices "Each cycle's index, once per cycle.")
   (pmap "Map a function over a pattern's values.")
   (ppure "Repeat a value once per cycle.")
   (pquery "Query a pattern over a span for its sorted events.")
