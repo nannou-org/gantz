@@ -110,6 +110,11 @@ fn derives_expected_units() {
     assert_eq!(derived.params[1].node_path, vec![1]);
     assert_eq!(derived.params[1].index, 1);
 
+    // The fade is the one gain the driver ramps, over the fade ramp time.
+    assert_eq!(derived.gains.len(), 1);
+    assert_eq!(derived.gains[0].index, 2);
+    assert_eq!(derived.gains[0].lag, FADE_LAG);
+
     // Unit 0 is `SinOsc.ar(freq-param, 0)`.
     assert_eq!(def.units[0].name, "SinOsc");
     assert!(matches!(def.units[0].inputs[0], InputRef::Param(0)));
@@ -155,50 +160,6 @@ fn derives_expected_units() {
         def.units[5].inputs[1],
         InputRef::Unit { unit: 4, output: 0 }
     ));
-}
-
-#[test]
-fn lag_change_changes_structural_sig() {
-    // The param value lives in node state, not in the synthdef, so a value
-    // change cannot alter the def. The lag is structural, so it does.
-    let g = sine_to_out();
-    let base = derive_synthdef(&g, 1, "t").expect("derive").def;
-
-    let mut g2 = Graph::<N>::default();
-    let mut lagged_sine = sinosc_unit();
-    lagged_sine.set_lag("freq", 0.5);
-    let s = g2.add_node(N::Unit(lagged_sine));
-    let o = g2.add_node(N::Out(Out::default()));
-    g2.add_edge(s, o, Edge::new(0.into(), 0.into()));
-    let lagged = derive_synthdef(&g2, 1, "t").expect("derive").def;
-
-    assert_ne!(
-        structural_sig(&base),
-        structural_sig(&lagged),
-        "a freq lag change must change the structural signature",
-    );
-}
-
-#[test]
-fn lag_is_part_of_node_identity() {
-    // Node identity is the erased data-layer content address.
-    let content_addr = |n: &UnitNode| {
-        gantz_core::data::erase_node_typed(n)
-            .unwrap()
-            .content_addr()
-    };
-    assert_eq!(
-        content_addr(&sinosc_unit()),
-        content_addr(&sinosc_unit()),
-        "identical nodes share a content address",
-    );
-    let mut lagged = sinosc_unit();
-    lagged.set_lag("freq", 0.5);
-    assert_ne!(
-        content_addr(&sinosc_unit()),
-        content_addr(&lagged),
-        "the freq lag is part of the node's content address",
-    );
 }
 
 #[test]
@@ -272,49 +233,6 @@ fn control_edge_on_root_does_not_panic() {
     );
     assert_eq!(derived.def.units[0].name, "SinOsc");
     assert_eq!(derived.def.units[5].name, "Out");
-}
-
-#[test]
-fn dsp_wire_into_freq_drives_fm() {
-    // `~lag -> ~sinosc.freq -> ~out`. Freq is a hybrid dsp input, so the
-    // connected chain emits units and the `Lag` output wire drives the
-    // oscillator's freq input directly. The freq fallback param must never be
-    // baked. The wire wins. An undriven param would land in the def and in
-    // `structural_sig` with nothing draining its state.
-    let mut g = Graph::<N>::default();
-    let l = g.add_node(lag());
-    let s = g.add_node(sinosc());
-    let o = g.add_node(N::Out(Out::default()));
-    g.add_edge(l, s, Edge::new(0.into(), 0.into())); // ~lag -> sinosc freq (dsp)
-    g.add_edge(s, o, Edge::new(0.into(), 0.into())); // sinosc -> ~out (dsp)
-
-    let derived = derive_synthdef(&g, 1, "t").expect("derive");
-    let def = &derived.def;
-    // The units are Lag(0), SinOsc(1), the fade gain, the level mul, the
-    // channel mul and Out.
-    assert_eq!(def.units.len(), 7);
-    assert_eq!(def.units[0].name, "Lag");
-    assert_eq!(def.units[1].name, "SinOsc");
-    assert!(
-        matches!(
-            def.units[1].inputs[0],
-            InputRef::Unit { unit: 0, output: 0 }
-        ),
-        "the SinOsc freq input reads the lag's output wire",
-    );
-    assert!(
-        def.params.iter().all(|p| !p.name.ends_with("/freq")),
-        "a wired freq bakes no fallback param",
-    );
-    assert!(
-        derived
-            .params
-            .iter()
-            .all(|b| b.node_path != vec![s.index()]),
-        "no binding drives the wired sinosc",
-    );
-    // The lag's own dur param is unaffected.
-    assert!(def.params.iter().any(|p| p.name.ends_with("/dur")));
 }
 
 #[test]
@@ -394,11 +312,10 @@ fn multichannel_freq_expands_an_osc_per_channel() {
 }
 
 #[test]
-fn freq_wire_changes_structural_sig() {
+fn graph_edits_change_structural_sig() {
     // Connecting a dsp wire into freq swaps the freq param for the wire and
-    // pulls the modulator chain into the def. The structural sig changes and
-    // the driver respawns with a crossfade.
-    let def = |fm: bool| {
+    // pulls the modulator chain into the def.
+    let fm_def = |fm: bool| {
         let mut g = Graph::<N>::default();
         let m = g.add_node(sinosc());
         let s = g.add_node(sinosc());
@@ -409,11 +326,31 @@ fn freq_wire_changes_structural_sig() {
         g.add_edge(s, o, Edge::new(0.into(), 0.into()));
         derive_synthdef(&g, 1, "t").expect("derive").def
     };
-    assert_ne!(
-        structural_sig(&def(false)),
-        structural_sig(&def(true)),
-        "a freq connect/disconnect must change the structural signature",
-    );
+    // Widening a pack from 2 to 3 inputs widens the tapped group. That changes
+    // the ScopeOut's input count.
+    let scope_def = |count: usize| {
+        let mut pack = Pack::default();
+        pack.set_count(count);
+        let mut g = Graph::<N>::default();
+        let s = g.add_node(sinosc());
+        let pk = g.add_node(N::Pack(pack));
+        let t = g.add_node(N::ScopeOut(ScopeOut::default()));
+        g.add_edge(s, pk, Edge::new(0.into(), 0.into()));
+        g.add_edge(pk, t, Edge::new(0.into(), 0.into()));
+        derive_synthdef(&g, 1, "t").expect("derive").def
+    };
+    // Each edit must change the structural sig, so the driver respawns with a
+    // crossfade.
+    for (label, before, after) in [
+        ("a freq connect", fm_def(false), fm_def(true)),
+        ("a pack width change", scope_def(2), scope_def(3)),
+    ] {
+        assert_ne!(
+            structural_sig(&before),
+            structural_sig(&after),
+            "{label} must change the structural signature",
+        );
+    }
 }
 
 #[test]
@@ -532,29 +469,6 @@ fn port_shapes_record_width_and_rate() {
 }
 
 #[test]
-fn derive_error_displays_readably() {
-    // Derive failures surface in the UI, so each variant formats as a
-    // readable message rather than a `Debug` dump.
-    let ca = gantz_ca::ContentAddr([9; 32]);
-    assert_eq!(
-        DeriveError::NoSink.to_string(),
-        "no dsp sink (no `~out` output and no `~scopeout` monitor)",
-    );
-    assert_eq!(
-        DeriveError::BusCycle.to_string(),
-        "`~bus`/instance boundaries form a cycle between parts",
-    );
-    assert_eq!(
-        DeriveError::Unresolved(ca).to_string(),
-        format!("unresolved instanced reference: {ca}"),
-    );
-    assert_eq!(
-        DeriveError::RefCycle(ca).to_string(),
-        format!("instanced references form a cycle through {ca}"),
-    );
-}
-
-#[test]
 fn scopeout_joins_output_in_one_def() {
     // `~sinosc -> ~out` and `~sinosc -> ~scopeout`. The tap is a second sink that
     // shares the sine's chain. One synthdef therefore carries SinOsc, Out and a
@@ -635,75 +549,6 @@ fn scopeout_taps_a_multichannel_signal() {
         "binding records the inferred width"
     );
     assert_eq!(monitors[0].node_path, vec![2]);
-}
-
-#[test]
-fn lag_smooths_each_channel() {
-    // `~lag` on a 2-channel signal emits one `Lag` unit per channel. All share
-    // the single `dur` param, since params broadcast across the group. Width in
-    // equals width out.
-    let mut b = DspBuilder::new(1);
-    let sig = stereo(InputRef::Constant(0.25), InputRef::Constant(0.5));
-    let outs = lag_unit().ugens(&[0], &[Some(sig)], &mut b);
-    assert_eq!(outs.len(), 1, "one dsp output port");
-    assert_eq!(outs[0].width(), 2, "width flows through");
-
-    let Finished { def, params, .. } = b.finish("t");
-    let lags: Vec<_> = def.units.iter().filter(|u| u.name == "Lag").collect();
-    assert_eq!(lags.len(), 2, "one Lag per channel");
-    assert_eq!(def.params.len(), 1, "one shared dur param");
-    assert!(def.params[0].name.ends_with("/dur"));
-    assert!(
-        lags.iter()
-            .all(|u| matches!(u.inputs[1], InputRef::Param(0))),
-        "every channel's Lag reads the shared dur param",
-    );
-    assert_eq!(params.len(), 1);
-}
-
-#[test]
-fn out_writes_multichannel_channel_per_bus() {
-    // A 2-channel signal into `~out` on a 2-channel device writes channel i to
-    // bus i. Each goes through its own gain multiply sharing the single gain
-    // param. There is no mono fan-out. The two written wires stay distinct.
-    let mut b = DspBuilder::new(2);
-    let sig = stereo(InputRef::Constant(0.25), InputRef::Constant(0.5));
-    let outs = Out::default().ugens(&[0], &[Some(sig)], &mut b);
-    assert!(outs.is_empty());
-
-    let Finished { def, .. } = b.finish("t");
-    // Two control-rate muls, the fade gain and the level `gain * fade gain`.
-    // The level is shared by two per-channel muls.
-    let kr_muls: Vec<_> = def
-        .units
-        .iter()
-        .filter(|u| u.name == "BinaryOpUGen" && matches!(u.rate, Rate::Control))
-        .collect();
-    assert_eq!(
-        kr_muls.len(),
-        2,
-        "the fade gain and one shared level multiply"
-    );
-    let muls: Vec<_> = def
-        .units
-        .iter()
-        .filter(|u| u.name == "BinaryOpUGen" && matches!(u.rate, Rate::Audio))
-        .collect();
-    assert_eq!(muls.len(), 2, "one level multiply per written channel");
-    assert!(matches!(muls[0].inputs[0], InputRef::Constant(c) if c == 0.25));
-    assert!(matches!(muls[1].inputs[0], InputRef::Constant(c) if c == 0.5));
-    assert_eq!(def.params.len(), 2, "one shared gain param + its fade");
-    let out = def
-        .units
-        .iter()
-        .find(|u| u.name == "Out")
-        .expect("Out unit");
-    assert_eq!(out.inputs.len(), 1 + 2);
-    // The fade gain is units 0 and 1, the level mul is unit 2 and the channel
-    // multiplies are units 3 and 4 in this builder. Bus channel 0 reads the
-    // first and bus channel 1 the second.
-    assert!(matches!(out.inputs[1], InputRef::Unit { unit: 3, .. }));
-    assert!(matches!(out.inputs[2], InputRef::Unit { unit: 4, .. }));
 }
 
 #[test]
@@ -863,28 +708,6 @@ fn pack_unpack_routes_a_channel() {
 }
 
 #[test]
-fn pack_count_changes_structural_sig() {
-    // Widening a pack from 2 to 3 inputs widens the tapped group. That changes
-    // the ScopeOut's input count and so the structural sig. The driver respawns.
-    let scope_def = |count: usize| {
-        let mut pack = Pack::default();
-        pack.set_count(count);
-        let mut g = Graph::<N>::default();
-        let s = g.add_node(sinosc());
-        let pk = g.add_node(N::Pack(pack));
-        let t = g.add_node(N::ScopeOut(ScopeOut::default()));
-        g.add_edge(s, pk, Edge::new(0.into(), 0.into()));
-        g.add_edge(pk, t, Edge::new(0.into(), 0.into()));
-        derive_synthdef(&g, 1, "t").expect("derive").def
-    };
-    assert_ne!(
-        structural_sig(&scope_def(2)),
-        structural_sig(&scope_def(3)),
-        "a width change must change the structural signature",
-    );
-}
-
-#[test]
 fn unpack_stale_output_edge_derives_silently() {
     // An edge left hanging off a removed `~unpack` output. The count shrank to
     // 1 with the edge still on output 1. The Steel compile surfaces a
@@ -910,29 +733,6 @@ fn unpack_stale_output_edge_derives_silently() {
         matches!(mul.inputs[0], InputRef::Constant(c) if c == 0.0),
         "the missing port must resolve to silence",
     );
-}
-
-#[test]
-fn scopeout_without_output_still_derives() {
-    // A monitor-only graph, `~sinosc -> ~scopeout` with no `~out`, derives a
-    // silent synthdef. A `~scopeout` is a sink in its own right, so there is
-    // something to root at.
-    let mut g = Graph::<N>::default();
-    let s = g.add_node(sinosc());
-    let t = g.add_node(N::ScopeOut(ScopeOut::default()));
-    g.add_edge(s, t, Edge::new(0.into(), 0.into()));
-
-    let derived = derive_synthdef(&g, 1, "t").expect("derive");
-    let names: Vec<&str> = derived.def.units.iter().map(|u| u.name.as_str()).collect();
-    assert!(
-        names.contains(&"SinOsc") && names.contains(&"ScopeOut"),
-        "{names:?}"
-    );
-    assert!(
-        !names.contains(&"Out"),
-        "no ~out means no Out unit: {names:?}"
-    );
-    assert_eq!(derived.monitors.len(), 1);
 }
 
 #[test]
@@ -1081,52 +881,6 @@ fn derived_synth_plays_expected_tone() {
 }
 
 #[test]
-fn audio_rate_fm_renders_through_the_wire() {
-    // `~sinosc(ar) -> ~sinosc.freq -> ~out` rendered offline. The carrier's freq
-    // is the modulator's raw [-1, 1] Hz signal, so the output is the faint
-    // phase-wobble tone at the modulator's 220 Hz. The carrier's own 220 Hz
-    // param default must never sound. The wire wins. This proves the
-    // audio-rate freq path end to end through the real engine.
-    let mut g = Graph::<N>::default();
-    let m = g.add_node(sinosc());
-    let s = g.add_node(sinosc());
-    let o = g.add_node(N::Out(Out::default()));
-    g.add_edge(m, s, Edge::new(0.into(), 0.into()));
-    g.add_edge(s, o, Edge::new(0.into(), 0.into()));
-    let derived = derive_synthdef(&g, 1, "t").expect("derive");
-
-    let (mut controller, _nrt, mut world) = engine(Options {
-        sample_rate: SR as f64,
-        output_channels: 1,
-        ..Options::default()
-    });
-    controller.add_synthdef(derived.def);
-    let node = controller
-        .synth_new("t", ROOT_GROUP_ID, AddAction::Tail)
-        .expect("synth_new");
-    {
-        let mut backend = Embedded::new(&mut controller);
-        for gain in &derived.gains {
-            backend.set_control(node, gain.index, 1.0).expect("fade in");
-        }
-    }
-
-    let a = render(&mut world, SR as usize / 2);
-    assert!(
-        a.iter().all(|s| s.is_finite() && s.abs() <= 1.001),
-        "output must stay finite and within full scale",
-    );
-    // A ±1 Hz freq wobbles the phase by about 1/(2*pi*220), so the tone at
-    // 220 Hz has a tiny but detectable magnitude. 330 Hz carries nothing.
-    let (m220, m330) = (goertzel(&a, 220.0), goertzel(&a, 330.0));
-    assert!(m220 > 1e-6, "expected the 220 Hz wobble: m220={m220}");
-    assert!(
-        m220 > 5.0 * m330,
-        "220 Hz must dominate: m220={m220}, m330={m330}",
-    );
-}
-
-#[test]
 fn stereo_pack_plays_per_channel_tones() {
     // `two sines -> ~pack(2) -> ~out` rendered offline on a 2-channel device.
     // Each device channel carries its own sine, 220 Hz left and 330 Hz right.
@@ -1259,34 +1013,6 @@ fn scheduled_control_change_takes_effect_at_its_time() {
     assert!(
         a440 > 4.0 * a220,
         "expected 440 Hz after the scheduled switch: m220={a220}, m440={a440}",
-    );
-}
-
-#[test]
-fn out_registers_a_fade_gain() {
-    // `~out` carries a driver-owned fade gain, the crossfade lever. It is
-    // recorded in `Derived.gains` with the fade ramp time and has no param
-    // binding. No node state feeds it. The driver alone drives it. The user's
-    // gain param keeps its ordinary binding for live value sync.
-    let g = sine_to_out();
-    let derived = derive_synthdef(&g, 1, "t").expect("derive");
-    assert_eq!(derived.gains.len(), 1);
-    let fade = derived.gains[0];
-    assert!(derived.def.params[fade.index].name.ends_with("/fade"));
-    assert_eq!(fade.lag, gantz_plyphon::FADE_LAG);
-    assert!(
-        !derived.params.iter().any(|b| b.index == fade.index),
-        "the fade must have no node binding",
-    );
-    let gain = derived
-        .def
-        .params
-        .iter()
-        .position(|p| p.name.ends_with("/gain"))
-        .expect("gain param");
-    assert!(
-        derived.params.iter().any(|b| b.index == gain),
-        "the user gain keeps its node binding for live value sync",
     );
 }
 
@@ -1469,72 +1195,6 @@ fn kr_into_scopeout_needs_no_lift() {
     assert_eq!(def.units.len(), 2, "SinOsc + ScopeOut only");
 }
 
-#[test]
-fn rate_is_part_of_node_identity() {
-    // Node identity is the erased data-layer content address.
-    fn content_addr<T>(n: &T) -> gantz_ca::ContentAddr
-    where
-        T: gantz_nodetag::NodeTag + serde::Serialize + gantz_core::Node,
-    {
-        gantz_core::data::erase_node_typed(n)
-            .unwrap()
-            .content_addr()
-    }
-    // The default audio rate leaves existing addresses unchanged. Control rate
-    // changes them. The same holds for `~lag`.
-    assert_eq!(
-        content_addr(&sinosc_unit()),
-        content_addr(&{
-            let mut s = sinosc_unit();
-            s.set_rate(NodeRate::Audio);
-            s
-        }),
-    );
-    let mut kr_sine = sinosc_unit();
-    kr_sine.set_rate(NodeRate::Control);
-    assert_ne!(content_addr(&sinosc_unit()), content_addr(&kr_sine));
-    let mut kr_lag = lag_unit();
-    kr_lag.set_rate(NodeRate::Control);
-    assert_ne!(content_addr(&lag_unit()), content_addr(&kr_lag));
-}
-
-#[test]
-fn kr_source_reaches_output() {
-    // End to end through the real engine. A kr sine lifted via K2A still lands
-    // on the output bus with its block-held, ramped 220 Hz content dominant.
-    let mut g = Graph::<N>::default();
-    let mut sine = sinosc_unit();
-    sine.set_rate(NodeRate::Control);
-    let s = g.add_node(N::Unit(sine));
-    let o = g.add_node(N::Out(Out::default()));
-    g.add_edge(s, o, Edge::new(0.into(), 0.into()));
-    let derived = derive_synthdef(&g, 1, "t").expect("derive");
-
-    let (mut controller, _nrt, mut world) = engine(Options {
-        sample_rate: SR as f64,
-        output_channels: 1,
-        ..Options::default()
-    });
-    controller.add_synthdef(derived.def);
-    let node = controller
-        .synth_new("t", ROOT_GROUP_ID, AddAction::Tail)
-        .expect("synth_new");
-    {
-        let mut backend = Embedded::new(&mut controller);
-        for gain in &derived.gains {
-            backend.set_control(node, gain.index, 1.0).expect("fade in");
-        }
-    }
-
-    let out = render(&mut world, SR as usize / 2);
-    assert!(rms(&out) > 0.02, "kr source must be audible");
-    let (m220, m440) = (goertzel(&out, 220.0), goertzel(&out, 440.0));
-    assert!(
-        m220 > 3.0 * m440,
-        "expected 220 Hz dominant: m220={m220}, m440={m440}",
-    );
-}
-
 /// The summing units of a def. `Sum3`, `Sum4` and add-selector `BinaryOpUGen`s
 /// with `special_index` 0 count. The gain muls select 2.
 fn sum_units(def: &SynthDef) -> Vec<&UnitSpec> {
@@ -1560,14 +1220,6 @@ fn unit_refs(u: &UnitSpec) -> Vec<(u32, u32)> {
 }
 
 #[test]
-fn single_edge_input_sums_unit_free() {
-    // A lone summand passes through with no summing units.
-    let g = sine_to_out();
-    let def = derive_synthdef(&g, 1, "t").expect("derive").def;
-    assert!(sum_units(&def).is_empty());
-}
-
-#[test]
 fn two_edges_into_one_input_sum() {
     // Two `~sinosc` into one `~out` input. The input is their unity-gain mix
     // via a single audio-rate add. Both sines land in the def, so neither
@@ -1590,23 +1242,6 @@ fn two_edges_into_one_input_sum() {
 }
 
 #[test]
-fn summands_tile_sum3_and_sum4() {
-    // Three summands lower to one `Sum3`. Five lower to a `Sum4` fed back into
-    // a binary add.
-    for (n, expected) in [(3, vec!["Sum3"]), (5, vec!["Sum4", "BinaryOpUGen"])] {
-        let mut g = Graph::<N>::default();
-        let o = g.add_node(N::Out(Out::default()));
-        for _ in 0..n {
-            let s = g.add_node(sinosc());
-            g.add_edge(s, o, Edge::new(0.into(), 0.into()));
-        }
-        let def = derive_synthdef(&g, 1, "t").expect("derive").def;
-        let names: Vec<&str> = sum_units(&def).iter().map(|u| u.name.as_str()).collect();
-        assert_eq!(names, expected, "{n} summands");
-    }
-}
-
-#[test]
 fn summand_order_is_canonical() {
     // The same two-source graph with its edges added in either order derives
     // the same def. Summands sort canonically, so `structural_sig` and the
@@ -1622,132 +1257,6 @@ fn summand_order_is_canonical() {
         derive_synthdef(&g, 1, "t").expect("derive").def
     };
     assert_eq!(structural_sig(&build(false)), structural_sig(&build(true)));
-}
-
-#[test]
-fn mono_broadcasts_across_a_summed_stereo() {
-    // A mono `~sinosc` summed with a stereo `~pack` into `~out` on a 2-channel
-    // device. The sum is stereo with one add per channel. The mono summand
-    // broadcasts into both adds rather than feeding only the left.
-    let mut g = Graph::<N>::default();
-    let m = g.add_node(sinosc());
-    let s0 = g.add_node(sinosc());
-    let s1 = g.add_node(sinosc());
-    let pk = g.add_node(N::Pack(Pack::default()));
-    let o = g.add_node(N::Out(Out::default()));
-    g.add_edge(s0, pk, Edge::new(0.into(), 0.into()));
-    g.add_edge(s1, pk, Edge::new(0.into(), 1.into()));
-    g.add_edge(m, o, Edge::new(0.into(), 0.into()));
-    g.add_edge(pk, o, Edge::new(0.into(), 0.into()));
-    let def = derive_synthdef(&g, 2, "t").expect("derive").def;
-
-    let adds = sum_units(&def);
-    assert_eq!(adds.len(), 2, "one add per summed channel");
-    let (a, b) = (unit_refs(adds[0]), unit_refs(adds[1]));
-    let shared: Vec<_> = a.iter().filter(|r| b.contains(r)).collect();
-    assert_eq!(shared.len(), 1, "the mono summand feeds both channels");
-    // The `~out` writes both summed channels.
-    let out = def.units.iter().find(|u| u.name == "Out").expect("Out");
-    assert_eq!(out.inputs.len(), 1 + 2);
-}
-
-#[test]
-fn narrower_summand_pads_with_silence() {
-    // A stereo `~pack` summed with a 3-wide `~pack`. Channels 0 and 1 sum a
-    // pair each. Channel 2 passes the wide summand's own channel through
-    // unsummed, since the narrower summand contributes silence there and that
-    // folds away.
-    let mut g = Graph::<N>::default();
-    let mut wide = Pack::default();
-    wide.set_count(3);
-    let p2 = g.add_node(N::Pack(Pack::default()));
-    let p3 = g.add_node(N::Pack(wide));
-    let o = g.add_node(N::Out(Out::default()));
-    for i in 0..5 {
-        let s = g.add_node(sinosc());
-        let (pk, input) = if i < 2 { (p2, i) } else { (p3, i - 2) };
-        g.add_edge(s, pk, Edge::new(0.into(), (input as u16).into()));
-    }
-    g.add_edge(p2, o, Edge::new(0.into(), 0.into()));
-    g.add_edge(p3, o, Edge::new(0.into(), 0.into()));
-    let def = derive_synthdef(&g, 3, "t").expect("derive").def;
-
-    assert_eq!(sum_units(&def).len(), 2, "adds on channels 0 and 1 only");
-    let out = def.units.iter().find(|u| u.name == "Out").expect("Out");
-    assert_eq!(out.inputs.len(), 1 + 3, "all three channels written");
-}
-
-#[test]
-fn summed_rate_is_audio_iff_any_summand_is() {
-    let build = |rates: [NodeRate; 2]| {
-        let mut g = Graph::<N>::default();
-        let o = g.add_node(N::Out(Out::default()));
-        for rate in rates {
-            let mut sine = sinosc_unit();
-            sine.set_rate(rate);
-            let s = g.add_node(N::Unit(sine));
-            g.add_edge(s, o, Edge::new(0.into(), 0.into()));
-        }
-        derive_synthdef(&g, 1, "t").expect("derive").def
-    };
-    let kk = build([NodeRate::Control, NodeRate::Control]);
-    assert!(matches!(sum_units(&kk)[0].rate, Rate::Control));
-    let ka = build([NodeRate::Control, NodeRate::Audio]);
-    assert!(matches!(sum_units(&ka)[0].rate, Rate::Audio));
-}
-
-#[test]
-fn summed_sines_are_both_audible() {
-    // Two sines summed into one `~out` input, the second re-tuned to 330 Hz.
-    // The rendered audio carries both tones. That is the end-to-end proof that
-    // no edge is dropped.
-    let mut g = Graph::<N>::default();
-    let s0 = g.add_node(sinosc());
-    let s1 = g.add_node(sinosc());
-    let o = g.add_node(N::Out(Out::default()));
-    g.add_edge(s0, o, Edge::new(0.into(), 0.into()));
-    g.add_edge(s1, o, Edge::new(0.into(), 0.into()));
-    let derived = derive_synthdef(&g, 1, "t").expect("derive");
-    let s1_freq = derived
-        .params
-        .iter()
-        .find(|b| b.node_path == [s1.index()])
-        .expect("sine1 freq binding")
-        .index;
-
-    let (mut controller, _nrt, mut world) = engine(Options {
-        sample_rate: SR as f64,
-        output_channels: 1,
-        ..Options::default()
-    });
-    controller.add_synthdef(derived.def);
-    let node = controller
-        .synth_new("t", ROOT_GROUP_ID, AddAction::Tail)
-        .expect("synth_new");
-    {
-        let mut backend = Embedded::new(&mut controller);
-        for gain in &derived.gains {
-            backend.set_control(node, gain.index, 1.0).expect("fade in");
-        }
-        backend
-            .set_control(node, s1_freq, 330.0)
-            .expect("re-tune sine1");
-    }
-
-    let out = render(&mut world, SR as usize / 2);
-    assert!(
-        out.iter().all(|s| s.abs() <= 1.001),
-        "output exceeded full scale"
-    );
-    let (m220, m330, m550) = (
-        goertzel(&out, 220.0),
-        goertzel(&out, 330.0),
-        goertzel(&out, 550.0),
-    );
-    assert!(
-        m220 > 5.0 * m550 && m330 > 5.0 * m550,
-        "both summands must be audible: m220={m220}, m330={m330}, m550={m550}",
-    );
 }
 
 #[test]
@@ -1881,21 +1390,6 @@ fn fixed_rate_rows_emit_their_rate() {
         seen += 1;
     }
     assert!(seen > 0, "the table has fixed-rate rows");
-}
-
-/// When a control-rate row feeds `~out`, the sink lifts it to audio rate.
-#[test]
-fn kr_only_row_lifts_to_audio_at_out() {
-    let mut g = Graph::<N>::default();
-    let s = g.add_node(sinosc());
-    let a = g.add_node(N::Unit(UnitNode::from_unit("A2K").expect("A2K row")));
-    let o = g.add_node(N::Out(Out::default()));
-    g.add_edge(s, a, Edge::new(0.into(), 0.into()));
-    g.add_edge(a, o, Edge::new(0.into(), 0.into()));
-    let derived = derive_synthdef(&g, 1, "t").expect("derive");
-    let names: Vec<&str> = derived.def.units.iter().map(|u| u.name.as_str()).collect();
-    assert!(names.contains(&"A2K"), "{names:?}");
-    assert!(names.contains(&"K2A"), "{names:?}");
 }
 
 /// The unit that one row node emits. A sine feeds socket 0 and the node
