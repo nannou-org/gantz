@@ -14,6 +14,10 @@
 //! migrates VM state, layout and selection. Background names move headlessly,
 //! followed by a reference resync.
 //!
+//! Vault: the configured vault ticket is the desired link. `sync_vault_link`
+//! links to match it, and each `poll_collab_events` then syncs every named
+//! graph outside the base names with the vault.
+//!
 //! The pure `gantz_ca::sync` rules decide what to merge and in which
 //! orientation. Everything here is bookkeeping around them.
 
@@ -32,12 +36,14 @@ use ui::{
     dispatch_collab_settings, dispatch_join_session, on_share_head_payload,
     on_stop_sharing_payload, sync_collab_settings,
 };
+pub use vault::{PersistedVaultSynced, VaultLinkState};
 
 pub mod action;
 mod session;
 pub mod storage;
 mod sync;
 mod ui;
+mod vault;
 
 /// The plugin. Registers the session resources, observers and systems.
 ///
@@ -45,8 +51,16 @@ mod ui;
 /// app provides the [`CollabIdentity`] resource at startup. Sharing and
 /// joining are requested via [`ShareSessionEvent`] and [`JoinSessionEvent`]
 /// triggers.
-#[derive(Default)]
-pub struct CollabPlugin;
+pub struct CollabPlugin {
+    /// The app and its version, such as `gantz 0.4.0`. Peers and vaults see
+    /// it. See [`AppVersion`].
+    pub app: String,
+}
+
+/// The app and its version, as given to [`CollabPlugin`]. Peers and vaults
+/// see it for display only.
+#[derive(Clone, Debug, Resource)]
+pub struct AppVersion(pub String);
 
 /// The user's collaborative identity, provided by the app at startup.
 #[derive(Resource)]
@@ -107,15 +121,19 @@ impl Plugin for CollabPlugin {
             .add_message::<CollabSettingsChanged>()
             .register_response_with::<gantz_egui::collab::CollabConfig>(dispatch_collab_settings)
             .add_systems(PreUpdate, sync_collab_settings);
-        app.init_resource::<CollabRuntime>()
+        app.insert_resource(AppVersion(self.app.clone()))
+            .init_resource::<CollabRuntime>()
             .init_resource::<CollabSessions>()
             .init_resource::<bevy_gantz_egui::CollabUi>()
             .init_resource::<action::ActionOutbox>()
             .init_resource::<action::ActionInbox>()
             .init_resource::<action::ActionLog>()
+            .init_resource::<VaultLinkState>()
+            .init_resource::<PersistedVaultSynced>()
             .register_head_response::<gantz_egui::ShareHead>()
             .register_head_response::<gantz_egui::StopSharing>()
             .register_response_with::<gantz_egui::JoinSession>(dispatch_join_session)
+            .register_response_with::<gantz_egui::CheckVault>(vault::dispatch_check_vault)
             // Capture overrides. The last registration wins, and the app adds
             // this plugin after `bevy_gantz_egui`'s.
             .register_response_with::<gantz_egui::StateWritten>(action::dispatch_state_written)
@@ -134,9 +152,12 @@ impl Plugin for CollabPlugin {
                 Update,
                 (
                     (
+                        vault::sync_vault_link.before(poll_collab_events),
                         poll_collab_events,
+                        vault::track_vault_synced.after(poll_collab_events),
                         action::apply_remote_actions.after(poll_collab_events),
                         attach_session_refs,
+                        vault::mark_vault_heads,
                     )
                         .before(bevy_gantz::VmSet),
                     (

@@ -3,14 +3,16 @@
 //! pointer broadcasts.
 
 use crate::{
-    CollabIdentity, CollabRuntime, CollabSessions, JoinSessionEvent, LeaveSessionEvent, SessionRef,
-    ShareSessionEvent,
+    AppVersion, CollabIdentity, CollabRuntime, CollabSessions, JoinSessionEvent, LeaveSessionEvent,
+    SessionRef, ShareSessionEvent, VaultLinkState,
 };
 use bevy_ecs::prelude::*;
 use bevy_gantz_egui::ForHead;
 use bevy_log as log;
 use gantz_ca as ca;
-use gantz_collab::{Access, Command, ConnState, GossipMsg, Role};
+use gantz_collab::{Access, Command, ConnState, GossipMsg, Role, VersionInfo};
+use gantz_collab_sync::{VaultLink, VaultStatus};
+use gantz_egui::collab::{VaultDisplay, VaultState};
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -93,10 +95,12 @@ pub(crate) fn on_stop_sharing_payload(
     });
 }
 
-/// Mirror the session state into the GUI's display resource.
+/// Mirror the session and vault state into the GUI's display resource.
 pub fn update_collab_ui(
     sessions: Res<CollabSessions>,
+    vault: Res<VaultLinkState>,
     identity: Option<Res<CollabIdentity>>,
+    app: Res<AppVersion>,
     mut ui: ResMut<bevy_gantz_egui::CollabUi>,
 ) {
     let state = &mut ui.0;
@@ -109,16 +113,13 @@ pub fn update_collab_ui(
             .collect::<String>()
     });
     state.relays = sessions.relays.clone();
+    state.vault = vault_display(sessions.vault.as_ref(), vault.error.as_deref(), &app.0);
     // Session counts are tiny, so recompute each frame.
     state.sessions.clear();
     for session_state in sessions.sessions.values() {
         let display = gantz_egui::collab::SessionDisplay {
             is_host: matches!(session_state.session.role, Role::Host),
-            conn: match session_state.conn {
-                ConnState::Connecting => gantz_egui::collab::SessionConn::Connecting,
-                ConnState::Live => gantz_egui::collab::SessionConn::Live,
-                ConnState::Degraded => gantz_egui::collab::SessionConn::Degraded,
-            },
+            conn: display_conn(session_state.conn),
             awaiting_snapshot: session_state.placeholder.is_some(),
             peers: session_state
                 .peers
@@ -147,6 +148,56 @@ pub fn update_collab_ui(
                 .collect(),
         };
         state.sessions.insert(session_state.branch_name(), display);
+    }
+}
+
+/// The vault link's display state. `error` is why the last attempt to link
+/// failed, and `app` is this app and its version.
+fn vault_display(link: Option<&VaultLink>, error: Option<&str>, app: &str) -> Option<VaultDisplay> {
+    let this_app = app_line(&VersionInfo::this(app));
+    let Some(link) = link else {
+        return error.map(|error| VaultDisplay {
+            state: VaultState::NotLinked(error.to_string()),
+            this_app,
+            ..Default::default()
+        });
+    };
+    let state = match &link.status {
+        VaultStatus::Connecting => VaultState::Connecting,
+        VaultStatus::Live => VaultState::Live,
+        VaultStatus::Offline(reason) => VaultState::Offline(reason.clone()),
+        VaultStatus::Denied(reason) => VaultState::Denied(reason.clone()),
+        VaultStatus::VaultOutdated => VaultState::VaultOutdated,
+        VaultStatus::DeviceOutdated => VaultState::DeviceOutdated,
+    };
+    let failures = link.failures.iter();
+    Some(VaultDisplay {
+        vault: link.vault.to_string(),
+        state,
+        vault_app: link.vault_info.as_ref().map(app_line),
+        this_app,
+        failures: failures.map(|(n, r)| (n.to_string(), r.clone())).collect(),
+    })
+}
+
+/// An app and its sync protocols, such as `gantz 0.4.0, protocol 2`.
+fn app_line(info: &VersionInfo) -> String {
+    let app = match info.app.as_str() {
+        "" => "an unknown app",
+        app => app,
+    };
+    match info.proto_min == info.proto_max {
+        true => format!("{app}, protocol {}", info.proto_max),
+        false => format!("{app}, protocols {} to {}", info.proto_min, info.proto_max),
+    }
+}
+
+/// The display form of a connection lifecycle.
+fn display_conn(conn: ConnState) -> gantz_egui::collab::SessionConn {
+    match conn {
+        ConnState::Connecting => gantz_egui::collab::SessionConn::Connecting,
+        ConnState::Live => gantz_egui::collab::SessionConn::Live,
+        ConnState::Degraded => gantz_egui::collab::SessionConn::Degraded,
     }
 }
 
@@ -260,4 +311,60 @@ pub(crate) fn broadcast_pointers(
     state
         .last
         .retain(|n, _| sessions.sessions.values().any(|s| s.branch_name() == *n));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gantz_collab::{Handle, Identity, PairingSecret, SessionId, VaultTicket};
+    use std::collections::BTreeSet;
+
+    #[test]
+    fn the_vault_display_tells_the_status_versions_and_failures() {
+        let this = format!("gantz 0.4.0, protocol {}", gantz_collab::PROTO_MAX);
+        let not_linked = vault_display(None, Some("bad ticket"), "gantz 0.4.0").unwrap();
+        assert_eq!(not_linked.state, VaultState::NotLinked("bad ticket".into()));
+        assert_eq!(not_linked.this_app, this);
+        assert!(vault_display(None, None, "gantz 0.4.0").is_none());
+
+        let (cmds, _cmd_rx) = async_channel::unbounded();
+        let (_events_tx, events) = async_channel::unbounded();
+        let handle = Handle { cmds, events };
+        let host = iroh::EndpointId::from_bytes(&Identity::generate().peer_id().0).unwrap();
+        let ticket = VaultTicket {
+            vault: SessionId::generate(),
+            pairing: PairingSecret::generate(),
+            host: host.into(),
+        };
+        let mut sessions = gantz_collab_sync::Sessions::default();
+        let (synced, local_only) = (Default::default(), BTreeSet::new());
+        gantz_collab_sync::vault::link(&mut sessions, &handle, ticket, synced, local_only).unwrap();
+        let link = sessions.vault.as_mut().unwrap();
+        link.status = VaultStatus::VaultOutdated;
+        link.vault_info = Some(VersionInfo {
+            proto_min: 1,
+            proto_max: 1,
+            app: "gantz 0.3.0".into(),
+        });
+        let jam: ca::Name = "jam".parse().unwrap();
+        link.failures.insert(jam, "push failed".into());
+        let display = vault_display(sessions.vault.as_ref(), None, "gantz 0.4.0").unwrap();
+        assert_eq!(display.state, VaultState::VaultOutdated);
+        assert_eq!(
+            display.vault_app.as_deref(),
+            Some("gantz 0.3.0, protocol 1")
+        );
+        assert_eq!(display.this_app, this);
+        assert_eq!(display.failures, vec![("jam".into(), "push failed".into())]);
+    }
+
+    #[test]
+    fn an_app_line_shows_a_protocol_range() {
+        let info = VersionInfo {
+            proto_min: 2,
+            proto_max: 3,
+            app: String::new(),
+        };
+        assert_eq!(app_line(&info), "an unknown app, protocols 2 to 3");
+    }
 }

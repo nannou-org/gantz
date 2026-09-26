@@ -18,7 +18,7 @@ use bevy_log as log;
 use gantz_ca as ca;
 use gantz_egui::{DynResponse, HeadDataMut, ResponseData};
 use std::any::TypeId;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::ops::{Deref, DerefMut};
 
 pub mod base;
@@ -166,6 +166,8 @@ impl Plugin for GantzEguiPlugin {
             .add_observer(on_merge_head)
             .add_observer(on_sync_remote_tip)
             .add_observer(on_resync_refs)
+            .add_observer(on_reset_head)
+            .add_observer(on_rename_head)
             .add_observer(on_paste)
             .add_observer(on_undo)
             .add_observer(on_redo)
@@ -270,9 +272,11 @@ pub struct GraphView(pub gantz_egui::SceneView);
 #[derive(Component, Default)]
 pub struct HeadNodeInstances(pub gantz_egui::node::NodeInstances);
 
-/// Marker. This open head participates in a live collaborative session.
+/// Marker. This open head participates in a live collaborative session, or
+/// syncs with a vault.
 ///
-/// The session layer inserts it on join and removes it on leave. While
+/// The session layer inserts it on join and removes it on leave. The vault
+/// layer keeps it on every open head that syncs with the vault. While
 /// present, the undo and redo handlers mint forward revert commits, see
 /// [`gantz_egui::ops::session_undo`], instead of navigating backwards. Peers
 /// plan an ancestor tip as up-to-date and drop it, so plain navigation undo
@@ -1492,7 +1496,7 @@ pub fn on_merge_head(
                 entity: event.head,
                 target,
             });
-            cmds.trigger(ResyncRefsEvent);
+            cmds.trigger(ResyncRefsEvent::default());
         }
         gantz_egui::ops::MergeHeadOutcome::Merged { new_commit, .. } => {
             log::debug!(
@@ -1647,20 +1651,96 @@ pub fn on_sync_remote_tip(
 /// collaborative-session layer triggers it after it moves scoped names that
 /// no open head points at, such as fast-forwards of nested or referenced
 /// graphs.
+#[derive(Debug, Default, Event)]
+pub struct ResyncRefsEvent {
+    /// Names whose referrers keep their references as they are. See
+    /// [`gantz_egui::sync::resync_except`].
+    pub skip: BTreeSet<ca::Name>,
+}
+
+/// Move the open heads on `name` to exactly `to`, or detach them and remove
+/// the name when `to` is `None`. The vault layer triggers it for a change
+/// that contains everything the local head holds.
 #[derive(Debug, Event)]
-pub struct ResyncRefsEvent;
+pub struct ResetHeadEvent {
+    pub name: ca::Name,
+    pub to: Option<ca::CommitAddr>,
+}
+
+/// Point the open heads on `from` at `to`, carrying their GUI state. For a
+/// name another layer already moved in the registry, such as a vault moving
+/// a local graph aside.
+#[derive(Debug, Event)]
+pub struct RenameHeadEvent {
+    pub from: ca::Name,
+    pub to: ca::Name,
+}
 
 /// Handle [`ResyncRefsEvent`]. The same pass as [`on_head_committed_resync`].
 pub fn on_resync_refs(
-    _trigger: On<ResyncRefsEvent>,
+    trigger: On<ResyncRefsEvent>,
     mut registry: ResMut<Registry>,
     mut cache: ResMut<GraphCache>,
     codec: Res<NodeCodecRes>,
     mut heads: Query<head::OpenHeadData, With<head::OpenHead>>,
 ) {
-    let moves = gantz_egui::sync::resync(&mut registry, bevy_gantz::reg::timestamp());
+    let skip = &trigger.event().skip;
+    let moves = gantz_egui::sync::resync_except(&mut registry, bevy_gantz::reg::timestamp(), skip);
     refresh_cache(&registry, &mut cache, &codec.0);
     refresh_moved_heads(&moves, &mut registry, &mut heads);
+}
+
+/// Handle [`ResetHeadEvent`].
+pub fn on_reset_head(
+    trigger: On<ResetHeadEvent>,
+    mut registry: ResMut<Registry>,
+    mut gui_state: ResMut<GuiState>,
+    mut heads: Query<(Entity, &mut head::HeadRef), With<head::OpenHead>>,
+    mut cmds: Commands,
+) {
+    let ResetHeadEvent { name, to } = trigger.event();
+    let head = ca::Head::Branch(name.clone());
+    // A remote change invalidates local redo, as in `on_sync_remote_tip`.
+    gui_state.redo_stacks.remove(&head);
+    gui_state.undo_cursors.remove(&head);
+    let Some(target) = *to else {
+        let open = heads.iter_mut().map(|(_, head_ref)| head_ref);
+        remove_name(&mut registry, open, name);
+        return;
+    };
+    let mut open = false;
+    for (entity, head_ref) in &heads {
+        if **head_ref == head {
+            cmds.trigger(head::MoveHeadEvent { entity, target });
+            open = true;
+        }
+    }
+    // The head closed since the reset was planned. Move the name alone.
+    if !open {
+        registry.set_head(name.clone(), target);
+    }
+}
+
+/// Handle [`RenameHeadEvent`].
+pub fn on_rename_head(
+    trigger: On<RenameHeadEvent>,
+    mut gui_state: ResMut<GuiState>,
+    mut heads: Query<&mut head::HeadRef, With<head::OpenHead>>,
+    mut ctxs: EguiContexts,
+) {
+    let RenameHeadEvent { from, to } = trigger.event();
+    let old_head = ca::Head::Branch(from.clone());
+    let new_head = ca::Head::Branch(to.clone());
+    for mut head_ref in &mut heads {
+        if **head_ref != old_head {
+            continue;
+        }
+        **head_ref = new_head.clone();
+        gui_state.migrate_head(&old_head, &new_head, false);
+        if let Ok(ctx) = ctxs.ctx_mut() {
+            gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
+        }
+    }
 }
 
 /// Handle undo payloads. Move the head back to its parent commit.
@@ -1697,7 +1777,7 @@ pub fn on_undo(
     };
     if let Some(target) = target {
         cmds.trigger(head::MoveHeadEvent { entity, target });
-        cmds.trigger(ResyncRefsEvent);
+        cmds.trigger(ResyncRefsEvent::default());
     }
 }
 
@@ -1735,7 +1815,7 @@ pub fn on_redo(
     };
     if let Some(target) = target {
         cmds.trigger(head::MoveHeadEvent { entity, target });
-        cmds.trigger(ResyncRefsEvent);
+        cmds.trigger(ResyncRefsEvent::default());
     }
 }
 
@@ -2349,16 +2429,8 @@ pub(crate) fn handle_gantz_response(
     }
 
     if let Some(name) = response.graph_name_removed() {
-        // Detach any open heads that reference the removed name.
-        for mut data in heads_query.iter_mut() {
-            if let ca::Head::Branch(head_name) = &**data.core.head_ref {
-                if *head_name == name {
-                    let commit_ca = registry.head_commit_ca(&data.core.head_ref).unwrap();
-                    **data.core.head_ref = ca::Head::Commit(commit_ca);
-                }
-            }
-        }
-        registry.remove_head(&name);
+        let open = heads_query.iter_mut().map(|data| data.core.head_ref);
+        remove_name(registry, open, &name);
     }
 
     // A single click replaces the focused head with the selected one.
@@ -2599,4 +2671,22 @@ fn dispatch_export_style(_: Option<Entity>, payload: DynResponse, cmds: &mut Com
 fn dispatch_import_style(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
     let gantz_egui::ImportStyle = downcast_payload(payload);
     cmds.trigger(ImportStyleEvent);
+}
+
+/// Remove `name`, first detaching the open heads on it onto its current
+/// commit, so they stay open as unnamed graphs.
+fn remove_name<'a>(
+    registry: &mut ca::Registry,
+    open: impl Iterator<Item = Mut<'a, head::HeadRef>>,
+    name: &ca::Name,
+) {
+    for mut head_ref in open {
+        if !matches!(&**head_ref, ca::Head::Branch(n) if n == name) {
+            continue;
+        }
+        if let Some(commit_ca) = registry.head_commit_ca(&head_ref) {
+            **head_ref = ca::Head::Commit(commit_ca);
+        }
+    }
+    registry.remove_head(name);
 }

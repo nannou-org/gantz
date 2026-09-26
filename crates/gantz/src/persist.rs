@@ -38,6 +38,13 @@ pub struct Persisted(pub gantz_store::PersistedRegistry);
 
 impl Plugin for PersistPlugin {
     fn build(&self, app: &mut App) {
+        // A vault sync changes the registry without any input, so it persists
+        // too.
+        #[cfg(feature = "collab")]
+        let due = on_message::<DebouncedInputEvent>
+            .or_eager(resource_exists_and_changed::<bevy_gantz_collab::PersistedVaultSynced>);
+        #[cfg(not(feature = "collab"))]
+        let due = on_message::<DebouncedInputEvent>;
         app.add_plugins(DebouncedInputPlugin::<PersistEguiMemory>::new(0.3))
             // No ordering against the load systems is needed. The worker only
             // locks the store when draining a batch, which cannot happen before
@@ -49,7 +56,7 @@ impl Plugin for PersistPlugin {
                     // After `settle_layout`, so a layout commit settled this frame
                     // and its seeded view are saved in the same pass.
                     .after(bevy_gantz_egui::settle_layout)
-                    .run_if(on_message::<DebouncedInputEvent>)
+                    .run_if(due)
                     .run_if(store_writable),
             )
             .add_systems(
@@ -202,6 +209,7 @@ fn persist_resources(
     focused: Res<FocusedHead>,
     heads_query: Query<OpenHeadDataReadOnly, With<OpenHead>>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
+    #[cfg(feature = "collab")] vault: Res<bevy_gantz_collab::PersistedVaultSynced>,
 ) {
     let start = web_time::Instant::now();
     let window = primary_window.single().ok();
@@ -214,6 +222,8 @@ fn persist_resources(
         &heads_query,
         window,
     );
+    #[cfg(feature = "collab")]
+    let batch = [batch, vault_batch(&vault)].concat();
     let writes = batch.len();
     persister.submit(batch);
     debug!(
@@ -222,6 +232,18 @@ fn persist_resources(
         persisted.graphs_len(),
         persisted.commits_len(),
     );
+}
+
+/// The vault agreement's writes. They go after the registry's in the same
+/// batch, so a crash can leave the agreement behind the registry but never
+/// ahead of it.
+#[cfg(feature = "collab")]
+fn vault_batch(vault: &bevy_gantz_collab::PersistedVaultSynced) -> Vec<(String, String)> {
+    let mut batch = gantz_store::BatchWriter::default();
+    if let Some(synced) = &vault.0 {
+        bevy_gantz_collab::storage::save_vault_synced(&mut batch, synced);
+    }
+    batch.take()
 }
 
 /// Debounced event driving egui-memory persistence. It runs on a slower
@@ -266,6 +288,7 @@ fn flush_on_exit(
     heads_query: Query<OpenHeadDataReadOnly, With<OpenHead>>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
     read_only: Option<Res<bevy_gantz::storage::StoreReadOnly>>,
+    #[cfg(feature = "collab")] vault: Res<bevy_gantz_collab::PersistedVaultSynced>,
 ) {
     if exit.read().next().is_none() {
         return;
@@ -282,6 +305,8 @@ fn flush_on_exit(
             &heads_query,
             window,
         );
+        #[cfg(feature = "collab")]
+        let batch = [batch, vault_batch(&vault)].concat();
         persister.submit(batch);
     }
     persister.shutdown();

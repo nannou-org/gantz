@@ -135,7 +135,7 @@ impl Peer {
                     changed = true;
                     debug!("{name} -> {}", to.display_short());
                 }
-                Effect::ResyncRefs => {
+                Effect::ResyncRefs { .. } => {
                     for m in gantz_collab_sync::resync_headless(&mut self.registry, now) {
                         changed = true;
                         debug!("{} follows -> {}", m.name, m.new_commit.display_short());

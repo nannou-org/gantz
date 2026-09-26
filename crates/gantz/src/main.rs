@@ -88,8 +88,10 @@ fn main() {
     // Added after `GantzEguiPlugin`, because the collab plugin's
     // payload-dispatcher overrides rely on last-registration-wins.
     #[cfg(feature = "collab")]
-    app.add_plugins(bevy_gantz_collab::CollabPlugin)
-        .add_systems(Startup, setup_collab_identity);
+    app.add_plugins(bevy_gantz_collab::CollabPlugin {
+        app: BUILD.to_string(),
+    })
+    .add_systems(Startup, setup_collab_identity);
 
     // Native OS windows for popped-out panes. On web the widget keeps drawing
     // popped-out panes as in-canvas `egui::Window`s.
@@ -221,8 +223,9 @@ fn upgrade_store(
     gantz_store::save_store_meta(storage, BUILD);
 }
 
-/// Load the user's collaborative identity, or generate and persist one. An
-/// identity that cannot be read is kept, and this run uses a new one.
+/// Load the user's collaborative identity, or generate and persist one, and
+/// the vault agreement persisted by an earlier run. An identity that cannot
+/// be read is kept, and this run uses a new one.
 #[cfg(feature = "collab")]
 fn setup_collab_identity(mut storage: ResMut<Pkv>, mut cmds: Commands) {
     let identity = match gantz_collab::identity::load(&*storage) {
@@ -238,6 +241,8 @@ fn setup_collab_identity(mut storage: ResMut<Pkv>, mut cmds: Commands) {
         }
     };
     cmds.insert_resource(bevy_gantz_collab::CollabIdentity(identity));
+    let synced = bevy_gantz_collab::storage::load_vault_synced(&*storage);
+    cmds.insert_resource(bevy_gantz_collab::PersistedVaultSynced(synced));
 }
 
 fn setup_open(

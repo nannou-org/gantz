@@ -59,7 +59,13 @@ pub(crate) fn poll_collab_events(
                     });
                 }
             }
-            Effect::ResyncRefs => cmds.trigger(bevy_gantz_egui::ResyncRefsEvent),
+            Effect::ResyncRefs { skip } => cmds.trigger(bevy_gantz_egui::ResyncRefsEvent { skip }),
+            Effect::Reset { name, to } => {
+                cmds.trigger(bevy_gantz_egui::ResetHeadEvent { name, to })
+            }
+            Effect::Renamed { from, to } => {
+                cmds.trigger(bevy_gantz_egui::RenameHeadEvent { from, to })
+            }
             // Queue ephemeral actions for `action::apply_remote_actions`,
             // which runs after this system and before `VmSet`.
             Effect::Action {
@@ -80,8 +86,6 @@ pub(crate) fn poll_collab_events(
                 data,
                 received: web_time::Instant::now(),
             }),
-            // The app holds no vault link yet.
-            Effect::Reset { .. } | Effect::Renamed { .. } => {}
             Effect::Moved { .. }
             | Effect::Joined { .. }
             | Effect::PeerUp { .. }
