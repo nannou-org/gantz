@@ -9,6 +9,9 @@ use gantz_collab::{
 };
 use std::time::Duration;
 
+mod vault;
+mod vault_convergence;
+
 /// A runtime stand-in: the commands it received and a sender for events.
 struct Fake {
     handle: Handle,

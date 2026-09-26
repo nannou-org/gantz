@@ -3966,6 +3966,7 @@ dependencies = [
  "gantz_ca",
  "gantz_collab",
  "gantz_egui",
+ "iroh",
  "log",
  "web-time",
 ]

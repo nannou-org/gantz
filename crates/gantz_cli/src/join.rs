@@ -149,7 +149,11 @@ impl Peer {
                 Effect::RemoteTip { name, .. } => {
                     warn!("remote tip for `{name}` routed to an open head with none open")
                 }
-                Effect::Open(_) | Effect::Action { .. } => {}
+                // A join peer holds no vault link.
+                Effect::Open(_)
+                | Effect::Action { .. }
+                | Effect::Reset { .. }
+                | Effect::Renamed { .. } => {}
             }
         }
         if self.joined && changed {

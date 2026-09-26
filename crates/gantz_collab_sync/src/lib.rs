@@ -16,13 +16,20 @@
 //! come back as [`Effect::RemoteTip`], so the host can migrate its live
 //! state. Background names move headlessly, followed by a reference resync.
 //!
+//! Vault: a device links to its owner's vault with [`vault::link`]. Each
+//! [`poll`] then plans a step for every name out of step with the vault, and
+//! fetches, pushes, merges or moves graphs aside to match. [`serve_push`] is
+//! the vault's side of a push.
+//!
 //! The pure `gantz_ca::sync` rules decide what to merge and in which
-//! orientation. Everything here is bookkeeping around them.
+//! orientation, and the pure `vault::step` rules decide how each name meets
+//! the vault. Everything else here is bookkeeping around them.
 
 pub use inbound::{Effect, OpenHeads, handle_event, poll};
 pub use lifecycle::{JoinError, infra, join, leave, resync_headless, session_resolutions, share};
 pub use outbound::{announce, serve_scope};
 pub use state::{PeerPointer, PendingTip, SessionState, Sessions};
+pub use vault::{PushOutcome, VaultLink, serve_push};
 
 mod inbound;
 mod lifecycle;
@@ -30,3 +37,4 @@ mod outbound;
 mod state;
 #[cfg(test)]
 mod tests;
+pub mod vault;
