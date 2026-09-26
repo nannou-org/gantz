@@ -1,9 +1,7 @@
 //! Euclidean rhythm tests pinning the full bjorklund onset table and
 //! event-level behavior.
 
-use crate::common;
-
-use common::{assert_pinned, eval_in, new_pin_engine};
+use crate::common::{assert_pinned, eval, new_pin_engine};
 use gantz_core::steel::SteelVal;
 
 /// Pinned (k, n, onsets) vectors, one char per slot with 't' an onset
@@ -76,7 +74,7 @@ fn bjorklund_table() {
             "(equal? {} (pat/euclid-bools {k} {n} 0))",
             steel_bools(onsets),
         );
-        match eval_in(&mut vm, &check) {
+        match eval(&mut vm, &check) {
             SteelVal::BoolV(true) => (),
             other => panic!("bjorklund ({k}, {n}) mismatch: {other:?}"),
         }
@@ -86,7 +84,9 @@ fn bjorklund_table() {
 // euclid 3 8 has onsets at slots 0, 3 and 6, each one slot long.
 #[test]
 fn euclid_3_8_events() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "((#t ((0 1) (1 8)) ((0 1) (1 8))) \
           (#t ((3 8) (1 2)) ((3 8) (1 2))) \
           (#t ((3 4) (7 8)) ((3 4) (7 8))))",
@@ -97,7 +97,9 @@ fn euclid_3_8_events() {
 // A rotation of one slot moves the onsets left.
 #[test]
 fn euclid_off_rotates() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "((#t ((1 4) (3 8)) ((1 4) (3 8))) \
           (#t ((5 8) (3 4)) ((5 8) (3 4))) \
           (#t ((7 8) (1 1)) ((7 8) (1 1))))",
@@ -108,7 +110,9 @@ fn euclid_off_rotates() {
 // euclid-full elongates each onset to fill the silence before the next.
 #[test]
 fn euclid_full_elongates() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "((#t ((0 1) (3 8)) ((0 1) (3 8))) \
           (#t ((3 8) (3 4)) ((3 8) (3 4))) \
           (#t ((3 4) (1 1)) ((3 4) (1 1))))",
@@ -119,11 +123,14 @@ fn euclid_full_elongates() {
 // No onsets yields silence from every variant.
 #[test]
 fn euclid_zero_onsets() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "()",
         "(pin-events (pat/query (pat/euclid 0 8) (pat/span 0 1)))",
     );
     assert_pinned(
+        &mut vm,
         "()",
         "(pin-events (pat/query (pat/euclid-full 0 8) (pat/span 0 1)))",
     );

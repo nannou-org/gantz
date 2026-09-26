@@ -1,15 +1,15 @@
 //! Join tests discriminating the three variants' whole and active
 //! derivation.
 
-use crate::common;
-
-use common::assert_pinned;
+use crate::common::{assert_pinned, new_pin_engine};
 
 // join flattens an outer event spanning the whole query whose value is
 // a two-per-cycle inner pattern.
 #[test]
 fn join_flattens_nested_pattern() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "(((1 1) ((0 1) (1 2)) ((0 1) (1 2))) \
           ((1 1) ((1 2) (1 1)) ((1 2) (1 1))) \
           ((1 1) ((1 1) (3 2)) ((1 1) (3 2))) \
@@ -25,13 +25,16 @@ fn join_flattens_nested_pattern() {
 // inner whole untouched.
 #[test]
 fn join_chops_whole_inner_join_keeps_it() {
+    let mut vm = new_pin_engine();
     let pp = "(pat/fast 2 (pat/pure (pat/pure 'c)))";
     assert_pinned(
+        &mut vm,
         "((c ((0 1) (1 2)) ((0 1) (1 2))) \
           (c ((1 2) (1 1)) ((1 2) (1 1))))",
         &format!("(pin-events (pat/query (pat/join {pp}) (pat/span 0 1)))"),
     );
     assert_pinned(
+        &mut vm,
         "((c ((0 1) (1 2)) ((0 1) (1 1))) \
           (c ((1 2) (1 1)) ((0 1) (1 1))))",
         &format!("(pin-events (pat/query (pat/inner-join {pp}) (pat/span 0 1)))"),
@@ -42,7 +45,9 @@ fn join_chops_whole_inner_join_keeps_it() {
 // inner yields nothing.
 #[test]
 fn outer_join_discrete_inner_is_silent() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "()",
         "(pin-events (pat/query
            (pat/outer-join (pat/fast 2 (pat/pure (pat/pure 'c))))
@@ -54,7 +59,9 @@ fn outer_join_discrete_inner_is_silent() {
 // outer's structure.
 #[test]
 fn outer_join_signal_inner_samples_start() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "(((0 1) ((0 1) (1 2)) ((0 1) (1 2))) \
           ((1 2) ((1 2) (1 1)) ((1 2) (1 1))))",
         "(pin-events (pat/query

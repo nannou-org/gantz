@@ -1,19 +1,20 @@
 //! Rate, concatenation, shift and fit-span tests.
 
-use crate::common;
-
-use common::{assert_pinned, assert_steel_true};
+use crate::common::{assert_pinned, assert_steel_true, new_pin_engine};
 
 // fast 2 doubles events per cycle and slow 4 of that nets a half-speed
 // pattern.
 #[test]
 fn fast_and_slow() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "(((1 1) ((0 1) (1 2)) ((0 1) (1 2))) \
           ((1 1) ((1 2) (1 1)) ((1 2) (1 1))))",
         "(pin-events (pat/query (pat/fast 2 (pat/pure 1)) (pat/span 0 1)))",
     );
     assert_pinned(
+        &mut vm,
         "(((1 1) ((0 1) (2 1)) ((0 1) (2 1))))",
         "(pin-events (pat/query (pat/slow 4 (pat/fast 2 (pat/pure 1))) (pat/span 0 2)))",
     );
@@ -22,11 +23,14 @@ fn fast_and_slow() {
 // A zero rate yields no events rather than dividing by zero.
 #[test]
 fn rate_zero_is_silent() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "()",
         "(pin-events (pat/query (pat/fast 0 (pat/pure 1)) (pat/span 0 1)))",
     );
     assert_pinned(
+        &mut vm,
         "()",
         "(pin-events (pat/query (pat/slow 0 (pat/pure 1)) (pat/span 0 1)))",
     );
@@ -36,7 +40,9 @@ fn rate_zero_is_silent() {
 // its full-cycle whole.
 #[test]
 fn slowcat() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "((a ((0 1) (1 1)) ((0 1) (1 1))) \
           (b ((1 1) (2 1)) ((1 1) (2 1))) \
           (a ((2 1) (5 2)) ((2 1) (3 1))))",
@@ -48,7 +54,9 @@ fn slowcat() {
 // Both patterns fit within one cycle.
 #[test]
 fn fastcat() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "((a ((0 1) (1 2)) ((0 1) (1 2))) \
           (b ((1 2) (1 1)) ((1 2) (1 1))) \
           (a ((1 1) (5 4)) ((1 1) (3 2))))",
@@ -61,7 +69,9 @@ fn fastcat() {
 // sub-span.
 #[test]
 fn timecat() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "((a ((1 4) (1 3)) ((0 1) (1 3))) \
           (b ((1 3) (1 1)) ((1 3) (1 1))) \
           (a ((1 1) (4 3)) ((1 1) (4 3))) \
@@ -75,37 +85,56 @@ fn timecat() {
 // Shift equivalences over a single cycle on the pattern `bd ~ bd ~`.
 #[test]
 fn shift_equivalences() {
+    let mut vm = new_pin_engine();
     let pat_a = "(pat/fastcat (list (pat/pure 'bd) pat/silence (pat/pure 'bd) pat/silence))";
     let pat_b = "(pat/fastcat (list pat/silence (pat/pure 'bd) pat/silence (pat/pure 'bd)))";
     let events = |p: String| format!("(pin-events (pat/query {p} (pat/span 0 1)))");
     let eq = |l: String, r: String| format!("(equal? {l} {r})");
     let shift = |amt: &str, p: &str| format!("(pat/shift {amt} {p})");
 
-    assert_steel_true(&eq(events(shift("1/4", pat_a)), events(pat_b.to_string())));
-    assert_steel_true(&eq(events(shift("5/4", pat_a)), events(pat_b.to_string())));
-    assert_steel_true(&eq(events(pat_a.to_string()), events(shift("-1/4", pat_b))));
-    assert_steel_true(&eq(events(pat_a.to_string()), events(shift("-3/4", pat_b))));
-    assert_steel_true(&eq(
-        events(shift("1/8", pat_a)),
-        events(shift("-1/8", pat_b)),
-    ));
+    assert_steel_true(
+        &mut vm,
+        &eq(events(shift("1/4", pat_a)), events(pat_b.to_string())),
+    );
+    assert_steel_true(
+        &mut vm,
+        &eq(events(shift("5/4", pat_a)), events(pat_b.to_string())),
+    );
+    assert_steel_true(
+        &mut vm,
+        &eq(events(pat_a.to_string()), events(shift("-1/4", pat_b))),
+    );
+    assert_steel_true(
+        &mut vm,
+        &eq(events(pat_a.to_string()), events(shift("-3/4", pat_b))),
+    );
+    assert_steel_true(
+        &mut vm,
+        &eq(events(shift("1/8", pat_a)), events(shift("-1/8", pat_b))),
+    );
     // The inequality too. An eighth off is not aligned.
-    assert_steel_true(&format!(
-        "(equal? #f {})",
-        eq(events(shift("1/8", pat_a)), events(pat_b.to_string())),
-    ));
+    assert_steel_true(
+        &mut vm,
+        &format!(
+            "(equal? #f {})",
+            eq(events(shift("1/8", pat_a)), events(pat_b.to_string())),
+        ),
+    );
 }
 
 // A unit-cycle pattern squeezed into [1/2, 3/4), with fit-cycle as the
 // unit-src shorthand.
 #[test]
 fn fit_span_and_fit_cycle() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "((a ((1 2) (3 4)) ((1 2) (3 4))))",
         "(pin-events (pat/query (pat/fit-span (pat/span 0 1) (pat/span 1/2 3/4) (pat/pure 'a)) \
            (pat/span 1/2 3/4)))",
     );
     assert_steel_true(
+        &mut vm,
         "(equal? (pin-events (pat/query (pat/fit-span (pat/span 0 1) (pat/span 1/2 3/4) (pat/pure 'a)) (pat/span 0 4)))
                  (pin-events (pat/query (pat/fit-cycle (pat/span 1/2 3/4) (pat/pure 'a)) (pat/span 0 4))))",
     );
@@ -114,7 +143,9 @@ fn fit_span_and_fit_cycle() {
 // stack layers patterns, query order stable at equal starts.
 #[test]
 fn stack_layers() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "((a ((0 1) (1 1)) ((0 1) (1 1))) \
           (b ((0 1) (1 2)) ((0 1) (1 2))) \
           (b ((1 2) (1 1)) ((1 2) (1 1))))",
@@ -126,8 +157,9 @@ fn stack_layers() {
 // rationalize snaps floats to the 1/1920 grid and passes exacts through.
 #[test]
 fn rationalize() {
-    assert_pinned("(1 2)", "(pin-num (pat/rationalize 0.5))");
-    assert_pinned("(3 2)", "(pin-num (pat/rationalize 1.5))");
-    assert_pinned("(1 3)", "(pin-num (pat/rationalize 1/3))");
-    assert_pinned("(2 1)", "(pin-num (pat/rationalize 2))");
+    let mut vm = new_pin_engine();
+    assert_pinned(&mut vm, "(1 2)", "(pin-num (pat/rationalize 0.5))");
+    assert_pinned(&mut vm, "(3 2)", "(pin-num (pat/rationalize 1.5))");
+    assert_pinned(&mut vm, "(1 3)", "(pin-num (pat/rationalize 1/3))");
+    assert_pinned(&mut vm, "(2 1)", "(pin-num (pat/rationalize 2))");
 }

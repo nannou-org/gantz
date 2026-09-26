@@ -1,4 +1,4 @@
-//! Shared test harness. A fresh engine with the `gantz/pattern` module
+//! Shared test harness. An engine with the `gantz/pattern` module
 //! plus the pin-projection helpers.
 //!
 //! Steel 0.8.2's `equal?` cannot compare rationals nested in containers.
@@ -32,8 +32,9 @@ pub const PIN: &str = r#"
 (define (pin-value v) (if (number? v) (pin-num v) v))
 "#;
 
-/// A fresh engine with the pattern module registered and the pin
-/// preamble evaluated, for tests running many snippets.
+/// An engine with the pattern module registered and the pin preamble
+/// evaluated. Building one compiles the whole pattern module, so each test
+/// builds one and passes it to every assertion.
 pub fn new_pin_engine() -> Engine {
     let mut vm = gantz_core::vm::new_engine(gantz_pattern::modules());
     vm.run(PIN.to_string()).expect("pin preamble");
@@ -42,7 +43,7 @@ pub fn new_pin_engine() -> Engine {
 
 /// Evaluate a snippet on an engine prepared by [`new_pin_engine`],
 /// returning the final value.
-pub fn eval_in(vm: &mut Engine, snippet: &str) -> SteelVal {
+pub fn eval(vm: &mut Engine, snippet: &str) -> SteelVal {
     let vals = vm
         .run(snippet.to_string())
         .unwrap_or_else(|e| panic!("steel error: {e}\nin snippet:\n{snippet}"));
@@ -51,15 +52,9 @@ pub fn eval_in(vm: &mut Engine, snippet: &str) -> SteelVal {
         .clone()
 }
 
-/// Evaluate a snippet with the pin preamble on a fresh pattern engine,
-/// returning the final value.
-pub fn eval(snippet: &str) -> SteelVal {
-    eval_in(&mut new_pin_engine(), snippet)
-}
-
 /// Assert the snippet evaluates to `#t`.
-pub fn assert_steel_true(snippet: &str) {
-    match eval(snippet) {
+pub fn assert_steel_true(vm: &mut Engine, snippet: &str) {
+    match eval(vm, snippet) {
         SteelVal::BoolV(true) => (),
         other => panic!("expected #t, got {other:?} for:\n{snippet}"),
     }
@@ -67,12 +62,12 @@ pub fn assert_steel_true(snippet: &str) {
 
 /// Assert `expr` evaluates to the quoted `expected` pinned literal,
 /// re-evaluating `expr` for a readable actual value on failure.
-pub fn assert_pinned(expected: &str, expr: &str) {
+pub fn assert_pinned(vm: &mut Engine, expected: &str, expr: &str) {
     let check = format!("(equal? '{expected} {expr})");
-    match eval(&check) {
+    match eval(vm, &check) {
         SteelVal::BoolV(true) => (),
         _ => {
-            let actual = eval(expr);
+            let actual = eval(vm, expr);
             panic!("expected {expected}\n     got {actual:?}\n     for {expr}");
         }
     }

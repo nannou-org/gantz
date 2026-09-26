@@ -1,9 +1,7 @@
 //! Apply-family tests covering each variant's whole derivation and the
 //! continuous-side degradation to a #f whole.
 
-use crate::common;
-
-use common::assert_pinned;
+use crate::common::{assert_pinned, new_pin_engine};
 
 const A: &str = "(pat/fast 2 (pat/pure 1))";
 const B: &str = "(pat/fast 3 (pat/pure (lambda (v) (+ v 2))))";
@@ -12,7 +10,9 @@ const B: &str = "(pat/fast 3 (pat/pure (lambda (v) (+ v 2))))";
 // from the intersections.
 #[test]
 fn app_intersection_structure() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "(((3 1) ((0 1) (1 3)) ((0 1) (1 3))) \
           ((3 1) ((1 3) (1 2)) ((1 3) (1 2))) \
           ((3 1) ((1 2) (2 3)) ((1 2) (2 3))) \
@@ -24,7 +24,9 @@ fn app_intersection_structure() {
 // Same actives, wholes carried from the left, the value pattern.
 #[test]
 fn appl_left_structure() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "(((3 1) ((0 1) (1 3)) ((0 1) (1 2))) \
           ((3 1) ((1 3) (1 2)) ((0 1) (1 2))) \
           ((3 1) ((1 2) (2 3)) ((1 2) (1 1))) \
@@ -36,7 +38,9 @@ fn appl_left_structure() {
 // Same actives, wholes carried from the right, the function pattern.
 #[test]
 fn appr_right_structure() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "(((3 1) ((0 1) (1 3)) ((0 1) (1 3))) \
           ((3 1) ((1 3) (1 2)) ((1 3) (2 3))) \
           ((3 1) ((1 2) (2 3)) ((1 3) (2 3))) \
@@ -49,7 +53,9 @@ fn appr_right_structure() {
 // continuous function pattern degrades even appl's whole to #f.
 #[test]
 fn appl_against_signal_degrades_whole() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "(((2 1) ((0 1) (1 1)) #f))",
         "(pin-events (pat/query
            (pat/appl (pat/pure 1) (pat/steady (lambda (v) (+ v 1))))
@@ -60,7 +66,9 @@ fn appl_against_signal_degrades_whole() {
 // merge-with combines values at intersections with app structure.
 #[test]
 fn merge_with_sums() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "(((11 1) ((0 1) (1 3)) ((0 1) (1 3))) \
           ((11 1) ((1 3) (1 2)) ((1 3) (1 2))) \
           ((11 1) ((1 2) (2 3)) ((1 2) (2 3))) \
@@ -75,13 +83,16 @@ fn merge_with_sums() {
 // matching values, pat/filter-events sees whole events.
 #[test]
 fn map_and_filters() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "(((10 1) ((0 1) (1 2)) ((0 1) (1 2))) \
           ((10 1) ((1 2) (1 1)) ((1 2) (1 1))))",
         "(pin-events (pat/query (pat/map (lambda (v) (* v 10)) (pat/fast 2 (pat/pure 1))) \
            (pat/span 0 1)))",
     );
     assert_pinned(
+        &mut vm,
         "((a ((0 1) (1 2)) ((0 1) (1 2))))",
         "(pin-events (pat/query
            (pat/filter (lambda (v) (equal? v 'a))
@@ -89,6 +100,7 @@ fn map_and_filters() {
            (pat/span 0 1)))",
     );
     assert_pinned(
+        &mut vm,
         "((b ((1 2) (1 1)) ((1 2) (1 1))))",
         "(pin-events (pat/query
            (pat/filter-events (lambda (e) (<= 1/2 (car (pat/event-active e))))
@@ -101,7 +113,9 @@ fn map_and_filters() {
 // start of its event's whole.
 #[test]
 fn map_events_sees_spans() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "(((0 1) ((0 1) (1 2)) ((0 1) (1 2))) \
           ((1 2) ((1 2) (1 1)) ((1 2) (1 1))))",
         "(pin-events (pat/query

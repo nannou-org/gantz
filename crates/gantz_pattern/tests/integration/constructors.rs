@@ -1,13 +1,13 @@
 //! Constructor and query tests.
 
-use crate::common;
-
-use common::{assert_pinned, assert_steel_true};
+use crate::common::{assert_pinned, assert_steel_true, new_pin_engine};
 
 // pure yields one event per cycle with whole equal to the cycle.
 #[test]
 fn pure_values_per_cycle() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "((hello ((0 1) (1 1)) ((0 1) (1 1))) \
           (hello ((1 1) (2 1)) ((1 1) (2 1))) \
           (hello ((2 1) (3 1)) ((2 1) (3 1))))",
@@ -19,7 +19,9 @@ fn pure_values_per_cycle() {
 // is clipped to the query.
 #[test]
 fn pure_partial_cycle_whole() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "((x ((0 1) (1 1)) ((0 1) (1 1))) \
           (x ((1 1) (2 1)) ((1 1) (2 1))) \
           (x ((2 1) (3 1)) ((2 1) (3 1))) \
@@ -31,7 +33,9 @@ fn pure_partial_cycle_whole() {
 // A zero-width query yields nothing from a discrete pattern.
 #[test]
 fn pure_empty_span() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "()",
         "(pin-events (pat/query (pat/pure 'x) (pat/span 1/2 1/2)))",
     );
@@ -41,7 +45,9 @@ fn pure_empty_span() {
 // same structure as pure.
 #[test]
 fn indices_values_per_cycle() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "(((-1 1) ((-1 1) (0 1)) ((-1 1) (0 1))) \
           ((0 1) ((0 1) (1 1)) ((0 1) (1 1))) \
           ((1 1) ((1 1) (2 1)) ((1 1) (2 1))) \
@@ -54,7 +60,9 @@ fn indices_values_per_cycle() {
 // pattern yields more of them per cycle.
 #[test]
 fn indices_follow_pattern_time() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "(((0 1) ((0 1) (1 2)) ((0 1) (1 2))) \
           ((1 1) ((1 2) (1 1)) ((1 2) (1 1))))",
         "(pin-events (pat/query (pat/fast 2 pat/indices) (pat/span 0 1)))",
@@ -65,12 +73,15 @@ fn indices_follow_pattern_time() {
 // the midpoint. That includes a zero-width instant query.
 #[test]
 fn saw_samples_midpoint() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "(((1 2) ((1 2) (1 2)) #f))",
         "(pin-events (pat/query pat/saw (pat/span 1/2 1/2)))",
     );
     // Midpoint of a wide query.
     assert_pinned(
+        &mut vm,
         "(((1 2) ((0 1) (1 1)) #f))",
         "(pin-events (pat/query pat/saw (pat/span 0 1)))",
     );
@@ -79,29 +90,39 @@ fn saw_samples_midpoint() {
 // Negative saw phases wrap.
 #[test]
 fn saw_negative_phases_wrap() {
+    let mut vm = new_pin_engine();
     let saw_value = |span: &str| {
         format!("(pin-value (pat/event-value (car (pat/query pat/saw (pat/span {span})))))")
     };
-    assert_steel_true(&format!(
-        "(equal? {} {})",
-        saw_value("-1/2 -1/2"),
-        saw_value("1/2 1/2"),
-    ));
-    assert_steel_true(&format!(
-        "(equal? {} {})",
-        saw_value("-3/4 -3/4"),
-        saw_value("1/4 1/4"),
-    ));
+    assert_steel_true(
+        &mut vm,
+        &format!(
+            "(equal? {} {})",
+            saw_value("-1/2 -1/2"),
+            saw_value("1/2 1/2"),
+        ),
+    );
+    assert_steel_true(
+        &mut vm,
+        &format!(
+            "(equal? {} {})",
+            saw_value("-3/4 -3/4"),
+            saw_value("1/4 1/4"),
+        ),
+    );
 }
 
 // saw2 is the polar saw, 0 at phase 1/2.
 #[test]
 fn saw2_polar() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "(((0 1) ((1 2) (1 2)) #f))",
         "(pin-events (pat/query pat/saw2 (pat/span 1/2 1/2)))",
     );
     assert_pinned(
+        &mut vm,
         "(((-1 2) ((1 4) (1 4)) #f))",
         "(pin-events (pat/query pat/saw2 (pat/span 1/4 1/4)))",
     );
@@ -110,7 +131,9 @@ fn saw2_polar() {
 // steady always yields its value, silence always yields nothing.
 #[test]
 fn steady_and_silence() {
+    let mut vm = new_pin_engine();
     assert_steel_true(
+        &mut vm,
         "(define (all-sevens n)
            (if (< n 0)
                #t
@@ -122,13 +145,19 @@ fn steady_and_silence() {
                      #f))))
          (all-sevens 10)",
     );
-    assert_pinned("()", "(pin-events (pat/query pat/silence (pat/span 0 10)))");
+    assert_pinned(
+        &mut vm,
+        "()",
+        "(pin-events (pat/query pat/silence (pat/span 0 10)))",
+    );
 }
 
 // query sorts events by active start. The pattern is deliberately reversed.
 #[test]
 fn query_sorts_by_active_start() {
+    let mut vm = new_pin_engine();
     assert_pinned(
+        &mut vm,
         "((a ((0 1) (1 2)) #f) (b ((1 2) (1 1)) #f))",
         "(pin-events (pat/query
            (lambda (span)
