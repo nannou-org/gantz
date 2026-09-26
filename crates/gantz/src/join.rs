@@ -220,10 +220,20 @@ impl Peer {
 /// Run the subcommand until the runtime stops. Returns the exit code.
 pub fn run(args: JoinArgs) -> i32 {
     // Parsed again by the join. Failing here spares spawning a runtime.
-    if let Err(e) = args.ticket.trim().parse::<gantz_collab::SessionTicket>() {
-        eprintln!("invalid ticket: {e}");
-        return 2;
-    }
+    let ticket = match args.ticket.trim().parse::<gantz_collab::SessionTicket>() {
+        Ok(ticket) => ticket,
+        Err(e) => {
+            eprintln!("invalid ticket: {e}");
+            return 2;
+        }
+    };
+    let dir = match args.dir.clone().or_else(|| default_dir(&ticket)) {
+        Some(dir) => dir,
+        None => {
+            eprintln!("no data directory for this user; pass --dir");
+            return 1;
+        }
+    };
     let identity = match identity(args.identity.as_deref()) {
         Ok(identity) => identity,
         Err(e) => {
@@ -231,12 +241,12 @@ pub fn run(args: JoinArgs) -> i32 {
             return 1;
         }
     };
-    if let Err(e) = std::fs::create_dir_all(&args.dir) {
-        eprintln!("{}: {e}", args.dir.display());
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        eprintln!("{}: {e}", dir.display());
         return 1;
     }
     let infra = gantz_collab_sync::infra(args.relay.as_deref());
-    let mut peer = Peer::new(identity, infra, args.dir.clone(), crate::node::codec());
+    let mut peer = Peer::new(identity, infra, dir.clone(), crate::node::codec());
     info!("peer {}", peer.peer_id());
     if let Err(e) = peer.join(&args.ticket, now()) {
         eprintln!("{e}");
@@ -245,7 +255,7 @@ pub fn run(args: JoinArgs) -> i32 {
     info!(
         "joining `{}` into {}",
         peer.branch().expect("joined"),
-        args.dir.display()
+        dir.display()
     );
     let mut next_poll = Instant::now();
     loop {
@@ -266,6 +276,15 @@ pub fn run(args: JoinArgs) -> i32 {
         }
         std::thread::sleep(TICK);
     }
+}
+
+/// The default working directory for a session: the app data directory,
+/// then `sessions/<name>-<session>`. Joining the same session again lands
+/// in the same directory, and sessions sharing a graph name do not collide.
+fn default_dir(ticket: &gantz_collab::SessionTicket) -> Option<PathBuf> {
+    let dirs = directories::ProjectDirs::from("", "nannou-org", "gantz")?;
+    let session = format!("{}-{}", ticket.name, ticket.session);
+    Some(dirs.data_dir().join("sessions").join(session))
 }
 
 /// The identity at `path`, created there when the file is absent. With no

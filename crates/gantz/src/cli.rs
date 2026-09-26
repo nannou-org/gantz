@@ -46,7 +46,8 @@ pub enum Command {
     ///
     /// Each top-level graph in the session becomes <DIR>/<NAME>.gantz. Saved
     /// edits become commits announced to the session, and remote changes
-    /// rewrite the files. Runs until stopped.
+    /// rewrite the files. Blocks until interrupted. Nothing keeps running
+    /// after it exits.
     #[cfg(feature = "collab")]
     Join(JoinArgs),
 }
@@ -88,8 +89,10 @@ pub struct CheckArgs {
 pub struct JoinArgs {
     /// The session invite ticket.
     pub ticket: String,
-    /// The directory to mirror the session into. Created if absent.
-    pub dir: PathBuf,
+    /// The directory to mirror the session into, created if absent. Defaults
+    /// to the app data directory, then sessions/<NAME>-<SESSION>.
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
     /// The peer identity file: 32 secret key bytes, created if absent. Gives
     /// the peer a stable id across runs. Without it the identity is new
     /// each run.
