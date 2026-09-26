@@ -672,6 +672,7 @@ pub fn node_dsp_of(any: &dyn std::any::Any) -> Option<&dyn NodeDsp> {
         .or_else(|| probe::<crate::Bus>(any))
         .or_else(|| probe::<crate::Sample>(any))
         .or_else(|| probe::<crate::Buffer>(any))
+        .or_else(|| probe::<crate::Envgen>(any))
 }
 
 /// The signal at dsp input `i` of a [`NodeDsp::ugens`] `inputs` slice, or mono
@@ -822,6 +823,7 @@ mod tests {
         check::<crate::Bus>();
         check::<crate::Sample>();
         check::<crate::Buffer>();
+        check::<crate::Envgen>();
         // `UnitNode` has no `Default`. Every table row probes through the one
         // type.
         let unit = crate::UnitNode::from_unit("SinOsc").expect("SinOsc row");

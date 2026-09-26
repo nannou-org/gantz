@@ -56,6 +56,7 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             gantz_plyphon::Bus,
             gantz_plyphon::Sample,
             gantz_plyphon::Buffer,
+            gantz_plyphon::Envgen,
             gantz_pattern::Pmini,
             gantz_pattern::Pplot,
         }
@@ -213,6 +214,7 @@ mod tests {
             "update!",
             "~buffer",
             "~bus",
+            "~envgen",
             "~out",
             "~pack",
             "~sample",
@@ -638,6 +640,7 @@ mod tests {
             48_000.0,
         )));
         nodes.push(erased(&gantz_plyphon::Buffer::new(1024, 2)));
+        nodes.push(erased(&gantz_plyphon::Envgen::default()));
         nodes
     }
 
@@ -734,6 +737,10 @@ mod tests {
             (
                 "Delay",
                 "45b031845977348820dd7e4b21fc53238355d94c9d682f604c1b77f199cc2940",
+            ),
+            (
+                "Envgen",
+                "4a072c3bb2625bf162e9e61a4cd019ecd1d03c3b5fe90d415e824b862107d803",
             ),
             (
                 "Expr",
@@ -859,7 +866,7 @@ mod tests {
 
         let unit = |name: &str| gantz_plyphon::UnitNode::from_unit(name).expect("table row");
         let sugar = super::codec().sugars();
-        let cases: [(gantz_ca::NodeData, &str, &str); 11] = [
+        let cases: [(gantz_ca::NodeData, &str, &str); 12] = [
             (erased(&unit("SinOsc")), "Unit", "~sinosc"),
             (erased(&unit("Lag")), "Unit", "~lag"),
             (erased(&unit("LPF")), "Unit", "~lpf"),
@@ -886,6 +893,11 @@ mod tests {
                 erased(&gantz_plyphon::Sample::default()),
                 "Sample",
                 "~sample",
+            ),
+            (
+                erased(&gantz_plyphon::Envgen::default()),
+                "Envgen",
+                "~envgen",
             ),
         ];
         for (nd, tag, expected) in cases {
@@ -2946,7 +2958,7 @@ mod tests {
     }
 
     /// The demos in the plyphon base source.
-    const PLYPHON_DEMOS: [&str; 9] = [
+    const PLYPHON_DEMOS: [&str; 10] = [
         "demo-sine",
         "demo-ringmod",
         "demo-waveshape",
@@ -2956,6 +2968,7 @@ mod tests {
         "demo-looper",
         "demo-sampler",
         "demo-wavetable",
+        "demo-kick",
     ];
 
     /// Every plyphon base demo derives synthdefs that build in the real
@@ -2988,6 +3001,20 @@ mod tests {
                 controller
                     .ensure_compiled(&part.def.name)
                     .unwrap_or_else(|e| panic!("{demo}: def failed to build: {e:?}"));
+            }
+            if demo == "demo-kick" {
+                let envs: Vec<_> = parts
+                    .iter()
+                    .flat_map(|p| p.def.units.iter())
+                    .filter(|u| u.name == "EnvGen")
+                    .collect();
+                assert_eq!(envs.len(), 2, "a pitch and an amp envelope");
+                for env in envs {
+                    assert!(
+                        matches!(env.inputs[0], plyphon::synthdef::InputRef::Unit { .. }),
+                        "the impulse gates each envelope",
+                    );
+                }
             }
             if demo == "demo-sampler" {
                 let spec = parts

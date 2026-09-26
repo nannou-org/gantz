@@ -13,7 +13,8 @@ pub fn rate_row(body: &mut egui_extras::TableBody, rate: &mut crate::dsp::NodeRa
     let mut changed = false;
     body.row(row_h, |mut row| {
         row.col(|ui| {
-            ui.label("rate");
+            ui.label("rate")
+                .on_hover_text("audio rate or control rate. A change derives a new synthdef");
         });
         row.col(|ui| {
             ui.horizontal(|ui| {
@@ -130,7 +131,8 @@ fn queued_row(body: &mut egui_extras::TableBody, n: usize) {
     let row_h = gantz_egui::widget::node_inspector::table_row_h(body.ui_mut());
     body.row(row_h, |mut row| {
         row.col(|ui| {
-            ui.label("state");
+            ui.label("state")
+                .on_hover_text("control updates that wait for the audio driver");
         });
         row.col(|ui| {
             ui.label(format!("{n} queued"))

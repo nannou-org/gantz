@@ -7,6 +7,7 @@
 
 pub mod buffer;
 pub mod bus;
+pub mod envgen;
 pub mod out;
 pub mod pack;
 pub mod sample;

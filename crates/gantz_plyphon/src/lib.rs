@@ -33,6 +33,7 @@ pub use dsp::{
     NodeDsp, NodeRate, ParamBinding, PortShape, PortShapes, ScopeOutBinding, Signal, ToNodeDsp,
     node_dsp_of, signal_rate,
 };
+pub use envelope::{Envelope, Segment, Shape};
 pub use flatten::{
     AsRefNode, Flat, FlattenError, RefKind, flatten, flatten_from_registry,
     flatten_instance_children,
@@ -41,7 +42,9 @@ pub use instance::{
     BusKey, DefCache, GraphTemplate, InstancePart, Part, ResolvedBus, ResolvedPart, TemplateBus,
     TemplateRegion, VariantKey, derive_template, instantiate,
 };
-pub use node::{Buffer, Bus, InvalidUnitNode, Out, Pack, Sample, ScopeOut, Sum, UnitNode, Unpack};
+pub use node::{
+    Buffer, Bus, Envgen, InvalidUnitNode, Out, Pack, Sample, ScopeOut, Sum, UnitNode, Unpack,
+};
 pub use port_info::{RootPortInfo, root_port_info};
 pub use ref_ext::{DSP_REF_EXT_KEY, DspRefExt, dsp_graphs, is_dsp_graph};
 pub use sugar::PlyphonSugar;
@@ -61,6 +64,7 @@ pub mod describe;
 pub mod dsp;
 #[cfg(feature = "egui")]
 pub mod egui;
+pub mod envelope;
 pub mod flatten;
 pub mod instance;
 pub mod monitor;

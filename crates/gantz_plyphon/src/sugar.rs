@@ -7,8 +7,14 @@
 //! `(~unpack #:count n)` and `(~buffer #:frames n #:channels c #:wavetable)`
 //! carry the structural smoothing lag, ring length, socket count or buffer
 //! shape. A `~sample` with an asset writes as a generic node, which keeps its
-//! address. Every [`crate::units`] descriptor-table keyword reads and writes
-//! the same way.
+//! address. A bare `~envgen` is an ADSR. The form
+//! `(~envgen #:init l #:segs ((level time [shape])...) #:release k #:rate kr
+//! #:width w #:height h #:grid #:axes #:x-range (a b) #:y-range (a b)
+//! #:compact)` carries any other envelope or look.
+//! A segment shape is a
+//! name such as `exp`, or a number for a curve.
+//! Every [`crate::units`] descriptor-table keyword reads and writes the same
+//! way.
 //! A bare form is `~sinosc` or `~lpf`. A full form such as
 //! `(~combc #:delay-lag s #:maxdelay v #:rate kr)` carries the structural
 //! per-param lags, init-only values and ugen rate. A fixed-rate row such as
@@ -17,15 +23,20 @@
 //! appear here. Compose it with [`gantz_format::CoreSugar`] and the other
 //! crates' sugars via [`gantz_format::Sugars`].
 
-use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
+use gantz_format::{Datum, FormatError, Sugar, SugarArgs, from_datum, node_datum, to_datum};
+use gantz_nodetag::NodeTag;
 
+use crate::dsp::NodeRate;
+use crate::envelope::{Envelope, Segment, Shape};
+use crate::node::Envgen;
 use crate::units::UnitRate;
 
 /// Keyword sugar for the plyphon DSP nodes. It covers the bespoke
 /// [`Out`](crate::Out), [`ScopeOut`](crate::ScopeOut), [`Pack`](crate::Pack),
 /// [`Sum`](crate::Sum), [`Unpack`](crate::Unpack), [`Bus`](crate::Bus),
-/// [`Buffer`](crate::Buffer) and [`Sample`](crate::Sample) nodes plus every
-/// [`UnitNode`](crate::UnitNode) descriptor-table keyword.
+/// [`Buffer`](crate::Buffer), [`Sample`](crate::Sample) and
+/// [`Envgen`] nodes plus every [`UnitNode`](crate::UnitNode)
+/// descriptor-table keyword.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PlyphonSugar;
 
@@ -41,6 +52,7 @@ const KEYWORD_TAG: &[(&str, &str)] = &[
     ("~bus", "Bus"),
     ("~buffer", "Buffer"),
     ("~sample", "Sample"),
+    ("~envgen", "Envgen"),
 ];
 
 /// The typetag tag for a sugar keyword.
@@ -70,6 +82,7 @@ impl Sugar for PlyphonSugar {
             "~bus" => node_datum("Bus", vec![]),
             "~buffer" => buffer_spec(args)?,
             "~sample" => node_datum("Sample", vec![]),
+            "~envgen" => envgen_spec(args)?,
             other => match crate::units::unit_desc_by_keyword(other) {
                 Some(desc) => unit_spec(desc, args)?,
                 None => return Ok(None),
@@ -79,6 +92,10 @@ impl Sugar for PlyphonSugar {
     }
 
     fn read_bare(&self, keyword: &str) -> Option<Datum> {
+        // An envelope has no empty form, so the bare keyword is the default.
+        if keyword == "~envgen" {
+            return envgen_datum(&Envgen::default()).ok();
+        }
         tag_for_keyword(keyword)
             .map(|tag| node_datum(tag, vec![]))
             .or_else(|| {
@@ -104,6 +121,7 @@ impl Sugar for PlyphonSugar {
             // An assigned sample falls through to the generic form, which
             // keeps its asset address.
             "Sample" => node.get("asset").is_none().then(|| "~sample".to_string()),
+            "Envgen" => write_envgen(node),
             // An unknown unit name falls through to the generic form.
             "Unit" => write_unit(node),
             other => keyword_for_tag(other).map(str::to_string),
@@ -343,6 +361,163 @@ fn write_buffer(node: &Datum) -> String {
         parts.push("#:wavetable".to_string());
     }
     write_form("~buffer", parts)
+}
+
+/// Read a `(~envgen [#:init l] [#:segs (seg...)] [#:release k] [#:rate kr]
+/// [#:width w] [#:height h] [#:grid] [#:axes] [#:x-range (a b)]
+/// [#:y-range (a b)] [#:compact])` form into an `Envgen` node datum.
+///
+/// A segment is `(level time [shape])`. The shape is a name such as `lin` or
+/// `exp`, see [`Shape::name`], or a number for a [`Shape::Curve`] segment
+/// with that curve. It is `lin` when absent. Without `#:segs` the envelope is
+/// the default ADSR. With `#:segs` there is no release point unless
+/// `#:release` gives one.
+fn envgen_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
+    let default = Envelope::default();
+    let init = args.keyword_f64("init")?.map_or(default.init, |l| l as f32);
+    let (segments, release) = match args.keyword_list("segs")? {
+        Some(segs) => {
+            let segments = (0..segs.count())
+                .map(|i| read_segment(&segs, i))
+                .collect::<Result<Vec<_>, _>>()?;
+            (segments, None)
+        }
+        None => (default.segments, default.release),
+    };
+    let release = match args.keyword_int("release")? {
+        Some(k) => Some(k.max(0) as usize),
+        None => release,
+    };
+    let rate = match args.keyword_symbol("rate")?.as_deref() {
+        None | Some("ar") => NodeRate::Audio,
+        Some("kr") => NodeRate::Control,
+        Some(other) => {
+            return Err(FormatError::malformed(format!(
+                "#:rate must be `ar` or `kr`, got `{other}`"
+            )));
+        }
+    };
+    let mut node = Envgen::new(Envelope {
+        init,
+        segments,
+        release,
+    })
+    .with_rate(rate);
+    let [mut width, mut height] = node.size();
+    if let Some(w) = args.keyword_int("width")? {
+        width = w.clamp(0, i64::from(u16::MAX)) as u16;
+    }
+    if let Some(h) = args.keyword_int("height")? {
+        height = h.clamp(0, i64::from(u16::MAX)) as u16;
+    }
+    node.set_size([width, height]);
+    node.set_grid(args.has_flag("grid"));
+    node.set_axes(args.has_flag("axes"));
+    if let Some(x_range) = read_range(&args, "x-range")? {
+        node.set_x_range(x_range);
+    }
+    if let Some(y_range) = read_range(&args, "y-range")? {
+        node.set_y_range(y_range);
+    }
+    node.set_compact(args.has_flag("compact"));
+    envgen_datum(&node)
+}
+
+/// Read a `#:<key> (min max)` range.
+fn read_range(args: &SugarArgs<'_>, key: &str) -> Result<Option<[f32; 2]>, FormatError> {
+    let Some(list) = args.keyword_list(key)? else {
+        return Ok(None);
+    };
+    let malformed = || FormatError::malformed(format!("#:{key} requires `(min max)`"));
+    let min = list.f64_at(0)?.ok_or_else(malformed)?;
+    let max = list.f64_at(1)?.ok_or_else(malformed)?;
+    Ok(Some([min as f32, max as f32]))
+}
+
+/// Read segment `i` of a `#:segs` list, `(level time [shape])`.
+fn read_segment(segs: &SugarArgs<'_>, i: usize) -> Result<Segment, FormatError> {
+    let malformed = || segs.malformed_at(i, "a segment is `(level time [shape])`");
+    let seg = segs.list_at(i).ok_or_else(malformed)?;
+    let level = seg.f64_at(0)?.ok_or_else(malformed)? as f32;
+    let time = seg.f64_at(1)?.ok_or_else(malformed)? as f32;
+    if seg.count() < 3 {
+        return Ok(Segment::new(level, time, Shape::Lin));
+    }
+    match seg.symbol_at(2) {
+        Some(name) => Shape::from_name(&name)
+            .map(|shape| Segment::new(level, time, shape))
+            .ok_or_else(|| seg.malformed_at(2, format!("unknown segment shape `{name}`"))),
+        None => {
+            let curve = seg.f64_at(2)?.ok_or_else(malformed)? as f32;
+            Ok(Segment::curved(level, time, curve))
+        }
+    }
+}
+
+/// Write an `Envgen`. The bare `~envgen` for the default node, else the
+/// keyword form with each field that differs from the default. Every field
+/// has a keyword, so the form never loses data.
+fn write_envgen(node: &Datum) -> Option<String> {
+    let node: Envgen = from_datum(node.clone()).ok()?;
+    let env = node.envelope();
+    let default = Envgen::default();
+    let default_env = default.envelope();
+    let mut parts = Vec::new();
+    if env.init != default_env.init {
+        parts.push(format!("#:init {}", env.init));
+    }
+    if (&env.segments, env.release) != (&default_env.segments, default_env.release) {
+        let segs: Vec<String> = env.segments.iter().map(write_segment).collect();
+        parts.push(format!("#:segs ({})", segs.join(" ")));
+        if let Some(k) = env.release {
+            parts.push(format!("#:release {k}"));
+        }
+    }
+    if node.rate() != default.rate() {
+        parts.push(format!("#:rate {}", node.rate().token()));
+    }
+    let ([width, height], [dw, dh]) = (node.size(), default.size());
+    if width != dw {
+        parts.push(format!("#:width {width}"));
+    }
+    if height != dh {
+        parts.push(format!("#:height {height}"));
+    }
+    if node.grid() {
+        parts.push("#:grid".to_string());
+    }
+    if node.axes() {
+        parts.push("#:axes".to_string());
+    }
+    if node.x_range() != default.x_range() {
+        let [min, max] = node.x_range();
+        parts.push(format!("#:x-range ({min} {max})"));
+    }
+    if node.y_range() != default.y_range() {
+        let [min, max] = node.y_range();
+        parts.push(format!("#:y-range ({min} {max})"));
+    }
+    if node.compact() {
+        parts.push("#:compact".to_string());
+    }
+    Some(write_form("~envgen", parts))
+}
+
+/// Write one segment, `(level time [shape])`.
+fn write_segment(seg: &Segment) -> String {
+    match seg.shape {
+        Shape::Lin => format!("({} {})", seg.level, seg.time),
+        Shape::Curve => format!("({} {} {})", seg.level, seg.time, seg.curve),
+        shape => format!("({} {} {})", seg.level, seg.time, shape.name()),
+    }
+}
+
+/// An `Envgen` as a node datum, tagged with its wire tag.
+fn envgen_datum(node: &Envgen) -> Result<Datum, FormatError> {
+    match to_datum(node) {
+        Ok(Datum::Map(fields)) => Ok(Datum::tagged(Envgen::TAG, fields)),
+        _ => Err(FormatError::malformed("`~envgen` does not encode")),
+    }
 }
 
 /// Write a count node. The bare keyword `kw` when the socket `count` is at
@@ -674,6 +849,61 @@ mod tests {
         assert_eq!(s.write_spec("Sample", &sample).as_deref(), Some("~sample"));
         let assigned = node_datum("Sample", vec![("asset", Datum::Str("ab".into()))]);
         assert_eq!(s.write_spec("Sample", &assigned), None);
+    }
+
+    /// The typed `Envgen` behind a node datum.
+    fn envgen(d: &Datum) -> Envgen {
+        from_datum(d.clone()).expect("an Envgen")
+    }
+
+    #[test]
+    fn envgen_round_trips() {
+        let s = PlyphonSugar;
+        let bare = s.read_bare("~envgen").expect("bare");
+        assert_eq!(envgen(&bare), Envgen::default());
+        assert_eq!(s.write_spec("Envgen", &bare).as_deref(), Some("~envgen"));
+        // Segments with the default shape, a curve and a named shape.
+        let form = "(~envgen #:init 50 #:segs ((230 0.001) (50 0.15 -8) (0 1 exp)) \
+                    #:release 2 #:rate kr #:width 240 #:grid #:axes #:x-range (0 1.5) \
+                    #:y-range (-1 250) #:compact)";
+        let d = read_spec(form).expect("form");
+        let node = envgen(&d);
+        let env = node.envelope();
+        assert_eq!(env.init, 50.0);
+        assert_eq!(env.segments[0], Segment::new(230.0, 0.001, Shape::Lin));
+        assert_eq!(env.segments[1], Segment::curved(50.0, 0.15, -8.0));
+        assert_eq!(env.segments[2].shape, Shape::Exp);
+        assert_eq!(env.release, Some(2));
+        assert_eq!(node.rate(), NodeRate::Control);
+        assert_eq!(node.size(), [240, Envgen::DEFAULT_HEIGHT]);
+        assert!(node.grid() && node.axes() && node.compact());
+        assert_eq!(node.x_range(), [0.0, 1.5]);
+        assert_eq!(node.y_range(), [-1.0, 250.0]);
+        assert_eq!(s.write_spec("Envgen", &d).as_deref(), Some(form));
+        // The default segments without their release point need `#:segs`.
+        let mut no_release = Envelope::default();
+        no_release.release = None;
+        let d = envgen_datum(&Envgen::new(no_release.clone())).expect("datum");
+        let written = s.write_spec("Envgen", &d).expect("form");
+        assert_eq!(
+            envgen(&read_spec(&written).expect("read")).envelope(),
+            &no_release
+        );
+    }
+
+    #[test]
+    fn envgen_rejects_bad_segments() {
+        let bad = |text: &str| {
+            let exprs = sexpr::read(text).expect("read");
+            let args = sexpr::list_args(&exprs[0]).expect("list");
+            PlyphonSugar
+                .read_spec("~envgen", SugarArgs::new(&args[1..], text))
+                .is_err()
+        };
+        assert!(bad("(~envgen #:segs ((1)))"), "a segment needs a time");
+        assert!(bad("(~envgen #:segs ((1 2 wobble)))"), "an unknown shape");
+        assert!(bad("(~envgen #:segs 3)"), "segs must be a list");
+        assert!(bad("(~envgen #:rate xr)"), "an unknown rate");
     }
 
     #[test]

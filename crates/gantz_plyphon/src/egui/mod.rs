@@ -15,6 +15,7 @@ pub use ref_ext::DspRefExtUi;
 pub use settings::DspSettingsTab;
 
 pub mod edge_style;
+pub mod envelope;
 pub mod node;
 pub mod pane;
 pub mod param;
