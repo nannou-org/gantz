@@ -2924,7 +2924,7 @@ mod tests {
     }
 
     /// The demos in the plyphon base source.
-    const PLYPHON_DEMOS: [&str; 7] = [
+    const PLYPHON_DEMOS: [&str; 8] = [
         "demo-sine",
         "demo-ringmod",
         "demo-waveshape",
@@ -2932,11 +2932,13 @@ mod tests {
         "demo-pluck",
         "demo-samplehold",
         "demo-looper",
+        "demo-sampler",
     ];
 
     /// Every plyphon base demo derives synthdefs that build in the real
     /// engine. This catches a demo wired to a wrong socket index. The
-    /// looper's writer and reader must also both bind its buffer.
+    /// looper's writer and reader must also both bind its buffer. The
+    /// sampler starts with no sample, so its reader feeds `-1`.
     #[test]
     fn plyphon_base_demos_derive_and_build() {
         use bevy_gantz_plyphon::plyphon;
@@ -2962,6 +2964,18 @@ mod tests {
                 controller
                     .ensure_compiled(&part.def.name)
                     .unwrap_or_else(|e| panic!("{demo}: def failed to build: {e:?}"));
+            }
+            if demo == "demo-sampler" {
+                let spec = parts
+                    .iter()
+                    .flat_map(|p| p.def.units.iter())
+                    .find(|u| u.name == "PlayBuf")
+                    .expect("the sampler emits `PlayBuf`");
+                assert!(
+                    matches!(spec.inputs[0], plyphon::synthdef::InputRef::Constant(v) if v == -1.0),
+                    "the sampler's `PlayBuf` reads an empty slot",
+                );
+                assert!(parts.iter().all(|p| p.buffers.is_empty()));
             }
             if demo != "demo-looper" {
                 continue;

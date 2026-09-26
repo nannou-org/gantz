@@ -11,13 +11,16 @@ repository.workspace = true
 [dependencies]
 bevy_app.workspace = true
 bevy_ecs.workspace = true
+bevy_tasks.workspace = true
 cpal.workspace = true
 gantz_ca.workspace = true
 gantz_core.workspace = true
 gantz_egui.workspace = true
+gantz_nodetag.workspace = true
 gantz_plyphon = { workspace = true, features = ["egui"] }
 log.workspace = true
 plyphon.workspace = true
+rfd.workspace = true
 web-time.workspace = true
 
 bevy_gantz.workspace = true

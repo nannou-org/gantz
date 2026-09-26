@@ -9,6 +9,7 @@
 //! `--no-default-features` build.
 
 pub use edge_style::DspEdgeStyle;
+pub use node::sample::LoadSample;
 pub use pane::{DSP_PANE_KEY, DspPane, DspPaneHead};
 pub use ref_ext::DspRefExtUi;
 pub use settings::DspSettingsTab;

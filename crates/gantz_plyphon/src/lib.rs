@@ -18,7 +18,7 @@
 //! gets its own type and a descriptive name.
 
 pub use asset::{
-    AudioAsset, AudioBuffers, BUFFER_SECTION, DecodeError, add_audio_asset, audio_asset,
+    AudioAsset, AudioBuffers, BUFFER_SECTION, DecodeError, WavError, add_audio_asset, audio_asset,
 };
 pub use backend::{AddAction, Backend, BackendError, Embedded, ROOT_GROUP_ID};
 pub use builtin::builtins;
@@ -49,7 +49,7 @@ pub use units::{Emit, In, RateScale, UNITS, UnitDesc, UnitRate, unit_desc, unit_
 // `self::` disambiguates from the extern `egui` crate at the crate root.
 #[cfg(feature = "egui")]
 pub use self::egui::{
-    DSP_PANE_KEY, DspEdgeStyle, DspPane, DspPaneHead, DspRefExtUi, DspSettingsTab,
+    DSP_PANE_KEY, DspEdgeStyle, DspPane, DspPaneHead, DspRefExtUi, DspSettingsTab, LoadSample,
 };
 
 pub mod asset;
