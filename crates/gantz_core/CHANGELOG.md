@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.6.1...gantz_core-v0.7.0) - 2026-09-26
+
+### Added
+
+- *(gantz_core)* [**breaking**] let a steel module carry a rust builtin module
+
 ## [0.6.1](https://github.com/nannou-org/gantz/compare/gantz_core-v0.6.0...gantz_core-v0.6.1) - 2026-09-26
 
 ### Other
