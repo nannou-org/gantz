@@ -952,8 +952,8 @@ mod tests {
         let derived = derive_synthdef(&g, 2, "test").expect("derive");
         assert_eq!(
             derived.def.units.len(),
-            5,
-            "2 SinOsc + level/channel muls + Out",
+            7,
+            "2 SinOsc + fade gain + level/channel muls + Out",
         );
     }
 
@@ -1005,7 +1005,15 @@ mod tests {
             .iter()
             .map(|u| u.name.as_str())
             .collect();
-        assert_eq!(names, vec!["SinOsc", "BinaryOpUGen", "BinaryOpUGen", "Out"]);
+        let expected = [
+            "SinOsc",
+            "Line",
+            "BinaryOpUGen",
+            "BinaryOpUGen",
+            "BinaryOpUGen",
+            "Out",
+        ];
+        assert_eq!(names, expected);
         assert_eq!(
             regions[0].derived.gains.len(),
             1,

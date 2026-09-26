@@ -1161,10 +1161,9 @@ fn buffer_blobs(reg: &ca::Registry) -> &BufferBlobs {
 /// graph therefore never spuriously respawns, and the driver never mutates a
 /// def copy.
 ///
-/// A replacement spawns silent, with fade defaults patched to `0.0`. Defaults
-/// seed both the control wire and the lag state. It ramps its fades to unity
-/// once up, while the old synth's fades ramp to zero ahead of a deferred free.
-/// The overlap is the crossfade. On a bus, `Out` sums the two ramps. Placement
+/// A replacement fades in from its first block through the `Line` in each of
+/// its fade gains, while the old synth's fades ramp to zero ahead of a
+/// deferred free. The overlap is the crossfade. On a bus, `Out` sums the two ramps. Placement
 /// follows the region DAG. A spawned synth lands `Before` the first kept synth
 /// later in topo order, else at the tail. Bus readers hear only writers
 /// computed earlier in the node tree. On install or spawn failure the old
@@ -1431,11 +1430,11 @@ fn wiring_hash(part: &ResolvedPart) -> u64 {
 
 /// Cue scope streams and allocate buses so their indices are known, then
 /// install and spawn one part's def. It spawns `Before` the given anchor when
-/// present, else at the root group's tail. The synth spawns silent behind its
-/// fade gains' baked `0.0` defaults. Bus indices, scope bufnums and unbound
-/// fade-to-unity are then set via `set_control` in one command-ring drain,
-/// landing before the first audible block. While `muted`, the `~out` fades
-/// stay at their silent default. Bound params re-send from node state via
+/// present, else at the root group's tail. The synth fades in from its first
+/// block through the `Line` in each fade gain. Bus indices, scope bufnums and
+/// the unbound fade params at unity are then set via `set_control` in one
+/// command-ring drain. While `muted`, the `~out` fade params stay at their
+/// silent `0.0` default. Bound params re-send from node state via
 /// the same-frame param sync. On failure, cleans up after itself and reports
 /// whether retrying next frame can converge. See [`SpawnError`].
 fn spawn_part(
@@ -1574,9 +1573,8 @@ fn spawn_part(
     match backend.spawn(&def_name, target, action) {
         Ok(node_id) => {
             // Wire the synth in one command-ring drain. Bus indices, scope
-            // bufnums, then the unbound fade gains ramped to unity. All land
-            // before the synth's first audible block. It spawns silent behind
-            // the fade's baked `0.0` default.
+            // bufnums, then the unbound fade params at unity. The fade lines
+            // ramp the synth in from its first block.
             for (param, value) in &set_after_spawn {
                 if let Err(e) = backend.set_control(node_id, *param, *value) {
                     log::error!("bevy_gantz_plyphon: post-spawn set_control failed: {e:?}");
@@ -2465,6 +2463,65 @@ mod tests {
             rms > 0.05,
             "sin -> out must sound via spawn_part: rms={rms}"
         );
+    }
+
+    /// A spawned part fades in. Its first block is near silent, and its level
+    /// rises over the fade lag to full. The ramp comes from the def, so it
+    /// holds even when the driver's fade param lands before the first block.
+    #[test]
+    fn spawn_part_fades_in() {
+        use gantz_core::edge::Edge;
+        use gantz_core::node::graph::Graph;
+        use gantz_plyphon::flatten::{Flat, RefKind, flatten};
+
+        let mut g = Graph::<TestN>::default();
+        let s = g.add_node(sinosc());
+        let o = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
+        g.add_edge(s, o, Edge::new(0.into(), 0.into()));
+        let resolve =
+            |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> { None };
+        let flat: Graph<Flat<&TestN>> = flatten(&|_| None, &g, &resolve).expect("flatten");
+        let mut cache = DefCache::new();
+        let template = derive_template(&flat, 1, &|_| None, &mut cache).expect("derive");
+        let part = instantiate(&template, &cache).into_iter().next().unwrap();
+        let wiring = wiring_hash(&part);
+
+        let (mut controller, _nrt, mut world) = test_engine();
+        let mut state = HeadSynths::default();
+        let entity = entities(1)[0];
+        spawn_part(
+            &mut controller,
+            &mut state,
+            &EMPTY_BUFFERS,
+            entity,
+            part,
+            wiring,
+            48_000.0,
+            None,
+            false,
+        )
+        .expect("spawn_part");
+
+        // The peak of each 64-frame block, over the fade and well past it.
+        let fade_blocks = (gantz_plyphon::FADE_LAG * 48_000.0 / 64.0).ceil() as usize;
+        let peaks: Vec<f32> = (0..fade_blocks * 3)
+            .map(|_| {
+                let mut block = [0.0f32; 64];
+                world.fill(&mut block, 1);
+                block.iter().fold(0.0f32, |peak, v| peak.max(v.abs()))
+            })
+            .collect();
+        let full = peaks[fade_blocks * 2..]
+            .iter()
+            .fold(0.0f32, |peak, &v| peak.max(v));
+        assert!(full > 0.15, "the tone reaches full level: {full}");
+        assert!(
+            peaks[0] < full * 0.1,
+            "the first block is near silent: {peaks:?}"
+        );
+        let mid = peaks[fade_blocks / 2];
+        let ramps = mid > full * 0.2 && mid < full * 0.8;
+        assert!(ramps, "the level ramps over the fade: {peaks:?}");
     }
 
     /// A part spawned muted is silent until its `~out` fade ramps to unity.

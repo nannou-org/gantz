@@ -114,9 +114,9 @@ impl NodeDsp for Out {
         let out_channels = b.out_channels();
         // The output level is gain times fade, multiplied once at control
         // rate. `gain` is the settable, smoothed control param. The driver
-        // applies its live state value via `set_control`. `fade` is the
-        // driver-owned crossfade lever that ramps the whole synth in and out
-        // across a replacement, see `DspBuilder::push_fade_gain`.
+        // applies its live state value via `set_control`. `fade` ramps the
+        // whole synth in from spawn, and the driver ramps it out across a
+        // replacement, see `DspBuilder::push_fade_gain`.
         let gain = b.push_param(
             path,
             plyphon_param(param_name(path, "gain"), Self::DEFAULT_GAIN, self.gain_lag),
@@ -125,7 +125,7 @@ impl NodeDsp for Out {
         let level = b.push_unit(UnitSpec {
             name: "BinaryOpUGen".to_string(),
             rate: Rate::Control,
-            inputs: vec![InputRef::Param(gain), InputRef::Param(fade)],
+            inputs: vec![InputRef::Param(gain), fade],
             num_outputs: 1,
             special_index: 2,
         });
