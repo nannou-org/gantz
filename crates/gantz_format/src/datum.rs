@@ -147,6 +147,8 @@ mod tests {
     use gantz_core::datum::to_datum;
     use serde::de::DeserializeOwned;
     use serde::{Deserialize, Serialize};
+    use std::collections::BTreeMap;
+    use std::fmt::Debug;
 
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
     struct Inner {
@@ -171,6 +173,29 @@ mod tests {
         Unit,
     }
 
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    struct Meters(f64);
+
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    struct Pair(i32, i32);
+
+    /// An externally tagged enum, serde's default. It uses the single-key-map or
+    /// bare string encoding, distinct from the internally tagged path `MyNode`
+    /// takes.
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    enum Shape {
+        Dot,
+        Tag(String),
+        Span(i32, i32),
+        Rect { w: u32, h: u32, fill: bool },
+    }
+
+    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+    struct Holder {
+        a: Option<i32>,
+        b: Option<String>,
+    }
+
     /// Reading a datum from text and rendering it back is stable.
     fn text_roundtrip(d: &Datum) -> Datum {
         let text = datum_text(d);
@@ -179,145 +204,120 @@ mod tests {
         datum_from_expr(&exprs[0], &text)
     }
 
-    #[test]
-    fn text_stable_scalars_round_trip() {
-        let cases = [
-            Datum::Null,
-            Datum::Bool(true),
-            Datum::Bool(false),
-            Datum::I64(-42),
-            Datum::F64(3.5),
-            Datum::F64(3.0),
-            Datum::Char('q'),
-            Datum::Str("hello world".to_string()),
-        ];
-        for d in cases {
-            assert_eq!(text_roundtrip(&d), d, "text round-trip for {d:?}");
-        }
-    }
-
-    /// A non-negative integer renders as bare digits, so it reads back as `I64`
-    /// even when it was a `U64`. This is harmless. A node's field `Deserialize`
-    /// produces the same value either way. The `faithful_serde_*` tests compare
-    /// nodes and are the real guard.
-    #[test]
-    fn nonnegative_int_normalizes_to_i64() {
-        assert_eq!(text_roundtrip(&Datum::U64(42)), Datum::I64(42));
-        assert_eq!(text_roundtrip(&Datum::I64(42)), Datum::I64(42));
-        // A value beyond i64::MAX still round-trips as U64.
-        let big = Datum::U64(u64::MAX);
-        assert_eq!(text_roundtrip(&big), big);
-    }
-
-    #[test]
-    fn empty_map_and_seq_are_distinct() {
-        assert_eq!(text_roundtrip(&Datum::Map(vec![])), Datum::Map(vec![]));
-        assert_eq!(text_roundtrip(&Datum::Seq(vec![])), Datum::Seq(vec![]));
-        assert_eq!(datum_text(&Datum::Map(vec![])), "()");
-        assert_eq!(datum_text(&Datum::Seq(vec![])), "#()");
-    }
-
-    #[test]
-    fn float_valued_integer_stays_a_float() {
-        // `3.0` must render with a decimal point so it does not read back as I64.
-        assert_eq!(datum_text(&Datum::F64(3.0)), "3.0");
-        assert_eq!(text_roundtrip(&Datum::F64(3.0)), Datum::F64(3.0));
-    }
-
-    #[test]
-    fn bytes_round_trip() {
-        let d = Datum::Bytes(vec![0, 1, 255]);
-        assert_eq!(datum_text(&d), "#u8(0 1 255)");
-        assert_eq!(text_roundtrip(&d), d);
-    }
-
-    #[test]
-    fn nested_map_and_seq_round_trip() {
-        let d = Datum::Map(vec![
-            ("a".to_string(), Datum::I64(1)),
-            (
-                "b".to_string(),
-                Datum::Seq(vec![Datum::I64(2), Datum::Str("x".into())]),
-            ),
-            (
-                "c".to_string(),
-                Datum::Map(vec![("k".to_string(), Datum::Bool(true))]),
-            ),
-        ]);
-        assert_eq!(text_roundtrip(&d), d);
-    }
-
-    #[test]
-    fn faithful_serde_struct_variant() {
-        let node = MyNode::Nested {
-            inner: Inner {
-                flag: true,
-                ratio: 0.25,
-                tags: vec!["a".into(), "b".into()],
-            },
-            maybe: Some(7),
-            extra: vec![-1, 0, 1],
-        };
-        // In-memory codec is exact.
-        let datum = to_datum(&node).expect("to_datum");
-        let back: MyNode = from_datum(datum.clone()).expect("from_datum");
-        assert_eq!(node, back);
-        // It survives a text round-trip too.
-        let via_text: MyNode = from_datum(text_roundtrip(&datum)).expect("from text");
-        assert_eq!(node, via_text);
-    }
-
-    #[test]
-    fn faithful_serde_unit_and_scalar_variants() {
-        for node in [
-            MyNode::Unit,
-            MyNode::Scalar {
-                count: 3,
-                offset: -9,
-                label: "hi".into(),
-            },
-        ] {
-            let datum = to_datum(&node).expect("to_datum");
-            let via_text: MyNode = from_datum(text_roundtrip(&datum)).expect("from text");
-            assert_eq!(node, via_text, "round-trip for {node:?}");
-        }
-    }
-
-    #[test]
-    fn char_specials_round_trip() {
-        for c in [' ', '\n', '\t', '\r', '\0', 'a', '✓', '\u{7}'] {
-            let d = Datum::Char(c);
-            assert_eq!(text_roundtrip(&d), d, "char round-trip for {c:?}");
-        }
-    }
-
-    /// Round-trip a serde value through the codec and through text.
-    fn serde_text_roundtrip<T>(value: &T) -> T
+    /// Assert a serde value survives the codec and a text round-trip.
+    fn assert_serde_text_roundtrip<T>(value: &T)
     where
-        T: Serialize + DeserializeOwned,
+        T: Debug + PartialEq + Serialize + DeserializeOwned,
     {
         let datum = to_datum(value).expect("to_datum");
-        from_datum(text_roundtrip(&datum)).expect("from_datum after text")
+        let back: T = from_datum(text_roundtrip(&datum)).expect("from_datum after text");
+        assert_eq!(back, *value, "text round-trip for {value:?}");
     }
 
-    /// Strings whose contents look like another datum kind must stay strings.
-    /// Quoting disambiguates them from `null`, `#t` and numbers on read.
+    /// Datums that read back unchanged from their rendered text. A row with
+    /// text also pins the rendered form.
     #[test]
-    fn strings_that_look_like_other_datums_stay_strings() {
-        for s in [
+    fn datums_round_trip_through_text() {
+        let mut rows: Vec<(Datum, Option<&str>)> = vec![
+            // Text-stable scalars.
+            (Datum::Null, None),
+            (Datum::Bool(true), None),
+            (Datum::Bool(false), None),
+            (Datum::I64(-42), None),
+            (Datum::F64(3.5), None),
+            // `3.0` must render with a decimal point so it does not read back
+            // as I64.
+            (Datum::F64(3.0), Some("3.0")),
+            (Datum::Char('q'), None),
+            (Datum::Str("hello world".to_string()), None),
+            // Integer boundary values round-trip with the correct variant. A
+            // value just past `i64::MAX` reads back as `U64`, not an overflow.
+            (Datum::I64(i64::MIN), None),
+            (Datum::I64(i64::MAX), None),
+            (Datum::U64(i64::MAX as u64 + 1), None),
+            // An empty map and an empty seq are distinct.
+            (Datum::Map(vec![]), Some("()")),
+            (Datum::Seq(vec![]), Some("#()")),
+            (Datum::Bytes(vec![0, 1, 255]), Some("#u8(0 1 255)")),
+            (Datum::Bytes(vec![]), Some("#u8()")),
+            (
+                Datum::Map(vec![
+                    ("a".to_string(), Datum::I64(1)),
+                    (
+                        "b".to_string(),
+                        Datum::Seq(vec![Datum::I64(2), Datum::Str("x".into())]),
+                    ),
+                    (
+                        "c".to_string(),
+                        Datum::Map(vec![("k".to_string(), Datum::Bool(true))]),
+                    ),
+                ]),
+                None,
+            ),
+            // Empty collections nested inside collections stay distinct. A seq
+            // holding an empty map, `#(())`, is not a seq holding an empty seq,
+            // `#(#())`.
+            (Datum::Seq(vec![Datum::Map(vec![])]), None),
+            (Datum::Seq(vec![Datum::Seq(vec![])]), None),
+            (
+                Datum::Map(vec![
+                    ("e_seq".into(), Datum::Seq(vec![])),
+                    ("e_map".into(), Datum::Map(vec![])),
+                ]),
+                None,
+            ),
+            // A deeply mixed structure. It nests maps in seqs in maps and
+            // interleaves nulls, bytes and strings with reader-significant
+            // characters.
+            (
+                Datum::Map(vec![
+                    (
+                        "rows".into(),
+                        Datum::Seq(vec![
+                            Datum::Map(vec![
+                                ("id".into(), Datum::I64(1)),
+                                (
+                                    "vals".into(),
+                                    Datum::Seq(vec![Datum::F64(1.5), Datum::Null]),
+                                ),
+                            ]),
+                            Datum::Map(vec![
+                                ("id".into(), Datum::I64(2)),
+                                ("vals".into(), Datum::Seq(vec![])),
+                            ]),
+                        ]),
+                    ),
+                    (
+                        "grid".into(),
+                        Datum::Seq(vec![
+                            Datum::Seq(vec![Datum::I64(0), Datum::I64(1)]),
+                            Datum::Seq(vec![Datum::Bool(true), Datum::Str("x".into())]),
+                        ]),
+                    ),
+                    ("raw".into(), Datum::Bytes(vec![1, 2, 3])),
+                    ("note".into(), Datum::Str("(parens) and \"quotes\"".into())),
+                ]),
+                None,
+            ),
+        ];
+        // Special chars, then reader-significant chars via Steel's character
+        // syntax. These cover parens, brackets, quotes, hash, the comment char
+        // and a digit.
+        let chars = [
+            ' ', '\n', '\t', '\r', '\0', 'a', '✓', '\u{7}', '(', ')', '[', ']', '"', '\\', '#',
+            ';', '5', '\'',
+        ];
+        rows.extend(chars.map(|c| (Datum::Char(c), None)));
+        // Strings whose contents look like another datum kind must stay
+        // strings. Quoting disambiguates them from `null`, `#t` and numbers on
+        // read.
+        let lookalikes = [
             "null", "true", "false", "#t", "#f", "42", "-7", "3.0", "-1.5", "1e9", "", " ",
-        ] {
-            let d = Datum::Str(s.to_string());
-            assert_eq!(text_roundtrip(&d), d, "{s:?} must round-trip as a string");
-        }
-    }
-
-    /// Strings containing reader-significant characters survive quoting and
-    /// re-reading. The cases cover quotes, escapes, parens, comment and keyword
-    /// markers, and unicode.
-    #[test]
-    fn string_escaping_round_trips() {
-        for s in [
+        ];
+        // Strings containing reader-significant characters survive quoting and
+        // re-reading. The cases cover quotes, escapes, parens, comment and
+        // keyword markers, and unicode.
+        let escapes = [
             "a\"b",         // embedded double quote
             "a\\b",         // embedded backslash
             "line1\nline2", // newline
@@ -328,14 +328,37 @@ mod tests {
             "#:keyword",    // keyword marker
             "✓ unicode ☃",
             "",
-        ] {
-            let d = Datum::Str(s.to_string());
+        ];
+        rows.extend(
+            lookalikes
+                .into_iter()
+                .chain(escapes)
+                .map(|s| (Datum::Str(s.to_string()), None)),
+        );
+        for (d, text) in &rows {
+            if let Some(text) = text {
+                assert_eq!(datum_text(d), *text, "text of {d:?}");
+            }
             assert_eq!(
-                text_roundtrip(&d),
-                d,
-                "escaped string {s:?} must round-trip"
+                text_roundtrip(d),
+                *d,
+                "text round-trip for {d:?} (rendered {:?})",
+                datum_text(d),
             );
         }
+    }
+
+    /// A non-negative integer renders as bare digits, so it reads back as `I64`
+    /// even when it was a `U64`. This is harmless. A node's field `Deserialize`
+    /// produces the same value either way. The serde round-trip test compares
+    /// nodes and is the real guard.
+    #[test]
+    fn nonnegative_int_normalizes_to_i64() {
+        assert_eq!(text_roundtrip(&Datum::U64(42)), Datum::I64(42));
+        assert_eq!(text_roundtrip(&Datum::I64(42)), Datum::I64(42));
+        // A value beyond i64::MAX still round-trips as U64.
+        let big = Datum::U64(u64::MAX);
+        assert_eq!(text_roundtrip(&big), big);
     }
 
     /// Floats survive a text round-trip bit-exactly, including fractional,
@@ -373,113 +396,37 @@ mod tests {
         }
     }
 
-    /// Integer boundary values round-trip with the correct variant. A value just
-    /// past `i64::MAX` reads back as `U64`, not an overflow.
+    /// Serde values survive the datum codec and a text round-trip.
     #[test]
-    fn integer_boundaries_round_trip() {
-        assert_eq!(text_roundtrip(&Datum::I64(i64::MIN)), Datum::I64(i64::MIN));
-        assert_eq!(text_roundtrip(&Datum::I64(i64::MAX)), Datum::I64(i64::MAX));
-        let just_past = Datum::U64(i64::MAX as u64 + 1);
-        assert_eq!(text_roundtrip(&just_past), just_past);
-    }
-
-    /// Empty collections nested inside collections stay distinct. A seq holding
-    /// an empty map, `#(())`, is not a seq holding an empty seq, `#(#())`.
-    #[test]
-    fn nested_empty_collections_are_distinguished() {
-        let seq_of_empty_map = Datum::Seq(vec![Datum::Map(vec![])]);
-        let seq_of_empty_seq = Datum::Seq(vec![Datum::Seq(vec![])]);
-        assert_ne!(seq_of_empty_map, seq_of_empty_seq);
-        assert_eq!(text_roundtrip(&seq_of_empty_map), seq_of_empty_map);
-        assert_eq!(text_roundtrip(&seq_of_empty_seq), seq_of_empty_seq);
-        let mixed = Datum::Map(vec![
-            ("e_seq".into(), Datum::Seq(vec![])),
-            ("e_map".into(), Datum::Map(vec![])),
-        ]);
-        assert_eq!(text_roundtrip(&mixed), mixed);
-    }
-
-    /// An empty bytevector renders as `#u8()` and round-trips.
-    #[test]
-    fn empty_bytes_round_trips() {
-        let d = Datum::Bytes(vec![]);
-        assert_eq!(datum_text(&d), "#u8()");
-        assert_eq!(text_roundtrip(&d), d);
-    }
-
-    /// A deeply mixed structure round-trips. It nests maps in seqs in maps and
-    /// interleaves nulls, bytes and strings with reader-significant characters.
-    #[test]
-    fn deeply_mixed_nesting_round_trips() {
-        let d = Datum::Map(vec![
-            (
-                "rows".into(),
-                Datum::Seq(vec![
-                    Datum::Map(vec![
-                        ("id".into(), Datum::I64(1)),
-                        (
-                            "vals".into(),
-                            Datum::Seq(vec![Datum::F64(1.5), Datum::Null]),
-                        ),
-                    ]),
-                    Datum::Map(vec![
-                        ("id".into(), Datum::I64(2)),
-                        ("vals".into(), Datum::Seq(vec![])),
-                    ]),
-                ]),
-            ),
-            (
-                "grid".into(),
-                Datum::Seq(vec![
-                    Datum::Seq(vec![Datum::I64(0), Datum::I64(1)]),
-                    Datum::Seq(vec![Datum::Bool(true), Datum::Str("x".into())]),
-                ]),
-            ),
-            ("raw".into(), Datum::Bytes(vec![1, 2, 3])),
-            ("note".into(), Datum::Str("(parens) and \"quotes\"".into())),
-        ]);
-        assert_eq!(text_roundtrip(&d), d);
-    }
-
-    /// Reader-significant characters round-trip via Steel's character syntax.
-    /// The cases cover parens, brackets, quotes, hash, the comment char and a
-    /// digit.
-    #[test]
-    fn reader_significant_chars_round_trip() {
-        for c in ['(', ')', '[', ']', '"', '\\', '#', ';', '5', '\''] {
-            let d = Datum::Char(c);
-            assert_eq!(
-                text_roundtrip(&d),
-                d,
-                "char {c:?} must round-trip (rendered {:?})",
-                char_text(c),
-            );
+    fn serde_values_round_trip_through_text() {
+        let nested = MyNode::Nested {
+            inner: Inner {
+                flag: true,
+                ratio: 0.25,
+                tags: vec!["a".into(), "b".into()],
+            },
+            maybe: Some(7),
+            extra: vec![-1, 0, 1],
+        };
+        // In-memory codec is exact.
+        let back: MyNode = from_datum(to_datum(&nested).expect("to_datum")).expect("from_datum");
+        assert_eq!(nested, back, "in-memory round-trip");
+        // Internally tagged struct, unit and scalar variants.
+        for node in [
+            nested,
+            MyNode::Unit,
+            MyNode::Scalar {
+                count: 3,
+                offset: -9,
+                label: "hi".into(),
+            },
+        ] {
+            assert_serde_text_roundtrip(&node);
         }
-    }
-
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    struct Meters(f64);
-
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    struct Pair(i32, i32);
-
-    /// An externally tagged enum, serde's default. It uses the single-key-map or
-    /// bare string encoding, distinct from the internally tagged path `MyNode`
-    /// takes.
-    #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-    enum Shape {
-        Dot,
-        Tag(String),
-        Span(i32, i32),
-        Rect { w: u32, h: u32, fill: bool },
-    }
-
-    /// Every externally tagged variant shape round-trips. This exercises the
-    /// enum and variant-access paths for unit, newtype, tuple and struct
-    /// variants.
-    #[test]
-    fn externally_tagged_enum_variants_round_trip() {
-        for value in [
+        // Every externally tagged variant shape round-trips. This exercises the
+        // enum and variant-access paths for unit, newtype, tuple and struct
+        // variants.
+        for shape in [
             Shape::Dot,
             Shape::Tag("hi".into()),
             Shape::Span(-1, 2),
@@ -489,24 +436,14 @@ mod tests {
                 fill: true,
             },
         ] {
-            assert_eq!(serde_text_roundtrip(&value), value, "variant {value:?}");
+            assert_serde_text_roundtrip(&shape);
         }
-    }
-
-    /// Tuple structs, newtype structs and tuples round-trip as sequences.
-    #[test]
-    fn tuple_and_newtype_serde_shapes_round_trip() {
-        assert_eq!(serde_text_roundtrip(&Meters(2.5)), Meters(2.5));
-        assert_eq!(serde_text_roundtrip(&Pair(-3, 7)), Pair(-3, 7));
-        let tuple = (1u8, "two".to_string(), 3.5f64);
-        assert_eq!(serde_text_roundtrip(&tuple), tuple);
-    }
-
-    /// Maps with non-identifier string keys and with numeric keys round-trip,
-    /// exercising the map-key serializer and deserializer.
-    #[test]
-    fn map_keys_round_trip() {
-        use std::collections::BTreeMap;
+        // Tuple structs, newtype structs and tuples round-trip as sequences.
+        assert_serde_text_roundtrip(&Meters(2.5));
+        assert_serde_text_roundtrip(&Pair(-3, 7));
+        assert_serde_text_roundtrip(&(1u8, "two".to_string(), 3.5f64));
+        // Maps with non-identifier string keys and with numeric keys
+        // round-trip, exercising the map-key serializer and deserializer.
         let str_keys: BTreeMap<String, i32> = [
             ("plain".to_string(), 1),
             ("with space".to_string(), 2),
@@ -516,33 +453,21 @@ mod tests {
         ]
         .into_iter()
         .collect();
-        assert_eq!(serde_text_roundtrip(&str_keys), str_keys);
-
+        assert_serde_text_roundtrip(&str_keys);
         let num_keys: BTreeMap<i32, String> = [(-2, "neg".to_string()), (7, "pos".to_string())]
             .into_iter()
             .collect();
-        assert_eq!(serde_text_roundtrip(&num_keys), num_keys);
-    }
-
-    /// `None`, the null datum, round-trips and stays distinct from a present
-    /// value.
-    #[test]
-    fn option_none_round_trips() {
-        #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-        struct Holder {
-            a: Option<i32>,
-            b: Option<String>,
-        }
-        let with_none = Holder {
+        assert_serde_text_roundtrip(&num_keys);
+        // `None`, the null datum, round-trips and stays distinct from a present
+        // value.
+        assert_serde_text_roundtrip(&Holder {
             a: None,
             b: Some("x".into()),
-        };
-        assert_eq!(serde_text_roundtrip(&with_none), with_none);
-        let other = Holder {
+        });
+        assert_serde_text_roundtrip(&Holder {
             a: Some(0),
             b: None,
-        };
-        assert_eq!(serde_text_roundtrip(&other), other);
+        });
     }
 
     /// Deserializing a datum into an incompatible type fails cleanly rather than
