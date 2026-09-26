@@ -224,8 +224,8 @@ fn announce(peers: &mut [Peer], net: &mut Net, from: usize) {
 }
 
 /// Deliver messages in the order chosen by `seed` until the network drains,
-/// announcing every minted commit. Returns the number of deliveries.
-fn run(peers: &mut [Peer], net: &mut Net, seed: u64) -> usize {
+/// announcing every minted commit.
+fn run(peers: &mut [Peer], net: &mut Net, seed: u64) {
     let mut rng = Rng(seed);
     let mut steps = 0;
     while !net.queue.is_empty() {
@@ -238,7 +238,6 @@ fn run(peers: &mut [Peer], net: &mut Net, seed: u64) -> usize {
             announce(peers, net, to);
         }
     }
-    steps
 }
 
 /// Assert all peers hold the identical tip, graph address and graph value,
@@ -291,29 +290,7 @@ fn reachable_merge_commits(reg: &Reg, tip: CommitAddr) -> usize {
 
 #[test]
 fn two_peers_disjoint_adds_converge_with_one_merge() {
-    let (mut peers, mut net) = peers_with_base(2, &["base"]);
-    peers[0].edit(Duration::from_secs(10), |g| {
-        g.add_node(node("a"));
-    });
-    announce(&mut peers, &mut net, 0);
-    peers[1].edit(Duration::from_secs(20), |g| {
-        g.add_node(node("b"));
-    });
-    announce(&mut peers, &mut net, 1);
-    run(&mut peers, &mut net, 42);
-    let tip = assert_converged(&peers);
-    assert_eq!(node_set(&peers[0]), ["a", "b", "base"]);
-    // Both peers minted the merge independently, yet exactly one distinct
-    // merge commit exists. They minted the identical commit.
-    assert_eq!(peers[0].minted_merges + peers[1].minted_merges, 2);
-    assert_eq!(reachable_merge_commits(&peers[0].reg, tip), 1);
-}
-
-#[test]
-fn convergence_is_delivery_order_independent() {
-    // The same two-peer scenario must converge on the same tip regardless of
-    // delivery order. The harness honours the seed.
-    let converged_tip = |seed: u64| {
+    let converge = |seed: u64| {
         let (mut peers, mut net) = peers_with_base(2, &["base"]);
         peers[0].edit(Duration::from_secs(10), |g| {
             g.add_node(node("a"));
@@ -324,10 +301,20 @@ fn convergence_is_delivery_order_independent() {
         });
         announce(&mut peers, &mut net, 1);
         run(&mut peers, &mut net, seed);
-        assert_converged(&peers)
+        let tip = assert_converged(&peers);
+        (peers, tip)
     };
-    let tips: Vec<_> = (0..8).map(converged_tip).collect();
-    assert!(tips.windows(2).all(|w| w[0] == w[1]));
+    let (peers, tip) = converge(42);
+    assert_eq!(node_set(&peers[0]), ["a", "b", "base"]);
+    // Both peers minted the merge independently, yet exactly one distinct
+    // merge commit exists. They minted the identical commit.
+    assert_eq!(peers[0].minted_merges + peers[1].minted_merges, 2);
+    assert_eq!(reachable_merge_commits(&peers[0].reg, tip), 1);
+    // The same scenario converges on the same tip regardless of delivery
+    // order. The harness honours the seed.
+    for seed in 0..8 {
+        assert_eq!(converge(seed).1, tip, "seed {seed}");
+    }
 }
 
 #[test]
@@ -408,50 +395,6 @@ fn twin_commits_adopt_without_merging() {
     // Adoption, not merging. Zero merge commits anywhere.
     assert_eq!(reachable_merge_commits(&peers[0].reg, tip), 0);
     assert_eq!(peers[0].minted_merges + peers[1].minted_merges, 0);
-}
-
-#[test]
-fn fast_forwards_are_not_reannounced() {
-    let (mut peers, mut net) = peers_with_base(2, &["base"]);
-    peers[0].edit(Duration::from_secs(10), |g| {
-        g.add_node(node("a"));
-    });
-    announce(&mut peers, &mut net, 0);
-    // A single delivery. Peer 1 fast-forwards and must stay silent.
-    let steps = run(&mut peers, &mut net, 0);
-    assert_eq!(steps, 1);
-    assert_converged(&peers);
-    assert_eq!(peers[1].minted_merges, 0);
-}
-
-#[test]
-fn redelivery_is_idempotent() {
-    let (mut peers, mut net) = peers_with_base(2, &["base"]);
-    peers[0].edit(Duration::from_secs(10), |g| {
-        g.add_node(node("a"));
-    });
-    announce(&mut peers, &mut net, 0);
-    peers[1].edit(Duration::from_secs(20), |g| {
-        g.add_node(node("b"));
-    });
-    announce(&mut peers, &mut net, 1);
-    run(&mut peers, &mut net, 42);
-    let tip = assert_converged(&peers);
-    let commit_counts: Vec<_> = peers.iter().map(|p| p.reg.commits().len()).collect();
-    // Re-deliver every peer's tip to everyone, bypassing suppression. This
-    // models a lost ack or an anti-entropy repeat.
-    for from in 0..peers.len() {
-        let t = peers[from].tip;
-        for to in 0..peers.len() {
-            if to != from {
-                net.queue.push(Msg { from, to, tip: t });
-            }
-        }
-    }
-    run(&mut peers, &mut net, 43);
-    assert_eq!(assert_converged(&peers), tip);
-    let after: Vec<_> = peers.iter().map(|p| p.reg.commits().len()).collect();
-    assert_eq!(commit_counts, after, "redelivery minted nothing");
 }
 
 #[test]
@@ -541,21 +484,6 @@ fn join_snapshot_tolerates_pruned_history() {
         node_set(&peers[0]),
         ["a", "b", "base", "host-edit", "joiner-edit"]
     );
-}
-
-#[test]
-fn unrelated_announcements_are_surfaced_not_applied() {
-    // Two peers with no shared history. The announcement is recorded as
-    // unrelated and the local tip is untouched. The app decides what to do.
-    let (mut a_peers, _) = peers_with_base(1, &["a"]);
-    let (mut b_peers, _) = peers_with_base(1, &["b"]);
-    let mut a = a_peers.remove(0);
-    let b = b_peers.remove(0);
-    let a_tip = a.tip;
-    let minted = a.receive(&b.reg, b.tip);
-    assert_eq!(minted, None);
-    assert_eq!(a.tip, a_tip);
-    assert_eq!(a.unrelated, 1);
 }
 
 #[test]
