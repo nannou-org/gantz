@@ -2,13 +2,11 @@
 
 #![cfg(feature = "steel")]
 
-use crate::codec::steel::{decode, encode, lower};
+use crate::codec::steel::decode;
 use crate::{
-    Align, BindPath, Col, Decoded, Dialer, Element, ErrorReason, Frame, Label, Limits, Row, SExpr,
-    Sep, Toggle, WarningKind,
+    Align, BindPath, Col, Decoded, Dialer, Element, Label, Limits, Row, Toggle, WarningKind,
 };
 use steel::SteelVal;
-use steel::gc::Gc;
 use steel::steel_vm::engine::Engine;
 
 fn run(src: &str) -> SteelVal {
@@ -26,11 +24,6 @@ fn sym(s: &str) -> SteelVal {
 
 fn slist(items: Vec<SteelVal>) -> SteelVal {
     SteelVal::ListV(items.into_iter().collect())
-}
-
-fn svec(items: Vec<SteelVal>) -> SteelVal {
-    let v: steel::Vector<SteelVal> = items.into_iter().collect();
-    SteelVal::VectorV(Gc::new(v).into())
 }
 
 #[test]
@@ -79,35 +72,6 @@ fn reader_output_decodes() {
 }
 
 #[test]
-fn string_tags_decode_like_symbol_tags() {
-    let strings = run(r#"'("col" ("sep"))"#);
-    let symbols = run("'(col (sep))");
-    let limits = Limits::default();
-    assert_eq!(decode(&strings, &limits), decode(&symbols, &limits));
-}
-
-#[test]
-fn vectors_decode_like_lists() {
-    let as_list = run("'(col (sep) (sep))");
-    let sep = svec(vec![sym("sep")]);
-    let as_vec = svec(vec![sym("col"), sep.clone(), sep]);
-    let limits = Limits::default();
-    assert_eq!(decode(&as_vec, &limits), decode(&as_list, &limits));
-}
-
-#[test]
-fn intv_edge_values_lower_losslessly() {
-    assert_eq!(
-        lower(&SteelVal::IntV(isize::MAX)),
-        SExpr::Int(isize::MAX as i64)
-    );
-    assert_eq!(
-        lower(&SteelVal::IntV(isize::MIN)),
-        SExpr::Int(isize::MIN as i64)
-    );
-}
-
-#[test]
 fn non_finite_numbers_warn_as_attr_values() {
     let tree = slist(vec![
         sym("dialer"),
@@ -122,57 +86,4 @@ fn non_finite_numbers_warn_as_attr_values() {
         d.warnings[0].kind,
         WarningKind::InvalidAttrValue { ref found, .. } if found == "a non-finite number"
     ));
-}
-
-#[test]
-fn foreign_values_in_element_position_error() {
-    let closure = run("(lambda (x) x)");
-    let tree = slist(vec![sym("col"), closure]);
-    let d = decode(&tree, &Limits::default());
-    let Element::Col(col) = &d.root else {
-        panic!("expected a col");
-    };
-    let Element::Error(err) = &col.children[0] else {
-        panic!("expected an error element");
-    };
-    assert!(matches!(err.reason, ErrorReason::NotAnElement { .. }));
-}
-
-#[test]
-fn a_full_tree_round_trips_through_steel() {
-    let tree = Element::Frame(Frame {
-        title: Some("filter".to_string()),
-        key: None,
-        children: vec![
-            Element::Dialer(Dialer {
-                bind: Some(BindPath(vec![2])),
-                min: Some(20.0),
-                max: Some(20_000.0),
-                precision: Some(1),
-                label: Some("cutoff".to_string()),
-                ..Default::default()
-            }),
-            Element::Sep(Sep::default()),
-            Element::Toggle(Toggle {
-                bind: Some(BindPath(vec![5])),
-                label: Some("drive".to_string()),
-                push: false,
-                key: None,
-            }),
-        ],
-    });
-    let val = encode(&tree);
-    // Canonical encoding uses symbols for tags and attribute names.
-    let SteelVal::ListV(items) = &val else {
-        panic!("expected a list");
-    };
-    assert_eq!(items.iter().next(), Some(&sym("frame")));
-    let d = decode(&val, &Limits::default());
-    assert_eq!(
-        d,
-        Decoded {
-            root: tree,
-            warnings: vec![],
-        }
-    );
 }

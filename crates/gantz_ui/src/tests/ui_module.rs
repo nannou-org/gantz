@@ -13,76 +13,73 @@ fn engine() -> Engine {
 }
 
 /// Assert `expr` evaluates to the quoted `expected` literal.
-fn assert_eval(expected: &str, expr: &str) {
-    let mut vm = engine();
+fn assert_eval(vm: &mut Engine, case: &str, expected: &str, expr: &str) {
     let check = format!("(equal? '{expected} {expr})");
     match vm.run(check).expect("steel error").last() {
         Some(SteelVal::BoolV(true)) => (),
         _ => {
             let actual = vm.run(expr.to_string()).expect("steel error");
-            panic!("expected {expected}\n     got {actual:?}\n     for {expr}");
+            panic!("{case}: expected {expected}\n     got {actual:?}\n     for {expr}");
         }
     }
 }
 
 #[test]
-fn all_absent_yields_the_bare_tag() {
-    assert_eval(
-        "(row)",
-        "(ui-elem 'row '() (list (list 'gap (None))) (None))",
-    );
-}
-
-#[test]
-fn present_attrs_keep_order_and_drop_absent() {
-    assert_eval(
-        "(row (@ (gap 4) (align \"end\")))",
-        "(ui-elem 'row '() (list (list 'gap (Some 4)) (list 'x (None)) (list 'align (Some \"end\"))) (None))",
-    );
-}
-
-#[test]
-fn positionals_drop_absent() {
-    assert_eval(
-        "(label \"hi\" (@ (size 12.0)))",
-        "(ui-elem 'label (list (Some \"hi\") (None)) (list (list 'size (Some 12.0))) (None))",
-    );
-}
-
-#[test]
-fn child_list_is_spliced() {
-    assert_eval(
-        "(col (sep) (label \"a\"))",
-        "(ui-elem 'col '() '() (Some (list '(sep) '(label \"a\"))))",
-    );
-}
-
-#[test]
-fn single_child_is_wrapped() {
-    assert_eval("(col (sep))", "(ui-elem 'col '() '() (Some '(sep)))");
-    assert_eval("(col)", "(ui-elem 'col '() '() (Some '()))");
-}
-
-#[test]
-fn ui_int_rounds_to_exact() {
-    assert_eval(
-        "(grid (@ (cols 3)))",
-        "(ui-elem 'grid '() (list (list 'cols (ui-int (Some 2.6)))) (None))",
-    );
-    assert_eval(
-        "(grid)",
-        "(ui-elem 'grid '() (list (list 'cols (ui-int (None)))) (None))",
-    );
-}
-
-#[test]
-fn ui_id_takes_the_first_segment() {
-    assert_eval(
-        "(ref-gui 2)",
-        "(ui-elem 'ref-gui (list (ui-id (Some '(2 5)))) '() (None))",
-    );
-    assert_eval(
-        "(ref-gui)",
-        "(ui-elem 'ref-gui (list (ui-id (None))) '() (None))",
-    );
+fn ui_module_helpers_build_elements() {
+    let cases = [
+        (
+            "all absent yields the bare tag",
+            "(row)",
+            "(ui-elem 'row '() (list (list 'gap (None))) (None))",
+        ),
+        (
+            "present attrs keep order and drop absent",
+            "(row (@ (gap 4) (align \"end\")))",
+            "(ui-elem 'row '() (list (list 'gap (Some 4)) (list 'x (None)) (list 'align (Some \"end\"))) (None))",
+        ),
+        (
+            "positionals drop absent",
+            "(label \"hi\" (@ (size 12.0)))",
+            "(ui-elem 'label (list (Some \"hi\") (None)) (list (list 'size (Some 12.0))) (None))",
+        ),
+        (
+            "child list is spliced",
+            "(col (sep) (label \"a\"))",
+            "(ui-elem 'col '() '() (Some (list '(sep) '(label \"a\"))))",
+        ),
+        (
+            "single child is wrapped",
+            "(col (sep))",
+            "(ui-elem 'col '() '() (Some '(sep)))",
+        ),
+        (
+            "empty child list yields no children",
+            "(col)",
+            "(ui-elem 'col '() '() (Some '()))",
+        ),
+        (
+            "ui-int rounds to exact",
+            "(grid (@ (cols 3)))",
+            "(ui-elem 'grid '() (list (list 'cols (ui-int (Some 2.6)))) (None))",
+        ),
+        (
+            "ui-int of none is absent",
+            "(grid)",
+            "(ui-elem 'grid '() (list (list 'cols (ui-int (None)))) (None))",
+        ),
+        (
+            "ui-id takes the first segment",
+            "(ref-gui 2)",
+            "(ui-elem 'ref-gui (list (ui-id (Some '(2 5)))) '() (None))",
+        ),
+        (
+            "ui-id of none is absent",
+            "(ref-gui)",
+            "(ui-elem 'ref-gui (list (ui-id (None))) '() (None))",
+        ),
+    ];
+    let mut vm = engine();
+    for (case, expected, expr) in cases {
+        assert_eval(&mut vm, case, expected, expr);
+    }
 }

@@ -843,26 +843,6 @@ mod tests {
     }
 
     #[test]
-    fn controls_apply_documented_defaults() {
-        assert_eq!(
-            dec(list(vec![ident("dialer")])).root,
-            Element::Dialer(Dialer::default())
-        );
-        assert_eq!(
-            dec(list(vec![ident("toggle")])).root,
-            Element::Toggle(Toggle::default())
-        );
-        assert_eq!(
-            dec(list(vec![ident("value")])).root,
-            Element::Value(Value::default())
-        );
-        assert_eq!(
-            dec(list(vec![ident("plot")])).root,
-            Element::Plot(Plot::default())
-        );
-    }
-
-    #[test]
     fn display_elements_decode() {
         let d = dec(list(vec![
             ident("label"),

@@ -71,6 +71,17 @@ pub fn encode(elem: &Element) -> SteelVal {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use steel::gc::Gc;
+    use steel::steel_vm::engine::Engine;
+
+    fn sym(s: &str) -> SteelVal {
+        SteelVal::SymbolV(s.into())
+    }
+
+    fn svec(items: Vec<SteelVal>) -> SteelVal {
+        let v: steel::Vector<SteelVal> = items.into_iter().collect();
+        SteelVal::VectorV(Gc::new(v).into())
+    }
 
     #[test]
     fn lower_maps_atoms() {
@@ -93,6 +104,29 @@ mod tests {
             lower(&SteelVal::CharV('x')),
             SExpr::Other("a character".to_string())
         );
+        assert_eq!(
+            lower(&SteelVal::IntV(isize::MAX)),
+            SExpr::Int(isize::MAX as i64)
+        );
+        assert_eq!(
+            lower(&SteelVal::IntV(isize::MIN)),
+            SExpr::Int(isize::MIN as i64)
+        );
+        let closure = Engine::new_base()
+            .run("(lambda (x) x)".to_string())
+            .unwrap()
+            .pop()
+            .expect("no value");
+        assert_eq!(lower(&closure), SExpr::Other("a function".to_string()));
+    }
+
+    #[test]
+    fn lower_maps_vectors_like_lists() {
+        let sep = svec(vec![sym("sep")]);
+        let as_vec = svec(vec![sym("col"), sep.clone(), sep]);
+        let sep = SExpr::List(vec![SExpr::Ident("sep".to_string())]);
+        let expected = SExpr::List(vec![SExpr::Ident("col".to_string()), sep.clone(), sep]);
+        assert_eq!(lower(&as_vec), expected);
     }
 
     #[test]
