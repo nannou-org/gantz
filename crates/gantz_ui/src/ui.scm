@@ -3,8 +3,8 @@
 ;; Helpers for building element trees from optional node inputs. A base
 ;; node's expr receives each unconnected `$?` input as `(None)`. These fns
 ;; drop absent values so an element carries only the attributes and
-;; positionals that were wired in. See the `row`, `dialer` and `label`
-;; graphs in base.gantz.
+;; positionals that were wired in. See the `uirow`, `uidialer` and
+;; `uilabel` graphs in base.gantz.
 ;;
 ;; Written for the prelude-free base engine. It uses primitive special
 ;; forms only. Names prefixed `ui//` are internal helpers and are not

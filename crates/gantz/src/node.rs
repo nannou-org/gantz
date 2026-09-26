@@ -2865,6 +2865,28 @@ mod tests {
         }
     }
 
+    /// No base graph shares a name with a builtin. `Env::create_node` resolves
+    /// registry names before builtins, so such a graph hides the builtin.
+    #[test]
+    fn base_names_do_not_shadow_builtins() {
+        let loaded = crate::headless::load_sources(
+            &crate::headless::base_sources(),
+            bevy_gantz_egui::base::BASE_TIMESTAMP,
+            &super::codec(),
+        );
+        let builtins = super::builtins();
+        let shadowing: Vec<String> = loaded
+            .registry
+            .heads()
+            .map(|(n, _)| n.to_string())
+            .filter(|n| builtins.node_data(n).is_some())
+            .collect();
+        assert!(
+            shadowing.is_empty(),
+            "base graphs shadow builtins: {shadowing:?}"
+        );
+    }
+
     /// The pattern base source is exactly the writer's canonical form. The
     /// file re-exports byte-identically, so `update-base` write-backs never
     /// churn it.
