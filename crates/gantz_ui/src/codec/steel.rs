@@ -18,6 +18,12 @@ pub fn lower(val: &SteelVal) -> SExpr {
         SteelVal::StringV(s) => SExpr::Str(s.to_string()),
         SteelVal::BoolV(b) => SExpr::Bool(*b),
         SteelVal::IntV(i) => SExpr::Int(*i as i64),
+        // Steel stores integers beyond `isize` as big integers. On 32 bit
+        // targets that includes much of the i64 range.
+        SteelVal::BigNum(n) => match i64::try_from(n.as_ref()) {
+            Ok(i) => SExpr::Int(i),
+            Err(_) => SExpr::Other("an integer beyond the i64 range".to_string()),
+        },
         SteelVal::NumV(f) if f.is_finite() => SExpr::Float(*f),
         SteelVal::NumV(_) => SExpr::Other("a non-finite number".to_string()),
         SteelVal::ListV(items) => SExpr::List(items.iter().map(lower).collect()),
@@ -37,16 +43,13 @@ pub fn lower(val: &SteelVal) -> SExpr {
 /// Raise an abstract value into a Steel value.
 ///
 /// Total. `Other` never comes out of the encoder. It raises to its
-/// description string for completeness. Integers saturate to the `isize`
-/// range on 32 bit targets.
+/// description string for completeness. Integers beyond the `isize` range
+/// raise to big integers, as Steel stores them.
 pub fn raise(expr: &SExpr) -> SteelVal {
     match expr {
         SExpr::Ident(s) => SteelVal::SymbolV(s.as_str().into()),
         SExpr::Bool(b) => SteelVal::BoolV(*b),
-        SExpr::Int(i) => {
-            let i = isize::try_from(*i).unwrap_or(if *i < 0 { isize::MIN } else { isize::MAX });
-            SteelVal::IntV(i)
-        }
+        SExpr::Int(i) => SteelVal::from(*i),
         SExpr::Float(f) => SteelVal::NumV(*f),
         SExpr::Str(s) => SteelVal::StringV(s.as_str().into()),
         SExpr::List(items) => SteelVal::ListV(items.iter().map(raise).collect()),
@@ -105,5 +108,27 @@ mod tests {
         for expr in exprs {
             assert_eq!(lower(&raise(&expr)), expr);
         }
+    }
+
+    // The full i64 range round-trips. On 32 bit targets the extremes pass
+    // through big integers.
+    #[test]
+    fn i64_extremes_round_trip() {
+        for i in [i64::MIN, i64::MAX] {
+            assert_eq!(lower(&raise(&SExpr::Int(i))), SExpr::Int(i));
+        }
+    }
+
+    // A big integer lowers to an int when it fits i64, and to `Other` when
+    // it does not.
+    #[test]
+    fn lower_maps_big_integers() {
+        let big = |i: i64| SteelVal::BigNum(steel::gc::Gc::new(i.into()));
+        assert_eq!(lower(&big(-5)), SExpr::Int(-5));
+        assert_eq!(lower(&big(i64::MAX)), SExpr::Int(i64::MAX));
+        assert_eq!(
+            lower(&SteelVal::from(u128::MAX)),
+            SExpr::Other("an integer beyond the i64 range".to_string())
+        );
     }
 }
