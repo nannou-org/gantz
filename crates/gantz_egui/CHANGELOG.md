@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.7.0...gantz_egui-v0.7.1) - 2026-09-26
+
+### Other
+
+- updated the following local packages: gantz_core, gantz_ui, gantz_format, gantz_std
+
 ## [0.7.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.6.1...gantz_egui-v0.7.0) - 2026-09-26
 
 ### Added

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.3](https://github.com/nannou-org/gantz/compare/gantz_std-v0.5.2...gantz_std-v0.5.3) - 2026-09-26
+
+### Other
+
+- updated the following local packages: gantz_core, gantz_format
+
 ## [0.5.2](https://github.com/nannou-org/gantz/compare/gantz_std-v0.5.1...gantz_std-v0.5.2) - 2026-09-26
 
 ### Added
