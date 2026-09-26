@@ -83,15 +83,22 @@ mod tests {
     }
 
     #[test]
-    fn update_bang_round_trips() {
-        let bare = BevySugar
-            .read_bare("update-bang")
-            .expect("bare update-bang");
-        assert_eq!(bare.get("type").and_then(Datum::as_str), Some("UpdateBang"));
-        assert_eq!(
-            BevySugar.write_spec("UpdateBang", &bare).as_deref(),
-            Some("update-bang")
-        );
+    fn bare_keywords_round_trip() {
+        for (keyword, tag) in [("update-bang", "UpdateBang"), ("await", "Await")] {
+            let bare = BevySugar
+                .read_bare(keyword)
+                .unwrap_or_else(|| panic!("bare {keyword}"));
+            assert_eq!(
+                bare.get("type").and_then(Datum::as_str),
+                Some(tag),
+                "{keyword}"
+            );
+            assert_eq!(
+                BevySugar.write_spec(tag, &bare).as_deref(),
+                Some(keyword),
+                "{keyword}"
+            );
+        }
     }
 
     #[test]
@@ -130,16 +137,6 @@ mod tests {
         assert!(
             s.read_spec("tick-bang", SugarArgs::new(&args[1..], text))
                 .is_err()
-        );
-    }
-
-    #[test]
-    fn await_round_trips() {
-        let bare = BevySugar.read_bare("await").expect("bare await");
-        assert_eq!(bare.get("type").and_then(Datum::as_str), Some("Await"));
-        assert_eq!(
-            BevySugar.write_spec("Await", &bare).as_deref(),
-            Some("await")
         );
     }
 

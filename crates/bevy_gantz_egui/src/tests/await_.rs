@@ -200,78 +200,6 @@ fn refresh_app_cache(app: &mut bevy_app::App) {
         });
 }
 
-/// The full bevy plumbing, headless. `sleep -> await -> inspect` is built in
-/// code and compiled by `vm::sync`. The sleep entrypoint fires. `drive_awaits`
-/// delivers the result once the duration elapses.
-#[test]
-fn driver_delivers_sleep_result_through_app() {
-    use bevy_ecs::prelude::*;
-    use bevy_gantz::{Registry, head, timestamp};
-    use std::time::{Duration, Instant};
-
-    let mut app = task_test_app();
-
-    // Build `sleep(0.05) -> await -> inspect` as erased data.
-    let mut sleep_node = Sleep::default();
-    sleep_node.set_duration(0.05);
-    let mut dg = gantz_ca::DataGraph::default();
-    let sleep = dg.add_node(gantz_core::data::erase_node_typed(&sleep_node).unwrap());
-    let await_n = dg.add_node(gantz_core::data::erase_node_typed(&Await).unwrap());
-    let inspect =
-        dg.add_node(gantz_core::data::erase_node_typed(&gantz_egui::node::Inspect).unwrap());
-    dg.add_edge(sleep, await_n, gantz_ca::Edge::from((0, 0)));
-    dg.add_edge(await_n, inspect, gantz_ca::Edge::from((0, 0)));
-
-    // Commit it, reify it into the cache, and open it as a head.
-    let graph_ca = gantz_ca::graph_addr(&dg);
-    let commit = {
-        let mut registry = app.world_mut().resource_mut::<Registry>();
-        registry.commit_graph(timestamp(), None, graph_ca, move || dg)
-    };
-    refresh_app_cache(&mut app);
-    app.world_mut()
-        .trigger(head::OpenEvent(gantz_ca::Head::Commit(commit)));
-
-    // The first update compiles the head's VM in `vm::sync`.
-    app.update();
-    let mut q = app
-        .world_mut()
-        .query_filtered::<Entity, With<head::OpenHead>>();
-    let head_entity = q.single(app.world()).expect("one open head");
-
-    // Fire the sleep node. Its task flows into `await`, which swallows the
-    // evaluation. `drive_awaits` polls it in place across updates.
-    app.world_mut().trigger(bevy_gantz::vm::EvalEntryEvent {
-        head: head_entity,
-        entrypoint: gantz_core::compile::entrypoint::push(vec![sleep.index()], 1),
-        time: None,
-    });
-
-    // `sleep` forwards its unconnected input value `'()` once the duration
-    // elapses. The inspect sink's state flips from `Void` to `'()`.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    loop {
-        app.update();
-        let vms = app.world().non_send::<head::HeadVms>();
-        let vm = vms.0.get(&head_entity).expect("head VM");
-        let st = state(vm, inspect.index());
-        if st != SteelVal::Void {
-            assert_eq!(st, SteelVal::ListV(Default::default()));
-            break;
-        }
-        assert!(
-            Instant::now() < deadline,
-            "await result was not delivered in time",
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
-
-    // Delivery replaced the pending pair, releasing the handle from state.
-    let vms = app.world().non_send::<head::HeadVms>();
-    let vm = vms.0.get(&head_entity).expect("head VM");
-    assert!(await_::pending_handle(&state(vm, await_n.index())).is_none());
-}
-
 /// Deleting a node reindexes its successors via swap-remove. The editor's
 /// delete flow of `remove_value` and `move_value` must carry a pending task
 /// with the await node's state. Dropping an unmapped key must cancel its task.
@@ -425,4 +353,9 @@ fn pending_await_survives_reindexing_replace() {
         );
         std::thread::sleep(Duration::from_millis(5));
     }
+
+    // Delivery replaced the pending pair, releasing the handle from state.
+    let vms = app.world().non_send::<head::HeadVms>();
+    let vm = vms.0.get(&head_entity).expect("head VM");
+    assert!(await_::pending_handle(&state(vm, c_await.index())).is_none());
 }
