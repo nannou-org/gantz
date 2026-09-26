@@ -205,13 +205,18 @@
 ;; A pattern is `(lambda (span) <list of events>)`. Combinators make no
 ;; ordering guarantee on the returned events. [`pat/query`] sorts.
 
-;; Repeats the given value once per cycle.
-(define (pat/pure v)
+;; One event per cycle of the span. Its value is `(f index)`, where
+;; `index` is the cycle's integer index.
+(define (pat//per-cycle f)
   (lambda (span)
     (pat//map (lambda (cyc)
                 (let ((start (floor (car cyc))))
-                  (pat/event v cyc (cons start (+ start 1)))))
+                  (pat/event (f start) cyc (cons start (+ start 1)))))
               (pat/span-cycles span))))
+
+;; Repeats the given value once per cycle.
+(define (pat/pure v)
+  (pat//per-cycle (lambda (i) v)))
 
 ;; The pattern producing no events.
 (define pat/silence (lambda (span) '()))
