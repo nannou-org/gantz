@@ -483,7 +483,7 @@ pub(crate) fn compile(sources: &[Source], target: usize, name: Option<&str>, emi
             .push(format!("{label}: graph `{name}`: no head graph"));
         return output;
     };
-    let entrypoints = headless::entrypoints(&get_node, graph);
+    let entrypoints = bevy_gantz_egui::entrypoints(&get_node, graph);
     let config = gantz_core::compile::Config::default();
     let exprs = match gantz_core::compile::module(&get_node, graph, &entrypoints, &config) {
         Ok(exprs) => exprs,

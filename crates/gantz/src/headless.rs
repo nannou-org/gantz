@@ -148,22 +148,6 @@ pub fn head_graph<'a>(
     reified.get(&reg.head_commit(head)?.graph)
 }
 
-/// Every entrypoint the app compiles for a graph: push and pull sources plus
-/// the `update!` and `tick!` providers `GantzEguiPlugin` registers.
-pub fn entrypoints(
-    get_node: gantz_core::node::GetNode<'_>,
-    graph: &gantz_core::node::graph::Graph<DynNode>,
-) -> Vec<gantz_core::compile::Entrypoint> {
-    let mut eps = gantz_core::compile::push_pull_entrypoints(get_node, graph);
-    eps.extend(bevy_gantz_egui::node::update_bang::entrypoints(
-        get_node, graph,
-    ));
-    eps.extend(bevy_gantz_egui::node::tick_bang::entrypoints(
-        get_node, graph,
-    ));
-    eps
-}
-
 /// Compile and initialise a VM for the graph exactly as the app does, with
 /// every entrypoint provider and the app's steel modules.
 pub fn init(
@@ -171,7 +155,7 @@ pub fn init(
     graph: &gantz_core::node::graph::Graph<DynNode>,
 ) -> Result<(steel::steel_vm::engine::Engine, gantz_core::vm::Compiled), gantz_core::vm::CompileError>
 {
-    let entrypoints = entrypoints(get_node, graph);
+    let entrypoints = bevy_gantz_egui::entrypoints(get_node, graph);
     let config = gantz_core::compile::Config::default();
     gantz_core::vm::init_with_modules(
         get_node,

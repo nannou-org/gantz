@@ -32,7 +32,7 @@ pub mod sugar;
 mod tests;
 pub mod vm;
 
-pub use node::builtins;
+pub use node::{builtins, entrypoints};
 pub use reg::{BuiltinNodes, GraphCache, env, lookup_node, prune_unused, refresh_cache};
 pub use sugar::BevySugar;
 pub use vm::{EntrypointFn, EntrypointFns};
@@ -84,16 +84,10 @@ pub struct ViewPersistSet;
 impl Plugin for GantzEguiPlugin {
     fn build(&self, app: &mut App) {
         // Push the entrypoint providers. See `vm::EntrypointFns`.
-        let mut entrypoint_fns = app.world_mut().get_resource_or_init::<vm::EntrypointFns>();
-        entrypoint_fns.0.push(Box::new(|get_node, graph| {
-            gantz_core::compile::push_pull_entrypoints(get_node, graph)
-        }));
-        entrypoint_fns.0.push(Box::new(|get_node, graph| {
-            node::update_bang::entrypoints(get_node, graph)
-        }));
-        entrypoint_fns.0.push(Box::new(|get_node, graph| {
-            node::tick_bang::entrypoints(get_node, graph)
-        }));
+        app.world_mut()
+            .get_resource_or_init::<vm::EntrypointFns>()
+            .0
+            .push(Box::new(node::entrypoints));
 
         // The core base source. Domain plugins push their own the same way.
         app.world_mut()

@@ -20,3 +20,15 @@ pub fn builtins() -> Vec<gantz_core::Builtin> {
         Builtin::new("update!", &UpdateBang),
     ]
 }
+
+/// Every entrypoint `GantzEguiPlugin` compiles for a graph: the push and pull
+/// sources plus the `update!` and `tick!` sources.
+pub fn entrypoints(
+    get_node: gantz_core::node::GetNode<'_>,
+    graph: &gantz_core::node::graph::Graph<gantz_egui::node::DynNode>,
+) -> Vec<gantz_core::compile::Entrypoint> {
+    let mut eps = gantz_core::compile::push_pull_entrypoints(get_node, graph);
+    eps.extend(update_bang::entrypoints(get_node, graph));
+    eps.extend(tick_bang::entrypoints(get_node, graph));
+    eps
+}
