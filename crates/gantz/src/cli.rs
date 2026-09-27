@@ -17,6 +17,29 @@ use std::borrow::Cow;
 use std::ops::Range;
 use std::path::PathBuf;
 
+/// The CLI configuration: the node set to parse and compile with, and the
+/// names that locate the default data directories.
+#[cfg_attr(not(feature = "collab"), allow(dead_code))]
+pub struct Conf {
+    /// The node set's codec. Its sugar reads and writes `.gantz` text.
+    pub codec: gantz_egui::node::NodeCodec,
+    /// The builtin node palette.
+    pub builtins: gantz_core::Builtins,
+    /// The Steel modules that every graph's VM registers beyond the core set.
+    pub steel_modules: Vec<gantz_core::vm::SteelModule>,
+    /// The embedded base sources, in load order.
+    pub base_sources: Vec<gantz_egui::base::BaseSource>,
+    /// Every entrypoint to compile for a graph.
+    pub entrypoints: fn(
+        gantz_core::node::GetNode<'_>,
+        &gantz_core::node::graph::Graph<gantz_egui::node::DynNode>,
+    ) -> Vec<gantz_core::compile::Entrypoint>,
+    /// The organisation name that locates the default data directories.
+    pub org: &'static str,
+    /// The app name that locates the default data directories.
+    pub app: &'static str,
+}
+
 #[derive(Parser)]
 #[command(
     name = "gantz",
@@ -169,33 +192,36 @@ pub fn parse() -> Option<Command> {
 }
 
 /// Run a subcommand and return the process exit code.
-pub fn run(command: Command) -> i32 {
+pub fn run(command: Command, conf: &Conf) -> i32 {
     // Library warnings, such as an unrecognised form a rewrite would drop,
     // must reach the user. Libraries log through `log` and `tracing`, and the
-    // subscriber bridges both. `RUST_LOG` overrides the default.
+    // subscriber bridges both. `RUST_LOG` overrides the default. A host that
+    // installed its own subscriber keeps it.
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,gantz=info"));
-    tracing_subscriber::fmt()
+    let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
         .without_time()
         .with_writer(std::io::stderr)
-        .init();
+        .try_init();
     let (files, mut output) = match command {
         #[cfg(feature = "collab")]
-        Command::Join(args) => return crate::join::run(args),
+        Command::Join(args) => return crate::join::run(args, conf),
         Command::Fmt(args) => {
-            let output = with_sources(&args.seed, &args.files, |s, t| fmt(s, t, args.check));
+            let output = with_sources(conf, &args.seed, &args.files, |s, t| {
+                fmt(conf, s, t, args.check)
+            });
             (args.files, output)
         }
         Command::Check(args) => {
-            let output = with_sources(&args.seed, &args.files, check);
+            let output = with_sources(conf, &args.seed, &args.files, |s, t| check(conf, s, t));
             (args.files, output)
         }
         Command::Compile(args) => {
             let files = vec![args.file];
-            let output = with_sources(&args.seed, &files, |s, t| {
-                compile(s, t.start, args.graph.as_deref(), args.emit)
+            let output = with_sources(conf, &args.seed, &files, |s, t| {
+                compile(conf, s, t.start, args.graph.as_deref(), args.emit)
             });
             (files, output)
         }
@@ -223,6 +249,7 @@ pub fn run(command: Command) -> i32 {
 /// Writes in the output are re-keyed from source index to target index.
 /// A file that cannot be read is a diagnostic and the core does not run.
 fn with_sources(
+    conf: &Conf,
     seed: &SeedArgs,
     files: &[PathBuf],
     core: impl FnOnce(&[Source], Range<usize>) -> Output,
@@ -230,7 +257,7 @@ fn with_sources(
     let mut sources = if seed.no_base {
         vec![]
     } else {
-        headless::base_sources()
+        headless::base_sources(conf)
     };
     let mut diagnostics = vec![];
     for path in seed.deps.iter().chain(files) {
@@ -298,8 +325,8 @@ fn load(
 /// Load every source and reify the merged registry, ready to compile.
 ///
 /// Reify failures join the parse diagnostics.
-fn ready(sources: &[Source], targets: Range<usize>) -> (Ready, Output) {
-    let codec = crate::node::codec();
+fn ready(conf: &Conf, sources: &[Source], targets: Range<usize>) -> (Ready, Output) {
+    let codec = conf.codec;
     let (loaded, mut output) = load(sources, targets, &codec);
     let (reified, errs) = headless::reify_all(&loaded.registry, &codec);
     output
@@ -309,7 +336,7 @@ fn ready(sources: &[Source], targets: Range<usize>) -> (Ready, Output) {
         codec,
         loaded,
         reified,
-        builtins: headless::builtins_with_instances(),
+        builtins: headless::builtins_with_instances(conf),
     };
     (ready, output)
 }
@@ -331,8 +358,8 @@ pub(crate) fn is_address_mode(text: &str) -> bool {
 /// Rewrite each target to its canonical form, keeping the mode the file is
 /// in. Under `check`, targets that differ are diagnostics and nothing is
 /// written.
-pub(crate) fn fmt(sources: &[Source], targets: Range<usize>, check: bool) -> Output {
-    let codec = crate::node::codec();
+pub(crate) fn fmt(conf: &Conf, sources: &[Source], targets: Range<usize>, check: bool) -> Output {
+    let codec = conf.codec;
     let (loaded, mut output) = load(sources, targets.clone(), &codec);
     for ix in targets {
         let Ok(parsed) = &loaded.parsed[ix] else {
@@ -415,8 +442,8 @@ fn path_text(path: &[gantz_core::node::Id]) -> String {
 }
 
 /// Compile every named graph the targets define.
-pub(crate) fn check(sources: &[Source], targets: Range<usize>) -> Output {
-    let (ready, mut output) = ready(sources, targets.clone());
+pub(crate) fn check(conf: &Conf, sources: &[Source], targets: Range<usize>) -> Output {
+    let (ready, mut output) = ready(conf, sources, targets.clone());
     let env = ready.env();
     let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
     for ix in targets {
@@ -433,7 +460,7 @@ pub(crate) fn check(sources: &[Source], targets: Range<usize>) -> Output {
                     .push(format!("{label}: graph `{name}`: no head graph"));
                 continue;
             };
-            if let Err(e) = headless::init(&get_node, graph) {
+            if let Err(e) = headless::init(conf, &get_node, graph) {
                 output
                     .diagnostics
                     .extend(compile_diagnostics(label, name, &e));
@@ -445,8 +472,14 @@ pub(crate) fn check(sources: &[Source], targets: Range<usize>) -> Output {
 
 /// Compile the graph `name` names, or the target's unique root graph, and
 /// emit the module text or its source map.
-pub(crate) fn compile(sources: &[Source], target: usize, name: Option<&str>, emit: Emit) -> Output {
-    let (ready, mut output) = ready(sources, target..target + 1);
+pub(crate) fn compile(
+    conf: &Conf,
+    sources: &[Source],
+    target: usize,
+    name: Option<&str>,
+    emit: Emit,
+) -> Output {
+    let (ready, mut output) = ready(conf, sources, target..target + 1);
     let label = &sources[target].label;
     let Ok(parsed) = &ready.loaded.parsed[target] else {
         return output;
@@ -483,7 +516,7 @@ pub(crate) fn compile(sources: &[Source], target: usize, name: Option<&str>, emi
             .push(format!("{label}: graph `{name}`: no head graph"));
         return output;
     };
-    let entrypoints = bevy_gantz_egui::entrypoints(&get_node, graph);
+    let entrypoints = (conf.entrypoints)(&get_node, graph);
     let config = gantz_core::compile::Config::default();
     let exprs = match gantz_core::compile::module(&get_node, graph, &entrypoints, &config) {
         Ok(exprs) => exprs,

@@ -1,13 +1,14 @@
 //! Headless registry loading and compilation, shared by the CLI and tests.
 //!
 //! No window, no store, no Bevy `App`. Everything here is built from the
-//! node set in [`crate::node`] and the plain functions of the gantz crates.
+//! node set of a [`Conf`] and the plain functions of the gantz crates.
 
+use crate::cli::Conf;
 use gantz_egui::export::ParseExportError;
 use gantz_egui::node::DynNode;
 use std::borrow::Cow;
 
-/// The registry's graphs reified through the app's node codec.
+/// The registry's graphs reified through a node codec.
 pub type Reified = gantz_core::data::ReifiedGraphs<DynNode>;
 /// The composed builtin palette plus one reified instance per builtin.
 pub type Builtins = (gantz_core::Builtins, gantz_egui::node::UiBuiltins);
@@ -26,20 +27,15 @@ pub struct Loaded {
     pub parsed: Vec<Result<gantz_ca::Registry, ParseExportError>>,
 }
 
-/// The embedded base sources every app loads at startup.
-pub fn base_sources() -> Vec<Source> {
-    [
-        ("<base:gantz>", gantz_base::BYTES),
-        ("<base:plyphon>", gantz_plyphon::BASE_BYTES),
-        ("<base:rng>", gantz_rng::BASE_BYTES),
-        ("<base:pattern>", gantz_pattern::BASE_BYTES),
-    ]
-    .into_iter()
-    .map(|(label, bytes)| Source {
-        label: label.to_string(),
-        bytes: Cow::Borrowed(bytes),
-    })
-    .collect()
+/// The configured base sources, in load order, labelled `<base:NAME>`.
+pub fn base_sources(conf: &Conf) -> Vec<Source> {
+    conf.base_sources
+        .iter()
+        .map(|source| Source {
+            label: format!("<base:{}>", source.name),
+            bytes: Cow::Borrowed(source.bytes),
+        })
+        .collect()
 }
 
 /// Parse every source seeded with the names loaded so far, to a fixpoint.
@@ -116,9 +112,9 @@ pub fn reify_all(
 ///
 /// A builtin that fails to reify is a node-set composition error, so this
 /// fails loudly, as the app does at startup.
-pub fn builtins_with_instances() -> Builtins {
-    let builtins = crate::node::builtins();
-    let (instances, errs) = gantz_egui::node::UiBuiltins::reify(&builtins, &crate::node::codec());
+pub fn builtins_with_instances(conf: &Conf) -> Builtins {
+    let builtins = conf.builtins.clone();
+    let (instances, errs) = gantz_egui::node::UiBuiltins::reify(&builtins, &conf.codec);
     assert!(errs.is_empty(), "builtins failed to reify: {errs:?}");
     (builtins, instances)
 }
@@ -149,19 +145,14 @@ pub fn head_graph<'a>(
 }
 
 /// Compile and initialise a VM for the graph exactly as the app does, with
-/// every entrypoint provider and the app's steel modules.
+/// the configured entrypoints and steel modules.
 pub fn init(
+    conf: &Conf,
     get_node: gantz_core::node::GetNode<'_>,
     graph: &gantz_core::node::graph::Graph<DynNode>,
 ) -> Result<(steel::steel_vm::engine::Engine, gantz_core::vm::Compiled), gantz_core::vm::CompileError>
 {
-    let entrypoints = bevy_gantz_egui::entrypoints(get_node, graph);
+    let entrypoints = (conf.entrypoints)(get_node, graph);
     let config = gantz_core::compile::Config::default();
-    gantz_core::vm::init_with_modules(
-        get_node,
-        graph,
-        &entrypoints,
-        &config,
-        &crate::node::steel_modules(),
-    )
+    gantz_core::vm::init_with_modules(get_node, graph, &entrypoints, &config, &conf.steel_modules)
 }

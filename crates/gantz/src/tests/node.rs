@@ -152,7 +152,7 @@ fn gui_marker_registry_lookups() {
     use gantz_egui::node::{Gui, GuiRole};
     let registry = gui_marker_registry();
     let reified = reify_all(&registry);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg = env(&registry, &reified, &builtins, &codec);
     let parent = named_ca(&registry, "parent");
@@ -946,7 +946,7 @@ fn nested_dsp_graph_flattens_derives_and_bridges_state() {
 
     // The binding's path reaches the nested lag's live param state in a VM
     // compiled from the same un-flattened graph.
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&registry, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -1417,7 +1417,7 @@ fn tick_node_compiles() {
     let head = gantz_ca::Head::Branch(name("g"));
     let graph = head_graph(&reified, &registry, &head).expect("g graph");
 
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&registry, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -1795,7 +1795,7 @@ fn base_graphs_all_compile() {
     let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &crate::node::codec())
         .expect("parse base");
     let reified = reify_all(&base);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&base, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -1848,7 +1848,7 @@ fn expr_require_sugar_compiles_and_evaluates() {
         gantz_egui::format::from_str(text, Duration::from_secs(0), &crate::node::codec())
             .expect("from_str");
     let reified = reify_all(&registry);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&registry, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -2070,7 +2070,7 @@ fn base_socket_docs() {
     );
 
     // A `ref add` exposes `add`'s socket docs.
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let reified = reify_all(&base);
     let codec = crate::node::codec();
     let reg_env = env(&base, &reified, &builtins, &codec);
@@ -2110,7 +2110,7 @@ fn demos_evaluate() {
     let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &crate::node::codec())
         .expect("parse base");
     let reified = reify_all(&base);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&base, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -2236,7 +2236,7 @@ fn base_list_nodes_evaluate() {
         gantz_egui::format::from_str(&text, Duration::from_secs(0), &crate::node::codec())
             .expect("from_str");
     let reified = reify_all(&registry);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&registry, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -2295,7 +2295,7 @@ fn base_pattern_combinator_nodes_evaluate() {
   (-> w1 tc) (-> w2 tc) (-> pa (tc 1)) (-> pb (tc 1))
   (-> tc tc-vals-ok) (-> tc tc-span-ok))"#;
 
-    let mut sources = crate::headless::base_sources();
+    let mut sources = crate::headless::base_sources(&crate::conf());
     sources.push(crate::headless::Source {
         label: "<test>".to_string(),
         bytes: std::borrow::Cow::Borrowed(TEST_GRAPH.as_bytes()),
@@ -2315,7 +2315,7 @@ fn base_pattern_combinator_nodes_evaluate() {
     }
     let registry = loaded.registry;
     let reified = reify_all(&registry);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&registry, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -2358,7 +2358,7 @@ fn base_gui_markers_decode_clean() {
     let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &crate::node::codec())
         .expect("parse base");
     let reified = reify_all(&base);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&base, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -2456,7 +2456,7 @@ fn demo_pplot_plots_every_source() {
         merged.merge(export);
     }
     let reified = reify_all(&merged);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&merged, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -2540,7 +2540,7 @@ fn demo_pattern_partial_evals_are_silent() {
         merged.merge(export);
     }
     let reified = reify_all(&merged);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&merged, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -2653,7 +2653,7 @@ fn reset_then_reopen_demo_recompiles() {
     registry.merge(subset);
 
     // The reset demo must still compile, so every `ref` resolves.
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let reified = reify_all(&registry);
     let codec = crate::node::codec();
     let reg_env = env(&registry, &reified, &builtins, &codec);
@@ -2720,7 +2720,7 @@ fn sample_buffers_ride_reachability() {
 /// registry names before builtins, so such a graph hides the builtin.
 #[test]
 fn base_names_do_not_shadow_builtins() {
-    let sources = crate::headless::base_sources();
+    let sources = crate::headless::base_sources(&crate::conf());
     let loaded = crate::headless::load_sources(
         &sources,
         gantz_egui::base::BASE_TIMESTAMP,
@@ -2764,7 +2764,7 @@ fn base_sources_parse_reproducibly() {
         .map(|(n, ca)| (n.clone(), ca))
         .collect()
     };
-    for source in crate::headless::base_sources() {
+    for source in crate::headless::base_sources(&crate::conf()) {
         assert_eq!(
             heads(&source),
             heads(&source),
@@ -2913,14 +2913,14 @@ fn cross_source_base_refs_resolve_via_seed() {
     merged.merge(domain);
 
     // The merged registry compiles the wrapper.
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let reified = reify_all(&merged);
     let codec = crate::node::codec();
     let reg_env = env(&merged, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
     let head = gantz_ca::Head::Branch(name("wrap-add"));
     let graph = head_graph(&reified, &merged, &head).expect("wrap-add graph");
-    crate::headless::init(&get_node, graph).unwrap_or_else(|e| {
+    crate::headless::init(&crate::conf(), &get_node, graph).unwrap_or_else(|e| {
         panic!(
             "wrap-add failed to compile:\n{}",
             gantz_core::vm::error_chain(&e),

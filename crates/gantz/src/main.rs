@@ -37,7 +37,7 @@ fn main() {
     // Subcommands run headless and exit. No subcommand boots the GUI.
     #[cfg(not(target_arch = "wasm32"))]
     if let Some(command) = cli::parse() {
-        std::process::exit(cli::run(command));
+        std::process::exit(cli::run(command, &conf()));
     }
     let mut app = App::new();
     // Domains with no bevy plugin, such as the pattern domain.
@@ -103,6 +103,38 @@ fn store_name() -> String {
         }
     }
     "gantz".to_string()
+}
+
+/// The CLI configuration over the app's node set.
+#[cfg(not(target_arch = "wasm32"))]
+fn conf() -> cli::Conf {
+    use gantz_egui::base::BaseSource;
+    cli::Conf {
+        codec: node::codec(),
+        builtins: node::builtins(),
+        steel_modules: node::steel_modules(),
+        base_sources: vec![
+            BaseSource {
+                name: "gantz",
+                bytes: gantz_base::BYTES,
+            },
+            BaseSource {
+                name: "plyphon",
+                bytes: gantz_plyphon::BASE_BYTES,
+            },
+            BaseSource {
+                name: "rng",
+                bytes: gantz_rng::BASE_BYTES,
+            },
+            BaseSource {
+                name: "pattern",
+                bytes: gantz_pattern::BASE_BYTES,
+            },
+        ],
+        entrypoints: bevy_gantz_egui::entrypoints,
+        org: "nannou-org",
+        app: "gantz",
+    }
 }
 
 fn log_plugin() -> bevy::log::LogPlugin {

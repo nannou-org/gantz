@@ -56,7 +56,7 @@ fn edits_reach_the_host_without_relays() {
 }
 
 fn round_trip(infra: Infra) {
-    let codec = crate::node::codec();
+    let conf = crate::conf();
     let dir = std::env::temp_dir().join(format!(
         "gantz-join-{}-{}",
         std::process::id(),
@@ -67,7 +67,7 @@ fn round_trip(infra: Infra) {
     // The host's store: `jam` at one commit, from real nodes.
     let text = "(graph jam (b bang))";
     let parsed =
-        gantz_egui::export::parse_export_at(text.as_bytes(), Duration::from_secs(1), &codec)
+        gantz_egui::export::parse_export_at(text.as_bytes(), Duration::from_secs(1), &conf.codec)
             .unwrap();
     let jam: ca::Name = "jam".parse().unwrap();
     let tip = parsed.head(&jam).unwrap();
@@ -110,7 +110,7 @@ fn round_trip(infra: Infra) {
     });
 
     // The peer joins and mirrors `jam` to disk.
-    let mut peer = Peer::new(Identity::generate(), infra, dir.clone(), codec);
+    let mut peer = Peer::new(Identity::generate(), infra, dir.clone(), &conf);
     peer.join(&ticket, now()).unwrap();
     let path = dir.join("jam.gantz");
     step_until(&mut peer, || path.exists());

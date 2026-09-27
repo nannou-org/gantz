@@ -12,7 +12,7 @@ fn name(s: &str) -> ca::Name {
 /// A registry holding the embedded base sources, as a peer starts with.
 fn base_registry() -> ca::Registry {
     headless::load_sources(
-        &headless::base_sources(),
+        &headless::base_sources(&crate::conf()),
         BASE_TIMESTAMP,
         &crate::node::codec(),
     )
