@@ -1,6 +1,6 @@
 use crate::cli::{Emit, check, compile, fmt, is_address_mode};
 use crate::headless::{self, Source};
-use bevy_gantz_egui::base::BASE_TIMESTAMP;
+use gantz_egui::base::BASE_TIMESTAMP;
 use std::borrow::Cow;
 use std::ops::Range;
 

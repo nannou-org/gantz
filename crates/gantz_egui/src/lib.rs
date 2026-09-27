@@ -10,6 +10,7 @@ use steel::{
 };
 
 pub mod action;
+pub mod base;
 pub mod collab;
 pub mod cycle;
 pub mod export;

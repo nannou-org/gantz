@@ -10,8 +10,8 @@
 //! sources unless `--no-base` is given, and through any `--dep` files.
 
 use crate::headless::{self, Source};
-use bevy_gantz_egui::base::BASE_TIMESTAMP;
 use clap::{Args, Parser, Subcommand, ValueEnum};
+use gantz_egui::base::BASE_TIMESTAMP;
 use gantz_egui::export::ParseExportError;
 use std::borrow::Cow;
 use std::ops::Range;

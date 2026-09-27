@@ -103,11 +103,11 @@ pub fn push_plain_domains(app: &mut bevy::app::App) {
         .get_resource_or_init::<bevy_gantz_egui::base::BaseSources>()
         .0
         .extend([
-            bevy_gantz_egui::base::BaseSource {
+            gantz_egui::base::BaseSource {
                 name: "rng",
                 bytes: gantz_rng::BASE_BYTES,
             },
-            bevy_gantz_egui::base::BaseSource {
+            gantz_egui::base::BaseSource {
                 name: "pattern",
                 bytes: gantz_pattern::BASE_BYTES,
             },

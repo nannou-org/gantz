@@ -58,7 +58,7 @@ pub fn load_sources(
     let mut parsed: Vec<Option<Result<gantz_ca::Registry, ParseExportError>>> =
         sources.iter().map(|_| None).collect();
     let parse = |ix: usize, names: &gantz_egui::reg::Names, registry: &gantz_ca::Registry| {
-        let seed = bevy_gantz_egui::base::seed_graph_addrs(names, registry);
+        let seed = gantz_egui::base::seed_graph_addrs(names, registry);
         gantz_egui::export::parse_export_seeded_at(&sources[ix].bytes, now, &seed, codec)
     };
     let is_missing_dep = |e: &ParseExportError| {

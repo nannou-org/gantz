@@ -1,7 +1,7 @@
 use crate::headless;
 use crate::mirror::{Applied, FileState, Mirror, apply_text, filename, render, write_set};
-use bevy_gantz_egui::base::BASE_TIMESTAMP;
 use gantz_ca as ca;
+use gantz_egui::base::BASE_TIMESTAMP;
 use std::collections::BTreeSet;
 use std::time::{Duration, SystemTime};
 

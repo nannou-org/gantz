@@ -99,7 +99,7 @@ impl Plugin for GantzEguiPlugin {
         app.world_mut()
             .get_resource_or_init::<base::BaseSources>()
             .0
-            .push(base::BaseSource {
+            .push(gantz_egui::base::BaseSource {
                 name: "gantz",
                 bytes: gantz_base::BYTES,
             });
@@ -1835,10 +1835,10 @@ pub fn on_reset_base_graph(
         log::warn!("ResetBaseGraph: no base source recorded for '{name}'");
         return;
     };
-    let seed = base::seed_graph_addrs(&base_names.0, &registry);
+    let seed = gantz_egui::base::seed_graph_addrs(&base_names.0, &registry);
     let export: gantz_ca::Registry = match gantz_egui::export::parse_export_seeded_at(
         source.bytes,
-        crate::base::BASE_TIMESTAMP,
+        gantz_egui::base::BASE_TIMESTAMP,
         &seed,
         &codec.0,
     ) {

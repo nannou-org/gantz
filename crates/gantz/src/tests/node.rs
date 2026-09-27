@@ -2302,7 +2302,7 @@ fn base_pattern_combinator_nodes_evaluate() {
     });
     let loaded = crate::headless::load_sources(
         &sources,
-        bevy_gantz_egui::base::BASE_TIMESTAMP,
+        gantz_egui::base::BASE_TIMESTAMP,
         &crate::node::codec(),
     );
     for (source, parsed) in sources.iter().zip(&loaded.parsed) {
@@ -2448,7 +2448,7 @@ fn demo_pplot_plots_every_source() {
     use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
     use gantz_core::steel::SteelVal;
 
-    let ts = bevy_gantz_egui::base::BASE_TIMESTAMP;
+    let ts = gantz_egui::base::BASE_TIMESTAMP;
     let mut merged = DataReg::default();
     for bytes in [gantz_base::BYTES, gantz_pattern::BASE_BYTES] {
         let export: DataReg =
@@ -2528,7 +2528,7 @@ fn demo_pplot_plots_every_source() {
 fn demo_pattern_partial_evals_are_silent() {
     use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
 
-    let ts = bevy_gantz_egui::base::BASE_TIMESTAMP;
+    let ts = gantz_egui::base::BASE_TIMESTAMP;
     let mut merged = DataReg::default();
     for bytes in [
         gantz_base::BYTES,
@@ -2625,7 +2625,7 @@ fn demo_pattern_partial_evals_are_silent() {
 
 /// Resetting a demo re-parses the base and merges the demo's commit subset
 /// back in. The base's hand-authored graphs are stamped at the fixed
-/// `bevy_gantz_egui::base::BASE_TIMESTAMP`, so the re-parse reproduces
+/// `gantz_egui::base::BASE_TIMESTAMP`, so the re-parse reproduces
 /// the primitive commit addresses loaded at startup. The reset demo's
 /// `ref`s still resolve and it recompiles. With a wall-clock timestamp
 /// the re-parsed demo would reference fresh primitive commits absent from
@@ -2634,7 +2634,7 @@ fn demo_pattern_partial_evals_are_silent() {
 fn reset_then_reopen_demo_recompiles() {
     use gantz_core::compile::{Config, push_pull_entrypoints};
 
-    let ts = bevy_gantz_egui::base::BASE_TIMESTAMP;
+    let ts = gantz_egui::base::BASE_TIMESTAMP;
     let parse = || -> DataReg {
         gantz_egui::export::parse_export_at(gantz_base::BYTES, ts, &crate::node::codec())
             .expect("parse base")
@@ -2723,7 +2723,7 @@ fn base_names_do_not_shadow_builtins() {
     let sources = crate::headless::base_sources();
     let loaded = crate::headless::load_sources(
         &sources,
-        bevy_gantz_egui::base::BASE_TIMESTAMP,
+        gantz_egui::base::BASE_TIMESTAMP,
         &crate::node::codec(),
     );
     for (source, parsed) in sources.iter().zip(&loaded.parsed) {
@@ -2756,7 +2756,7 @@ fn base_sources_parse_reproducibly() {
     let heads = |source: &crate::headless::Source| -> BTreeMap<_, _> {
         gantz_egui::export::parse_export_at(
             &source.bytes,
-            bevy_gantz_egui::base::BASE_TIMESTAMP,
+            gantz_egui::base::BASE_TIMESTAMP,
             &crate::node::codec(),
         )
         .unwrap_or_else(|e| panic!("{}: parse failed: {e}", source.label))
@@ -2799,7 +2799,7 @@ fn plyphon_base_demos_derive_and_build() {
 
     let registry: DataReg = gantz_egui::export::parse_export_at(
         gantz_plyphon::BASE_BYTES,
-        bevy_gantz_egui::base::BASE_TIMESTAMP,
+        gantz_egui::base::BASE_TIMESTAMP,
         &crate::node::codec(),
     )
     .expect("parse");
@@ -2872,7 +2872,7 @@ fn plyphon_base_demos_derive_and_build() {
 #[test]
 fn cross_source_base_refs_resolve_via_seed() {
     use std::collections::BTreeMap;
-    let ts = bevy_gantz_egui::base::BASE_TIMESTAMP;
+    let ts = gantz_egui::base::BASE_TIMESTAMP;
 
     let core: DataReg =
         gantz_egui::export::parse_export_at(gantz_base::BYTES, ts, &crate::node::codec())
