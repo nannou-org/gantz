@@ -46,6 +46,20 @@ fn junk_patterns_and_fns_are_silent() {
             ),
         );
     }
+    // timecat ignores an element that is not a pair with a number weight,
+    // and keeps the rest. The number junk `7` is a valid weight.
+    for junk in JUNK.iter().filter(|junk| **junk != "7") {
+        assert_pinned(
+            &mut vm,
+            &format!("timecat with {junk} weight and element"),
+            "((a ((0 1) (1 1)) ((0 1) (1 1))))",
+            &format!(
+                "(pin-events (pat/query
+                   (pat/timecat (list (list {junk} (pat/pure 'x)) {junk} (list 1 (pat/pure 'a))))
+                   (pat/span 0 1)))"
+            ),
+        );
+    }
     let rows: &[(&str, &str)] = &[
         // The apply family drops events whose "function" is not applicable.
         (
@@ -68,6 +82,10 @@ fn junk_patterns_and_fns_are_silent() {
         (
             "filter_events_with_non_fn",
             "(pin-events (pat/query (pat/filter-events 'nope (pat/pure 1)) (pat/span 0 1)))",
+        ),
+        (
+            "merge_with_non_fn",
+            "(pin-events (pat/query (pat/merge-with 'nope (pat/pure 1) (pat/pure 2)) (pat/span 0 1)))",
         ),
         (
             "degrade_by_with_non_fn",
