@@ -66,6 +66,10 @@ fn junk_patterns_and_fns_are_silent() {
             "(pin-events (pat/query (pat/filter 'nope (pat/pure 1)) (pat/span 0 1)))",
         ),
         (
+            "filter_events_with_non_fn",
+            "(pin-events (pat/query (pat/filter-events 'nope (pat/pure 1)) (pat/span 0 1)))",
+        ),
+        (
             "degrade_by_with_non_fn",
             "(pin-events (pat/query (pat/degrade-by 7 'nope (pat/pure 1)) (pat/span 0 1)))",
         ),

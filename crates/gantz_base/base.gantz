@@ -14,11 +14,29 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph all
+  (expr0 (expr (list/all $f $list) #:require "gantz/list"))
+  (inlet1 (inlet "function" "item predicate"))
+  (inlet2 (inlet "list" "input list"))
+  (outlet3 (outlet "boolean" "true if every item satisfies the predicate"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (graph and
   (expr0 (expr (if $l $r #f)))
   (inlet1 (inlet "boolean" "left operand"))
   (inlet2 (inlet "boolean" "right operand"))
   (outlet3 (outlet "boolean" "true if both are truthy"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph any
+  (expr0 (expr (list/any $f $list) #:require "gantz/list"))
+  (inlet1 (inlet "function" "item predicate"))
+  (inlet2 (inlet "list" "input list"))
+  (outlet3 (outlet "boolean" "true if any item satisfies the predicate"))
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
@@ -31,6 +49,13 @@
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
+
+(graph concat
+  (expr0 (expr (list/concat $lists) #:require "gantz/list"))
+  (inlet1 (inlet "list" "a list of lists, or one list per wire"))
+  (outlet2 (outlet "list" "items of each list in order"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
 
 (graph cons
   (expr0 (expr (cons $head $tail)))
@@ -90,7 +115,22 @@
   (ref45 (ref uisep #:sync))
   (ref46 (ref uispace #:sync))
   (ref47 (ref uitoggle #:sync))
-  (ref48 (ref uivalue #:sync)))
+  (ref48 (ref uivalue #:sync))
+  (ref49 (ref range #:sync))
+  (ref50 (ref take #:sync))
+  (ref51 (ref drop #:sync))
+  (ref52 (ref last #:sync))
+  (ref53 (ref zip #:sync))
+  (ref54 (ref concat #:sync))
+  (comment55 (comment "List functions" 110 15))
+  (ref56 (ref map #:sync))
+  (ref57 (ref filter #:sync))
+  (ref58 (ref fold #:sync))
+  (ref59 (ref flat-map #:sync))
+  (ref60 (ref any #:sync))
+  (ref61 (ref all #:sync))
+  (ref62 (ref find #:sync))
+  (ref63 (ref sort #:sync)))
 
 (graph demo-arithmetic
   (comment0 (comment "Arithmetic operations.\nChange `a` and `b` below.\nPress `!` to evaluate." 150 45))
@@ -366,6 +406,29 @@
   (bang31 bang)
   (expr32 (expr (list 1 2 3)))
   (inspect33 inspect)
+  (comment34 (comment "Bang to make a list of integers from start up to end with `range`." 150 45))
+  (bang35 bang)
+  (expr36 (expr 2))
+  (expr37 (expr 8))
+  (ref38 (ref range #:sync))
+  (inspect39 inspect)
+  (expr40 (expr 3))
+  (ref41 (ref take #:sync))
+  (inspect42 inspect)
+  (ref43 (ref drop #:sync))
+  (inspect44 inspect)
+  (ref45 (ref last #:sync))
+  (inspect46 inspect)
+  (comment47 (comment "`take` keeps the first n items and `drop` skips them. `last` gets the final item." 170 45))
+  (comment48 (comment "Bang to pair two lists with `zip`, or join them with `concat`." 150 45))
+  (bang49 bang)
+  (expr50 (expr (list 1 2 3)))
+  (expr51 (expr (list 10 20)))
+  (ref52 (ref zip #:sync))
+  (inspect53 inspect)
+  (ref54 (ref concat #:sync))
+  (inspect55 inspect)
+  (comment56 (comment "Several wires into one `concat` inlet arrive as a list of lists." 150 45))
   (-> bang1 expr4)
   (-> expr5 ref28)
   (-> bang6 expr5)
@@ -391,7 +454,94 @@
   (-> ref28 inspect29)
   (-> expr5 (ref28 1))
   (-> bang31 expr32)
-  (-> expr32 inspect33))
+  (-> expr32 inspect33)
+  (-> bang35 expr36)
+  (-> bang35 expr37)
+  (-> bang35 expr40)
+  (-> expr36 ref38)
+  (-> expr37 (ref38 1))
+  (-> ref38 inspect39)
+  (-> ref38 ref41)
+  (-> expr40 (ref41 1))
+  (-> ref41 inspect42)
+  (-> ref38 ref43)
+  (-> expr40 (ref43 1))
+  (-> ref43 inspect44)
+  (-> ref38 ref45)
+  (-> ref45 inspect46)
+  (-> bang49 expr50)
+  (-> bang49 expr51)
+  (-> expr50 ref52)
+  (-> expr51 (ref52 1))
+  (-> ref52 inspect53)
+  (-> expr50 ref54)
+  (-> expr51 ref54)
+  (-> ref54 inspect55))
+
+(graph demo-list-fn
+  (comment0 (comment "Functions over lists. Bang to run every row.\nA `fn` node turns a graph into a function value.\nAn `expr` can make one with `lambda`." 300 45))
+  (bang1 bang)
+  (expr2 (expr (list 3 1 4 1 5 9 2 6)))
+  (fnref3 (fn-ref neg #:sync))
+  (ref4 (ref map #:sync))
+  (inspect5 inspect)
+  (comment6 (comment "map: negate each item with `fn neg`." 150 30))
+  (expr7 (expr (lambda (x) (> x 2))))
+  (ref8 (ref filter #:sync))
+  (inspect9 inspect)
+  (comment10 (comment "filter: keep the items greater than 2." 150 30))
+  (fnref11 (fn-ref add #:sync))
+  (expr12 (expr 0))
+  (ref13 (ref fold #:sync))
+  (inspect14 inspect)
+  (comment15 (comment "fold: sum the items with `fn add`, from 0." 150 30))
+  (fnref16 (fn-ref lt #:sync))
+  (ref17 (ref sort #:sync))
+  (inspect18 inspect)
+  (comment19 (comment "sort: ascending with `fn lt`." 110 30))
+  (ref20 (ref any #:sync))
+  (inspect21 inspect)
+  (ref22 (ref all #:sync))
+  (inspect23 inspect)
+  (ref24 (ref find #:sync))
+  (inspect25 inspect)
+  (comment26 (comment "any, all, find: test the items with the same predicate as filter." 250 30))
+  (expr27 (expr (lambda (x) (list x x))))
+  (ref28 (ref flat-map #:sync))
+  (inspect29 inspect)
+  (comment30 (comment "flat-map: map each item to a list and join the lists." 150 30))
+  (-> bang1 expr2)
+  (-> bang1 fnref3)
+  (-> bang1 expr7)
+  (-> bang1 fnref11)
+  (-> bang1 expr12)
+  (-> bang1 fnref16)
+  (-> bang1 expr27)
+  (-> fnref3 ref4)
+  (-> expr2 (ref4 1))
+  (-> ref4 inspect5)
+  (-> expr7 ref8)
+  (-> expr2 (ref8 1))
+  (-> ref8 inspect9)
+  (-> fnref11 ref13)
+  (-> expr12 (ref13 1))
+  (-> expr2 (ref13 2))
+  (-> ref13 inspect14)
+  (-> fnref16 ref17)
+  (-> expr2 (ref17 1))
+  (-> ref17 inspect18)
+  (-> expr7 ref20)
+  (-> expr2 (ref20 1))
+  (-> ref20 inspect21)
+  (-> expr7 ref22)
+  (-> expr2 (ref22 1))
+  (-> ref22 inspect23)
+  (-> expr7 ref24)
+  (-> expr2 (ref24 1))
+  (-> ref24 inspect25)
+  (-> expr27 ref28)
+  (-> expr2 (ref28 1))
+  (-> ref28 inspect29))
 
 (graph demo-logic
   (comment0 (comment "p = a<b, q = a>b. Bang to evaluate." 152 30))
@@ -504,6 +654,15 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph drop
+  (expr0 (expr (list/drop $list $n) #:require "gantz/list"))
+  (inlet1 (inlet "list" "input list"))
+  (inlet2 (inlet "number" "item count"))
+  (outlet3 (outlet "list" "all but the first n items"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (graph empty?
   (expr0 (expr (empty? $list)))
   (inlet1 (inlet "list" "input list"))
@@ -520,12 +679,50 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph filter
+  (expr0 (expr (list/filter $f $list) #:require "gantz/list"))
+  (inlet1 (inlet "function" "item predicate"))
+  (inlet2 (inlet "list" "input list"))
+  (outlet3 (outlet "list" "items that satisfy the predicate"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph find
+  (expr0 (expr (list/find $f $list) #:require "gantz/list"))
+  (inlet1 (inlet "function" "item predicate"))
+  (inlet2 (inlet "list" "input list"))
+  (outlet3 (outlet "value" "first item that satisfies the predicate, or false"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (graph first
   (expr0 (expr (car $list)))
   (inlet1 (inlet "list" "input list"))
   (outlet2 (outlet "value" "first element"))
   (-> inlet1 expr0)
   (-> expr0 outlet2))
+
+(graph flat-map
+  (expr0 (expr (list/flat-map $f $list) #:require "gantz/list"))
+  (inlet1 (inlet "function" "maps an item to a list"))
+  (inlet2 (inlet "list" "input list"))
+  (outlet3 (outlet "list" "mapped lists joined in order"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph fold
+  (expr0 (expr (list/fold $f $init $list) #:require "gantz/list"))
+  (inlet1 (inlet "function" "combines, called as (f acc item)"))
+  (inlet2 (inlet "value" "initial accumulator"))
+  (inlet3 (inlet "list" "input list"))
+  (outlet4 (outlet "value" "final accumulator"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
 
 (graph gt
   (expr0 (expr (> $l $r)))
@@ -544,6 +741,13 @@
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
+
+(graph last
+  (expr0 (expr (list/last $list) #:require "gantz/list"))
+  (inlet1 (inlet "list" "input list"))
+  (outlet2 (outlet "value" "last item, or the empty list"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
 
 (graph length
   (expr0 (expr (length $list)))
@@ -582,6 +786,15 @@
   (inlet1 (inlet "number" "left operand"))
   (inlet2 (inlet "number" "right operand"))
   (outlet3 (outlet "boolean" "true if left <= right"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph map
+  (expr0 (expr (list/map $f $list) #:require "gantz/list"))
+  (inlet1 (inlet "function" "item mapping"))
+  (inlet2 (inlet "list" "input list"))
+  (outlet3 (outlet "list" "list of mapped items"))
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
@@ -646,6 +859,15 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph range
+  (expr0 (expr (list/range $start $end) #:require "gantz/list"))
+  (inlet1 (inlet "number" "first integer, 0 when unset"))
+  (inlet2 (inlet "number" "end, excluded"))
+  (outlet3 (outlet "list" "integers from start up to end"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (graph rest
   (expr0 (expr (cdr $list)))
   (inlet1 (inlet "list" "input list"))
@@ -671,6 +893,15 @@
   (-> inlet3 (expr0 2))
   (-> expr0 outlet4))
 
+(graph sort
+  (expr0 (expr (list/sort $f $list) #:require "gantz/list"))
+  (inlet1 (inlet "function" "less-than comparator"))
+  (inlet2 (inlet "list" "input list"))
+  (outlet3 (outlet "list" "sorted items, equal items kept in order"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (graph string?
   (expr0 (expr (string? $x)))
   (inlet1 (inlet "value" "value to test"))
@@ -683,6 +914,15 @@
   (inlet1 (inlet "number" "left operand"))
   (inlet2 (inlet "number" "right operand"))
   (outlet3 (outlet "number" "difference"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph take
+  (expr0 (expr (list/take $list $n) #:require "gantz/list"))
+  (inlet1 (inlet "list" "input list"))
+  (inlet2 (inlet "number" "item count"))
+  (outlet3 (outlet "list" "the first n items"))
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
@@ -845,11 +1085,23 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph zip
+  (expr0 (expr (list/zip $l $r) #:require "gantz/list"))
+  (inlet1 (inlet "list" "left list"))
+  (inlet2 (inlet "list" "right list"))
+  (outlet3 (outlet "list" "pairs of items at the same index"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (descriptions
   (abs "Absolute value of a number")
   (add "Add two numbers")
+  (all "Whether every item of a list satisfies a predicate")
   (and "Logical AND of two booleans")
+  (any "Whether any item of a list satisfies a predicate")
   (append "Concatenate two lists")
+  (concat "Join a list of lists into one list")
   (cons "Prepend an item to a list")
   (demo-all "Demo: a tour of the base nodes")
   (demo-arithmetic "Demo: arithmetic operations")
@@ -857,19 +1109,27 @@
   (demo-gui "Demo: declare a graph's GUI with a gui marker")
   (demo-gui-compose "Demo: compose GUIs across graph instances")
   (demo-list "Demo: list operations")
+  (demo-list-fn "Demo: functions over lists")
   (demo-logic "Demo: boolean logic")
   (demo-predicate "Demo: type predicates")
   (div "Divide one number by another")
+  (drop "A list without its first n items")
   (empty? "Whether a list is empty")
   (eq "Whether two values are equal")
+  (filter "The items of a list that satisfy a predicate")
+  (find "The first item of a list that satisfies a predicate")
   (first "The first item of a list")
+  (flat-map "Map each item of a list to a list and join the lists")
+  (fold "Combine the items of a list into one value")
   (gt "Whether the left is greater than the right")
   (gte "Whether the left is greater than or equal to the right")
+  (last "The last item of a list")
   (length "The number of items in a list")
   (list-ref "The list item at an index")
   (list? "Whether a value is a list")
   (lt "Whether the left is less than the right")
   (lte "Whether the left is less than or equal to the right")
+  (map "Apply a function to each item of a list")
   (mod "Remainder after division")
   (mul "Multiply two numbers")
   (neg "Negate a number")
@@ -877,11 +1137,14 @@
   (not "Logical NOT of a boolean")
   (number? "Whether a value is a number")
   (or "Logical OR of two booleans")
+  (range "A list of integers from start up to end")
   (rest "A list without its first item")
   (reverse "Reverse a list")
   (select "Choose between two values by a condition")
+  (sort "Sort a list with a less-than function")
   (string? "Whether a value is a string")
   (sub "Subtract one number from another")
+  (take "The first n items of a list")
   (uibutton "GUI: a button that push-evals a node")
   (uicol "GUI: stack children vertically")
   (uidialer "GUI: a dialer editing a number node")
@@ -895,7 +1158,8 @@
   (uisep "GUI: a separator line")
   (uispace "GUI: empty space")
   (uitoggle "GUI: a checkbox editing a boolean node")
-  (uivalue "GUI: show a node's state"))
+  (uivalue "GUI: show a node's state")
+  (zip "Pair the items of two lists by index"))
 
 (layout abs
   (expr0 -15.608376 13.40625)
@@ -910,6 +1174,13 @@
   (outlet3 -39.625 106.59375)
   (camera 26.5 26.5 1))
 
+(layout all
+  (expr0 -66 13.40625)
+  (inlet1 -66 -75.78125)
+  (inlet2 33.6 -75.78125)
+  (outlet3 -66 106.59375)
+  (camera 26.5 26.5 1))
+
 (layout and
   (expr0 -39.625 13.40625)
   (inlet1 -39.625 -75.78125)
@@ -917,11 +1188,24 @@
   (outlet3 -39.625 106.59375)
   (camera 26.5 26.5 1))
 
+(layout any
+  (expr0 -66 13.40625)
+  (inlet1 -66 -75.78125)
+  (inlet2 33.6 -75.78125)
+  (outlet3 -66 106.59375)
+  (camera 26.5 26.5 1))
+
 (layout append
   (expr0 -39.625 13.40625)
   (inlet1 -39.625 -75.78125)
   (inlet2 60.002007 -75.78125)
   (outlet3 -39.625 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout concat
+  (expr0 -70 13.40625)
+  (inlet1 -70 -75.78125)
+  (outlet2 -70 106.59375)
   (camera 26.5 26.5 1))
 
 (layout cons
@@ -938,6 +1222,7 @@
   (comment21 534 -32)
   (comment30 714 -32)
   (comment34 894 -32)
+  (comment55 1074 -32)
   (comment9 174 -32)
   (ref10 180 30)
   (ref11 180 90)
@@ -977,11 +1262,25 @@
   (ref46 900 690)
   (ref47 900 750)
   (ref48 900 810)
+  (ref49 540 510)
   (ref5 0 210)
+  (ref50 540 570)
+  (ref51 540 630)
+  (ref52 540 690)
+  (ref53 540 750)
+  (ref54 540 810)
+  (ref56 1080 30)
+  (ref57 1080 90)
+  (ref58 1080 150)
+  (ref59 1080 210)
   (ref6 0 270)
+  (ref60 1080 270)
+  (ref61 1080 330)
+  (ref62 1080 390)
+  (ref63 1080 450)
   (ref7 0 330)
   (ref8 0 390)
-  (camera 428.4524 151.87439 1))
+  (camera 540 151.87439 1))
 
 (layout demo-arithmetic
   (bang1 445 -303)
@@ -1131,6 +1430,8 @@
   (bang1 212 323)
   (bang3 475 33)
   (bang31 49 59)
+  (bang35 880 70)
+  (bang49 1230 70)
   (bang6 690 35)
   (comment0 244 315)
   (comment12 89 46)
@@ -1138,11 +1439,20 @@
   (comment24 512 15)
   (comment27 641 451)
   (comment30 727 17)
+  (comment34 880 15)
+  (comment47 940 390)
+  (comment48 1230 15)
+  (comment56 1230 270)
   (expr15 513 84)
   (expr18 579 403)
   (expr32 49 114)
+  (expr36 880 115)
+  (expr37 940 115)
   (expr4 212 378)
+  (expr40 1000 115)
   (expr5 690 83)
+  (expr50 1230 115)
+  (expr51 1330 115)
   (expr9 475 84)
   (inspect11 127 538)
   (inspect14 213 569)
@@ -1152,6 +1462,12 @@
   (inspect26 476 179)
   (inspect29 691 183)
   (inspect33 50 166)
+  (inspect39 880 215)
+  (inspect42 940 335)
+  (inspect44 1030 335)
+  (inspect46 1120 335)
+  (inspect53 1230 215)
+  (inspect55 1340 215)
   (inspect8 47 497)
   (number2 603 346)
   (ref10 127 493)
@@ -1161,8 +1477,48 @@
   (ref22 580 458)
   (ref25 476 134)
   (ref28 691 138)
+  (ref38 880 170)
+  (ref41 940 290)
+  (ref43 1030 290)
+  (ref45 1120 290)
+  (ref52 1230 170)
+  (ref54 1340 170)
   (ref7 47 453)
-  (camera 423.58875 238.78638 1))
+  (camera 740 250 1))
+
+(layout demo-list-fn
+  (bang1 0 -60)
+  (comment0 60 -130)
+  (comment10 200 180)
+  (comment15 420 180)
+  (comment19 600 180)
+  (comment26 720 180)
+  (comment30 1060 180)
+  (comment6 0 180)
+  (expr12 520 0)
+  (expr2 0 0)
+  (expr27 1060 0)
+  (expr7 220 0)
+  (fnref11 420 0)
+  (fnref16 620 0)
+  (fnref3 120 0)
+  (inspect14 420 130)
+  (inspect18 600 130)
+  (inspect21 720 130)
+  (inspect23 810 130)
+  (inspect25 900 130)
+  (inspect29 1060 130)
+  (inspect5 0 130)
+  (inspect9 200 130)
+  (ref13 420 80)
+  (ref17 600 80)
+  (ref20 720 80)
+  (ref22 810 80)
+  (ref24 900 80)
+  (ref28 1060 80)
+  (ref4 0 80)
+  (ref8 200 80)
+  (camera 540 40 1))
 
 (layout demo-logic
   (bang1 -36 -220)
@@ -1231,6 +1587,13 @@
   (outlet3 -39.625 106.59375)
   (camera 26.5 26.5 1))
 
+(layout drop
+  (expr0 -70 13.40625)
+  (inlet1 -70 -75.78125)
+  (inlet2 29.6 -75.78125)
+  (outlet3 -70 106.59375)
+  (camera 26.5 26.5 1))
+
 (layout empty?
   (expr0 -39.21775 13.40625)
   (inlet1 -39.21775 -75.78125)
@@ -1244,11 +1607,40 @@
   (outlet3 -39.625 106.59375)
   (camera 26.5 26.5 1))
 
+(layout filter
+  (expr0 -77 13.40625)
+  (inlet1 -77 -75.78125)
+  (inlet2 22.6 -75.78125)
+  (outlet3 -77 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout find
+  (expr0 -70 13.40625)
+  (inlet1 -70 -75.78125)
+  (inlet2 29.6 -75.78125)
+  (outlet3 -70 106.59375)
+  (camera 26.5 26.5 1))
+
 (layout first
   (expr0 -27.21775 13.40625)
   (inlet1 -27.21775 -75.78125)
   (outlet2 -27.21775 106.59375)
   (camera 26.500002 26.5 1))
+
+(layout flat-map
+  (expr0 -84 13.40625)
+  (inlet1 -84 -75.78125)
+  (inlet2 15.6 -75.78125)
+  (outlet3 -84 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout fold
+  (expr0 -91 13.40625)
+  (inlet1 -91 -75.78125)
+  (inlet2 8.6 -75.78125)
+  (inlet3 108.2 -75.78125)
+  (outlet4 -91 106.59375)
+  (camera 26.5 26.5 1))
 
 (layout gt
   (expr0 -39.625 13.40625)
@@ -1262,6 +1654,12 @@
   (inlet1 -39.625 -75.78125)
   (inlet2 60.002007 -75.78125)
   (outlet3 -39.625 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout last
+  (expr0 -60 13.40625)
+  (inlet1 -60 -75.78125)
+  (outlet2 -60 106.59375)
   (camera 26.5 26.5 1))
 
 (layout length
@@ -1295,6 +1693,13 @@
   (inlet1 -39.625 -75.78125)
   (inlet2 60.002007 -75.78125)
   (outlet3 -39.625 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout map
+  (expr0 -66 13.40625)
+  (inlet1 -66 -75.78125)
+  (inlet2 33.6 -75.78125)
+  (outlet3 -66 106.59375)
   (camera 26.5 26.5 1))
 
 (layout mod
@@ -1343,6 +1748,13 @@
   (outlet3 -39.625 106.59375)
   (camera 26.5 26.5 1))
 
+(layout range
+  (expr0 -84 13.40625)
+  (inlet1 -84 -75.78125)
+  (inlet2 15.6 -75.78125)
+  (outlet3 -84 106.59375)
+  (camera 26.5 26.5 1))
+
 (layout rest
   (expr0 -27.21775 13.40625)
   (inlet1 -27.21775 -75.78125)
@@ -1363,6 +1775,13 @@
   (outlet4 -89.4385 106.59375)
   (camera 26.499996 26.499996 1))
 
+(layout sort
+  (expr0 -70 13.40625)
+  (inlet1 -70 -75.78125)
+  (inlet2 29.6 -75.78125)
+  (outlet3 -70 106.59375)
+  (camera 26.5 26.5 1))
+
 (layout string?
   (expr0 -31.21775 13.40625)
   (inlet1 -31.21775 -75.78125)
@@ -1374,6 +1793,13 @@
   (inlet1 -39.625 -75.78125)
   (inlet2 60.002007 -75.78125)
   (outlet3 -39.625 106.59375)
+  (camera 26.5 26.5 1))
+
+(layout take
+  (expr0 -70 13.40625)
+  (inlet1 -70 -75.78125)
+  (inlet2 29.6 -75.78125)
+  (outlet3 -70 106.59375)
   (camera 26.5 26.5 1))
 
 (layout uibutton
@@ -1490,27 +1916,52 @@
   (outlet3 -39.625 106.59375)
   (camera 26.5 26.5 1))
 
+(layout zip
+  (expr0 -56 13.40625)
+  (inlet1 -56 -75.78125)
+  (inlet2 43.6 -75.78125)
+  (outlet3 -56 106.59375)
+  (camera 26.5 26.5 1))
+
 (demo abs "demo-arithmetic")
 
 (demo add "demo-arithmetic")
 
+(demo all "demo-list-fn")
+
 (demo and "demo-logic")
 
+(demo any "demo-list-fn")
+
 (demo append "demo-list")
+
+(demo concat "demo-list")
 
 (demo cons "demo-list")
 
 (demo div "demo-arithmetic")
 
+(demo drop "demo-list")
+
 (demo empty? "demo-list")
 
 (demo eq "demo-comparison")
 
+(demo filter "demo-list-fn")
+
+(demo find "demo-list-fn")
+
 (demo first "demo-list")
+
+(demo flat-map "demo-list-fn")
+
+(demo fold "demo-list-fn")
 
 (demo gt "demo-comparison")
 
 (demo gte "demo-comparison")
+
+(demo last "demo-list")
 
 (demo length "demo-list")
 
@@ -1521,6 +1972,8 @@
 (demo lt "demo-comparison")
 
 (demo lte "demo-comparison")
+
+(demo map "demo-list-fn")
 
 (demo mul "demo-arithmetic")
 
@@ -1534,15 +1987,21 @@
 
 (demo or "demo-logic")
 
+(demo range "demo-list")
+
 (demo rest "demo-list")
 
 (demo reverse "demo-list")
 
 (demo select "demo-logic")
 
+(demo sort "demo-list-fn")
+
 (demo string? "demo-predicate")
 
 (demo sub "demo-arithmetic")
+
+(demo take "demo-list")
 
 (demo uibutton "demo-gui")
 
@@ -1571,3 +2030,5 @@
 (demo uitoggle "demo-gui")
 
 (demo uivalue "demo-gui")
+
+(demo zip "demo-list")

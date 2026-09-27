@@ -7,9 +7,10 @@
 ;; full structure. Whole is #f for continuous signals.
 ;;
 ;; Written for the prelude-free base engine. It uses primitive special
-;; forms only and defines the missing prelude list fns below. Names
+;; forms only and takes its list fns from `gantz/list`. Names
 ;; prefixed `pat//` are internal helpers and are not provided.
 
+(require "gantz/list")
 (require "gantz/rng")
 
 (provide pat/span
@@ -71,64 +72,8 @@
 (define (pat//max2 a b) (if (< a b) b a))
 (define (pat//min2 a b) (if (< b a) b a))
 
-;; Tail-recursive list helpers, standing in for the unavailable prelude
-;; fns.
-
 (define (pat//rev-append xs acc)
   (if (empty? xs) acc (pat//rev-append (cdr xs) (cons (car xs) acc))))
-
-(define (pat//map f xs)
-  (pat//map-loop f xs '()))
-
-(define (pat//map-loop f xs acc)
-  (if (empty? xs)
-      (reverse acc)
-      (pat//map-loop f (cdr xs) (cons (f (car xs)) acc))))
-
-(define (pat//filter keep? xs)
-  (pat//filter-loop keep? xs '()))
-
-(define (pat//filter-loop keep? xs acc)
-  (if (empty? xs)
-      (reverse acc)
-      (pat//filter-loop keep?
-                        (cdr xs)
-                        (if (keep? (car xs)) (cons (car xs) acc) acc))))
-
-;; Map `f` over `xs` and concatenate the resulting lists, preserving order.
-(define (pat//flat-map f xs)
-  (pat//flat-map-loop f xs '()))
-
-(define (pat//flat-map-loop f xs acc)
-  (if (empty? xs)
-      (reverse acc)
-      (pat//flat-map-loop f (cdr xs) (pat//rev-append (f (car xs)) acc))))
-
-(define (pat//fold f init xs)
-  (if (empty? xs)
-      init
-      (pat//fold f (f init (car xs)) (cdr xs))))
-
-;; A stable merge sort. The base engine's `sort` rejects closures.
-;; `less?` must be a strict order. Merge recursion depth is bounded by the
-;; list length, which is fine at event-list scale.
-(define (pat//sort less? xs)
-  (let ((n (length xs)))
-    (if (< n 2)
-        xs
-        (let ((mid (exact (floor (/ n 2)))))
-          (pat//merge less?
-                      (pat//sort less? (take xs mid))
-                      (pat//sort less? (list-tail xs mid)))))))
-
-(define (pat//merge less? a b)
-  (if (empty? a)
-      b
-      (if (empty? b)
-          a
-          (if (less? (car b) (car a))
-              (cons (car b) (pat//merge less? a (cdr b)))
-              (cons (car a) (pat//merge less? (cdr a) b))))))
 
 ;; Order events by the start of their active spans.
 (define (pat//event-earlier? a b)
@@ -218,7 +163,7 @@
 ;; `index` is the cycle's integer index.
 (define (pat//per-cycle f)
   (lambda (span)
-    (pat//map (lambda (cyc)
+    (list/map (lambda (cyc)
                 (let ((start (floor (car cyc))))
                   (pat/event (f start) cyc (cons start (+ start 1)))))
               (pat/span-cycles span))))
@@ -264,7 +209,7 @@
 
 ;; Query the pattern over the span. Events are sorted by active-span start.
 (define (pat/query p span)
-  (pat//sort pat//event-earlier? (pat//events p span)))
+  (list/sort pat//event-earlier? (pat//events p span)))
 
 ;; The grid that pattern time snaps to when converting from floats. It is
 ;; fine enough for musical subdivisions, with 2^7 * 3 * 5 slots per cycle.
@@ -287,7 +232,7 @@
   (if (zero? r)
       pat/silence
       (lambda (span)
-        (pat//map (lambda (e)
+        (list/map (lambda (e)
                     (pat/event-map-spans
                      (lambda (s) (pat/span-map (lambda (t) (/ t r)) s))
                      e))
@@ -302,7 +247,7 @@
 ;; Shift the pattern later in time by `amount` cycles.
 (define (pat/shift amount p)
   (lambda (span)
-    (pat//map (lambda (e)
+    (list/map (lambda (e)
                 (pat/event-map-spans
                  (lambda (s) (pat/span-map (lambda (t) (+ t amount)) s))
                  e))
@@ -314,7 +259,7 @@
     (if (zero? n)
         pat/silence
         (lambda (span)
-          (pat//flat-map
+          (list/flat-map
            (lambda (cyc)
              (let ((ix (modulo (floor (car cyc)) n)))
                (pat//events (list-ref ps ix) cyc)))
@@ -331,20 +276,20 @@
 ;; pair giving the pattern's proportion of the cycle. Every resulting
 ;; event's whole becomes its pattern's sub-span.
 (define (pat/timecat pairs)
-  (let ((total (pat//fold (lambda (acc pr) (+ acc (car pr))) 0 pairs)))
+  (let ((total (list/fold (lambda (acc pr) (+ acc (car pr))) 0 pairs)))
     (if (zero? total)
         pat/silence
         (let ((sub-spans (pat//timecat-spans pairs total 0 '())))
           (lambda (span)
-            (pat//flat-map
+            (list/flat-map
              (lambda (cyc)
                (let ((sam (floor (car cyc))))
-                 (pat//flat-map
+                 (list/flat-map
                   (lambda (sp)
                     (let ((p-span (pat/span-map (lambda (t) (+ t sam)) (car sp))))
                       (let ((sect (pat/span-intersect cyc p-span)))
                         (if sect
-                            (pat//map (lambda (e)
+                            (list/map (lambda (e)
                                         (pat/event (pat/event-value e)
                                                    (pat/event-active e)
                                                    p-span))
@@ -368,7 +313,7 @@
 ;; Layer the patterns. A query concatenates every pattern's events.
 (define (pat/stack ps)
   (lambda (span)
-    (pat//flat-map (lambda (p) (pat//events p span)) ps)))
+    (list/flat-map (lambda (p) (pat//events p span)) ps)))
 
 ;; Fit the pattern's `src` span to the `dst` span by adjusting the rate
 ;; and shifting. Degenerate spans yield silence.
@@ -388,7 +333,7 @@
 (define (pat/map f p)
   (lambda (span)
     (if (function? f)
-        (pat//map (lambda (e) (pat/event-map-value f e)) (pat//events p span))
+        (list/map (lambda (e) (pat/event-map-value f e)) (pat//events p span))
         '())))
 
 ;; Map events with `f`, which takes an event and returns an event. Unlike
@@ -397,24 +342,20 @@
 ;; yields silence.
 (define (pat/map-events f p)
   (lambda (span)
-    (if (function? f)
-        (pat//filter event? (pat//map f (pat//events p span)))
-        '())))
+    (list/filter event? (list/map f (pat//events p span)))))
 
 ;; Keep events whose value satisfies `keep?`. A non-fn `keep?` yields
 ;; silence.
 (define (pat/filter keep? p)
   (lambda (span)
     (if (function? keep?)
-        (pat//filter (lambda (e) (keep? (pat/event-value e))) (pat//events p span))
+        (list/filter (lambda (e) (keep? (pat/event-value e))) (pat//events p span))
         '())))
 
 ;; Keep events satisfying `keep?`. A non-fn `keep?` yields silence.
 (define (pat/filter-events keep? p)
   (lambda (span)
-    (if (function? keep?)
-        (pat//filter keep? (pat//events p span))
-        '())))
+    (list/filter keep? (pat//events p span))))
 
 ;; Drop each event of `p` with the probability `prob`, drawn from `seed`.
 ;; The draw keys on the midpoint of the event's whole, or of its active
@@ -440,9 +381,9 @@
 ;; event's active span. Both whole and active spans are intersected.
 (define (pat/join pp)
   (lambda (span)
-    (pat//flat-map
+    (list/flat-map
      (lambda (oe)
-       (pat//flat-map
+       (list/flat-map
         (lambda (ie)
           (let ((active (pat/span-intersect (pat/event-active oe)
                                             (pat/event-active ie))))
@@ -459,9 +400,9 @@
 ;; Wholes are untouched and actives are clipped to the original query span.
 (define (pat/inner-join pp)
   (lambda (q-span)
-    (pat//flat-map
+    (list/flat-map
      (lambda (oe)
-       (pat//flat-map
+       (list/flat-map
         (lambda (ie)
           (let ((active (pat/span-intersect q-span (pat/event-active ie))))
             (if active
@@ -475,10 +416,10 @@
 ;; discrete inner yields nothing and only signal inners are productive.
 (define (pat/outer-join pp)
   (lambda (q-span)
-    (pat//flat-map
+    (list/flat-map
      (lambda (oe)
        (let ((start (car (pat/event-whole-or-active oe))))
-         (pat//flat-map
+         (list/flat-map
           (lambda (ie)
             (let ((active (pat/span-intersect q-span (pat/event-active oe))))
               (if active
@@ -493,9 +434,9 @@
 ;; right-whole)` when both wholes are present, else #f.
 (define (pat//apply pv pf structure)
   (lambda (span)
-    (pat//flat-map
+    (list/flat-map
      (lambda (ev)
-       (pat//flat-map
+       (list/flat-map
         (lambda (ef)
           (let ((active (pat/span-intersect (pat/event-active ev)
                                             (pat/event-active ef)))
@@ -533,11 +474,6 @@
 (define (pat//repeat v n acc)
   (if (<= n 0) acc (pat//repeat v (- n 1) (cons v acc))))
 
-(define (pat//zip2 xs ys acc)
-  (if (empty? xs)
-      (reverse acc)
-      (pat//zip2 (cdr xs) (cdr ys) (cons (list (car xs) (car ys)) acc))))
-
 ;; Pairwise-append two equal-length lists of lists.
 (define (pat//zip-append xs ys acc)
   (if (empty? xs)
@@ -574,9 +510,9 @@
       '()
       (let ((kk (pat//min2 (pat//max2 k 0) n)))
         (pat//rotate
-         (pat//flat-map (lambda (g) g)
-                        (pat//bjorklund-loop (pat//repeat (list #t) kk '())
-                                             (pat//repeat (list #f) (- n kk) '())))
+         (list/concat
+          (pat//bjorklund-loop (pat//repeat (list #t) kk '())
+                               (pat//repeat (list #f) (- n kk) '())))
          off))))
 
 ;; Cyclic distance from each slot to the next onset, inclusive of the
@@ -586,7 +522,7 @@
     (if (< len 1)
         '()
         (if (pat//onset-distance 0 bs len)
-            (pat//map (lambda (i) (pat//onset-distance i bs len)) (range 0 len))
+            (list/map (lambda (i) (pat//onset-distance i bs len)) (range 0 len))
             '()))))
 
 (define (pat//onset-distance ix bs len)
@@ -611,7 +547,7 @@
 ;; [`pat/euclid`] rotated left by `off` slots.
 (define (pat/euclid-off k n off)
   (pat/filter (lambda (v) v)
-              (pat/fastcat (pat//map pat/pure (pat/euclid-bools k n off)))))
+              (pat/fastcat (list/map pat/pure (pat/euclid-bools k n off)))))
 
 ;; [`pat/euclid`] with each onset elongated to fill the silence before
 ;; the next onset. Event values are #t.
@@ -620,9 +556,9 @@
     (let ((ds (pat//onset-distances bs)))
       (if (empty? ds)
           pat/silence
-          (let ((p (pat/fastcat (pat//map pat/pure (pat//zip2 bs ds '())))))
+          (let ((p (pat/fastcat (list/map pat/pure (list/zip bs ds)))))
             (lambda (span)
-              (pat//flat-map
+              (list/flat-map
                (lambda (e)
                  (let ((v (pat/event-value e)))
                    (if (car v)
@@ -697,12 +633,12 @@
   (if (if (list? events)
           (if (pair? span) (if (number? t) (number? cps) #f) #f)
           #f)
-      (pat//map
+      (list/map
        (lambda (e)
          (list (+ t (exact->inexact (/ (- (car (pat/event-active e)) (car span)) cps)))
                (let ((v (pat/event-value e)))
                  (if (number? v) (exact->inexact v) v))))
-       (pat//filter pat/event-onset? events))
+       (list/filter pat/event-onset? events))
       '()))
 
 ;; Apply the euclidean mask to the pattern. Structure comes from the
@@ -745,7 +681,7 @@
       (pat//signal-points-loop
        p span n (- i 1)
        (pat//rev-append
-        (pat//fold
+        (list/fold
          (lambda (pts e)
            (let ((a (pat/event-active e)))
              (if (pat/event-whole e)
@@ -771,7 +707,7 @@
   (let ((events (pat//events p span)))
     (list (exact->inexact (pat/span-start span))
           (exact->inexact (pat/span-end span))
-          (pat//fold
+          (list/fold
            (lambda (segs e)
              (let ((a (pat/event-active e)))
                (if (pat/event-whole e)
@@ -783,6 +719,6 @@
                    segs)))
            '()
            (reverse events))
-          (if (pat//fold (lambda (any e) (if any any (not (pat/event-whole e)))) #f events)
+          (if (list/any (lambda (e) (not (pat/event-whole e))) events)
               (pat//signal-points p span res)
               '()))))
