@@ -274,8 +274,18 @@
 
 ;; Like [`pat/fastcat`], but each element is a `(list weight pattern)`
 ;; pair giving the pattern's proportion of the cycle. Every resulting
-;; event's whole becomes its pattern's sub-span.
+;; event's whole becomes its pattern's sub-span. An element that is not
+;; such a pair with a number weight is ignored.
 (define (pat/timecat pairs)
+  (pat//timecat (list/filter pat//weighted? pairs)))
+
+;; Whether `pr` is a `(list weight pattern)` pair with a number weight.
+(define (pat//weighted? pr)
+  (if (pair? pr)
+      (if (number? (car pr)) (pair? (cdr pr)) #f)
+      #f))
+
+(define (pat//timecat pairs)
   (let ((total (list/fold (lambda (acc pr) (+ acc (car pr))) 0 pairs)))
     (if (zero? total)
         pat/silence
@@ -467,9 +477,11 @@
 
 ;; Merge two patterns by calling `(f a-value b-value)` at every
 ;; intersection of active spans. Structure is the intersection of both
-;; wholes.
+;; wholes. A non-fn `f` yields silence.
 (define (pat/merge-with f pa pb)
-  (pat/app pa (pat/map (lambda (bv) (lambda (av) (f av bv))) pb)))
+  (if (function? f)
+      (pat/app pa (pat/map (lambda (bv) (lambda (av) (f av bv))) pb))
+      pat/silence))
 
 (define (pat//repeat v n acc)
   (if (<= n 0) acc (pat//repeat v (- n 1) (cons v acc))))

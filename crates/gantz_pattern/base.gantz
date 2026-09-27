@@ -159,6 +159,13 @@
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
+(graph pjoin
+  (expr0 (expr (pat/join $pp) #:require "gantz/pattern"))
+  (inlet1 (inlet "pattern" "pattern of patterns"))
+  (outlet2 (outlet "pattern" "inner events within their outer events"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
 (graph pmap
   (expr0 (expr (pat/map $f $p) #:require "gantz/pattern"))
   (inlet1 (inlet "function" "value mapping"))
@@ -176,6 +183,17 @@
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
+
+(graph pmergewith
+  (expr0 (expr (pat/merge-with $f $pa $pb) #:require "gantz/pattern"))
+  (inlet1 (inlet "function" "combines a value from each pattern"))
+  (inlet2 (inlet "pattern" "first pattern"))
+  (inlet3 (inlet "pattern" "second pattern"))
+  (outlet4 (outlet "pattern" "combined values where events meet"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
 
 (graph ppure
   (expr0 (expr (pat/pure $v) #:require "gantz/pattern"))
@@ -264,6 +282,15 @@
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
+(graph ptimecat
+  (expr0 (expr (pat/timecat (list/zip (list/map pat/rationalize (if (list? $ws) $ws (list $ws))) (if (list? $ps) $ps (list $ps)))) #:require "gantz/list" #:require "gantz/pattern"))
+  (inlet1 (inlet "number(s)" "weights in connection order"))
+  (inlet2 (inlet "pattern(s)" "patterns in connection order"))
+  (outlet3 (outlet "pattern" "patterns sharing each cycle by weight"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (graph pwindow
   (expr0 (expr (begin $tick (let ((r (pat/window state (hash-ref %args 'time) $cps))) (begin (set! state (list-ref r 1)) (list-ref r 0)))) #:require "gantz/pattern"))
   (inlet1 (inlet "bang" "tick trigger"))
@@ -285,8 +312,10 @@
   (pfastcat "Concatenate patterns within a single cycle.")
   (pfilter "Keep events whose values satisfy a predicate.")
   (pindices "Each cycle's index, once per cycle.")
+  (pjoin "Flatten a pattern of patterns, keeping both structures.")
   (pmap "Map a function over a pattern's values.")
   (pmapevents "Map a function over a pattern's events, spans included.")
+  (pmergewith "Combine the values of two patterns with a function where their events meet.")
   (ppure "Repeat a value once per cycle.")
   (pquery "Query a pattern over a span for its sorted events.")
   (prand "A seeded signal of random floats in [0, 1).")
@@ -298,6 +327,7 @@
   (pslowcat "Concatenate patterns, one per cycle.")
   (pstack "Layer patterns on top of each other.")
   (psteady "A continuous constant signal.")
+  (ptimecat "Concatenate patterns within a single cycle, each taking a share by its weight.")
   (pwindow "Advance a tick-driven query window in cycles."))
 
 (layout demo-pattern

@@ -2263,6 +2263,85 @@ fn base_list_nodes_evaluate() {
     fire_push(&mut vm, &eps, bang.index());
 }
 
+/// The `pjoin`, `pmergewith` and `ptimecat` base nodes give the expected
+/// patterns through `ref`s. `pmergewith` takes an `fn-ref` over the base
+/// `add` graph. `ptimecat` takes float weights, as `number` nodes emit
+/// them, and several connections per inlet. Each `assert!` expr checks
+/// one output, so a wrong result errors the push.
+#[test]
+fn base_pattern_combinator_nodes_evaluate() {
+    const TEST_GRAPH: &str = r#"
+(graph pattern-nodes-test
+  (b bang)
+  (inner (expr (pat/pure (pat/fast 2 (pat/pure 'x))) #:require "gantz/pattern"))
+  (jn (ref pjoin))
+  (jn-ok (expr (assert! (equal? (list/map pat/event-value (pat/query $p (pat/span 0 1))) '(x x))) #:require "gantz/list" #:require "gantz/pattern"))
+  (fadd (fn-ref add))
+  (ones (expr (pat/fast 2 (pat/pure 1)) #:require "gantz/pattern"))
+  (tens (expr (pat/pure 10) #:require "gantz/pattern"))
+  (mw (ref pmergewith))
+  (mw-ok (expr (assert! (equal? (list/map pat/event-value (pat/query $p (pat/span 0 1))) '(11 11))) #:require "gantz/list" #:require "gantz/pattern"))
+  (w1 (expr 1.0))
+  (w2 (expr 2.0))
+  (pa (expr (pat/pure 'a) #:require "gantz/pattern"))
+  (pb (expr (pat/pure 'b) #:require "gantz/pattern"))
+  (tc (ref ptimecat))
+  (tc-vals-ok (expr (assert! (equal? (list/map pat/event-value (pat/query $p (pat/span 0 1))) '(a b))) #:require "gantz/list" #:require "gantz/pattern"))
+  (tc-span-ok (expr (assert! (= (cdr (pat/event-whole (car (pat/query $p (pat/span 0 1))))) 1/3)) #:require "gantz/pattern"))
+  (-> b inner) (-> b fadd) (-> b ones) (-> b tens)
+  (-> b w1) (-> b w2) (-> b pa) (-> b pb)
+  (-> inner jn) (-> jn jn-ok)
+  (-> fadd mw) (-> ones (mw 1)) (-> tens (mw 2)) (-> mw mw-ok)
+  (-> w1 tc) (-> w2 tc) (-> pa (tc 1)) (-> pb (tc 1))
+  (-> tc tc-vals-ok) (-> tc tc-span-ok))"#;
+
+    let mut sources = crate::headless::base_sources();
+    sources.push(crate::headless::Source {
+        label: "<test>".to_string(),
+        bytes: std::borrow::Cow::Borrowed(TEST_GRAPH.as_bytes()),
+    });
+    let loaded = crate::headless::load_sources(
+        &sources,
+        bevy_gantz_egui::base::BASE_TIMESTAMP,
+        &crate::node::codec(),
+    );
+    for (source, parsed) in sources.iter().zip(&loaded.parsed) {
+        assert!(
+            parsed.is_ok(),
+            "{}: {:?}",
+            source.label,
+            parsed.as_ref().err()
+        );
+    }
+    let registry = loaded.registry;
+    let reified = reify_all(&registry);
+    let builtins = builtins_with_instances();
+    let codec = crate::node::codec();
+    let reg_env = env(&registry, &reified, &builtins, &codec);
+    let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
+
+    let head = gantz_ca::Head::Branch(name("pattern-nodes-test"));
+    let graph = head_graph(&reified, &registry, &head).expect("head graph");
+    let eps = gantz_core::compile::push_pull_entrypoints(&get_node, graph);
+    let (mut vm, _compiled) = gantz_core::vm::init_with_modules(
+        &get_node,
+        graph,
+        &eps,
+        &Default::default(),
+        &crate::node::steel_modules(),
+    )
+    .unwrap_or_else(|e| panic!("init: {}", gantz_core::vm::error_chain(&e)));
+    let bang = graph
+        .node_indices()
+        .find(|&ix| {
+            (&*graph[ix] as &dyn std::any::Any)
+                .downcast_ref::<gantz_std::Bang>()
+                .is_some()
+        })
+        .expect("a bang");
+    fire_push(&mut vm, &eps, bang.index());
+}
+
 /// Every `gui` marker reachable from a `base.gantz` graph stores a tree
 /// that decodes with no error element and no warning. Markers are
 /// collected through instance hops, so an instance of a graph with a GUI
