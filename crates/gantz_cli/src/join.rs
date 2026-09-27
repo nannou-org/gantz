@@ -5,8 +5,8 @@
 //! tip converges headlessly. Files are rewritten when names move and read
 //! back when they change on disk. See [`crate::mirror`].
 
-use crate::cli::{Conf, JoinArgs};
 use crate::mirror::Mirror;
+use crate::{Conf, JoinArgs};
 use gantz_ca as ca;
 use gantz_collab::{Handle, Identity, Infra, PeerId, RuntimeConfig};
 use gantz_collab_sync::{Effect, JoinError, OpenHeads, Sessions};
@@ -176,7 +176,7 @@ impl Peer {
                         }
                         edited |= !applied.is_empty();
                     }
-                    Err(e) => warn!("{}", crate::cli::parse_diagnostic(&label, &e)),
+                    Err(e) => warn!("{}", crate::parse_diagnostic(&label, &e)),
                 }
             }
             if edited {

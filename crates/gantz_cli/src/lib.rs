@@ -1,25 +1,61 @@
-//! The `gantz` command line.
+//! The gantz command line, as a library.
 //!
-//! With no subcommand the binary boots the GUI. The subcommands work on
-//! `.gantz` files headlessly, with no window, store or network, so any
-//! editor or tool can validate and canonicalize graphs.
+//! The subcommands work on `.gantz` files headlessly, with no window, store
+//! or network, so any editor or tool can validate and canonicalize graphs.
+//! An app built on gantz passes its node set in a [`Conf`], so the
+//! subcommands parse and compile exactly as the app does.
 //!
 //! Each subcommand is a pure core over in-memory [`Source`]s that returns an
 //! [`Output`]. [`run`] does the file IO around it and maps the result to an
-//! exit code. Names a file does not define resolve through the embedded base
-//! sources unless `--no-base` is given, and through any `--dep` files.
+//! exit code. Names a file does not define resolve through the configured
+//! base sources unless `--no-base` is given, and through any `--dep` files.
+//!
+//! An app puts [`Command`] in its own parser, so `--version` reports the
+//! app's version:
+//!
+//! ```no_run
+//! use clap::Parser;
+//!
+//! #[derive(Parser)]
+//! #[command(version, about)]
+//! struct Cli {
+//!     #[command(subcommand)]
+//!     command: Option<gantz_cli::Command>,
+//! }
+//!
+//! fn conf() -> gantz_cli::Conf {
+//!     todo!("the app's node set")
+//! }
+//!
+//! fn main() {
+//!     if let Some(command) = Cli::parse().command {
+//!         std::process::exit(gantz_cli::run(command, &conf()));
+//!     }
+//!     // With no subcommand, start the app.
+//! }
+//! ```
+//!
+//! To add its own subcommands, an app puts `#[command(flatten)]` on a
+//! [`Command`] variant of its own `clap::Subcommand` enum.
 
-use crate::headless::{self, Source};
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use crate::headless::Source;
+use clap::{Args, Subcommand, ValueEnum};
 use gantz_egui::base::BASE_TIMESTAMP;
 use gantz_egui::export::ParseExportError;
 use std::borrow::Cow;
 use std::ops::Range;
 use std::path::PathBuf;
 
+pub mod headless;
+#[cfg(feature = "collab")]
+mod join;
+#[cfg(feature = "collab")]
+mod mirror;
+#[cfg(test)]
+mod tests;
+
 /// The CLI configuration: the node set to parse and compile with, and the
 /// names that locate the default data directories.
-#[cfg_attr(not(feature = "collab"), allow(dead_code))]
 pub struct Conf {
     /// The node set's codec. Its sugar reads and writes `.gantz` text.
     pub codec: gantz_egui::node::NodeCodec,
@@ -38,17 +74,6 @@ pub struct Conf {
     pub org: &'static str,
     /// The app name that locates the default data directories.
     pub app: &'static str,
-}
-
-#[derive(Parser)]
-#[command(
-    name = "gantz",
-    version,
-    about = "An environment for creative systems."
-)]
-struct Cli {
-    #[command(subcommand)]
-    command: Option<Command>,
 }
 
 #[derive(Subcommand)]
@@ -143,7 +168,7 @@ pub struct CompileArgs {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
-pub(crate) enum Emit {
+pub enum Emit {
     /// The Steel module text.
     Steel,
     /// The source map: one line per definition and identifier occurrence,
@@ -154,15 +179,15 @@ pub(crate) enum Emit {
 
 /// What a subcommand core produced.
 #[derive(Default)]
-pub(crate) struct Output {
+pub struct Output {
     /// Text for stdout.
-    pub(crate) stdout: String,
+    pub stdout: String,
     /// Lines for stderr. Any means a non-zero exit.
-    pub(crate) diagnostics: Vec<String>,
+    pub diagnostics: Vec<String>,
     /// Non-fatal lines for stderr.
-    pub(crate) warnings: Vec<String>,
+    pub warnings: Vec<String>,
     /// Text to write back to a target, by source index.
-    pub(crate) writes: Vec<(usize, String)>,
+    pub writes: Vec<(usize, String)>,
 }
 
 /// A loaded and reified source set, ready to compile.
@@ -184,13 +209,6 @@ impl Ready {
     }
 }
 
-/// The subcommand named on the command line, if any.
-///
-/// Usage errors and `--help` exit here, as clap does.
-pub fn parse() -> Option<Command> {
-    Cli::parse().command
-}
-
 /// Run a subcommand and return the process exit code.
 pub fn run(command: Command, conf: &Conf) -> i32 {
     // Library warnings, such as an unrecognised form a rewrite would drop,
@@ -198,7 +216,7 @@ pub fn run(command: Command, conf: &Conf) -> i32 {
     // subscriber bridges both. `RUST_LOG` overrides the default. A host that
     // installed its own subscriber keeps it.
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,gantz=info"));
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,gantz_cli=info"));
     let _ = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
@@ -358,7 +376,7 @@ pub(crate) fn is_address_mode(text: &str) -> bool {
 /// Rewrite each target to its canonical form, keeping the mode the file is
 /// in. Under `check`, targets that differ are diagnostics and nothing is
 /// written.
-pub(crate) fn fmt(conf: &Conf, sources: &[Source], targets: Range<usize>, check: bool) -> Output {
+pub fn fmt(conf: &Conf, sources: &[Source], targets: Range<usize>, check: bool) -> Output {
     let codec = conf.codec;
     let (loaded, mut output) = load(sources, targets.clone(), &codec);
     for ix in targets {
@@ -442,7 +460,7 @@ fn path_text(path: &[gantz_core::node::Id]) -> String {
 }
 
 /// Compile every named graph the targets define.
-pub(crate) fn check(conf: &Conf, sources: &[Source], targets: Range<usize>) -> Output {
+pub fn check(conf: &Conf, sources: &[Source], targets: Range<usize>) -> Output {
     let (ready, mut output) = ready(conf, sources, targets.clone());
     let env = ready.env();
     let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
@@ -472,7 +490,7 @@ pub(crate) fn check(conf: &Conf, sources: &[Source], targets: Range<usize>) -> O
 
 /// Compile the graph `name` names, or the target's unique root graph, and
 /// emit the module text or its source map.
-pub(crate) fn compile(
+pub fn compile(
     conf: &Conf,
     sources: &[Source],
     target: usize,

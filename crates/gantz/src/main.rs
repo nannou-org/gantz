@@ -10,22 +10,28 @@ use bevy_gantz::{
 };
 use bevy_gantz_egui::{BuiltinNodes, GantzEguiPlugin, TraceCapture};
 use bevy_pkv::PkvStore;
+#[cfg(not(target_arch = "wasm32"))]
+use clap::Parser;
 use storage::Pkv;
 
-#[cfg(not(target_arch = "wasm32"))]
-mod cli;
-#[cfg(not(target_arch = "wasm32"))]
-mod headless;
-#[cfg(all(not(target_arch = "wasm32"), feature = "collab"))]
-mod join;
-#[cfg(all(not(target_arch = "wasm32"), feature = "collab"))]
-mod mirror;
 mod node;
 mod persist;
 mod storage;
 #[cfg(test)]
 mod tests;
 mod window;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Parser)]
+#[command(
+    name = "gantz",
+    version,
+    about = "An environment for creative systems."
+)]
+struct Cli {
+    #[command(subcommand)]
+    command: Option<gantz_cli::Command>,
+}
 
 fn main() {
     // cpal's AudioWorklet backend on the web re-instantiates this wasm module
@@ -34,10 +40,11 @@ fn main() {
     if bevy_gantz_plyphon::on_worklet_thread() {
         return;
     }
-    // Subcommands run headless and exit. No subcommand boots the GUI.
+    // Subcommands run headless and exit. No subcommand boots the GUI. Usage
+    // errors and `--help` exit in the parse, as clap does.
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(command) = cli::parse() {
-        std::process::exit(cli::run(command, &conf()));
+    if let Some(command) = Cli::parse().command {
+        std::process::exit(gantz_cli::run(command, &conf()));
     }
     let mut app = App::new();
     // Domains with no bevy plugin, such as the pattern domain.
@@ -105,11 +112,11 @@ fn store_name() -> String {
     "gantz".to_string()
 }
 
-/// The CLI configuration over the app's node set.
+/// The [`gantz_cli`] configuration over the app's node set.
 #[cfg(not(target_arch = "wasm32"))]
-fn conf() -> cli::Conf {
+fn conf() -> gantz_cli::Conf {
     use gantz_egui::base::BaseSource;
-    cli::Conf {
+    gantz_cli::Conf {
         codec: node::codec(),
         builtins: node::builtins(),
         steel_modules: node::steel_modules(),

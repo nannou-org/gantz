@@ -56,7 +56,7 @@ fn edits_reach_the_host_without_relays() {
 }
 
 fn round_trip(infra: Infra) {
-    let conf = crate::conf();
+    let conf = super::conf();
     let dir = std::env::temp_dir().join(format!(
         "gantz-join-{}-{}",
         std::process::id(),

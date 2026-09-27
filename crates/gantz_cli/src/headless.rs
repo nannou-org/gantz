@@ -3,7 +3,7 @@
 //! No window, no store, no Bevy `App`. Everything here is built from the
 //! node set of a [`Conf`] and the plain functions of the gantz crates.
 
-use crate::cli::Conf;
+use crate::Conf;
 use gantz_egui::export::ParseExportError;
 use gantz_egui::node::DynNode;
 use std::borrow::Cow;

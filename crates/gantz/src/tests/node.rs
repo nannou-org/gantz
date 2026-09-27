@@ -1,4 +1,4 @@
-use crate::headless::{Reified, builtins_with_instances, env, head_graph};
+use gantz_cli::headless::{Reified, builtins_with_instances, env, head_graph};
 use gantz_egui::node::DynNode;
 
 /// The data registry, which stores graphs erased.
@@ -23,7 +23,7 @@ fn as_named_ref(node: &DynNode) -> Option<&gantz_egui::node::NamedRef> {
 
 /// Reify the whole registry column, asserting every graph reifies.
 fn reify_all(reg: &DataReg) -> Reified {
-    let (reified, errs) = crate::headless::reify_all(reg, &crate::node::codec());
+    let (reified, errs) = gantz_cli::headless::reify_all(reg, &crate::node::codec());
     assert!(errs.is_empty(), "{errs:?}");
     reified
 }
@@ -2295,12 +2295,12 @@ fn base_pattern_combinator_nodes_evaluate() {
   (-> w1 tc) (-> w2 tc) (-> pa (tc 1)) (-> pb (tc 1))
   (-> tc tc-vals-ok) (-> tc tc-span-ok))"#;
 
-    let mut sources = crate::headless::base_sources(&crate::conf());
-    sources.push(crate::headless::Source {
+    let mut sources = gantz_cli::headless::base_sources(&crate::conf());
+    sources.push(gantz_cli::headless::Source {
         label: "<test>".to_string(),
         bytes: std::borrow::Cow::Borrowed(TEST_GRAPH.as_bytes()),
     });
-    let loaded = crate::headless::load_sources(
+    let loaded = gantz_cli::headless::load_sources(
         &sources,
         gantz_egui::base::BASE_TIMESTAMP,
         &crate::node::codec(),
@@ -2720,8 +2720,8 @@ fn sample_buffers_ride_reachability() {
 /// registry names before builtins, so such a graph hides the builtin.
 #[test]
 fn base_names_do_not_shadow_builtins() {
-    let sources = crate::headless::base_sources(&crate::conf());
-    let loaded = crate::headless::load_sources(
+    let sources = gantz_cli::headless::base_sources(&crate::conf());
+    let loaded = gantz_cli::headless::load_sources(
         &sources,
         gantz_egui::base::BASE_TIMESTAMP,
         &crate::node::codec(),
@@ -2753,7 +2753,7 @@ fn base_names_do_not_shadow_builtins() {
 #[test]
 fn base_sources_parse_reproducibly() {
     use std::collections::BTreeMap;
-    let heads = |source: &crate::headless::Source| -> BTreeMap<_, _> {
+    let heads = |source: &gantz_cli::headless::Source| -> BTreeMap<_, _> {
         gantz_egui::export::parse_export_at(
             &source.bytes,
             gantz_egui::base::BASE_TIMESTAMP,
@@ -2764,7 +2764,7 @@ fn base_sources_parse_reproducibly() {
         .map(|(n, ca)| (n.clone(), ca))
         .collect()
     };
-    for source in crate::headless::base_sources(&crate::conf()) {
+    for source in gantz_cli::headless::base_sources(&crate::conf()) {
         assert_eq!(
             heads(&source),
             heads(&source),
@@ -2920,7 +2920,7 @@ fn cross_source_base_refs_resolve_via_seed() {
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
     let head = gantz_ca::Head::Branch(name("wrap-add"));
     let graph = head_graph(&reified, &merged, &head).expect("wrap-add graph");
-    crate::headless::init(&crate::conf(), &get_node, graph).unwrap_or_else(|e| {
+    gantz_cli::headless::init(&crate::conf(), &get_node, graph).unwrap_or_else(|e| {
         panic!(
             "wrap-add failed to compile:\n{}",
             gantz_core::vm::error_chain(&e),

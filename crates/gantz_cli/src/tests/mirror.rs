@@ -1,3 +1,4 @@
+use super::conf;
 use crate::headless;
 use crate::mirror::{Applied, FileState, Mirror, apply_text, filename, render, write_set};
 use gantz_ca as ca;
@@ -12,9 +13,9 @@ fn name(s: &str) -> ca::Name {
 /// A registry holding the embedded base sources, as a peer starts with.
 fn base_registry() -> ca::Registry {
     headless::load_sources(
-        &headless::base_sources(&crate::conf()),
+        &headless::base_sources(&conf()),
         BASE_TIMESTAMP,
-        &crate::node::codec(),
+        &conf().codec,
     )
     .registry
 }
@@ -25,7 +26,7 @@ fn apply(registry: &mut ca::Registry, file: &mut FileState, text: &str, secs: u6
         file,
         text.as_bytes(),
         Duration::from_secs(secs),
-        &crate::node::codec(),
+        &conf().codec,
     )
     .unwrap_or_else(|e| panic!("apply failed: {e}"))
 }
@@ -119,7 +120,7 @@ fn reapplying_rendered_text_is_a_noop() {
         apply(&mut registry, &mut file, src, 1);
         let names: Vec<ca::Name> = names.iter().map(|n| name(n)).collect();
         let heads: Vec<_> = names.iter().map(|n| registry.head(n)).collect();
-        let text = render(&registry, &names, &crate::node::codec()).unwrap();
+        let text = render(&registry, &names, &conf().codec).unwrap();
         for n in &names {
             assert!(text.contains(&format!("(graph {n}")), "{case}: {text}");
         }
@@ -186,10 +187,10 @@ fn non_sync_pins_survive_a_round_trip_and_sync_refs_follow() {
 
     // Re-reading the pinned file keeps its pin. Re-reading the following
     // file resolves to the new `add`.
-    let text = render(&registry, &[name("pinned")], &crate::node::codec()).unwrap();
+    let text = render(&registry, &[name("pinned")], &conf().codec).unwrap();
     let applied = apply(&mut registry, &mut pinned, &text, 4);
     assert!(applied.is_empty(), "{applied:?}");
-    let text = render(&registry, &[name("following")], &crate::node::codec()).unwrap();
+    let text = render(&registry, &[name("following")], &conf().codec).unwrap();
     let applied = apply(&mut registry, &mut following, &text, 5);
     assert!(applied.is_empty(), "{applied:?}");
     let graph = registry
@@ -214,7 +215,7 @@ fn mirror_writes_reads_and_ignores_own_writes() {
     let mut seed_file = FileState::default();
     apply(&mut registry, &mut seed_file, G1, 1);
     let scope: BTreeSet<ca::Name> = [name("g")].into_iter().collect();
-    let mut mirror = Mirror::new(dir.clone(), crate::node::codec());
+    let mut mirror = Mirror::new(dir.clone(), conf().codec);
 
     let written = mirror.write_all(&registry, &scope).unwrap();
     assert_eq!(written, vec![dir.join("g.gantz")]);

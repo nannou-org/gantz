@@ -1,0 +1,34 @@
+[package]
+name = "gantz_cli"
+version = "0.1.0"
+description = "The gantz command line, as a library that apps built on gantz embed."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+
+[dependencies]
+clap.workspace = true
+directories = { workspace = true, optional = true }
+gantz_ca.workspace = true
+gantz_collab = { workspace = true, optional = true }
+gantz_collab_sync = { workspace = true, optional = true }
+gantz_core.workspace = true
+gantz_egui.workspace = true
+gantz_format.workspace = true
+steel-core.workspace = true
+tracing.workspace = true
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+
+[dev-dependencies]
+async-channel.workspace = true
+gantz_base.workspace = true
+gantz_std.workspace = true
+gantz_ui.workspace = true
+serde.workspace = true
+
+[features]
+default = ["collab"]
+# The `join` subcommand, which mirrors a collaborative session to a directory.
+collab = ["dep:directories", "dep:gantz_collab", "dep:gantz_collab_sync"]

@@ -1,6 +1,6 @@
-use crate::cli::{Emit, check, compile, fmt, is_address_mode};
-use crate::conf;
+use super::conf;
 use crate::headless::{self, Source};
+use crate::{Emit, check, compile, fmt, is_address_mode};
 use gantz_egui::base::BASE_TIMESTAMP;
 use std::borrow::Cow;
 use std::ops::Range;
@@ -37,14 +37,6 @@ fn with_base(extra: Vec<Source>) -> (Vec<Source>, Range<usize>) {
 }
 
 #[test]
-fn fmt_check_passes_on_base_files() {
-    let sources = headless::base_sources(&conf());
-    let output = fmt(&conf(), &sources, 0..sources.len(), true);
-    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-    assert!(output.writes.is_empty());
-}
-
-#[test]
 fn fmt_rewrites_labels_and_is_idempotent() {
     let (sources, targets) = with_base(vec![source(
         "g.gantz",
@@ -65,7 +57,7 @@ fn fmt_rewrites_labels_and_is_idempotent() {
 
 #[test]
 fn fmt_keeps_address_mode() {
-    let codec = crate::node::codec();
+    let codec = conf().codec;
     let base = gantz_egui::export::parse_export_at(gantz_base::BYTES, BASE_TIMESTAMP, &codec)
         .expect("parse base");
     let heads: Vec<_> = base
@@ -120,14 +112,6 @@ fn compile_by_name_and_source_map() {
 
     let output = compile(&conf(), &sources, targets.start, Some("nope"), Emit::Steel);
     assert_eq!(output.diagnostics, ["root.gantz: no graph named `nope`"]);
-}
-
-#[test]
-fn check_passes_on_base_sources() {
-    let sources = headless::base_sources(&conf());
-    let output = check(&conf(), &sources, 0..sources.len());
-    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
 }
 
 #[test]
