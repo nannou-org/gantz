@@ -597,6 +597,41 @@ mod tests {
         assert_eq!(to_datum(&node).unwrap(), unit_datum("A2K", None));
     }
 
+    /// Node identity is the erased data-layer content address. A param lag
+    /// and a control rate are part of it. An explicit default rate is not.
+    #[test]
+    fn structural_fields_key_the_content_address() {
+        let content_addr = |n: &UnitNode| {
+            gantz_core::data::erase_node_typed(n)
+                .unwrap()
+                .content_addr()
+        };
+        let sinosc = || UnitNode::from_unit("SinOsc").expect("SinOsc row");
+        let lag = || UnitNode::from_unit("Lag").expect("Lag row");
+        let mut ar_sine = sinosc();
+        ar_sine.set_rate(NodeRate::Audio);
+        let mut lagged_sine = sinosc();
+        lagged_sine.set_lag("freq", 0.5);
+        let mut kr_sine = sinosc();
+        kr_sine.set_rate(NodeRate::Control);
+        let mut kr_lag = lag();
+        kr_lag.set_rate(NodeRate::Control);
+        for (label, a, b, same) in [
+            ("an identical node", sinosc(), sinosc(), true),
+            ("an explicit audio rate", sinosc(), ar_sine, true),
+            ("a freq lag", sinosc(), lagged_sine, false),
+            ("a control rate", sinosc(), kr_sine, false),
+            ("a control rate on a lag", lag(), kr_lag, false),
+        ] {
+            let effect = if same { "keeps" } else { "changes" };
+            assert_eq!(
+                content_addr(&a) == content_addr(&b),
+                same,
+                "{label} {effect} the content address",
+            );
+        }
+    }
+
     #[test]
     fn fixed_rate_rows_reify_bare_and_reject_the_other_rate() {
         let a2k = UnitNode::from_unit("A2K").expect("A2K row");

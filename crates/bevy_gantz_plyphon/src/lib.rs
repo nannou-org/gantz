@@ -2164,6 +2164,8 @@ where
 mod tests {
     use super::*;
 
+    mod plugin_order;
+
     /// A fading entry with no scope streams, due at `deadline`.
     fn fade(entity: Entity, deadline: Instant) -> FadingSynth {
         FadingSynth {
@@ -2285,33 +2287,42 @@ mod tests {
         assert_ne!(scope, bufnum);
     }
 
-    /// An asset shared by two synths is installed once, refcounted, and freed
-    /// only when the last reference drops.
+    /// A resident asset or a scratch buffer shared by two synths is installed
+    /// once, refcounted, and freed only when the last reference drops. A
+    /// respawn takes its reference before the old synth releases its own, so
+    /// the buffer and its contents survive.
     #[test]
-    fn resident_buffer_shares_and_refcounts() {
-        let mut controller = test_controller();
-        let mut state = HeadSynths::default();
+    fn shared_buffer_refcounts_until_the_last_reference_drops() {
         let (assets, addr) = one_asset();
-        let key = BufferKey::Asset(addr);
+        let head = entities(1)[0];
+        for (label, key, store) in [
+            ("asset", BufferKey::Asset(addr), &assets),
+            ("scratch", scratch(head, &[4], 64, 1), &EMPTY_BUFFERS),
+        ] {
+            let mut controller = test_controller();
+            let mut state = HeadSynths::default();
 
-        let mut a_refs = Vec::new();
-        let bufnum = resolve(&mut controller, &mut state, &assets, &mut a_refs, &key).unwrap();
-        assert_eq!(a_refs, vec![key.clone()]);
-        assert_eq!(refcount(&state, &key), Some(1));
+            let mut a_refs = Vec::new();
+            let bufnum =
+                resolve(&mut controller, &mut state, store, &mut a_refs, &key).expect(label);
+            assert_eq!(a_refs, vec![key.clone()], "{label}");
+            assert_eq!(refcount(&state, &key), Some(1), "{label}");
 
-        // A second synth shares the same bufnum and bumps the refcount.
-        let mut b_refs = Vec::new();
-        let bufnum2 = resolve(&mut controller, &mut state, &assets, &mut b_refs, &key).unwrap();
-        assert_eq!(bufnum2, bufnum);
-        assert_eq!(refcount(&state, &key), Some(2));
+            // A second synth shares the same bufnum and bumps the refcount.
+            let mut b_refs = Vec::new();
+            let bufnum2 =
+                resolve(&mut controller, &mut state, store, &mut b_refs, &key).expect(label);
+            assert_eq!(bufnum2, bufnum, "{label}");
+            assert_eq!(refcount(&state, &key), Some(2), "{label}");
 
-        // Freeing the first keeps the buffer resident for the second.
-        free_buffers(&mut controller, &mut state, &a_refs, Instant::now());
-        assert_eq!(refcount(&state, &key), Some(1));
+            // Freeing the first keeps the buffer resident for the second.
+            free_buffers(&mut controller, &mut state, &a_refs, Instant::now());
+            assert_eq!(refcount(&state, &key), Some(1), "{label}");
 
-        // Freeing the last drops it and quarantines the bufnum.
-        free_buffers(&mut controller, &mut state, &b_refs, Instant::now());
-        assert_eq!(refcount(&state, &key), None);
+            // Freeing the last drops it and quarantines the bufnum.
+            free_buffers(&mut controller, &mut state, &b_refs, Instant::now());
+            assert_eq!(refcount(&state, &key), None, "{label}");
+        }
     }
 
     /// Two references to the same asset within one part take a single refcount.
@@ -2338,24 +2349,6 @@ mod tests {
         let missing = BufferKey::Asset(ca::blob_addr(b"absent"));
         assert!(resolve(&mut controller, &mut state, &assets, &mut refs, &missing).is_none());
         assert!(refs.is_empty());
-    }
-
-    /// A respawn takes a reference to the scratch buffer before the old synth
-    /// releases its own, so the buffer and its contents survive.
-    #[test]
-    fn scratch_buffer_survives_respawn() {
-        let mut controller = test_controller();
-        let mut state = HeadSynths::default();
-        let head = entities(1)[0];
-        let key = scratch(head, &[4], 64, 1);
-        let mut old = Vec::new();
-        let bufnum = resolve(&mut controller, &mut state, &EMPTY_BUFFERS, &mut old, &key).unwrap();
-        let mut new = Vec::new();
-        let again = resolve(&mut controller, &mut state, &EMPTY_BUFFERS, &mut new, &key).unwrap();
-        assert_eq!(again, bufnum);
-        assert_eq!(refcount(&state, &key), Some(2));
-        free_buffers(&mut controller, &mut state, &old, Instant::now());
-        assert_eq!(refcount(&state, &key), Some(1));
     }
 
     /// Scratch buffers are per head and per node path. A new shape is a new
@@ -2456,16 +2449,6 @@ mod tests {
         );
     }
 
-    /// Under the cap and before any deadline, nothing drains.
-    #[test]
-    fn expire_fades_keeps_recent_under_cap() {
-        let e = entities(1);
-        let base = Instant::now();
-        let mut fading = vec![fade(e[0], later(base, 1)), fade(e[0], later(base, 2))];
-        assert!(expire_fades(&mut fading, base).is_empty());
-        assert_eq!(fading.len(), 2);
-    }
-
     /// Consecutive-run allocation, key stability, and width-change realloc.
     #[test]
     fn bus_alloc_allocates_stable_consecutive_runs() {
@@ -2528,62 +2511,6 @@ mod tests {
         );
     }
 
-    /// A `~sinosc -> ~out` graph spawns through `spawn_part` and sounds. The
-    /// fade gain, baked at `0.0`, is ramped to unity via `set_control`, and the
-    /// tone is audible after the fade lag. Guards the driver's runtime spawn
-    /// path, the GUI's path, end to end with an offline engine.
-    #[test]
-    fn spawn_part_sounds_sin_out() {
-        use gantz_core::edge::Edge;
-        use gantz_core::node::graph::Graph;
-        use gantz_plyphon::flatten::{Flat, RefKind, flatten};
-
-        let mut g = Graph::<TestN>::default();
-        let s = g.add_node(sinosc());
-        let o = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
-        g.add_edge(s, o, Edge::new(0.into(), 0.into()));
-        let resolve =
-            |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> { None };
-        let flat: Graph<Flat<&TestN>> = flatten(&|_| None, &g, &resolve).expect("flatten");
-
-        let mut cache = DefCache::new();
-        let template = derive_template(&flat, 1, &|_| None, &mut cache).expect("derive");
-        let part = instantiate(&template, &cache).into_iter().next().unwrap();
-        let wiring = wiring_hash(&part);
-
-        let (mut controller, _nrt, mut world) = plyphon::engine(plyphon::Options {
-            sample_rate: 48_000.0,
-            output_channels: 1,
-            ..plyphon::Options::default()
-        });
-        let mut state = HeadSynths::default();
-        let assets = BufferBlobs::default();
-        let entity = entities(1)[0];
-        let synth = spawn_part(
-            &mut controller,
-            &mut state,
-            &assets,
-            entity,
-            part,
-            wiring,
-            48_000.0,
-            None,
-            false,
-        )
-        .expect("spawn_part");
-        assert_eq!(synth.gains.len(), 1, "the out carries a fade gain");
-
-        let mut out = vec![0.0f32; 48_000 / 2];
-        for block in out.chunks_mut(64) {
-            world.fill(block, 1);
-        }
-        let rms = (out.iter().map(|v| v * v).sum::<f32>() / out.len() as f32).sqrt();
-        assert!(
-            rms > 0.05,
-            "sin -> out must sound via spawn_part: rms={rms}"
-        );
-    }
-
     /// A spawned part fades in. Its first block is near silent, and its level
     /// rises over the fade lag to full. The ramp comes from the def, so it
     /// holds even when the driver's fade param lands before the first block.
@@ -2608,7 +2535,7 @@ mod tests {
         let (mut controller, _nrt, mut world) = test_engine();
         let mut state = HeadSynths::default();
         let entity = entities(1)[0];
-        spawn_part(
+        let synth = spawn_part(
             &mut controller,
             &mut state,
             &EMPTY_BUFFERS,
@@ -2620,6 +2547,7 @@ mod tests {
             false,
         )
         .expect("spawn_part");
+        assert_eq!(synth.gains.len(), 1, "the out carries a fade gain");
 
         // The peak of each 64-frame block, over the fade and well past it.
         let fade_blocks = (gantz_plyphon::FADE_LAG * 48_000.0 / 64.0).ceil() as usize;

@@ -816,61 +816,163 @@ mod tests {
         );
     }
 
-    /// The collaborative-editing driver scenario. One side edits a node's
-    /// content while the other connects an edge to it. Chain-tracked identity
-    /// makes this a clean merge.
+    /// Single-commit merges of one small graph. Each row lists the expected
+    /// merged nodes in order, the merged edges and the flagged conflicts.
     #[test]
-    fn content_edit_and_edge_add_merge_cleanly() {
-        let base = graph(&["a", "b"], &[]);
-        let ours = graph(&["a", "b2"], &[]);
-        let theirs = graph(&["a", "b"], &[(0, 1, 0)]);
-        let (_, _, _, res) = merge_two(&base, &ours, &theirs);
-        let out = diverged(res);
-        assert!(out.conflicts.is_empty());
-        assert_eq!(nodes(&out.graph), vec!["a", "b2"]);
-        assert_eq!(edges(&out.graph), BTreeSet::from([(0, 1, 0)]));
-    }
-
-    #[test]
-    fn both_modified_differently_keeps_ours_and_flags() {
-        let base = graph(&["a", "b"], &[]);
-        let ours = graph(&["a", "b2"], &[]);
-        let theirs = graph(&["a", "b3"], &[]);
-        let (_, _, _, res) = merge_two(&base, &ours, &theirs);
-        let out = diverged(res);
-        assert_eq!(nodes(&out.graph), vec!["a", "b2"]);
-        assert_eq!(
-            out.conflicts,
-            vec![Conflict::BothModified {
-                base: 1,
-                ours: 1,
-                theirs: 1,
-                kept: Side::Ours,
-            }],
-        );
-    }
-
-    #[test]
-    fn both_modified_resolves_to_theirs_when_asked() {
-        let base = graph(&["a", "b"], &[]);
-        let ours = graph(&["a", "b2"], &[]);
-        let theirs = graph(&["a", "b3"], &[]);
-        let resolutions = Resolutions {
+    fn three_way_merge_cases() {
+        let keep_theirs = Resolutions {
             both_modified: BothModified::KeepTheirs,
             ..Default::default()
         };
-        let (_, _, _, res) = merge_two_with(&base, &ours, &theirs, resolutions);
-        let out = diverged(res);
-        assert_eq!(nodes(&out.graph), vec!["a", "b3"]);
-        assert_eq!(
-            out.conflicts,
-            vec![Conflict::BothModified {
-                base: 1,
-                ours: 1,
-                theirs: 1,
-                kept: Side::Theirs,
-            }],
-        );
+        let keep_delete = Resolutions {
+            delete_modify: EditOrDelete::KeepDelete,
+            ..Default::default()
+        };
+        let both_modified = |kept| Conflict::BothModified {
+            base: 1,
+            ours: 1,
+            theirs: 1,
+            kept,
+        };
+        let edge_to_deleted = Conflict::EdgeToDeleted {
+            side: Side::Theirs,
+            src: 0,
+            dst: 1,
+            edge: edge(0),
+        };
+        let cases = [
+            // The collaborative-editing driver scenario. One side edits a
+            // node's content while the other connects an edge to it.
+            // Chain-tracked identity makes this a clean merge.
+            (
+                "content edit and edge add merge cleanly",
+                graph(&["a", "b"], &[]),
+                graph(&["a", "b2"], &[]),
+                graph(&["a", "b"], &[(0, 1, 0)]),
+                Resolutions::default(),
+                vec!["a", "b2"],
+                vec![(0, 1, 0)],
+                vec![],
+            ),
+            (
+                "both modified differently keeps ours and flags",
+                graph(&["a", "b"], &[]),
+                graph(&["a", "b2"], &[]),
+                graph(&["a", "b3"], &[]),
+                Resolutions::default(),
+                vec!["a", "b2"],
+                vec![],
+                vec![both_modified(Side::Ours)],
+            ),
+            (
+                "both modified resolves to theirs when asked",
+                graph(&["a", "b"], &[]),
+                graph(&["a", "b2"], &[]),
+                graph(&["a", "b3"], &[]),
+                keep_theirs,
+                vec!["a", "b3"],
+                vec![],
+                vec![both_modified(Side::Theirs)],
+            ),
+            (
+                "both modified identically is clean",
+                graph(&["a", "b"], &[]),
+                graph(&["a", "b2"], &[]),
+                graph(&["a", "b2"], &[]),
+                Resolutions::default(),
+                vec!["a", "b2"],
+                vec![],
+                vec![],
+            ),
+            // Ours deletes ix 1. Theirs modifies it and wires into it. The
+            // delete wins. Theirs' edge into the node dangles and drops.
+            (
+                "delete vs modify deletes when asked",
+                graph(&["a", "b"], &[]),
+                graph(&["a"], &[]),
+                graph(&["a", "b2"], &[(0, 1, 0)]),
+                keep_delete,
+                vec!["a"],
+                vec![],
+                vec![
+                    Conflict::DeleteModify {
+                        base: 1,
+                        modified: Side::Theirs,
+                        kept: false,
+                    },
+                    edge_to_deleted.clone(),
+                ],
+            ),
+            (
+                "delete vs untouched deletes",
+                graph(&["a", "b"], &[]),
+                graph(&["a"], &[]),
+                graph(&["a", "b"], &[]),
+                Resolutions::default(),
+                vec!["a"],
+                vec![],
+                vec![],
+            ),
+            // Ours deletes ix 1, which theirs left untouched. Theirs wires
+            // into it.
+            (
+                "edge to deleted node is dropped and flagged",
+                graph(&["a", "b"], &[]),
+                graph(&["a"], &[]),
+                graph(&["a", "b"], &[(0, 1, 0)]),
+                Resolutions::default(),
+                vec!["a"],
+                vec![],
+                vec![edge_to_deleted],
+            ),
+            (
+                "identical edge additions collapse",
+                graph(&["a", "b"], &[]),
+                graph(&["a", "b"], &[(0, 1, 0)]),
+                graph(&["a", "b"], &[(0, 1, 0)]),
+                Resolutions::default(),
+                vec!["a", "b"],
+                vec![(0, 1, 0)],
+                vec![],
+            ),
+            (
+                "distinct parallel edge additions are both kept",
+                graph(&["a", "b"], &[]),
+                graph(&["a", "b"], &[(0, 1, 0)]),
+                graph(&["a", "b"], &[(0, 1, 1)]),
+                Resolutions::default(),
+                vec!["a", "b"],
+                vec![(0, 1, 0), (0, 1, 1)],
+                vec![],
+            ),
+            (
+                "edge removed by one side stays removed",
+                graph(&["a", "b"], &[(0, 1, 0)]),
+                graph(&["a", "b"], &[]),
+                graph(&["a", "b", "c"], &[(0, 1, 0)]),
+                Resolutions::default(),
+                vec!["a", "b", "c"],
+                vec![],
+                vec![],
+            ),
+        ];
+        for (label, base, ours, theirs, resolutions, want_nodes, want_edges, conflicts) in cases {
+            let (_, _, _, res) = merge_two_with(&base, &ours, &theirs, resolutions);
+            let out = match res {
+                MergeResolution::Diverged { outcome, .. } => outcome,
+                other => panic!("{label}: expected Diverged, got {other:?}"),
+            };
+            assert_eq!(nodes(&out.graph), want_nodes, "{label}: nodes");
+            let want_edge_set: BTreeSet<_> = want_edges.iter().copied().collect();
+            assert_eq!(edges(&out.graph), want_edge_set, "{label}: edges");
+            // `edges` is a set. The count catches duplicated parallel edges.
+            assert_eq!(
+                out.graph.edge_count(),
+                want_edges.len(),
+                "{label}: edge count"
+            );
+            assert_eq!(out.conflicts, conflicts, "{label}: conflicts");
+        }
     }
 
     /// Per-node last edit wins. Ours edited node 0 at t=2 then node 1 at
@@ -923,17 +1025,6 @@ mod tests {
     }
 
     #[test]
-    fn both_modified_identically_is_clean() {
-        let base = graph(&["a", "b"], &[]);
-        let ours = graph(&["a", "b2"], &[]);
-        let theirs = graph(&["a", "b2"], &[]);
-        let (_, _, _, res) = merge_two(&base, &ours, &theirs);
-        let out = diverged(res);
-        assert!(out.conflicts.is_empty());
-        assert_eq!(nodes(&out.graph), vec!["a", "b2"]);
-    }
-
-    #[test]
     fn delete_vs_modify_keeps_the_modified_node() {
         let base = graph(&["a", "b"], &[]);
         // Ours deletes ix 1 and theirs modifies it.
@@ -958,119 +1049,6 @@ mod tests {
                 theirs: Some(1)
             },
         );
-    }
-
-    #[test]
-    fn delete_vs_modify_deletes_when_asked() {
-        let base = graph(&["a", "b"], &[]);
-        // Ours deletes ix 1. Theirs modifies it and wires into it.
-        let ours = graph(&["a"], &[]);
-        let theirs = graph(&["a", "b2"], &[(0, 1, 0)]);
-        let resolutions = Resolutions {
-            delete_modify: EditOrDelete::KeepDelete,
-            ..Default::default()
-        };
-        let (_, _, _, res) = merge_two_with(&base, &ours, &theirs, resolutions);
-        let out = diverged(res);
-        // The delete wins. Theirs' edge into the node dangles and drops.
-        assert_eq!(nodes(&out.graph), vec!["a"]);
-        assert!(edges(&out.graph).is_empty());
-        assert_eq!(
-            out.conflicts,
-            vec![
-                Conflict::DeleteModify {
-                    base: 1,
-                    modified: Side::Theirs,
-                    kept: false,
-                },
-                Conflict::EdgeToDeleted {
-                    side: Side::Theirs,
-                    src: 0,
-                    dst: 1,
-                    edge: edge(0),
-                },
-            ],
-        );
-    }
-
-    #[test]
-    fn delete_vs_untouched_deletes() {
-        let base = graph(&["a", "b"], &[]);
-        let ours = graph(&["a"], &[]);
-        let theirs = graph(&["a", "b"], &[]);
-        let (_, _, _, res) = merge_two(&base, &ours, &theirs);
-        let out = diverged(res);
-        assert!(out.conflicts.is_empty());
-        assert_eq!(nodes(&out.graph), vec!["a"]);
-    }
-
-    #[test]
-    fn edge_to_deleted_node_is_dropped_and_flagged() {
-        let base = graph(&["a", "b"], &[]);
-        // Ours deletes ix 1, which theirs left untouched. Theirs wires into it.
-        let ours = graph(&["a"], &[]);
-        let theirs = graph(&["a", "b"], &[(0, 1, 0)]);
-        let (_, _, _, res) = merge_two(&base, &ours, &theirs);
-        let out = diverged(res);
-        assert_eq!(nodes(&out.graph), vec!["a"]);
-        assert!(edges(&out.graph).is_empty());
-        assert_eq!(
-            out.conflicts,
-            vec![Conflict::EdgeToDeleted {
-                side: Side::Theirs,
-                src: 0,
-                dst: 1,
-                edge: edge(0)
-            }],
-        );
-    }
-
-    #[test]
-    fn identical_edge_additions_collapse() {
-        let base = graph(&["a", "b"], &[]);
-        let ours = graph(&["a", "b"], &[(0, 1, 0)]);
-        let theirs = graph(&["a", "b"], &[(0, 1, 0)]);
-        let (_, _, _, res) = merge_two(&base, &ours, &theirs);
-        let out = diverged(res);
-        assert!(out.conflicts.is_empty());
-        assert_eq!(edges(&out.graph), BTreeSet::from([(0, 1, 0)]));
-        assert_eq!(out.graph.edge_count(), 1);
-    }
-
-    #[test]
-    fn distinct_parallel_edge_additions_are_both_kept() {
-        let base = graph(&["a", "b"], &[]);
-        let ours = graph(&["a", "b"], &[(0, 1, 0)]);
-        let theirs = graph(&["a", "b"], &[(0, 1, 1)]);
-        let (_, _, _, res) = merge_two(&base, &ours, &theirs);
-        let out = diverged(res);
-        assert!(out.conflicts.is_empty());
-        assert_eq!(edges(&out.graph), BTreeSet::from([(0, 1, 0), (0, 1, 1)]));
-    }
-
-    #[test]
-    fn edge_removed_by_one_side_stays_removed() {
-        let base = graph(&["a", "b"], &[(0, 1, 0)]);
-        let ours = graph(&["a", "b"], &[]);
-        let theirs = graph(&["a", "b", "c"], &[(0, 1, 0)]);
-        let (_, _, _, res) = merge_two(&base, &ours, &theirs);
-        let out = diverged(res);
-        assert!(out.conflicts.is_empty());
-        assert_eq!(nodes(&out.graph), vec!["a", "b", "c"]);
-        assert!(edges(&out.graph).is_empty());
-    }
-
-    #[test]
-    fn merge_is_deterministic() {
-        let base = graph(&["a", "b"], &[(0, 1, 0)]);
-        let ours = graph(&["a", "b", "x"], &[(0, 1, 0), (0, 2, 1)]);
-        let theirs = graph(&["a", "b2", "y"], &[(0, 1, 0), (2, 1, 2)]);
-        let (_, o, t, res) = merge_two(&base, &ours, &theirs);
-        let out = diverged(res);
-        let (reg2, _, _, _) = merge_two(&base, &ours, &theirs);
-        let res2 = merge_commits(&reg2, o, t, Resolutions::default()).unwrap();
-        let out2 = diverged(res2);
-        assert_eq!(graph_addr(&out.graph), graph_addr(&out2.graph));
     }
 
     #[test]

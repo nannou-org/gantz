@@ -19,9 +19,6 @@ use bevy_gantz_egui::{BuiltinNodes, GantzEguiPlugin, GuiState, TraceCapture};
 use bevy_pkv::PkvStore;
 use storage::Pkv;
 
-// The `node` tests share the headless helpers.
-#[cfg(test)]
-mod headless;
 mod node;
 mod storage;
 

@@ -319,20 +319,19 @@ mod tests {
     }
 
     #[test]
-    fn navigation_matching_tracks_redo_along_the_chain() {
+    fn navigation_matching_tracks_the_chain_both_ways() {
         let (reg, base, child) = base_and_child();
-        // Redo direction. Index 2 swap-moved to 1. Index 1 was deleted.
-        let m = navigation_matching(&reg, base, child).unwrap();
-        assert_eq!(m, ca::Matching::from([(0, 0), (2, 1)]));
-    }
-
-    #[test]
-    fn navigation_matching_inverts_for_undo() {
-        let (reg, base, child) = base_and_child();
-        // Undo direction. The chain runs the other way, so the tracked
-        // matching is inverted. Child index 1 returns to 2.
-        let m = navigation_matching(&reg, child, base).unwrap();
-        assert_eq!(m, ca::Matching::from([(0, 0), (1, 2)]));
+        let rows = [
+            // Redo direction. Index 2 swap-moved to 1. Index 1 was deleted.
+            ("redo", base, child, ca::Matching::from([(0, 0), (2, 1)])),
+            // Undo direction. The chain runs the other way, so the tracked
+            // matching is inverted. Child index 1 returns to 2.
+            ("undo", child, base, ca::Matching::from([(0, 0), (1, 2)])),
+        ];
+        for (case, from, to, expected) in rows {
+            let m = navigation_matching(&reg, from, to).unwrap();
+            assert_eq!(m, expected, "{case}");
+        }
     }
 
     #[test]

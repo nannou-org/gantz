@@ -63,3 +63,5 @@ pub mod registry;
 pub mod section;
 pub mod serde_sorted;
 pub mod sync;
+#[cfg(test)]
+mod tests;

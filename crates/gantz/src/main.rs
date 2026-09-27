@@ -23,6 +23,8 @@ mod mirror;
 mod node;
 mod persist;
 mod storage;
+#[cfg(test)]
+mod tests;
 mod window;
 
 fn main() {
@@ -192,17 +194,5 @@ fn load_egui_memory(mut ctxs: EguiContexts, mut storage: ResMut<Pkv>, mut loaded
             bevy_gantz_egui::storage::load_egui_memory(&mut *storage, ctx);
             *loaded = true;
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    const BASE_GANTZ: &[u8] = gantz_base::BYTES;
-
-    #[test]
-    fn base_gantz_deserializes() {
-        let _registry: gantz_ca::Registry =
-            gantz_egui::export::parse_export(BASE_GANTZ, &super::node::codec())
-                .expect("valid .gantz");
     }
 }

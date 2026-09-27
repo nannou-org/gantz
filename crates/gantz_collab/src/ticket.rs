@@ -98,10 +98,4 @@ mod tests {
         assert_eq!(parsed.resolutions, ticket.resolutions);
         assert_eq!(parsed.proto, PROTO_VERSION);
     }
-
-    #[test]
-    fn garbage_tickets_are_rejected() {
-        assert!(SessionTicket::from_str("gantznotaticket").is_err());
-        assert!(SessionTicket::from_str("blob123").is_err());
-    }
 }

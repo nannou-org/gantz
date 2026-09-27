@@ -406,22 +406,16 @@ fn test_n_inputs_min_one() {
 }
 
 #[test]
-fn test_outputs_default() {
+fn test_outputs() {
     let e = Expr::new("(+ $a $b)").unwrap();
-    assert_eq!(e.outputs(), 1);
-}
+    assert_eq!(e.outputs(), 1, "default");
 
-#[test]
-fn test_with_outputs() {
     let e = Expr::new("(values $a $b)").unwrap().with_outputs(2);
-    assert_eq!(e.outputs(), 2);
-}
+    assert_eq!(e.outputs(), 2, "with_outputs");
 
-#[test]
-fn test_set_outputs() {
     let mut e = Expr::new("(values $a $b $c)").unwrap();
     e.set_outputs(3);
-    assert_eq!(e.outputs(), 3);
+    assert_eq!(e.outputs(), 3, "set_outputs");
 }
 
 // An `Expr` without requires must serialize without the field, since content
@@ -456,52 +450,50 @@ fn test_outputs_exceeds_max_panics() {
 }
 
 #[test]
-fn test_interpolate_optional_unconnected() {
-    let src = "(if $?a $?a 0)";
-    let vars = vars_from_src(src);
-    let tts = TokenStream::new(src, true, None);
-    let result = interpolate_tokens(tts, &vars, &[None]);
-    assert!(result.contains("(None)"), "expected (None) in: {result}");
-}
-
-#[test]
-fn test_interpolate_optional_connected() {
-    let src = "(if $?a $?a 0)";
-    let vars = vars_from_src(src);
-    let tts = TokenStream::new(src, true, None);
-    let result = interpolate_tokens(tts, &vars, &[Some("input0".into())]);
-    assert!(
-        result.contains("(Some input0)"),
-        "expected (Some input0) in: {result}",
-    );
-}
-
-#[test]
-fn test_interpolate_mixed_required_optional() {
-    let src = "(+ $a (unwrap-or $?b 0))";
-    let vars = vars_from_src(src);
-    let tts = TokenStream::new(src, true, None);
-    // $a connected, $?b unconnected.
-    let result = interpolate_tokens(tts, &vars, &[Some("input0".into()), None]);
-    assert!(result.contains("input0"), "expected input0 in: {result}");
-    assert!(result.contains("(None)"), "expected (None) in: {result}");
-}
-
-#[test]
-fn test_interpolate_required_unconnected_unchanged() {
-    let src = "(+ $a $b)";
-    let vars = vars_from_src(src);
-    let tts = TokenStream::new(src, true, None);
-    let result = interpolate_tokens(tts, &vars, &[Some("input0".into()), None]);
-    assert!(result.contains("input0"), "expected input0 in: {result}");
-    assert!(result.contains("'()"), "expected '() in: {result}");
-    // Ensure no Option wrapping for required vars.
-    assert!(
-        !result.contains("(None)"),
-        "should not contain (None): {result}"
-    );
-    assert!(
-        !result.contains("(Some"),
-        "should not contain (Some: {result}"
-    );
+fn test_interpolate_tokens() {
+    let input0 = || Some("input0".to_string());
+    // Each case lists the substrings the result must and must not contain.
+    let cases: [(&str, &str, Vec<Option<String>>, &[&str], &[&str]); 4] = [
+        (
+            "optional unconnected",
+            "(if $?a $?a 0)",
+            vec![None],
+            &["(None)"],
+            &[],
+        ),
+        (
+            "optional connected",
+            "(if $?a $?a 0)",
+            vec![input0()],
+            &["(Some input0)"],
+            &[],
+        ),
+        // $a connected, $?b unconnected.
+        (
+            "mixed required and optional",
+            "(+ $a (unwrap-or $?b 0))",
+            vec![input0(), None],
+            &["input0", "(None)"],
+            &[],
+        ),
+        // No Option wrapping for required vars.
+        (
+            "required unconnected",
+            "(+ $a $b)",
+            vec![input0(), None],
+            &["input0", "'()"],
+            &["(None)", "(Some"],
+        ),
+    ];
+    for (label, src, inputs, must, must_not) in cases {
+        let vars = vars_from_src(src);
+        let tts = TokenStream::new(src, true, None);
+        let result = interpolate_tokens(tts, &vars, &inputs);
+        for s in must {
+            assert!(result.contains(s), "{label}: expected {s} in: {result}");
+        }
+        for s in must_not {
+            assert!(!result.contains(s), "{label}: unexpected {s} in: {result}");
+        }
+    }
 }

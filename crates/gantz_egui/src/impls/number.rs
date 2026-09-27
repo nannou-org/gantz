@@ -238,15 +238,16 @@ mod tests {
             push: false,
             ..Default::default()
         });
-        assert_eq!(fragment(&num, 3), expected);
-    }
+        assert_eq!(fragment(&num, 3), expected, "custom weight");
 
-    #[test]
-    fn default_weight_yields_default_dialer_attrs() {
         let expected = gantz_ui::Element::Dialer(gantz_ui::Dialer {
             bind: Some(gantz_ui::BindPath(vec![0])),
             ..Default::default()
         });
-        assert_eq!(fragment(&Number::default(), 0), expected);
+        assert_eq!(
+            fragment(&Number::default(), 0),
+            expected,
+            "default weight yields default dialer attrs"
+        );
     }
 }

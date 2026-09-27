@@ -269,37 +269,22 @@ mod tests {
             .content_addr()
     }
 
-    /// `size` is part of the content address, so a resize is a genuine edit.
-    /// Identical fields produce an identical address.
+    /// `size` and `text` are part of the content address, so a resize is a
+    /// genuine edit. Identical fields produce an identical address.
     #[test]
-    fn size_is_part_of_content_address() {
-        let a = Comment {
-            text: "hi".into(),
-            size: [100, 40],
+    fn size_and_text_are_part_of_content_address() {
+        let comment = |text: &str, size| Comment {
+            text: text.into(),
+            size,
         };
-        let b = Comment {
-            text: "hi".into(),
-            size: [200, 40],
-        };
-        let c = Comment {
-            text: "hi".into(),
-            size: [100, 40],
-        };
-        assert_ne!(content_addr(&a), content_addr(&b));
-        assert_eq!(content_addr(&a), content_addr(&c));
-    }
-
-    /// Text is part of the content address.
-    #[test]
-    fn text_is_part_of_content_address() {
-        let a = Comment {
-            text: "hi".into(),
-            size: [100, 40],
-        };
-        let b = Comment {
-            text: "bye".into(),
-            size: [100, 40],
-        };
-        assert_ne!(content_addr(&a), content_addr(&b));
+        let a = content_addr(&comment("hi", [100, 40]));
+        let cases = [
+            ("identical fields", comment("hi", [100, 40]), true),
+            ("size differs", comment("hi", [200, 40]), false),
+            ("text differs", comment("bye", [100, 40]), false),
+        ];
+        for (case, b, equal) in cases {
+            assert_eq!(a == content_addr(&b), equal, "{case}");
+        }
     }
 }

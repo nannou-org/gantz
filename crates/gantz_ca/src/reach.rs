@@ -247,18 +247,6 @@ mod tests {
     }
 
     #[test]
-    fn graphs_stay_live_through_content_refs_without_commits() {
-        let mut reg = Registry::default();
-        let nested = add_graph(&mut reg, vec![], vec![]);
-        let root_ga = add_graph(&mut reg, vec![nested], vec![]);
-        let c = reg.commit_graph(Duration::from_secs(1), None, root_ga, || unreachable!());
-        reg.set_head(name("alpha"), c);
-        let live = closure(&reg, []);
-        prune(&mut reg, &live);
-        assert!(reg.graph(&nested).is_some());
-    }
-
-    #[test]
     fn prune_drops_dead_content_and_sections_follow() {
         let mut reg = Registry::default();
         let ga = add_graph(&mut reg, vec![], vec![]);
@@ -300,26 +288,6 @@ mod tests {
         prune(&mut reg, &live);
         assert!(!reg.commits().contains_key(&old));
         assert_eq!(reg.commits()[&tip].parent, None);
-    }
-
-    #[test]
-    fn blob_liveness_follows_content_refs() {
-        let mut reg = Registry::default();
-        let used = reg.add_blob("dsp.buffer", BlobLiveness::ContentReferenced, &b"used"[..]);
-        let unused = reg.add_blob(
-            "dsp.buffer",
-            BlobLiveness::ContentReferenced,
-            &b"unused"[..],
-        );
-        let ga = add_graph(&mut reg, vec![], vec![("dsp.buffer".to_string(), used)]);
-        let c = reg.commit_graph(Duration::from_secs(1), None, ga, || unreachable!());
-        reg.set_head(name("alpha"), c);
-        let live = closure(&reg, []);
-        assert!(live.blob_live("dsp.buffer", &used));
-        assert!(!live.blob_live("dsp.buffer", &unused));
-        prune(&mut reg, &live);
-        assert!(reg.blob("dsp.buffer", &used).is_some());
-        assert!(reg.blob("dsp.buffer", &unused).is_none());
     }
 
     #[test]
@@ -446,7 +414,9 @@ mod tests {
         assert!(live.blob_live("dsp.buffer", &buf));
         assert!(!live.blob_live("dsp.buffer", &orphan));
         prune(&mut reg, &live);
+        assert!(reg.graph(&nested).is_some());
         assert!(reg.graph(&dead).is_none());
+        assert!(reg.blob("dsp.buffer", &buf).is_some());
         assert!(reg.blob("dsp.buffer", &orphan).is_none());
     }
 

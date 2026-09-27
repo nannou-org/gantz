@@ -178,6 +178,8 @@ pub mod diag;
 pub mod elem;
 pub mod encode;
 pub mod sexpr;
+#[cfg(test)]
+mod tests;
 
 /// The `gantz/ui` Steel module.
 ///

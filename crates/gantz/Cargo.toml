@@ -64,3 +64,6 @@ path = "src/main.rs"
 [[bin]]
 name = "update-base"
 path = "src/main_update_base.rs"
+# It has no tests. The `gantz` bin tests the `node` and `storage` modules it
+# shares.
+test = false

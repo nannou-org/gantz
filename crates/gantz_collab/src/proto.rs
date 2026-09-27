@@ -322,28 +322,55 @@ mod tests {
         s.parse().unwrap()
     }
 
-    #[test]
-    fn wire_types_round_trip() {
+    /// One message of every [`GossipMsg`] variant, in declaration order.
+    fn gossip_msgs() -> [GossipMsg; 5] {
         let ca = CommitAddr::from(gantz_ca::ContentAddr::from([3; 32]));
         let ga = GraphAddr::from(gantz_ca::ContentAddr::from([4; 32]));
-        let msg = GossipMsg::Tips {
-            origin: PeerId([1; 32]),
-            seq: 7,
-            changed: vec![(name("main"), ca, ga)],
-        };
-        let decoded: GossipMsg = decode(&encode(&msg)).unwrap();
-        let GossipMsg::Tips {
-            origin,
-            seq,
-            changed,
-        } = decoded
-        else {
-            panic!("wrong variant");
-        };
-        assert_eq!(origin, PeerId([1; 32]));
-        assert_eq!(seq, 7);
-        assert_eq!(changed, vec![(name("main"), ca, ga)]);
+        [
+            GossipMsg::Tips {
+                origin: PeerId([1; 32]),
+                seq: 7,
+                changed: vec![(name("main"), ca, ga)],
+            },
+            GossipMsg::Digest {
+                origin: PeerId([2; 32]),
+                seq: 5,
+                n_names: 1,
+                digest: [6; 32],
+            },
+            GossipMsg::Presence {
+                origin: PeerId([1; 32]),
+                name: Some("ann".to_string()),
+            },
+            GossipMsg::Action {
+                origin: PeerId([9; 32]),
+                seq: 3,
+                timestamp: 1_000_000,
+                name: name("main"),
+                graph: ga,
+                data: vec![1, 2, 3],
+            },
+            GossipMsg::Pointer {
+                origin: PeerId([7; 32]),
+                seq: 9,
+                name: name("main"),
+                pos: Some((1.5, -2.0)),
+            },
+        ]
+    }
 
+    /// The wire types have no `PartialEq`. Postcard gives distinct values
+    /// distinct bytes, so equal bytes after a round trip show an equal value.
+    #[test]
+    fn wire_types_round_trip() {
+        for msg in gossip_msgs() {
+            let bytes = encode(&msg);
+            let decoded: GossipMsg = decode(&bytes).unwrap();
+            assert_eq!(encode(&decoded), bytes, "{msg:?}");
+        }
+
+        let ca = CommitAddr::from(gantz_ca::ContentAddr::from([3; 32]));
+        let ga = GraphAddr::from(gantz_ca::ContentAddr::from([4; 32]));
         let req = SyncRequest::Want {
             session: SessionId([2; 32]),
             want: Want {
@@ -361,93 +388,18 @@ mod tests {
                 ],
             },
         };
-        let decoded: SyncRequest = decode(&encode(&req)).unwrap();
-        let SyncRequest::Want { want, .. } = decoded else {
-            panic!("wrong variant");
-        };
-        assert_eq!(want.refs.len(), 4);
+        let bytes = encode(&req);
+        let decoded: SyncRequest = decode(&bytes).unwrap();
+        assert_eq!(encode(&decoded), bytes, "{req:?}");
     }
 
+    /// Variant order is part of the wire format. An appended variant must
+    /// not shift the postcard discriminants of the variants before it.
     #[test]
-    fn action_round_trips_and_leaves_other_variants_stable() {
-        let ga = GraphAddr::from(gantz_ca::ContentAddr::from([4; 32]));
-        let msg = GossipMsg::Action {
-            origin: PeerId([9; 32]),
-            seq: 3,
-            timestamp: 1_000_000,
-            name: name("main"),
-            graph: ga,
-            data: vec![1, 2, 3],
-        };
-        let decoded: GossipMsg = decode(&encode(&msg)).unwrap();
-        let GossipMsg::Action {
-            origin,
-            seq,
-            timestamp,
-            name,
-            graph,
-            data,
-        } = decoded
-        else {
-            panic!("wrong variant");
-        };
-        assert_eq!(origin, PeerId([9; 32]));
-        assert_eq!(seq, 3);
-        assert_eq!(timestamp, 1_000_000);
-        assert_eq!(name, "main".parse::<Name>().unwrap());
-        assert_eq!(graph, ga);
-        assert_eq!(data, vec![1, 2, 3]);
-
-        // The trailing variant must not shift the existing postcard
-        // discriminants. A Tips encoding still starts with tag 0.
-        let tips = GossipMsg::Tips {
-            origin: PeerId([1; 32]),
-            seq: 0,
-            changed: vec![],
-        };
-        assert_eq!(encode(&tips)[0], 0);
-        let presence = GossipMsg::Presence {
-            origin: PeerId([1; 32]),
-            name: None,
-        };
-        assert_eq!(encode(&presence)[0], 2);
-    }
-
-    #[test]
-    fn pointer_round_trips_and_leaves_other_variants_stable() {
-        let msg = GossipMsg::Pointer {
-            origin: PeerId([7; 32]),
-            seq: 9,
-            name: name("main"),
-            pos: Some((1.5, -2.0)),
-        };
-        let decoded: GossipMsg = decode(&encode(&msg)).unwrap();
-        let GossipMsg::Pointer {
-            origin,
-            seq,
-            name: n,
-            pos,
-        } = decoded
-        else {
-            panic!("wrong variant");
-        };
-        assert_eq!(origin, PeerId([7; 32]));
-        assert_eq!(seq, 9);
-        assert_eq!(n, name("main"));
-        assert_eq!(pos, Some((1.5, -2.0)));
-
-        // `Pointer` follows `Action`, so its discriminant is one higher and
-        // `Action`'s is unchanged.
-        let action = GossipMsg::Action {
-            origin: PeerId([1; 32]),
-            seq: 0,
-            timestamp: 0,
-            name: name("main"),
-            graph: GraphAddr::from(gantz_ca::ContentAddr::from([4; 32])),
-            data: vec![],
-        };
-        assert_eq!(encode(&action)[0], 3);
-        assert_eq!(encode(&msg)[0], 4);
+    fn gossip_discriminants_are_pinned() {
+        for (tag, msg) in gossip_msgs().iter().enumerate() {
+            assert_eq!(usize::from(encode(msg)[0]), tag, "{msg:?}");
+        }
     }
 
     #[test]

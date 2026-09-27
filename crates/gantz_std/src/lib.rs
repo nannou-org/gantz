@@ -11,6 +11,8 @@ pub mod list;
 pub mod log;
 pub mod number;
 pub mod sugar;
+#[cfg(test)]
+mod tests;
 
 /// Builtin specs for the std node set.
 pub fn builtins() -> Vec<gantz_core::Builtin> {

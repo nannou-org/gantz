@@ -243,35 +243,24 @@ mod tests {
     }
 
     #[test]
-    fn extract_subgraph_basic() {
-        let (g, [_a, b, c, d]) = diamond_graph();
-        let selected: HashSet<_> = [b, c, d].into_iter().collect();
-        let sub = extract_subgraph(&g, &selected);
-        assert_eq!(sub.node_count(), 3);
-        // Only edges where both endpoints are selected. That is B to D and C
-        // to D.
-        assert_eq!(sub.edge_count(), 2);
-        // Weights preserved.
-        let weights: Vec<_> = sub.node_indices().map(|n| sub[n]).collect();
-        assert_eq!(weights, vec!["B", "C", "D"]);
-    }
-
-    #[test]
-    fn extract_subgraph_excludes_external_edges() {
-        let (g, [a, _b, _c, d]) = diamond_graph();
-        // Select only A and D. There is no direct edge between them.
-        let selected: HashSet<_> = [a, d].into_iter().collect();
-        let sub = extract_subgraph(&g, &selected);
-        assert_eq!(sub.node_count(), 2);
-        assert_eq!(sub.edge_count(), 0);
-    }
-
-    #[test]
-    fn extract_subgraph_empty_selection() {
-        let (g, _) = diamond_graph();
-        let sub = extract_subgraph(&g, &HashSet::new());
-        assert_eq!(sub.node_count(), 0);
-        assert_eq!(sub.edge_count(), 0);
+    fn extract_subgraph_selections() {
+        let (g, [a, b, c, d]) = diamond_graph();
+        // Only edges where both endpoints are selected are kept.
+        for (label, selected, n_edges, weights) in [
+            // B to D and C to D.
+            ("B, C and D", vec![b, c, d], 2, &["B", "C", "D"][..]),
+            // There is no direct edge between A and D.
+            ("A and D", vec![a, d], 0, &["A", "D"][..]),
+            ("empty", vec![], 0, &[][..]),
+        ] {
+            let selected: HashSet<_> = selected.into_iter().collect();
+            let sub = extract_subgraph(&g, &selected);
+            assert_eq!(sub.node_count(), weights.len(), "{label}: node count");
+            assert_eq!(sub.edge_count(), n_edges, "{label}: edge count");
+            // Weights preserved.
+            let got: Vec<_> = sub.node_indices().map(|n| sub[n]).collect();
+            assert_eq!(got, weights, "{label}: weights");
+        }
     }
 
     #[test]

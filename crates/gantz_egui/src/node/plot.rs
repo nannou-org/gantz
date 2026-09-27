@@ -787,173 +787,118 @@ mod tests {
         (g, s.index(), p.index())
     }
 
-    // Scope mode appends each pushed number and bounds the history to `capacity`.
+    // Scope mode pushes through `plot_push`. Each row folds its pushes into
+    // the start state at capacity `cap`. The history is always vector-backed
+    // and follows the incoming shape. A flat history is one channel.
     #[test]
-    fn scope_accumulates_bounded_history() {
-        let src = gantz_core::node::expr("5").unwrap().with_push_eval();
-        let plot = Plot {
-            mode: PlotMode::Scope,
-            capacity: 3,
-            ..Default::default()
-        };
-        let (g, s, p) = graph_with(Box::new(src) as Box<dyn Node>, plot);
-        let mut vm = vm_for(&g);
-        fire(&mut vm, &g, s, 5);
-        assert_eq!(samples_of(&vm, p), vec![5.0, 5.0, 5.0]);
-    }
-
-    // Scope mode extends the history with a pushed list's elements.
-    #[test]
-    fn scope_extends_with_list() {
-        let src = gantz_core::node::expr("(list 1 2 3)")
-            .unwrap()
-            .with_push_eval();
-        let plot = Plot {
-            mode: PlotMode::Scope,
-            capacity: 10,
-            ..Default::default()
-        };
-        let (g, s, p) = graph_with(Box::new(src) as Box<dyn Node>, plot);
-        let mut vm = vm_for(&g);
-        fire(&mut vm, &g, s, 2);
-        assert_eq!(samples_of(&vm, p), vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0]);
-    }
-
-    // A pushed list at least as long as the capacity keeps only its last `cap`
-    // samples.
-    #[test]
-    fn scope_list_over_capacity_keeps_tail() {
-        let src = gantz_core::node::expr("(list 1 2 3 4 5)")
-            .unwrap()
-            .with_push_eval();
-        let plot = Plot {
-            mode: PlotMode::Scope,
-            capacity: 3,
-            ..Default::default()
-        };
-        let (g, s, p) = graph_with(Box::new(src) as Box<dyn Node>, plot);
-        let mut vm = vm_for(&g);
-        fire(&mut vm, &g, s, 1);
-        assert_eq!(samples_of(&vm, p), vec![3.0, 4.0, 5.0]);
-        // A second identical window still yields just its last 3.
-        fire(&mut vm, &g, s, 1);
-        assert_eq!(samples_of(&vm, p), vec![3.0, 4.0, 5.0]);
-    }
-
-    // A pushed list of channels accumulates one capped history per channel. That
-    // is the stacked-sub-plot state shape.
-    #[test]
-    fn scope_accumulates_per_channel_histories() {
-        let src = gantz_core::node::expr("(list (list 1 2) (list -1 -2))")
-            .unwrap()
-            .with_push_eval();
-        let plot = Plot {
-            mode: PlotMode::Scope,
-            capacity: 3,
-            ..Default::default()
-        };
-        let (g, s, p) = graph_with(Box::new(src) as Box<dyn Node>, plot);
-        let mut vm = vm_for(&g);
-        // Two windows of 2 samples with capacity 3. Each channel keeps its last 3.
-        fire(&mut vm, &g, s, 2);
-        let state = node::state::extract_value(&vm, &[p]).unwrap().unwrap();
-        assert_eq!(
-            split_channels(&state),
-            vec![vec![2.0, 1.0, 2.0], vec![-2.0, -1.0, -2.0]],
-        );
-    }
-
-    // The history follows the incoming shape. A flat history is discarded when
-    // per-channel data arrives, and the reverse. Shapes never mix.
-    #[test]
-    fn scope_shape_switch_discards_prior_history() {
+    fn plot_push_accumulates_capped_history() {
+        let int = |n: isize| SteelVal::IntV(n);
         let num = |n: f64| SteelVal::NumV(n);
         let list = |vals: Vec<SteelVal>| SteelVal::ListV(vals.into_iter().collect());
-        let cap = SteelVal::IntV(8);
-
-        // A flat history then a per-channel value discards the flat samples.
-        let flat = plot_push(SteelVal::Void, num(1.0), cap.clone());
-        let chans = plot_push(flat, list(vec![list(vec![num(2.0)])]), cap.clone());
-        assert_eq!(split_channels(&chans), vec![vec![2.0]]);
-
-        // A per-channel history then a flat value discards the channel histories.
-        let flat_again = plot_push(chans, num(3.0), cap);
-        assert_eq!(split_channels(&flat_again), vec![vec![3.0]]);
-    }
-
-    // When a pushed list overflows the remaining capacity, the oldest history is
-    // trimmed so the history tail plus the new samples total `cap`.
-    #[test]
-    fn scope_list_trims_oldest_to_cap() {
-        let src = gantz_core::node::expr("(list 1 2 3)")
-            .unwrap()
-            .with_push_eval();
-        let plot = Plot {
-            mode: PlotMode::Scope,
-            capacity: 4,
-            ..Default::default()
-        };
-        let (g, s, p) = graph_with(Box::new(src) as Box<dyn Node>, plot);
-        let mut vm = vm_for(&g);
-        // [1,2,3], then keep the last 4 of [1,2,3] ++ [1,2,3] = [3,1,2,3].
-        fire(&mut vm, &g, s, 2);
-        assert_eq!(samples_of(&vm, p), vec![3.0, 1.0, 2.0, 3.0]);
-    }
-
-    // `plot_push` accepts a vector input. It accumulates the numeric elements into
-    // the vector-backed scope history and caps at `cap`. A vector-emitting Steel
-    // expr is not available under `new_base`, so the test calls the fn directly.
-    #[test]
-    fn plot_push_accepts_vector() {
-        let num = |n: f64| SteelVal::NumV(n);
         let vector = |xs: Vec<SteelVal>| SteelVal::VectorV(xs.into_iter().collect());
-        let empty = SteelVal::VectorV(std::iter::empty::<SteelVal>().collect());
-
-        let s1 = plot_push(
-            empty,
-            vector(vec![num(1.0), num(2.0), num(3.0)]),
-            SteelVal::IntV(4),
-        );
-        let s2 = plot_push(s1, vector(vec![num(4.0), num(5.0)]), SteelVal::IntV(4));
-
-        // The history is a VectorV of the last 4 samples, in order.
-        let got: Vec<f64> = match s2 {
-            SteelVal::VectorV(v) => v.iter().filter_map(steel_num).collect(),
-            other => panic!("expected vector state, got {other:?}"),
-        };
-        assert_eq!(got, vec![2.0, 3.0, 4.0, 5.0]);
+        let ints = |ns: &[isize]| list(ns.iter().map(|&n| int(n)).collect());
+        // The state `register` initialises.
+        let empty = vector(vec![]);
+        let channels = list(vec![ints(&[1, 2]), ints(&[-1, -2])]);
+        let cases = [
+            (
+                "a list extends the history",
+                empty.clone(),
+                vec![ints(&[1, 2, 3]), ints(&[1, 2, 3])],
+                10,
+                vec![vec![1.0, 2.0, 3.0, 1.0, 2.0, 3.0]],
+            ),
+            (
+                "a list over capacity keeps its tail",
+                empty.clone(),
+                vec![ints(&[1, 2, 3, 4, 5])],
+                3,
+                vec![vec![3.0, 4.0, 5.0]],
+            ),
+            (
+                "a second list over capacity still keeps just its tail",
+                empty.clone(),
+                vec![ints(&[1, 2, 3, 4, 5]), ints(&[1, 2, 3, 4, 5])],
+                3,
+                vec![vec![3.0, 4.0, 5.0]],
+            ),
+            (
+                "an overflowing list trims the oldest history to cap",
+                empty.clone(),
+                vec![ints(&[1, 2, 3]), ints(&[1, 2, 3])],
+                4,
+                vec![vec![3.0, 1.0, 2.0, 3.0]],
+            ),
+            (
+                "a list of channels keeps one capped history per channel",
+                empty.clone(),
+                vec![channels.clone(), channels],
+                3,
+                vec![vec![2.0, 1.0, 2.0], vec![-2.0, -1.0, -2.0]],
+            ),
+            (
+                "a vector extends the history",
+                empty,
+                vec![
+                    vector(vec![num(1.0), num(2.0), num(3.0)]),
+                    vector(vec![num(4.0), num(5.0)]),
+                ],
+                4,
+                vec![vec![2.0, 3.0, 4.0, 5.0]],
+            ),
+            (
+                "per-channel data discards a flat history",
+                SteelVal::Void,
+                vec![num(1.0), list(vec![list(vec![num(2.0)])])],
+                8,
+                vec![vec![2.0]],
+            ),
+            (
+                "flat data discards the channel histories",
+                SteelVal::Void,
+                vec![num(1.0), list(vec![list(vec![num(2.0)])]), num(3.0)],
+                8,
+                vec![vec![3.0]],
+            ),
+        ];
+        for (case, state, pushes, cap, expected) in cases {
+            let state = pushes
+                .into_iter()
+                .fold(state, |s, v| plot_push(s, v, SteelVal::IntV(cap)));
+            assert!(
+                matches!(state, SteelVal::VectorV(_)),
+                "{case}: expected vector state, got {state:?}"
+            );
+            assert_eq!(split_channels(&state), expected, "{case}");
+        }
     }
 
-    // Signal mode stores the incoming list verbatim, preserving order.
+    // Signal mode stores the incoming value verbatim. A list keeps its order.
+    // A lone number stays a number, which `series` reads as a single sample.
     #[test]
-    fn signal_stores_list() {
-        let src = gantz_core::node::expr("(list 1 2 3)")
-            .unwrap()
-            .with_push_eval();
-        let plot = Plot {
-            mode: PlotMode::Signal,
-            ..Default::default()
-        };
-        let (g, s, p) = graph_with(Box::new(src) as Box<dyn Node>, plot);
-        let mut vm = vm_for(&g);
-        fire(&mut vm, &g, s, 1);
-        assert_eq!(samples_of(&vm, p), vec![1.0, 2.0, 3.0]);
-    }
-
-    // Signal mode also accepts a single number, drawn as one bar.
-    #[test]
-    fn signal_stores_scalar() {
-        let src = gantz_core::node::expr("7").unwrap().with_push_eval();
-        let plot = Plot {
-            mode: PlotMode::Signal,
-            ..Default::default()
-        };
-        let (g, s, p) = graph_with(Box::new(src) as Box<dyn Node>, plot);
-        let mut vm = vm_for(&g);
-        fire(&mut vm, &g, s, 1);
-        // Stored as a lone number. `series` reads it as a single sample.
-        let state = node::state::extract_value(&vm, &[p]).unwrap().unwrap();
-        assert!(matches!(state, SteelVal::IntV(7)));
+    fn signal_stores_the_incoming_value() {
+        let list = |vals: Vec<SteelVal>| SteelVal::ListV(vals.into_iter().collect());
+        let ints = list(vec![
+            SteelVal::IntV(1),
+            SteelVal::IntV(2),
+            SteelVal::IntV(3),
+        ]);
+        let cases = [
+            ("list", "(list 1 2 3)", ints),
+            ("scalar", "7", SteelVal::IntV(7)),
+        ];
+        for (case, src, expected) in cases {
+            let src = gantz_core::node::expr(src).unwrap().with_push_eval();
+            let plot = Plot {
+                mode: PlotMode::Signal,
+                ..Default::default()
+            };
+            let (g, s, p) = graph_with(Box::new(src) as Box<dyn Node>, plot);
+            let mut vm = vm_for(&g);
+            fire(&mut vm, &g, s, 1);
+            let state = node::state::extract_value(&vm, &[p]).unwrap().unwrap();
+            assert_eq!(state, expected, "{case}");
+        }
     }
 
     // The fragment bakes every render-relevant weight field, the bind id,

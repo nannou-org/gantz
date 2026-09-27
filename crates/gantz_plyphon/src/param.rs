@@ -424,32 +424,31 @@ mod tests {
         drain_param(&mut vm, &path).expect("drain")
     }
 
-    /// A connected number queues one pair stamped with the eval time.
+    /// A connected number queues one pair stamped with the eval time. A batch
+    /// of `(time value)` pairs, the `pat/events->secs` shape, is queued whole,
+    /// draining oldest-first, with `value` taking the last. Multi-edge lists
+    /// of bare values, empty lists and non-numeric values are all ignored.
+    /// Nothing is queued and the value keeps its initial 1.0.
     #[test]
-    fn control_input_number_queues_one_pair() {
-        let (value, pending) = eval_control_input("42.0");
-        assert_eq!(value, 42.0);
-        assert_eq!(pending, vec![(7.0, 42.0)]);
-    }
-
-    /// A batch of `(time value)` pairs, the `pat/events->secs` shape, is
-    /// queued whole, draining oldest-first, with `value` taking the last.
-    #[test]
-    fn control_input_batch_queues_all_pairs() {
-        let (value, pending) =
-            eval_control_input("(list (list 1.0 10.0) (list 2.0 20.0) (list 3.0 30.0))");
-        assert_eq!(value, 30.0);
-        assert_eq!(pending, vec![(1.0, 10.0), (2.0, 20.0), (3.0, 30.0)]);
-    }
-
-    /// Multi-edge lists of bare values, empty lists and non-numeric values
-    /// are all ignored. Nothing is queued and the value is untouched.
-    #[test]
-    fn control_input_ignores_non_batches() {
-        for ignored in ["(list 1.0 2.0)", "(list)", "'sym", "(list (list 'x 1.0))"] {
-            let (value, pending) = eval_control_input(ignored);
-            assert_eq!(value, 1.0, "value untouched for {ignored}");
-            assert_eq!(pending, vec![], "nothing queued for {ignored}");
+    fn control_input_queues_numbers_and_batches_only() {
+        let cases: &[(&str, f64, &[(f64, f64)])] = &[
+            ("42.0", 42.0, &[(7.0, 42.0)]),
+            (
+                "(list (list 1.0 10.0) (list 2.0 20.0) (list 3.0 30.0))",
+                30.0,
+                &[(1.0, 10.0), (2.0, 20.0), (3.0, 30.0)],
+            ),
+            ("(list 1.0 2.0)", 1.0, &[]),
+            ("(list)", 1.0, &[]),
+            ("'sym", 1.0, &[]),
+            ("(list (list 'x 1.0))", 1.0, &[]),
+        ];
+        for &(input, value, pending) in cases {
+            assert_eq!(
+                eval_control_input(input),
+                (value, pending.to_vec()),
+                "{input}",
+            );
         }
     }
 

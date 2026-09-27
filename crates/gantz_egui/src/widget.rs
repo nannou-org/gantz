@@ -176,24 +176,23 @@ mod tests {
     use super::group_runs;
 
     #[test]
-    fn group_runs_collapses_consecutive_equal_items() {
-        // Only consecutive equal items collapse. The trailing `a` items form
-        // a separate run from the leading ones.
-        let items = ['a', 'a', 'a', 'b', 'a', 'a'];
-        let runs = group_runs(&items, |x, y| x == y);
-        assert_eq!(runs, vec![(0, 3), (3, 1), (4, 2)]);
-    }
-
-    #[test]
-    fn group_runs_empty_is_empty() {
-        let items: [char; 0] = [];
-        assert!(group_runs(&items, |x, y| x == y).is_empty());
-    }
-
-    #[test]
-    fn group_runs_all_distinct() {
-        let items = [1, 2, 3];
-        let runs = group_runs(&items, |x, y| x == y);
-        assert_eq!(runs, vec![(0, 1), (1, 1), (2, 1)]);
+    fn group_runs_collapses_only_consecutive_equal_items() {
+        let cases: [(&str, &[char], Vec<(usize, usize)>); 3] = [
+            // The trailing `a` items form a separate run from the leading ones.
+            (
+                "mixed runs",
+                &['a', 'a', 'a', 'b', 'a', 'a'],
+                vec![(0, 3), (3, 1), (4, 2)],
+            ),
+            ("empty", &[], vec![]),
+            (
+                "all distinct",
+                &['a', 'b', 'c'],
+                vec![(0, 1), (1, 1), (2, 1)],
+            ),
+        ];
+        for (case, items, expected) in cases {
+            assert_eq!(group_runs(items, |x, y| x == y), expected, "{case}");
+        }
     }
 }

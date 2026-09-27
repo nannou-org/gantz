@@ -320,38 +320,46 @@ mod tests {
     }
 
     #[test]
-    fn match_nodes_pairs_duplicate_content_by_rank() {
-        // [A, B, A] with B swap-removed gives [A, A].
-        let a = graph(&["a", "b", "a"], &[]);
-        let b = graph(&["a", "a"], &[]);
-        let m = match_nodes(&a, &b);
-        assert_eq!(m, Matching::from([(0, 0), (2, 1)]));
-    }
-
-    #[test]
-    fn match_step_pairs_edited_node_by_index() {
-        let prev = graph(&["a", "b", "c"], &[]);
-        let next = graph(&["a", "b2", "c"], &[]);
-        let m = match_step(&prev, &next);
-        assert_eq!(m, Matching::from([(0, 0), (1, 1), (2, 2)]));
-    }
-
-    #[test]
-    fn match_step_swap_removal_leaves_no_false_pair() {
-        // Removing ix 1 swap-moves the last node into its slot.
-        let prev = graph(&["a", "b", "c"], &[]);
-        let next = graph(&["a", "c"], &[]);
-        let m = match_step(&prev, &next);
-        assert_eq!(m, Matching::from([(0, 0), (2, 1)]));
-    }
-
-    #[test]
-    fn match_step_edit_to_duplicate_content() {
-        // Editing ix 1 to duplicate ix 0's content must not steal its match.
-        let prev = graph(&["a", "b"], &[]);
-        let next = graph(&["a", "a"], &[]);
-        let m = match_step(&prev, &next);
-        assert_eq!(m, Matching::from([(0, 0), (1, 1)]));
+    fn node_matching_cases() {
+        type Match = fn(&DataGraph, &DataGraph) -> Matching;
+        let cases: [(&str, Match, DataGraph, DataGraph, Matching); 4] = [
+            // [A, B, A] with B swap-removed gives [A, A].
+            (
+                "match_nodes pairs duplicate content by rank",
+                match_nodes,
+                graph(&["a", "b", "a"], &[]),
+                graph(&["a", "a"], &[]),
+                Matching::from([(0, 0), (2, 1)]),
+            ),
+            (
+                "match_step pairs an edited node by index",
+                match_step,
+                graph(&["a", "b", "c"], &[]),
+                graph(&["a", "b2", "c"], &[]),
+                Matching::from([(0, 0), (1, 1), (2, 2)]),
+            ),
+            // Removing ix 1 swap-moves the last node into its slot.
+            (
+                "match_step swap removal leaves no false pair",
+                match_step,
+                graph(&["a", "b", "c"], &[]),
+                graph(&["a", "c"], &[]),
+                Matching::from([(0, 0), (2, 1)]),
+            ),
+            // Editing ix 1 to duplicate ix 0's content must not steal its
+            // match.
+            (
+                "match_step edit to duplicate content",
+                match_step,
+                graph(&["a", "b"], &[]),
+                graph(&["a", "a"], &[]),
+                Matching::from([(0, 0), (1, 1)]),
+            ),
+        ];
+        for (label, match_fn, prev, next, expected) in cases {
+            let m = match_fn(&prev, &next);
+            assert_eq!(m, expected, "{label}");
+        }
     }
 
     #[test]

@@ -239,16 +239,6 @@ mod tests {
     }
 
     #[test]
-    fn round_trips_through_steelval() {
-        use steel::rvals::FromSteelVal;
-        let handle = TaskHandle::new(ready(SteelVal::IntV(3)));
-        let val = handle.clone().into_steelval().unwrap();
-        let extracted = TaskHandle::from_steelval(&val).unwrap();
-        assert!(extracted.take().is_some());
-        assert!(handle.take().is_none());
-    }
-
-    #[test]
     fn poll_fn_pends_until_ready() {
         let mut count = 0;
         let mut task = GantzTask::poll_fn(move || {

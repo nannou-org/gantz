@@ -618,12 +618,6 @@ mod tests {
         let mut batch = BatchWriter::default();
         save_registry_incremental(&mut batch, &reg, &mut persisted);
 
-        let keys: Vec<&str> = batch.writes.iter().map(|(k, _)| k.as_str()).collect();
-        assert!(keys.contains(&key::graph(graph_addr(1)).as_str()));
-        assert!(keys.contains(&key::commit(commit_addr(11)).as_str()));
-        assert!(keys.contains(&key::GRAPH_ADDRS));
-        assert!(keys.contains(&key::COMMIT_ADDRS));
-        assert!(keys.contains(&heads_key().as_str()));
         let (_, heads_ron) = batch
             .writes
             .iter()

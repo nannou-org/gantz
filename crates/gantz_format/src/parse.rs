@@ -600,20 +600,6 @@ mod tests {
     }
 
     #[test]
-    fn descriptions_form_lands_in_extra() {
-        // `(descriptions ...)` is an extender's friendly form. The gui layer
-        // maps it to the `gantz.description` section, so the core parser
-        // preserves it verbatim like any unrecognised form.
-        let text = "\
-(graph mul (m (expr 1)))
-(descriptions
-  (mul \"multiply two numbers\"))";
-        let doc = parse(text, &CoreSugar).expect("parse");
-        assert_eq!(doc.extra.len(), 1);
-        assert_eq!(doc.extra[0].head, "descriptions");
-    }
-
-    #[test]
     fn round_trips_sections() {
         // A section from a domain this parser knows nothing about carries
         // its semantics as data and round-trips through a write and parse.

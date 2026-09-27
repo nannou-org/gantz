@@ -191,17 +191,4 @@ mod tests {
             "NodeData CaHash scheme changed - this breaks existing node addresses",
         );
     }
-
-    /// `DataGraph` satisfies the structural-hashing bounds. The canonical-rank
-    /// graph addressing works over erased nodes.
-    #[test]
-    fn data_graph_addr_smoke() {
-        let mut g = DataGraph::default();
-        let a = g.add_node(node("a"));
-        let b = g.add_node(node("b"));
-        g.add_edge(a, b, Edge::from((0, 0)));
-        let _ = crate::graph_addr(&g);
-        let g2 = g.clone();
-        assert_eq!(crate::graph_addr(&g), crate::graph_addr(&g2));
-    }
 }

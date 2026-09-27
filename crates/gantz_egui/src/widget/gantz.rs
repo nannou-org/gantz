@@ -3945,6 +3945,7 @@ fn log_view(
     })
 }
 
+#[cfg(feature = "tracing")]
 fn trace_view(
     trace_capture: &widget::trace_view::TraceCapture,
     level: tracing::level_filters::LevelFilter,

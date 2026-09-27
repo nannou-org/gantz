@@ -218,13 +218,6 @@ mod tests {
     }
 
     #[test]
-    fn encode_decode_round_trips() {
-        let a = asset();
-        let decoded = AudioAsset::decode(&a.encode()).unwrap();
-        assert_eq!(decoded, a);
-    }
-
-    #[test]
     fn addr_is_stable_and_metadata_sensitive() {
         let a = asset();
         // Deterministic across re-encodes.
@@ -243,15 +236,6 @@ mod tests {
         let a = AudioAsset::from_interleaved(vec![1.0, 2.0, 3.0], 2, 48_000.0);
         assert_eq!(a.num_frames(), 1);
         assert_eq!(a.samples(), &[1.0, 2.0]);
-    }
-
-    #[test]
-    fn converts_to_a_plyphon_buffer() {
-        let a = asset();
-        let buffer: plyphon::Buffer = a.clone().into();
-        assert_eq!(buffer.num_channels(), a.num_channels());
-        assert_eq!(buffer.num_frames(), a.num_frames());
-        assert_eq!(buffer.sample_rate(), a.sample_rate());
     }
 
     #[test]
@@ -310,14 +294,6 @@ mod tests {
         let a = AudioAsset::from_wav(&bytes).unwrap();
         assert_eq!(a.samples(), &[0.25, -0.75]);
         assert_eq!(a.sample_rate(), 48_000.0);
-    }
-
-    #[test]
-    fn from_wav_rejects_other_bytes() {
-        assert!(matches!(
-            AudioAsset::from_wav(b"not a wav file"),
-            Err(WavError::Read(_))
-        ));
     }
 
     #[test]

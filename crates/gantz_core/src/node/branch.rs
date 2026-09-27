@@ -316,64 +316,45 @@ mod tests {
     }
 
     #[test]
-    fn test_new_no_branches() {
-        let err = Branch::new("(list 0 '())", vec![]).unwrap_err();
-        assert!(matches!(err, BranchNewError::NoBranches));
-    }
-
-    #[test]
-    fn test_new_invalid_outputs_zero() {
-        let err = Branch::new("(list 0 '())", vec![Conns::unconnected(0).unwrap()]).unwrap_err();
-        assert!(matches!(err, BranchNewError::InvalidOutputs(0)));
-    }
-
-    #[test]
-    fn test_new_invalid_outputs_too_high() {
-        let err = Branch::new("(list 0 '())", vec![Conns::unconnected(17).unwrap()]).unwrap_err();
-        assert!(matches!(err, BranchNewError::InvalidOutputs(17)));
-    }
-
-    #[test]
-    fn test_new_conns_len_mismatch() {
-        let bad = vec![
+    fn test_new_errors() {
+        let mismatched = vec![
             Conns::try_from([true, false, false]).unwrap(),
             Conns::try_from([false, true]).unwrap(),
         ];
-        let err = Branch::new("(list 0 '())", bad).unwrap_err();
-        assert!(matches!(
-            err,
-            BranchNewError::ConnsLenMismatch {
-                ix: 1,
-                expected: 3,
-                actual: 2,
-            }
-        ));
-    }
-
-    #[test]
-    fn test_new_invalid_expr() {
-        let err = Branch::new("(((", two_branch_conns()).unwrap_err();
-        assert!(matches!(err, BranchNewError::InvalidExpr { .. }));
-    }
-
-    #[test]
-    fn test_node_trait_branches() {
-        let b = Branch::new(
-            "(if (equal? 0 $x) (list 0 '()) (list 1 '()))",
-            two_branch_conns(),
-        )
-        .unwrap();
-        let ctx = node::MetaCtx::new(&|_| None);
-        let branches = b.branches(ctx);
-        assert_eq!(branches.len(), 2);
-        assert_eq!(
-            branches[0],
-            node::EvalConf::Set(Conns::try_from([true, false]).unwrap())
-        );
-        assert_eq!(
-            branches[1],
-            node::EvalConf::Set(Conns::try_from([false, true]).unwrap())
-        );
+        let cases: [(&str, &str, Vec<Conns>, fn(&BranchNewError) -> bool); 5] = [
+            ("no branches", "(list 0 '())", vec![], |e| {
+                matches!(e, BranchNewError::NoBranches)
+            }),
+            (
+                "zero outputs",
+                "(list 0 '())",
+                vec![Conns::unconnected(0).unwrap()],
+                |e| matches!(e, BranchNewError::InvalidOutputs(0)),
+            ),
+            (
+                "too many outputs",
+                "(list 0 '())",
+                vec![Conns::unconnected(17).unwrap()],
+                |e| matches!(e, BranchNewError::InvalidOutputs(17)),
+            ),
+            ("conns len mismatch", "(list 0 '())", mismatched, |e| {
+                matches!(
+                    e,
+                    BranchNewError::ConnsLenMismatch {
+                        ix: 1,
+                        expected: 3,
+                        actual: 2,
+                    }
+                )
+            }),
+            ("invalid expr", "(((", two_branch_conns(), |e| {
+                matches!(e, BranchNewError::InvalidExpr { .. })
+            }),
+        ];
+        for (label, src, branches, is_expected) in cases {
+            let err = Branch::new(src, branches).unwrap_err();
+            assert!(is_expected(&err), "{label}: unexpected error {err:?}");
+        }
     }
 
     #[test]

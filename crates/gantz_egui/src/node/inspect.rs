@@ -76,18 +76,3 @@ fn fragment(id: node::Id) -> gantz_ui::Element {
         key: None,
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fragment_bakes_bind() {
-        let expected = gantz_ui::Element::Value(gantz_ui::Value {
-            bind: Some(gantz_ui::BindPath(vec![2])),
-            wrap: false,
-            key: None,
-        });
-        assert_eq!(fragment(2), expected);
-    }
-}

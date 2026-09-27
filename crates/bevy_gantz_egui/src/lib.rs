@@ -28,6 +28,8 @@ pub mod pane_window;
 pub mod reg;
 pub mod storage;
 pub mod sugar;
+#[cfg(test)]
+mod tests;
 pub mod vm;
 
 pub use node::builtins;

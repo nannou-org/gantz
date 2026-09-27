@@ -278,12 +278,18 @@ mod tests {
 
     #[test]
     fn test_iter() {
-        let mut conns = Conns::unconnected(4).unwrap();
-        conns.set(0, true).unwrap();
-        conns.set(2, true).unwrap();
-
-        let collected: Vec<bool> = conns.iter().collect();
-        assert_eq!(collected, vec![true, false, true, false]);
+        for (label, len, set, expected) in [
+            ("empty", 0, &[][..], &[][..]),
+            ("single", 1, &[0][..], &[true][..]),
+            ("mixed", 4, &[0, 2][..], &[true, false, true, false][..]),
+        ] {
+            let mut conns = Conns::unconnected(len).unwrap();
+            for &i in set {
+                conns.set(i, true).unwrap();
+            }
+            let collected: Vec<bool> = conns.iter().collect();
+            assert_eq!(collected, expected, "{label}");
+        }
     }
 
     #[test]
@@ -336,35 +342,6 @@ mod tests {
     }
 
     #[test]
-    fn test_try_from_array() {
-        let arr = [true, false, true, false, true];
-        let conns = Conns::try_from(arr).unwrap();
-        assert_eq!(conns.len, 5);
-        assert_eq!(conns.get(0), Some(true));
-        assert_eq!(conns.get(1), Some(false));
-        assert_eq!(conns.get(2), Some(true));
-        assert_eq!(conns.get(3), Some(false));
-        assert_eq!(conns.get(4), Some(true));
-
-        let empty_arr: [bool; 0] = [];
-        let conns = Conns::try_from(empty_arr).unwrap();
-        assert_eq!(conns.len, 0);
-    }
-
-    #[test]
-    fn test_try_from_vec() {
-        let vec = vec![true, false, true];
-        let conns = Conns::try_from(vec).unwrap();
-        assert_eq!(conns.len, 3);
-        assert_eq!(conns.get(0), Some(true));
-        assert_eq!(conns.get(1), Some(false));
-        assert_eq!(conns.get(2), Some(true));
-
-        let large_vec = vec![false; Conns::MAX + 1];
-        assert_eq!(Conns::try_from(large_vec), Err(OutOfBoundsError));
-    }
-
-    #[test]
     fn test_debug_formatting() {
         let conns = Conns::unconnected(0).unwrap();
         assert_eq!(format!("{:?}", conns), "Conns()");
@@ -407,21 +384,6 @@ mod tests {
         for i in [1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14] {
             assert_eq!(conns.get(i), Some(false));
         }
-    }
-
-    #[test]
-    fn test_iter_empty() {
-        let conns = Conns::unconnected(0).unwrap();
-        let collected: Vec<bool> = conns.iter().collect();
-        assert!(collected.is_empty());
-    }
-
-    #[test]
-    fn test_iter_single() {
-        let mut conns = Conns::unconnected(1).unwrap();
-        conns.set(0, true).unwrap();
-        let collected: Vec<bool> = conns.iter().collect();
-        assert_eq!(collected, vec![true]);
     }
 }
 
@@ -478,6 +440,15 @@ mod serde_tests {
         let conns = Conns::unconnected(4).unwrap();
         let json = serde_json::to_string(&conns).unwrap();
         assert_eq!(json, "\"0000\"");
+
+        // Set bits on both sides of the byte boundaries.
+        let mut conns = Conns::unconnected(16).unwrap();
+        conns.set(0, true).unwrap();
+        conns.set(7, true).unwrap();
+        conns.set(8, true).unwrap();
+        conns.set(15, true).unwrap();
+        let json = serde_json::to_string(&conns).unwrap();
+        assert_eq!(json, "\"1000000110000001\"");
     }
 
     #[test]
@@ -495,48 +466,23 @@ mod serde_tests {
         let conns: Conns = serde_json::from_str(json).unwrap();
         assert_eq!(conns.len, 0);
 
+        // Set bits on both sides of the byte boundaries.
+        let json = "\"1000000110000001\"";
+        let conns: Conns = serde_json::from_str(json).unwrap();
+        assert_eq!(conns.len, 16);
+        assert_eq!(conns.get(0), Some(true));
+        assert_eq!(conns.get(7), Some(true));
+        assert_eq!(conns.get(8), Some(true));
+        assert_eq!(conns.get(15), Some(true));
+        for i in [1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14] {
+            assert_eq!(conns.get(i), Some(false));
+        }
+
         let json = "\"102\"";
         assert!(serde_json::from_str::<Conns>(json).is_err());
 
         let long_bitstring = "1".repeat(Conns::MAX + 1);
         let json = format!("\"{}\"", long_bitstring);
         assert!(serde_json::from_str::<Conns>(&json).is_err());
-    }
-
-    #[test]
-    fn test_roundtrip() {
-        let mut original = Conns::unconnected(8).unwrap();
-        original.set(0, true).unwrap();
-        original.set(3, true).unwrap();
-        original.set(7, true).unwrap();
-
-        let json = serde_json::to_string(&original).unwrap();
-        let deserialized: Conns = serde_json::from_str(&json).unwrap();
-
-        let original_bits: Vec<bool> = original.iter().collect();
-        let deserialized_bits: Vec<bool> = deserialized.iter().collect();
-        assert_eq!(original_bits, deserialized_bits);
-        assert_eq!(original.len, deserialized.len);
-    }
-
-    #[test]
-    fn test_cross_byte_boundary_serde() {
-        let mut conns = Conns::unconnected(16).unwrap();
-        conns.set(0, true).unwrap();
-        conns.set(7, true).unwrap();
-        conns.set(8, true).unwrap();
-        conns.set(15, true).unwrap();
-
-        let json = serde_json::to_string(&conns).unwrap();
-        let deserialized: Conns = serde_json::from_str(&json).unwrap();
-
-        assert_eq!(deserialized.get(0), Some(true));
-        assert_eq!(deserialized.get(7), Some(true));
-        assert_eq!(deserialized.get(8), Some(true));
-        assert_eq!(deserialized.get(15), Some(true));
-
-        for i in [1, 2, 3, 4, 5, 6, 9, 10, 11, 12, 13, 14] {
-            assert_eq!(deserialized.get(i), Some(false));
-        }
     }
 }

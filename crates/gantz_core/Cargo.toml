@@ -19,6 +19,5 @@ thiserror.workspace = true
 web-time.workspace = true
 
 [dev-dependencies]
-env_logger.workspace = true
 serde_json.workspace = true
 steel-derive.workspace = true
