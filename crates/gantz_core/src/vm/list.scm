@@ -14,6 +14,10 @@
 ;; - A count or bound is rounded to an exact integer. A non-number counts
 ;;   as 0.
 ;;
+;; `list/map`, `list/filter`, `list/fold` and `list/zip` use Steel's
+;; native transducers. These iterate in Rust and enter the VM only to
+;; call `f`, which makes them several times faster than a Scheme loop.
+;;
 ;; Written for the base engine: primitive special forms only (no `and`,
 ;; `or`, `cond`). Names prefixed `list//` are internal helpers and are
 ;; not provided.
@@ -56,31 +60,18 @@
 
 ;; Apply `f` to each item of `xs`.
 (define (list/map f xs)
-  (if (function? f) (list//map-loop f (list//of xs) '()) '()))
-
-(define (list//map-loop f xs acc)
-  (if (empty? xs)
-      (reverse acc)
-      (list//map-loop f (cdr xs) (cons (f (car xs)) acc))))
+  (if (function? f) (transduce (list//of xs) (mapping f) (into-list)) '()))
 
 ;; The items of `xs` for which `keep?` is truthy, in order.
 (define (list/filter keep? xs)
-  (if (function? keep?) (list//filter-loop keep? (list//of xs) '()) '()))
-
-(define (list//filter-loop keep? xs acc)
-  (if (empty? xs)
-      (reverse acc)
-      (list//filter-loop keep?
-                         (cdr xs)
-                         (if (keep? (car xs)) (cons (car xs) acc) acc))))
+  (if (function? keep?)
+      (transduce (list//of xs) (filtering keep?) (into-list))
+      '()))
 
 ;; Left fold. Calls `(f acc x)` for each item `x`, first to last, and
 ;; returns the final `acc`.
 (define (list/fold f init xs)
-  (if (function? f) (list//fold-loop f init (list//of xs)) init))
-
-(define (list//fold-loop f acc xs)
-  (if (empty? xs) acc (list//fold-loop f (f acc (car xs)) (cdr xs))))
+  (if (function? f) (transduce (list//of xs) (into-reducer f init)) init))
 
 ;; Apply `f` to each item of `xs` and join the results in order. A result
 ;; that is not a list counts as one item.
@@ -100,14 +91,7 @@
 ;; Pair the items of `xs` and `ys` by position as 2-lists. Stops at the
 ;; end of the shorter list.
 (define (list/zip xs ys)
-  (list//zip-loop (list//of xs) (list//of ys) '()))
-
-(define (list//zip-loop xs ys acc)
-  (if (empty? xs)
-      (reverse acc)
-      (if (empty? ys)
-          (reverse acc)
-          (list//zip-loop (cdr xs) (cdr ys) (cons (list (car xs) (car ys)) acc)))))
+  (transduce (list//of xs) (zipping (list//of ys)) (into-list)))
 
 ;; Whether `pred` is truthy for any item of `xs`.
 (define (list/any pred xs)

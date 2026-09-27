@@ -395,6 +395,15 @@ mod tests {
             ("#t", "(list/all odd? '())"),
             ("2", "(list/find even? '(1 2 4))"),
             ("#f", "(list/find even? '(1 3))"),
+            // A fn given to a list fn can itself call list fns.
+            (
+                "'((-1 -2) (-3))",
+                "(list/map (lambda (xs) (list/map - xs)) '((1 2) (3)))",
+            ),
+            (
+                "10",
+                "(list/fold (lambda (acc xs) (+ acc (list/fold + 0 xs))) 0 '((1 2) (3 4)))",
+            ),
         ]));
     }
 

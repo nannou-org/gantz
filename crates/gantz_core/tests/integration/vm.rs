@@ -190,3 +190,32 @@ fn steel_err_node_attribution() {
     // The stale pre-recompile error does not attribute to the new module.
     // Its span belongs to the old source text.
 }
+
+// An error inside a closure that a `gantz/list` fn calls maps back to the
+// node whose expr holds the closure.
+#[test]
+fn steel_err_node_attribution_through_list_fns() {
+    let exprs = [
+        "(list/map (lambda (v) (car v)) $xs)",
+        "(list/filter (lambda (v) (car v)) $xs)",
+        "(list/fold (lambda (acc v) (car v)) 0 $xs)",
+    ];
+    for src in exprs {
+        let mut g = petgraph::graph::DiGraph::new();
+        let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let xs = g.add_node(Box::new(node::expr("(begin $push (list 1 2))").unwrap()) as Box<_>);
+        let boom = node::expr(src).unwrap().with_requires(["gantz/list"]);
+        let boom = g.add_node(Box::new(boom) as Box<_>);
+        g.add_edge(push, xs, Edge::from((0, 0)));
+        g.add_edge(xs, boom, Edge::from((0, 0)));
+
+        let eps = push_pull_entrypoints(&no_lookup, &g);
+        let (mut vm, compiled) =
+            gantz_core::vm::init(&no_lookup, &g, &eps, &Default::default()).unwrap();
+        let err = vm
+            .call_function_by_name_with_args(&push_fn_name(&g, push), vec![])
+            .unwrap_err();
+        let path = gantz_core::vm::steel_err_node(&err, &vm, &compiled);
+        assert_eq!(path, Some(vec![boom.index()]), "{src}");
+    }
+}
