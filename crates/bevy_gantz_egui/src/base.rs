@@ -23,18 +23,10 @@ use bevy_ecs::prelude::*;
 use bevy_gantz::Registry;
 use bevy_log as log;
 use gantz_ca::Name;
-use std::collections::{BTreeMap, HashMap};
+use gantz_egui::base::{BASE_TIMESTAMP, BaseSource, seed_graph_addrs};
+use std::collections::HashMap;
 
 use crate::{BaseNames, NodeCodecRes};
-
-/// One domain's baked-in base `.gantz` export.
-pub struct BaseSource {
-    /// The source name, for example `"gantz"`. Used in logs, in
-    /// [`BaseNameSources`] and for `update-base` write-back routing.
-    pub name: &'static str,
-    /// The `.gantz` bytes of the domain's base file.
-    pub bytes: &'static [u8],
-}
 
 /// The base sources to load, in load order.
 ///
@@ -67,14 +59,6 @@ pub struct ExportPaths {
     /// graphs created during the session.
     pub default_source: &'static str,
 }
-
-/// The fixed timestamp used to stamp the base's hand-authored graphs.
-///
-/// Every base source is parsed at startup and again on demo reset. Both must
-/// agree on the synthesized commit addresses. Otherwise a reset demo's `ref`s
-/// point at commits absent from the loaded registry. A constant makes those
-/// addresses reproducible.
-pub const BASE_TIMESTAMP: gantz_ca::Timestamp = std::time::Duration::ZERO;
 
 /// Startup system that parses each embedded base source and merges it into
 /// the registry. Populates [`BaseNames`] and [`BaseNameSources`].
@@ -208,22 +192,6 @@ pub fn export_to_file(
             Err(e) => log::error!("export_to_file: failed to serialize `{source}`: {e}"),
         }
     }
-}
-
-/// The name to head graph address seed for a seeded base parse. Each known
-/// base name resolves to its head commit's graph in the given registry. See
-/// [`gantz_egui::export::parse_export_seeded_at`].
-pub fn seed_graph_addrs(
-    names: &gantz_egui::reg::Names,
-    registry: &gantz_ca::Registry,
-) -> BTreeMap<String, gantz_ca::GraphAddr> {
-    names
-        .iter()
-        .filter_map(|(name, ca)| {
-            let commit = registry.commits().get(ca)?;
-            Some((name.to_string(), commit.graph))
-        })
-        .collect()
 }
 
 /// Partition base names by their owning source for per-source write-back.

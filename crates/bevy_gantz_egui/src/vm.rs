@@ -23,8 +23,8 @@ pub type EntrypointFn = Box<
 /// Resource holding all entrypoint provider functions.
 ///
 /// Each provider is called during compilation to collect entrypoints.
-/// `GantzEguiPlugin` registers `push_pull_entrypoints` plus the `update!` and
-/// `tick!` providers. Downstream plugins may push additional providers.
+/// `GantzEguiPlugin` registers [`crate::entrypoints`]. Downstream plugins may
+/// push additional providers.
 ///
 /// Contribute via `get_resource_or_init` and push. Never `insert_resource`,
 /// which would clobber providers pushed by plugins built earlier. Every
@@ -191,8 +191,8 @@ mod tests {
         let fns = app.world().resource::<EntrypointFns>();
         assert_eq!(
             fns.0.len(),
-            4,
-            "the pre-pushed provider and the plugin's three seeds must survive",
+            2,
+            "the pre-pushed provider and the plugin's provider must survive",
         );
     }
 

@@ -1,4 +1,4 @@
-use crate::headless::{Reified, builtins_with_instances, env, head_graph};
+use gantz_cli::headless::{Reified, builtins_with_instances, env, head_graph};
 use gantz_egui::node::DynNode;
 
 /// The data registry, which stores graphs erased.
@@ -23,7 +23,7 @@ fn as_named_ref(node: &DynNode) -> Option<&gantz_egui::node::NamedRef> {
 
 /// Reify the whole registry column, asserting every graph reifies.
 fn reify_all(reg: &DataReg) -> Reified {
-    let (reified, errs) = crate::headless::reify_all(reg, &crate::node::codec());
+    let (reified, errs) = gantz_cli::headless::reify_all(reg, &crate::node::codec());
     assert!(errs.is_empty(), "{errs:?}");
     reified
 }
@@ -152,7 +152,7 @@ fn gui_marker_registry_lookups() {
     use gantz_egui::node::{Gui, GuiRole};
     let registry = gui_marker_registry();
     let reified = reify_all(&registry);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg = env(&registry, &reified, &builtins, &codec);
     let parent = named_ca(&registry, "parent");
@@ -946,7 +946,7 @@ fn nested_dsp_graph_flattens_derives_and_bridges_state() {
 
     // The binding's path reaches the nested lag's live param state in a VM
     // compiled from the same un-flattened graph.
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&registry, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -1417,7 +1417,7 @@ fn tick_node_compiles() {
     let head = gantz_ca::Head::Branch(name("g"));
     let graph = head_graph(&reified, &registry, &head).expect("g graph");
 
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&registry, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -1795,7 +1795,7 @@ fn base_graphs_all_compile() {
     let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &crate::node::codec())
         .expect("parse base");
     let reified = reify_all(&base);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&base, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -1848,7 +1848,7 @@ fn expr_require_sugar_compiles_and_evaluates() {
         gantz_egui::format::from_str(text, Duration::from_secs(0), &crate::node::codec())
             .expect("from_str");
     let reified = reify_all(&registry);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&registry, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -2070,7 +2070,7 @@ fn base_socket_docs() {
     );
 
     // A `ref add` exposes `add`'s socket docs.
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let reified = reify_all(&base);
     let codec = crate::node::codec();
     let reg_env = env(&base, &reified, &builtins, &codec);
@@ -2110,7 +2110,7 @@ fn demos_evaluate() {
     let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &crate::node::codec())
         .expect("parse base");
     let reified = reify_all(&base);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&base, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -2236,7 +2236,7 @@ fn base_list_nodes_evaluate() {
         gantz_egui::format::from_str(&text, Duration::from_secs(0), &crate::node::codec())
             .expect("from_str");
     let reified = reify_all(&registry);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&registry, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -2295,14 +2295,14 @@ fn base_pattern_combinator_nodes_evaluate() {
   (-> w1 tc) (-> w2 tc) (-> pa (tc 1)) (-> pb (tc 1))
   (-> tc tc-vals-ok) (-> tc tc-span-ok))"#;
 
-    let mut sources = crate::headless::base_sources();
-    sources.push(crate::headless::Source {
+    let mut sources = gantz_cli::headless::base_sources(&crate::conf());
+    sources.push(gantz_cli::headless::Source {
         label: "<test>".to_string(),
         bytes: std::borrow::Cow::Borrowed(TEST_GRAPH.as_bytes()),
     });
-    let loaded = crate::headless::load_sources(
+    let loaded = gantz_cli::headless::load_sources(
         &sources,
-        bevy_gantz_egui::base::BASE_TIMESTAMP,
+        gantz_egui::base::BASE_TIMESTAMP,
         &crate::node::codec(),
     );
     for (source, parsed) in sources.iter().zip(&loaded.parsed) {
@@ -2315,7 +2315,7 @@ fn base_pattern_combinator_nodes_evaluate() {
     }
     let registry = loaded.registry;
     let reified = reify_all(&registry);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&registry, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -2358,7 +2358,7 @@ fn base_gui_markers_decode_clean() {
     let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &crate::node::codec())
         .expect("parse base");
     let reified = reify_all(&base);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&base, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -2448,7 +2448,7 @@ fn demo_pplot_plots_every_source() {
     use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
     use gantz_core::steel::SteelVal;
 
-    let ts = bevy_gantz_egui::base::BASE_TIMESTAMP;
+    let ts = gantz_egui::base::BASE_TIMESTAMP;
     let mut merged = DataReg::default();
     for bytes in [gantz_base::BYTES, gantz_pattern::BASE_BYTES] {
         let export: DataReg =
@@ -2456,7 +2456,7 @@ fn demo_pplot_plots_every_source() {
         merged.merge(export);
     }
     let reified = reify_all(&merged);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&merged, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -2528,7 +2528,7 @@ fn demo_pplot_plots_every_source() {
 fn demo_pattern_partial_evals_are_silent() {
     use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
 
-    let ts = bevy_gantz_egui::base::BASE_TIMESTAMP;
+    let ts = gantz_egui::base::BASE_TIMESTAMP;
     let mut merged = DataReg::default();
     for bytes in [
         gantz_base::BYTES,
@@ -2540,7 +2540,7 @@ fn demo_pattern_partial_evals_are_silent() {
         merged.merge(export);
     }
     let reified = reify_all(&merged);
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
     let reg_env = env(&merged, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
@@ -2625,7 +2625,7 @@ fn demo_pattern_partial_evals_are_silent() {
 
 /// Resetting a demo re-parses the base and merges the demo's commit subset
 /// back in. The base's hand-authored graphs are stamped at the fixed
-/// `bevy_gantz_egui::base::BASE_TIMESTAMP`, so the re-parse reproduces
+/// `gantz_egui::base::BASE_TIMESTAMP`, so the re-parse reproduces
 /// the primitive commit addresses loaded at startup. The reset demo's
 /// `ref`s still resolve and it recompiles. With a wall-clock timestamp
 /// the re-parsed demo would reference fresh primitive commits absent from
@@ -2634,7 +2634,7 @@ fn demo_pattern_partial_evals_are_silent() {
 fn reset_then_reopen_demo_recompiles() {
     use gantz_core::compile::{Config, push_pull_entrypoints};
 
-    let ts = bevy_gantz_egui::base::BASE_TIMESTAMP;
+    let ts = gantz_egui::base::BASE_TIMESTAMP;
     let parse = || -> DataReg {
         gantz_egui::export::parse_export_at(gantz_base::BYTES, ts, &crate::node::codec())
             .expect("parse base")
@@ -2653,7 +2653,7 @@ fn reset_then_reopen_demo_recompiles() {
     registry.merge(subset);
 
     // The reset demo must still compile, so every `ref` resolves.
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let reified = reify_all(&registry);
     let codec = crate::node::codec();
     let reg_env = env(&registry, &reified, &builtins, &codec);
@@ -2720,10 +2720,10 @@ fn sample_buffers_ride_reachability() {
 /// registry names before builtins, so such a graph hides the builtin.
 #[test]
 fn base_names_do_not_shadow_builtins() {
-    let sources = crate::headless::base_sources();
-    let loaded = crate::headless::load_sources(
+    let sources = gantz_cli::headless::base_sources(&crate::conf());
+    let loaded = gantz_cli::headless::load_sources(
         &sources,
-        bevy_gantz_egui::base::BASE_TIMESTAMP,
+        gantz_egui::base::BASE_TIMESTAMP,
         &crate::node::codec(),
     );
     for (source, parsed) in sources.iter().zip(&loaded.parsed) {
@@ -2753,10 +2753,10 @@ fn base_names_do_not_shadow_builtins() {
 #[test]
 fn base_sources_parse_reproducibly() {
     use std::collections::BTreeMap;
-    let heads = |source: &crate::headless::Source| -> BTreeMap<_, _> {
+    let heads = |source: &gantz_cli::headless::Source| -> BTreeMap<_, _> {
         gantz_egui::export::parse_export_at(
             &source.bytes,
-            bevy_gantz_egui::base::BASE_TIMESTAMP,
+            gantz_egui::base::BASE_TIMESTAMP,
             &crate::node::codec(),
         )
         .unwrap_or_else(|e| panic!("{}: parse failed: {e}", source.label))
@@ -2764,7 +2764,7 @@ fn base_sources_parse_reproducibly() {
         .map(|(n, ca)| (n.clone(), ca))
         .collect()
     };
-    for source in crate::headless::base_sources() {
+    for source in gantz_cli::headless::base_sources(&crate::conf()) {
         assert_eq!(
             heads(&source),
             heads(&source),
@@ -2799,7 +2799,7 @@ fn plyphon_base_demos_derive_and_build() {
 
     let registry: DataReg = gantz_egui::export::parse_export_at(
         gantz_plyphon::BASE_BYTES,
-        bevy_gantz_egui::base::BASE_TIMESTAMP,
+        gantz_egui::base::BASE_TIMESTAMP,
         &crate::node::codec(),
     )
     .expect("parse");
@@ -2872,7 +2872,7 @@ fn plyphon_base_demos_derive_and_build() {
 #[test]
 fn cross_source_base_refs_resolve_via_seed() {
     use std::collections::BTreeMap;
-    let ts = bevy_gantz_egui::base::BASE_TIMESTAMP;
+    let ts = gantz_egui::base::BASE_TIMESTAMP;
 
     let core: DataReg =
         gantz_egui::export::parse_export_at(gantz_base::BYTES, ts, &crate::node::codec())
@@ -2913,14 +2913,14 @@ fn cross_source_base_refs_resolve_via_seed() {
     merged.merge(domain);
 
     // The merged registry compiles the wrapper.
-    let builtins = builtins_with_instances();
+    let builtins = builtins_with_instances(&crate::conf());
     let reified = reify_all(&merged);
     let codec = crate::node::codec();
     let reg_env = env(&merged, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
     let head = gantz_ca::Head::Branch(name("wrap-add"));
     let graph = head_graph(&reified, &merged, &head).expect("wrap-add graph");
-    crate::headless::init(&get_node, graph).unwrap_or_else(|e| {
+    gantz_cli::headless::init(&crate::conf(), &get_node, graph).unwrap_or_else(|e| {
         panic!(
             "wrap-add failed to compile:\n{}",
             gantz_core::vm::error_chain(&e),

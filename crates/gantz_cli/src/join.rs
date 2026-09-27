@@ -5,8 +5,8 @@
 //! tip converges headlessly. Files are rewritten when names move and read
 //! back when they change on disk. See [`crate::mirror`].
 
-use crate::cli::JoinArgs;
 use crate::mirror::Mirror;
+use crate::{Conf, JoinArgs};
 use gantz_ca as ca;
 use gantz_collab::{Handle, Identity, Infra, PeerId, RuntimeConfig};
 use gantz_collab_sync::{Effect, JoinError, OpenHeads, Sessions};
@@ -62,27 +62,22 @@ impl From<std::io::Error> for Stop {
 }
 
 impl Peer {
-    /// Spawn the runtime and prepare a registry holding the embedded base
+    /// Spawn the runtime and prepare a registry holding the configured base
     /// sources, as every app has them, so edits can reference base graphs.
-    pub fn new(
-        identity: Identity,
-        infra: Infra,
-        dir: PathBuf,
-        codec: gantz_egui::node::NodeCodec,
-    ) -> Self {
+    pub fn new(identity: Identity, infra: Infra, dir: PathBuf, conf: &Conf) -> Self {
         let peer = identity.peer_id();
         let handle = gantz_collab::spawn(identity, RuntimeConfig { infra });
         let registry = crate::headless::load_sources(
-            &crate::headless::base_sources(),
-            bevy_gantz_egui::base::BASE_TIMESTAMP,
-            &codec,
+            &crate::headless::base_sources(conf),
+            gantz_egui::base::BASE_TIMESTAMP,
+            &conf.codec,
         )
         .registry;
         Self {
             handle,
             sessions: Sessions::default(),
             registry,
-            mirror: Mirror::new(dir, codec),
+            mirror: Mirror::new(dir, conf.codec),
             peer,
             branch: None,
             joined: false,
@@ -181,7 +176,7 @@ impl Peer {
                         }
                         edited |= !applied.is_empty();
                     }
-                    Err(e) => warn!("{}", crate::cli::parse_diagnostic(&label, &e)),
+                    Err(e) => warn!("{}", crate::parse_diagnostic(&label, &e)),
                 }
             }
             if edited {
@@ -216,7 +211,7 @@ impl Peer {
 }
 
 /// Run the subcommand until the runtime stops. Returns the exit code.
-pub fn run(args: JoinArgs) -> i32 {
+pub fn run(args: JoinArgs, conf: &Conf) -> i32 {
     // Parsed again by the join. Failing here spares spawning a runtime.
     let ticket = match args.ticket.trim().parse::<gantz_collab::SessionTicket>() {
         Ok(ticket) => ticket,
@@ -225,7 +220,7 @@ pub fn run(args: JoinArgs) -> i32 {
             return 2;
         }
     };
-    let dir = match args.dir.clone().or_else(|| default_dir(&ticket)) {
+    let dir = match args.dir.clone().or_else(|| default_dir(conf, &ticket)) {
         Some(dir) => dir,
         None => {
             eprintln!("no data directory for this user; pass --dir");
@@ -244,7 +239,7 @@ pub fn run(args: JoinArgs) -> i32 {
         return 1;
     }
     let infra = gantz_collab_sync::infra(args.relay.as_deref());
-    let mut peer = Peer::new(identity, infra, dir.clone(), crate::node::codec());
+    let mut peer = Peer::new(identity, infra, dir.clone(), conf);
     info!("peer {}", peer.peer_id());
     if let Err(e) = peer.join(&args.ticket, now()) {
         eprintln!("{e}");
@@ -279,8 +274,8 @@ pub fn run(args: JoinArgs) -> i32 {
 /// The default working directory for a session: the app data directory,
 /// then `sessions/<name>-<session>`. Joining the same session again lands
 /// in the same directory, and sessions sharing a graph name do not collide.
-fn default_dir(ticket: &gantz_collab::SessionTicket) -> Option<PathBuf> {
-    let dirs = directories::ProjectDirs::from("", "nannou-org", "gantz")?;
+fn default_dir(conf: &Conf, ticket: &gantz_collab::SessionTicket) -> Option<PathBuf> {
+    let dirs = directories::ProjectDirs::from("", conf.org, conf.app)?;
     let session = format!("{}-{}", ticket.name, ticket.session);
     Some(dirs.data_dir().join("sessions").join(session))
 }

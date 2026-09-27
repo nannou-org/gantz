@@ -3872,12 +3872,11 @@ dependencies = [
  "bevy_gantz_plyphon",
  "bevy_pkv",
  "clap",
- "directories",
  "egui_graph",
  "gantz_base",
  "gantz_ca",
+ "gantz_cli",
  "gantz_collab",
- "gantz_collab_sync",
  "gantz_core",
  "gantz_egui",
  "gantz_format",
@@ -3889,8 +3888,6 @@ dependencies = [
  "gantz_ui",
  "serde",
  "steel-core",
- "tracing",
- "tracing-subscriber",
  "web-time",
 ]
 
@@ -3917,6 +3914,28 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "gantz_cli"
+version = "0.1.0"
+dependencies = [
+ "async-channel",
+ "clap",
+ "directories",
+ "gantz_base",
+ "gantz_ca",
+ "gantz_collab",
+ "gantz_collab_sync",
+ "gantz_core",
+ "gantz_egui",
+ "gantz_format",
+ "gantz_std",
+ "gantz_ui",
+ "serde",
+ "steel-core",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

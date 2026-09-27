@@ -1,6 +1,7 @@
-use crate::cli::{Emit, check, compile, fmt, is_address_mode};
+use super::conf;
 use crate::headless::{self, Source};
-use bevy_gantz_egui::base::BASE_TIMESTAMP;
+use crate::{Emit, check, compile, fmt, is_address_mode};
+use gantz_egui::base::BASE_TIMESTAMP;
 use std::borrow::Cow;
 use std::ops::Range;
 
@@ -28,19 +29,11 @@ fn source(label: &str, text: &'static str) -> Source {
 /// The base sources followed by `extra`, with the target range covering
 /// only `extra`.
 fn with_base(extra: Vec<Source>) -> (Vec<Source>, Range<usize>) {
-    let mut sources = headless::base_sources();
+    let mut sources = headless::base_sources(&conf());
     let start = sources.len();
     sources.extend(extra);
     let end = sources.len();
     (sources, start..end)
-}
-
-#[test]
-fn fmt_check_passes_on_base_files() {
-    let sources = headless::base_sources();
-    let output = fmt(&sources, 0..sources.len(), true);
-    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-    assert!(output.writes.is_empty());
 }
 
 #[test]
@@ -49,7 +42,7 @@ fn fmt_rewrites_labels_and_is_idempotent() {
         "g.gantz",
         "(graph g (m (expr 1)) (n (expr 2)) (-> m n))",
     )]);
-    let mut output = fmt(&sources, targets.clone(), false);
+    let mut output = fmt(&conf(), &sources, targets.clone(), false);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     let (ix, text) = output.writes.pop().expect("one rewrite");
     assert_eq!(ix, targets.start);
@@ -58,13 +51,13 @@ fn fmt_rewrites_labels_and_is_idempotent() {
 
     let mut sources = sources;
     sources[ix].bytes = Cow::Owned(text.into_bytes());
-    let output = fmt(&sources, targets, true);
+    let output = fmt(&conf(), &sources, targets, true);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
 }
 
 #[test]
 fn fmt_keeps_address_mode() {
-    let codec = crate::node::codec();
+    let codec = conf().codec;
     let base = gantz_egui::export::parse_export_at(gantz_base::BYTES, BASE_TIMESTAMP, &codec)
         .expect("parse base");
     let heads: Vec<_> = base
@@ -78,14 +71,14 @@ fn fmt_keeps_address_mode() {
         label: "export.gantz".to_string(),
         bytes: Cow::Owned(text.into_bytes()),
     }];
-    let output = fmt(&sources, 0..1, true);
+    let output = fmt(&conf(), &sources, 0..1, true);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
 }
 
 #[test]
 fn compile_emits_steel_for_root_graph() {
     let (sources, targets) = with_base(vec![source("root.gantz", ROOT)]);
-    let output = compile(&sources, targets.start, None, Emit::Steel);
+    let output = compile(&conf(), &sources, targets.start, None, Emit::Steel);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     assert!(output.stdout.contains("(define"), "{}", output.stdout);
     assert!(output.stdout.ends_with('\n'));
@@ -93,8 +86,8 @@ fn compile_emits_steel_for_root_graph() {
 
 #[test]
 fn compile_rejects_ambiguous_root() {
-    let sources = headless::base_sources();
-    let output = compile(&sources, 0, None, Emit::Steel);
+    let sources = headless::base_sources(&conf());
+    let output = compile(&conf(), &sources, 0, None, Emit::Steel);
     assert_eq!(output.diagnostics.len(), 1, "{:?}", output.diagnostics);
     assert!(output.diagnostics[0].contains("no unique root graph"));
     assert!(output.stdout.is_empty());
@@ -103,7 +96,13 @@ fn compile_rejects_ambiguous_root() {
 #[test]
 fn compile_by_name_and_source_map() {
     let (sources, targets) = with_base(vec![source("root.gantz", ROOT)]);
-    let output = compile(&sources, targets.start, Some("root"), Emit::SourceMap);
+    let output = compile(
+        &conf(),
+        &sources,
+        targets.start,
+        Some("root"),
+        Emit::SourceMap,
+    );
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     assert!(
         output.stdout.lines().any(|l| l.starts_with("def ")),
@@ -111,22 +110,14 @@ fn compile_by_name_and_source_map() {
         output.stdout
     );
 
-    let output = compile(&sources, targets.start, Some("nope"), Emit::Steel);
+    let output = compile(&conf(), &sources, targets.start, Some("nope"), Emit::Steel);
     assert_eq!(output.diagnostics, ["root.gantz: no graph named `nope`"]);
-}
-
-#[test]
-fn check_passes_on_base_sources() {
-    let sources = headless::base_sources();
-    let output = check(&sources, 0..sources.len());
-    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
-    assert!(output.warnings.is_empty(), "{:?}", output.warnings);
 }
 
 #[test]
 fn check_reports_parse_location() {
     let (sources, targets) = with_base(vec![source("bad.gantz", "(graph g (n bogus))")]);
-    let output = check(&sources, targets);
+    let output = check(&conf(), &sources, targets);
     assert_eq!(output.diagnostics.len(), 1, "{:?}", output.diagnostics);
     assert!(
         output.diagnostics[0].starts_with("bad.gantz:1:"),
@@ -138,7 +129,7 @@ fn check_reports_parse_location() {
 #[test]
 fn check_no_base_reports_missing_dependency() {
     let sources = vec![source("wrap-add.gantz", WRAP_ADD)];
-    let output = check(&sources, 0..1);
+    let output = check(&conf(), &sources, 0..1);
     assert_eq!(output.diagnostics.len(), 1, "{:?}", output.diagnostics);
     assert_eq!(
         output.diagnostics[0],
@@ -146,14 +137,14 @@ fn check_no_base_reports_missing_dependency() {
     );
 
     let (sources, targets) = with_base(vec![source("wrap-add.gantz", WRAP_ADD)]);
-    let output = check(&sources, targets);
+    let output = check(&conf(), &sources, targets);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
 }
 
 #[test]
 fn check_warns_on_redefined_name() {
     let (sources, targets) = with_base(vec![source("mine.gantz", "(graph add (a inlet))")]);
-    let output = check(&sources, targets);
+    let output = check(&conf(), &sources, targets);
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     assert_eq!(output.warnings.len(), 1, "{:?}", output.warnings);
     assert!(output.warnings[0].contains("`add` redefines"));

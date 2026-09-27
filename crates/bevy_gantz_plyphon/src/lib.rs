@@ -246,7 +246,7 @@ impl Plugin for PlyphonPlugin {
         app.world_mut()
             .get_resource_or_init::<bevy_gantz_egui::base::BaseSources>()
             .0
-            .push(bevy_gantz_egui::base::BaseSource {
+            .push(gantz_egui::base::BaseSource {
                 name: "plyphon",
                 bytes: gantz_plyphon::BASE_BYTES,
             });
