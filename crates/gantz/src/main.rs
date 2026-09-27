@@ -23,6 +23,8 @@ mod mirror;
 mod node;
 mod persist;
 mod storage;
+#[cfg(test)]
+mod tests;
 mod window;
 
 fn main() {
