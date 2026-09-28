@@ -638,6 +638,38 @@ impl NodeUi for Plot {
             });
         });
 
+        // The capacity only bounds the scope history. In signal mode the row
+        // shows the length of the incoming signal instead.
+        let size = chans.iter().map(Vec::len).max().unwrap_or(0);
+        body.row(row_h, |mut row| match self.mode {
+            PlotMode::Scope => {
+                row.col(|ui| {
+                    ui.label("capacity");
+                });
+                row.col(|ui| {
+                    let mut c = self.capacity as i32;
+                    if ui
+                        .add(egui::DragValue::new(&mut c).range(1..=4096).speed(1.0))
+                        .on_hover_text("max samples retained per channel")
+                        .changed()
+                    {
+                        self.capacity = c.clamp(1, 4096) as u32;
+                        changed = true;
+                    }
+                });
+            }
+            PlotMode::Signal => {
+                row.col(|ui| {
+                    ui.label("size");
+                });
+                row.col(|ui| {
+                    let mut n = size;
+                    ui.add_enabled(false, egui::DragValue::new(&mut n))
+                        .on_disabled_hover_text("the incoming signal's samples per channel");
+                });
+            }
+        });
+
         body.row(row_h, |mut row| {
             row.col(|ui| {
                 ui.label("style");
@@ -659,23 +691,6 @@ impl NodeUi for Plot {
                         "draw as a connected line",
                     );
                 });
-            });
-        });
-
-        body.row(row_h, |mut row| {
-            row.col(|ui| {
-                ui.label("capacity");
-            });
-            row.col(|ui| {
-                let mut c = self.capacity as i32;
-                if ui
-                    .add(egui::DragValue::new(&mut c).range(1..=4096).speed(1.0))
-                    .on_hover_text("max samples retained in scope mode")
-                    .changed()
-                {
-                    self.capacity = c.clamp(1, 4096) as u32;
-                    changed = true;
-                }
             });
         });
 
