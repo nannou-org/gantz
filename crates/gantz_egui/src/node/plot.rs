@@ -25,7 +25,7 @@ use super::size_sync::{self, fitted_size};
 use crate::ui_tree::UiTree;
 use crate::ui_tree::plot::{PlotFrame, is_container, resolve_color, split_channels};
 use crate::widget::node_inspector;
-use crate::widget::node_inspector::radio_option;
+use crate::widget::node_inspector::{radio_option, toggle_option};
 use crate::{
     ContextMenuResponse, Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse,
     NodeViewResponse, SocketDoc, SocketKind,
@@ -495,18 +495,15 @@ impl PlotLook {
             });
             row.col(|ui| {
                 ui.horizontal(|ui| {
-                    changed |= ui
-                        .checkbox(&mut self.show_grid, "grid")
-                        .on_hover_text("draw the background grid")
-                        .changed();
-                    changed |= ui
-                        .checkbox(&mut self.show_axes, "axes")
-                        .on_hover_text("draw the axes")
-                        .changed();
-                    changed |= ui
-                        .checkbox(&mut self.interactive, "interactive")
-                        .on_hover_text("show a crosshair and value readout on hover")
-                        .changed();
+                    changed |=
+                        toggle_option(ui, &mut self.show_grid, "grid", "draw the background grid");
+                    changed |= toggle_option(ui, &mut self.show_axes, "axes", "draw the axes");
+                    changed |= toggle_option(
+                        ui,
+                        &mut self.interactive,
+                        "interact",
+                        "show a crosshair and value readout on hover",
+                    );
                 });
             });
         });
