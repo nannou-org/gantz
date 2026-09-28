@@ -1092,6 +1092,7 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         match outcome {
             gantz_egui::ops::MergeHeadOutcome::FastForward(target) => {
                 navigate_head(ctx, state, &head, target);
+                resync_and_refresh(state);
             }
             gantz_egui::ops::MergeHeadOutcome::Merged { .. } => {
                 // The op already committed with both parents, so the commit
@@ -1123,6 +1124,7 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             gantz_egui::ops::undo(&state.env.registry, &mut state.gantz.redo_stacks, &head);
         if let Some(parent) = parent {
             navigate_head(ctx, state, &head, parent);
+            resync_and_refresh(state);
         }
     }
 
@@ -1133,6 +1135,7 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         let redo_ca = gantz_egui::ops::redo(&mut state.gantz.redo_stacks, &head);
         if let Some(redo_ca) = redo_ca {
             navigate_head(ctx, state, &head, redo_ca);
+            resync_and_refresh(state);
         }
     }
 

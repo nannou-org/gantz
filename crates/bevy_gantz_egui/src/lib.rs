@@ -1399,6 +1399,7 @@ pub fn on_merge_head(
                 entity: event.head,
                 target,
             });
+            cmds.trigger(ResyncRefsEvent);
         }
         gantz_egui::ops::MergeHeadOutcome::Merged { new_commit, .. } => {
             log::debug!(
@@ -1545,9 +1546,14 @@ pub fn on_sync_remote_tip(
 
 /// Request a reference resync outside the usual committed flow. Bring
 /// sync-enabled `NamedRef`s up to date and refresh open heads whose commits
-/// moved. The collaborative-session layer triggers it after it moves scoped
-/// names that no open head points at, such as fast-forwards of nested or
-/// referenced graphs.
+/// moved.
+///
+/// A head move fires no [`head::CommittedEvent`], so the referrers of a moved
+/// graph follow only via this event. [`on_undo`], [`on_redo`] and a merge
+/// fast-forward trigger it after their [`head::MoveHeadEvent`]. The
+/// collaborative-session layer triggers it after it moves scoped names that
+/// no open head points at, such as fast-forwards of nested or referenced
+/// graphs.
 #[derive(Debug, Event)]
 pub struct ResyncRefsEvent;
 
@@ -1598,6 +1604,7 @@ pub fn on_undo(
     };
     if let Some(target) = target {
         cmds.trigger(head::MoveHeadEvent { entity, target });
+        cmds.trigger(ResyncRefsEvent);
     }
 }
 
@@ -1635,6 +1642,7 @@ pub fn on_redo(
     };
     if let Some(target) = target {
         cmds.trigger(head::MoveHeadEvent { entity, target });
+        cmds.trigger(ResyncRefsEvent);
     }
 }
 
