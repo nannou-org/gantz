@@ -871,6 +871,7 @@ fn provide_dsp_edge_style(
 ///
 /// - Structural sync, only when the head's committed graph changed. Re-derive
 ///   the synthdef and respawn the synth if its structure changed, else keep it.
+///   A spawned synth starts from its bound params' current values.
 /// - Param sync, every frame. Drain each dsp param's queued `(time, value)`
 ///   control updates from VM state and schedule them on the running synth at
 ///   `time + sched_lead` via [`Backend::set_control_at`], so automation plays
@@ -987,6 +988,7 @@ fn drive_synths(
                     out_channels,
                     sample_rate,
                     muted,
+                    vms.get_mut(&entity),
                 ),
                 Err(e) => {
                     log::error!(
@@ -1019,11 +1021,8 @@ fn drive_synths(
             let node_id = synth.node_id;
             let mut backend = Embedded::new(&mut dsp.controller);
             for slot in &mut synth.params {
-                let drained = match &slot.key {
-                    None => gantz_plyphon::param::drain_param(vm, &slot.node_path),
-                    Some(key) => gantz_plyphon::param::drain_param_keyed(vm, &slot.node_path, key),
-                };
-                let Some((value, pending)) = drained else {
+                let Some((value, pending)) = drain_bound(vm, &slot.node_path, slot.key.as_deref())
+                else {
                     continue;
                 };
                 let value = value as f32;
@@ -1132,6 +1131,20 @@ fn drive_synths(
     }
     state.bus_alloc.sweep(Instant::now());
     state.bufnum_alloc.sweep(Instant::now());
+}
+
+/// Read a bound param's current value and drain its queued `(time, value)`
+/// updates, oldest first, from the node state at `node_path`. `key` names the
+/// param within keyed state. See [`gantz_plyphon::param`].
+fn drain_bound(
+    vm: &mut Engine,
+    node_path: &[usize],
+    key: Option<&str>,
+) -> Option<(f64, Vec<(f64, f64)>)> {
+    match key {
+        None => gantz_plyphon::param::drain_param(vm, node_path),
+        Some(key) => gantz_plyphon::param::drain_param_keyed(vm, node_path, key),
+    }
 }
 
 /// Drain the engine's events. Returns the node ids of the synths it failed to
@@ -1279,6 +1292,9 @@ fn buffer_blobs(reg: &ca::Registry) -> &BufferBlobs {
 /// A spawn while `muted` stays silent. Kept synths keep the mute recorded on
 /// the head until [`sync_mute`] ramps them.
 ///
+/// Each spawn starts from the bound params' current values in `vm`. See
+/// [`spawn_part`].
+///
 /// Returns the sync's outcome as the head's [`DspHead`], for the GUI.
 fn structural_sync<N>(
     controller: &mut Controller,
@@ -1291,6 +1307,7 @@ fn structural_sync<N>(
     out_channels: usize,
     sample_rate: f64,
     muted: bool,
+    mut vm: Option<&mut Engine>,
 ) -> DspHead
 where
     N: ToNodeDsp,
@@ -1465,6 +1482,7 @@ where
                     sample_rate,
                     anchor,
                     muted,
+                    vm.as_deref_mut(),
                 ) {
                     Ok(synth) => {
                         // The replacement is live. Fade the old out, so the
@@ -1549,9 +1567,16 @@ fn wiring_hash(part: &ResolvedPart) -> u64 {
 /// block through the `Line` in each fade gain. The spawn carries the bus
 /// indices, scope bufnums, bufnums and unbound fade params in one batch, so
 /// all are in place before the synth's first block. While `muted`, the `~out`
-/// fade params stay at their silent `0.0` default. Bound params re-send from
-/// node state via the same-frame param sync. On failure, cleans up after itself and reports
-/// whether retrying next frame can converge. See [`SpawnError`].
+/// fade params stay at their silent `0.0` default.
+///
+/// The batch also carries each bound param's current value from node state
+/// in `vm`, so the synth's first block and its units' init see it. Updates
+/// queued before the spawn are in the synth's past, so they collapse to that
+/// value. Without a VM, bound params start at their def defaults until the
+/// param sync sends them.
+///
+/// On failure, cleans up after itself and reports whether retrying next frame
+/// can converge. See [`SpawnError`].
 fn spawn_part(
     controller: &mut Controller,
     state: &mut HeadSynths,
@@ -1562,6 +1587,7 @@ fn spawn_part(
     sample_rate: f64,
     anchor: Option<i32>,
     muted: bool,
+    mut vm: Option<&mut Engine>,
 ) -> Result<PartSynth, SpawnError> {
     let now = Instant::now();
     let ResolvedPart {
@@ -1684,38 +1710,46 @@ fn spawn_part(
         Some(node) => (node, AddAction::Before),
         None => (ROOT_GROUP_ID, AddAction::Tail),
     };
+    // The bound params at their current node state values.
+    let params: Vec<ParamSlot> = params
+        .into_iter()
+        .map(|b| {
+            let last = vm
+                .as_deref_mut()
+                .and_then(|vm| drain_bound(vm, &b.node_path, b.key.as_deref()))
+                .map(|(value, _)| value as f32);
+            if let Some(value) = last {
+                controls.push((b.index, value));
+            }
+            ParamSlot {
+                node_path: b.node_path,
+                key: b.key,
+                index: b.index,
+                last,
+            }
+        })
+        .collect();
     // The unbound fade params at unity. The fade lines ramp the synth in from
     // its first block.
     for g in &gains {
         let held_muted = muted && g.sink == FadeSink::Output;
-        if !held_muted && !params.iter().any(|b| b.index == g.index) {
+        if !held_muted && !params.iter().any(|p| p.index == g.index) {
             controls.push((g.index, 1.0));
         }
     }
     let node_id = state.node_ids.alloc();
     match backend.spawn(node_id, &def_name, target, action, &controls) {
-        Ok(()) => {
-            let params = params
-                .iter()
-                .map(|b| ParamSlot {
-                    node_path: b.node_path.clone(),
-                    key: b.key.clone(),
-                    index: b.index,
-                    last: None,
-                })
-                .collect();
-            Ok(PartSynth {
-                key,
-                def_name,
-                node_id,
-                sig,
-                wiring,
-                params,
-                scopes,
-                gains,
-                buffers: part_buffers,
-            })
-        }
+        Ok(()) => Ok(PartSynth {
+            key,
+            def_name,
+            node_id,
+            sig,
+            wiring,
+            params,
+            scopes,
+            gains,
+            buffers: part_buffers,
+        }),
         Err(e) => {
             log::error!("bevy_gantz_plyphon: synth spawn failed: {e:?}");
             let spawn_err = match e {
@@ -2545,6 +2579,7 @@ mod tests {
             48_000.0,
             None,
             false,
+            None,
         )
         .expect("spawn_part");
         assert_eq!(synth.gains.len(), 1, "the out carries a fade gain");
@@ -2609,6 +2644,7 @@ mod tests {
             48_000.0,
             None,
             true,
+            None,
         )
         .expect("spawn_part");
         let gain = synth.gains[0];
@@ -2626,6 +2662,77 @@ mod tests {
             .expect("set_control");
         let rms = render_rms(&mut world, 48_000 / 2);
         assert!(rms > 0.05, "unmuted, the part must sound: rms={rms}");
+    }
+
+    /// A spawn starts each bound param from its node state. The `~out` gain
+    /// holds a queued `0.0`, as a same-frame `load!` push leaves it. The spawn
+    /// applies it from the first block and drains the queue, so the part never
+    /// sounds at its default gain.
+    #[test]
+    fn spawn_starts_bound_params_from_node_state() {
+        use gantz_core::edge::Edge;
+        use gantz_core::node::graph::Graph;
+        use gantz_plyphon::flatten::{Flat, RefKind, flatten};
+
+        let mut g = Graph::<TestN>::default();
+        let s = g.add_node(sinosc());
+        let o = g.add_node(TestN::Out(gantz_plyphon::Out::default()));
+        g.add_edge(s, o, Edge::new(0.into(), 0.into()));
+        let resolve =
+            |_: &TestN| -> Option<(gantz_ca::ContentAddr, RefKind, Option<&Graph<TestN>>)> { None };
+        let flat: Graph<Flat<&TestN>> = flatten(&|_| None, &g, &resolve).expect("flatten");
+        let mut cache = DefCache::new();
+        let template = derive_template(&flat, 1, &|_| None, &mut cache).expect("derive");
+        let part = instantiate(&template, &cache).into_iter().next().unwrap();
+        let wiring = wiring_hash(&part);
+
+        let mut vm = Engine::new_base();
+        vm.register_value(
+            gantz_core::ROOT_STATE,
+            gantz_core::steel::SteelVal::empty_hashmap(),
+        );
+        let src = format!(
+            "(set! {root} (hash-insert {root} {ix} \
+                (hash 'value 0.0 'pending (list (list 0.0 0.0)))))",
+            root = gantz_core::ROOT_STATE,
+            ix = o.index(),
+        );
+        vm.run(src).expect("set the gain state");
+
+        let (mut controller, _nrt, mut world) = test_engine();
+        let mut state = HeadSynths::default();
+        let entity = entities(1)[0];
+        let synth = spawn_part(
+            &mut controller,
+            &mut state,
+            &EMPTY_BUFFERS,
+            entity,
+            part,
+            wiring,
+            48_000.0,
+            None,
+            false,
+            Some(&mut vm),
+        )
+        .expect("spawn_part");
+
+        let gain = synth
+            .params
+            .iter()
+            .find(|p| p.node_path == [o.index()])
+            .expect("the out's gain slot");
+        assert_eq!(gain.last, Some(0.0));
+        let out_state = gantz_core::node::state::extract_value(&vm, &[o.index()])
+            .expect("state read")
+            .expect("state present");
+        assert_eq!(
+            gantz_plyphon::param::pending_len(&out_state),
+            0,
+            "the spawn drains the queue",
+        );
+
+        let rms = render_rms(&mut world, 48_000 / 4);
+        assert!(rms < 1e-3, "the part starts at the queued gain: rms={rms}");
     }
 
     /// End-to-end for the descriptor-table nodes. A `~saw -> ~lpf -> ~out`
@@ -2673,6 +2780,7 @@ mod tests {
             48_000.0,
             None,
             false,
+            None,
         )
         .expect("spawn_part");
 
@@ -2742,6 +2850,7 @@ mod tests {
             48_000.0,
             None,
             false,
+            None,
         )
         .expect("spawn_part");
         // The asset has one refcount, held by this synth.
@@ -2825,6 +2934,7 @@ mod tests {
                 48_000.0,
                 None,
                 false,
+                None,
             )
             .expect("spawn_part");
             synths.push(synth);
@@ -2894,6 +3004,7 @@ mod tests {
                 48_000.0,
                 None,
                 false,
+                None,
             )
             .expect("spawn_part");
         }
@@ -3076,6 +3187,7 @@ mod tests {
             48_000.0,
             None,
             false,
+            None,
         )
         .expect("spawn_part");
 
@@ -3167,6 +3279,7 @@ mod tests {
             1,
             48_000.0,
             false,
+            None,
         );
         let mut out = vec![0.0f32; 48_000 / 4];
         for block in out.chunks_mut(64) {
@@ -3196,6 +3309,7 @@ mod tests {
             1,
             48_000.0,
             false,
+            None,
         );
         // Render past the crossfade. The respawn fades in over FADE_LAG.
         let mut out = vec![0.0f32; 48_000 / 2];
@@ -3248,6 +3362,7 @@ mod tests {
             1,
             48_000.0,
             true,
+            None,
         );
         assert_eq!(head.outputs, 1, "one `~out`");
         assert!(
@@ -3277,6 +3392,7 @@ mod tests {
             1,
             48_000.0,
             true,
+            None,
         );
         let rms2 = render_rms(&mut world, 48_000 / 2);
         assert!(rms2 < 1e-3, "muted respawn must be silent: rms={rms2}");
@@ -3294,6 +3410,7 @@ mod tests {
             1,
             48_000.0,
             false,
+            None,
         );
         let head = state.heads.get_mut(&entity).expect("head parts");
         assert!(head.muted, "a kept part keeps the mute applied to it");
@@ -3342,6 +3459,7 @@ mod tests {
                 1,
                 48_000.0,
                 false,
+                None,
             );
             let node_id = state.heads[&entity].parts[0].node_id;
             world.fill(&mut [0.0; 64], 1);
@@ -3420,6 +3538,7 @@ mod tests {
             1,
             48_000.0,
             false,
+            None,
         );
         let mut out = vec![0.0f32; 48_000 / 8];
         for block in out.chunks_mut(64) {
@@ -3449,6 +3568,7 @@ mod tests {
             1,
             48_000.0,
             false,
+            None,
         );
         let mut out = vec![0.0f32; 48_000 / 2];
         for block in out.chunks_mut(64) {
@@ -3665,6 +3785,7 @@ mod tests {
             1,
             48_000.0,
             false,
+            None,
         );
         let rms_one = render_rms(&mut world, 48_000 / 2);
         assert!(rms_one > 0.05, "one instance must sound: rms={rms_one}");
@@ -3687,6 +3808,7 @@ mod tests {
             1,
             48_000.0,
             false,
+            None,
         );
         assert_eq!(state.heads[&entity].parts.len(), 2, "two instance spawns");
         assert_eq!(
@@ -3750,6 +3872,7 @@ mod tests {
             1,
             48_000.0,
             false,
+            None,
         );
         let before: HashMap<u64, i32> = state.heads[&entity]
             .parts
@@ -3771,6 +3894,7 @@ mod tests {
             1,
             48_000.0,
             false,
+            None,
         );
         let after: HashMap<u64, i32> = state.heads[&entity]
             .parts
@@ -3832,6 +3956,7 @@ mod tests {
             1,
             48_000.0,
             false,
+            None,
         );
         let rms1 = render_rms(&mut world, 48_000 / 4);
         assert!(rms1 > 0.05, "instanced lowering sounds: rms={rms1}");
@@ -3855,6 +3980,7 @@ mod tests {
             1,
             48_000.0,
             false,
+            None,
         );
         // Render across the crossfade. The tone stays audible throughout.
         let rms2 = render_rms(&mut world, 48_000 / 2);
@@ -3893,6 +4019,7 @@ mod tests {
             1,
             48_000.0,
             false,
+            None,
         );
         let rms_both = render_rms(&mut world, 48_000 / 2);
 
