@@ -1,4 +1,4 @@
-//! [`crate::NodeUi`] implementations for core and std gantz nodes.
+//! [`crate::NodeUi`] implementations for nodes defined in other crates.
 
 mod apply;
 mod branch;

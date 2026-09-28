@@ -488,7 +488,7 @@ fn node_set_data() -> Vec<gantz_ca::NodeData> {
         .set_ext("test.ext", &TestExt { inline: true })
         .unwrap();
     nodes.push(erased(&ext_ref));
-    nodes.push(erased(&gantz_std::Log::default()));
+    nodes.push(erased(&gantz_io::Log::default()));
     nodes.push(erased(&gantz_core::node::Fn(
         gantz_egui::node::NamedRef::new(
             name("mul"),

@@ -111,6 +111,15 @@ fn path_from_val(val: &SteelVal) -> Vec<node::Id> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use gantz_core::{
+        Edge, Node,
+        compile::push_pull_entrypoints,
+        node::{self, WithPushEval},
+    };
+
+    fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
+        None
+    }
 
     #[test]
     fn log_target_roundtrip() {
@@ -121,8 +130,31 @@ mod tests {
 
     #[test]
     fn non_gantz_targets_rejected() {
-        for target in ["", "gantz_std::log", "gantz:", "gantz:x", "gantz:1:x"] {
+        for target in ["", "gantz_io::log", "gantz:", "gantz:x", "gantz:1:x"] {
             assert_eq!(parse_log_target(target), None, "{target}");
         }
+    }
+
+    // The emitted module passes the log node's path as a quoted literal to the
+    // registered log fn, so log entries identify their emitting node.
+    #[test]
+    fn log_expr_carries_node_path() {
+        let mut g = petgraph::graph::DiGraph::new();
+        let push =
+            g.add_node(Box::new(node::expr("'()").unwrap().with_push_eval()) as Box<dyn Node>);
+        let int = g.add_node(Box::new(node::expr("(begin $push 7)").unwrap()) as Box<_>);
+        let log = g.add_node(Box::new(Log::default()) as Box<_>);
+        g.add_edge(push, int, Edge::from((0, 0)));
+        g.add_edge(int, log, Edge::from((0, 0)));
+
+        let eps = push_pull_entrypoints(&no_lookup, &g);
+        let module =
+            gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
+        let src = gantz_core::vm::fmt_module(&module);
+        let expected = format!("(log/info (quote ({})) ", log.index());
+        assert!(
+            src.contains(&expected) || src.contains(&format!("(log/info '({})", log.index())),
+            "module does not pass the log node's path:\n{src}"
+        );
     }
 }

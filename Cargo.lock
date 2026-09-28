@@ -3880,11 +3880,11 @@ dependencies = [
  "gantz_core",
  "gantz_egui",
  "gantz_format",
+ "gantz_io",
  "gantz_nodetag",
  "gantz_pattern",
  "gantz_plyphon",
  "gantz_rng",
- "gantz_std",
  "gantz_ui",
  "serde",
  "steel-core",
@@ -3930,7 +3930,7 @@ dependencies = [
  "gantz_core",
  "gantz_egui",
  "gantz_format",
- "gantz_std",
+ "gantz_io",
  "gantz_ui",
  "serde",
  "steel-core",
@@ -4001,8 +4001,8 @@ dependencies = [
  "gantz_ca",
  "gantz_core",
  "gantz_format",
+ "gantz_io",
  "gantz_nodetag",
- "gantz_std",
  "gantz_ui",
  "hex",
  "humantime",
@@ -4034,6 +4034,19 @@ dependencies = [
  "serde",
  "serde_json",
  "steel-core",
+]
+
+[[package]]
+name = "gantz_io"
+version = "0.1.0"
+dependencies = [
+ "gantz_ca",
+ "gantz_core",
+ "gantz_format",
+ "gantz_nodetag",
+ "log",
+ "petgraph",
+ "serde",
 ]
 
 [[package]]

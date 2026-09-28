@@ -3,7 +3,7 @@ use crate::{
     SocketDoc, SocketKind,
 };
 
-impl NodeUi for gantz_std::log::Log {
+impl NodeUi for gantz_io::log::Log {
     fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
         match self.level {
             log::Level::Error => "error",

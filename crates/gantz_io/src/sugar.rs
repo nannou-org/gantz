@@ -1,8 +1,8 @@
-//! `.gantz` keyword sugar for the standard node set.
+//! `.gantz` keyword sugar for the io node set.
 //!
-//! [`StdSugar`] provides the keyword for this crate's node, `(log [level])`.
-//! Compose it with [`gantz_format::CoreSugar`] and the other crates' sugars
-//! via [`gantz_format::Sugars`].
+//! [`IoSugar`] provides the keywords for this crate's nodes. That is
+//! `(log [level])`. Compose it with [`gantz_format::CoreSugar`] and the other
+//! crates' sugars via [`gantz_format::Sugars`].
 
 use crate::Log;
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
@@ -10,29 +10,9 @@ use gantz_nodetag::NodeTag;
 
 /// Keyword sugar for [`Log`].
 #[derive(Clone, Copy, Debug, Default)]
-pub struct StdSugar;
+pub struct IoSugar;
 
-/// Maps each sugar keyword to its node tag, for the std builtins that lower
-/// to a plain serde object with no extra arguments.
-const KEYWORD_TAG: &[(&str, &str)] = &[("log", Log::TAG)];
-
-/// The node tag for a sugar keyword.
-fn tag_for_keyword(kw: &str) -> Option<&'static str> {
-    KEYWORD_TAG
-        .iter()
-        .find(|(k, _)| *k == kw)
-        .map(|&(_, tag)| tag)
-}
-
-/// The sugar keyword for a node tag, if one exists.
-fn keyword_for_tag(tag: &str) -> Option<&'static str> {
-    KEYWORD_TAG
-        .iter()
-        .find(|(_, t)| *t == tag)
-        .map(|&(kw, _)| kw)
-}
-
-impl Sugar for StdSugar {
+impl Sugar for IoSugar {
     fn read_spec(&self, head: &str, args: SugarArgs<'_>) -> Result<Option<Datum>, FormatError> {
         let datum = match head {
             "log" => log_spec(args)?,
@@ -45,22 +25,22 @@ impl Sugar for StdSugar {
         match keyword {
             // A bare `log` defaults to the INFO level, not an empty node.
             "log" => Some(node_datum(
-                "Log",
+                Log::TAG,
                 vec![("level", Datum::Str("INFO".into()))],
             )),
-            _ => tag_for_keyword(keyword).map(|tag| node_datum(tag, vec![])),
+            _ => None,
         }
     }
 
     fn write_spec(&self, tag: &str, node: &Datum) -> Option<String> {
         match tag {
-            "Log" => Some(write_log(node)),
-            other => keyword_for_tag(other).map(str::to_string),
+            Log::TAG => Some(write_log(node)),
+            _ => None,
         }
     }
 
     fn keyword_for_tag(&self, tag: &str) -> Option<&str> {
-        keyword_for_tag(tag)
+        (tag == Log::TAG).then_some("log")
     }
 }
 
@@ -71,7 +51,7 @@ fn log_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
             .ok_or_else(|| args.malformed_at(0, format!("unknown log level `{sym}`")))?,
         None => "INFO".to_string(),
     };
-    Ok(node_datum("Log", vec![("level", Datum::Str(level))]))
+    Ok(node_datum(Log::TAG, vec![("level", Datum::Str(level))]))
 }
 
 /// Map a log-level symbol to the `log::Level` serde representation.
@@ -100,19 +80,19 @@ mod tests {
     use super::*;
     use gantz_format::sexpr;
 
-    /// Read a single sugar form's text through `StdSugar`, as the format does.
+    /// Read a single sugar form's text through `IoSugar`, as the format does.
     fn read_spec(text: &str) -> Option<Datum> {
         let exprs = sexpr::read(text).expect("read");
         let args = sexpr::list_args(&exprs[0]).expect("list");
         let head = sexpr::as_symbol(&args[0]).expect("head");
-        StdSugar
+        IoSugar
             .read_spec(&head, SugarArgs::new(&args[1..], text))
             .expect("read_spec")
     }
 
     #[test]
     fn log_level_round_trips() {
-        let s = StdSugar;
+        let s = IoSugar;
 
         // A bare `log` and an explicit `(log)` both default to INFO and write
         // `(log)`.

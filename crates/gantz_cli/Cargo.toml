@@ -24,7 +24,7 @@ tracing-subscriber = { workspace = true, features = ["env-filter"] }
 [dev-dependencies]
 async-channel.workspace = true
 gantz_base.workspace = true
-gantz_std.workspace = true
+gantz_io.workspace = true
 gantz_ui.workspace = true
 serde.workspace = true
 
