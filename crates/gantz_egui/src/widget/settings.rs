@@ -2,7 +2,7 @@
 //! the Global, Style, Keybinds and Panes subtabs, plus any application-supplied
 //! extension subtabs. See [`SettingsTab`].
 
-use super::gantz::{LayoutConfig, SceneConfig, ViewToggles};
+use super::gantz::{FollowSelectionConfig, LayoutConfig, SceneConfig, ViewToggles};
 use crate::{Keymap, Responses, StyleConfig};
 
 /// An application-supplied settings subtab.
@@ -64,6 +64,7 @@ pub fn settings(
     validate_change_tracking: Option<bool>,
     layout_config: &mut LayoutConfig,
     scene_config: &mut SceneConfig,
+    follow_selection: &mut FollowSelectionConfig,
     style: &mut StyleConfig,
     keymap: &mut Keymap,
     ext_tabs: &mut [&mut dyn SettingsTab],
@@ -160,6 +161,7 @@ pub fn settings(
                         layout_config,
                         &mut scene_config.snap,
                         &mut scene_config.align,
+                        follow_selection,
                         ui,
                     )
                 })

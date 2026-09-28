@@ -117,6 +117,10 @@ pub struct GantzState {
     /// options and apply to every open head.
     #[serde(default)]
     pub scene_config: SceneConfig,
+    /// Which panes scroll to follow the node selection. Edited in the
+    /// Settings Global subtab.
+    #[serde(default)]
+    pub follow_selection: FollowSelectionConfig,
     /// The egui theme preference and per-theme style overrides, applied to
     /// every gantz context. See [`crate::style`]. Edited in the Settings
     /// Style subtab.
@@ -397,6 +401,31 @@ impl SceneConfig {
                 edges: self.align.edges,
                 centers: self.align.centers,
             })
+    }
+}
+
+/// Which panes scroll to keep the selected node in view when the selection
+/// changes.
+#[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
+pub struct FollowSelectionConfig {
+    /// The Node Inspector pane scrolls to the selected node's entry.
+    #[serde(default = "default_follow_selection")]
+    pub inspector: bool,
+    /// The Steel pane scrolls to the selected node's code.
+    #[serde(default = "default_follow_selection")]
+    pub steel: bool,
+}
+
+fn default_follow_selection() -> bool {
+    true
+}
+
+impl Default for FollowSelectionConfig {
+    fn default() -> Self {
+        Self {
+            inspector: default_follow_selection(),
+            steel: default_follow_selection(),
+        }
     }
 }
 
@@ -1223,6 +1252,7 @@ impl GantzState {
             view_toggles: ViewToggles::default(),
             layout_config: LayoutConfig::default(),
             scene_config: SceneConfig::default(),
+            follow_selection: FollowSelectionConfig::default(),
             style: Default::default(),
             keymap: Keymap::default(),
             collab: Default::default(),
@@ -1856,6 +1886,7 @@ where
         Pane::NodeInspector => {
             if let Some(fh) = access.heads().get(*focused_head).cloned() {
                 let immutable = head_immutable(&fh, gantz.base_immutable, base_names);
+                let follow_selection = state.follow_selection.inspector;
                 let head_state = state.open_heads.entry(fh.clone()).or_default();
                 let ref_ext_uis = gantz.ref_ext_uis;
                 let codec = gantz.codec;
@@ -1869,6 +1900,7 @@ where
                         head_state,
                         &fh,
                         immutable,
+                        follow_selection,
                         ref_ext_uis,
                         ui,
                     )
@@ -2030,13 +2062,17 @@ where
                         highlights.extend(spans.refs);
                     }
                     // Scroll to the first highlighted span when the
-                    // selection changes.
+                    // selection changes. The last-seen selection updates
+                    // even while follow is off, so enabling it does not jump
+                    // to an old selection.
                     let state_id = egui::Id::new("steel_view_selection");
                     let current = egui::Id::new(("steel_sel", h, &selected));
                     let prev: Option<egui::Id> = ui.ctx().data(|d| d.get_temp(state_id));
                     if prev != Some(current) {
                         ui.ctx().data_mut(|d| d.insert_temp(state_id, current));
-                        scroll_to = highlights.iter().map(|r| r.start).min();
+                        if state.follow_selection.steel {
+                            scroll_to = highlights.iter().map(|r| r.start).min();
+                        }
                     }
                 }
             }
@@ -2128,6 +2164,7 @@ where
                     validate_change_tracking,
                     &mut state.layout_config,
                     &mut state.scene_config,
+                    &mut state.follow_selection,
                     &mut state.style,
                     &mut state.keymap,
                     ext_tabs,
@@ -3978,6 +4015,9 @@ fn head_immutable(
 
 /// Returns whether any inspected node had a CA-affecting edit, together with
 /// the payloads emitted by node UIs within the inspector.
+///
+/// `follow_selection` scrolls to the first selected node when the selection
+/// changes.
 #[allow(clippy::too_many_arguments)]
 fn node_inspector<'a>(
     registry: &'a Env<'a>,
@@ -3988,6 +4028,7 @@ fn node_inspector<'a>(
     head_state: &mut OpenHeadState,
     head: &gantz_ca::Head,
     immutable: bool,
+    follow_selection: bool,
     ref_ext_uis: &'a [&'a dyn crate::node::RefExtUi],
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<(bool, Vec<DynResponse>)> {
@@ -4073,7 +4114,9 @@ fn node_inspector<'a>(
                 }
 
                 // Scroll to the first selected node when the selection changes,
-                // mirroring the Steel view's scroll-to-span on selection.
+                // mirroring the Steel view's scroll-to-span on selection. The
+                // last-seen selection updates even while follow is off, so
+                // enabling it does not jump to an old selection.
                 let state_id = egui::Id::new("node_inspector_selection");
                 let mut selected: Vec<node::Id> = head_state
                     .scene
@@ -4088,7 +4131,7 @@ fn node_inspector<'a>(
                 let prev: Option<egui::Id> = ui.ctx().data(|d| d.get_temp(state_id));
                 if prev != Some(current) {
                     ui.ctx().data_mut(|d| d.insert_temp(state_id, current));
-                    if let Some(rect) = selected_rect {
+                    if let Some(rect) = selected_rect.filter(|_| follow_selection) {
                         ui.scroll_to_rect(rect, Some(egui::Align::Center));
                     }
                 }

@@ -1,10 +1,13 @@
 //! The "Global" settings subtab. Globally relevant configuration.
 //!
 //! Hosts the global compile config toggles, the global auto-layout
-//! parameters, the drag snapping and snap-align options, and a button to
-//! reset all demo graphs to their initial state.
+//! parameters, the drag snapping and snap-align options, the follow-selection
+//! toggles, and a button to reset all demo graphs to their initial state.
 
-use super::gantz::{AlignConfig, LayoutConfig, SnapConfig, SnapMode, request_clear_egui_memory};
+use super::gantz::{
+    AlignConfig, FollowSelectionConfig, LayoutConfig, SnapConfig, SnapMode,
+    request_clear_egui_memory,
+};
 use crate::widget::section;
 
 /// Response from [`global_config`].
@@ -24,7 +27,8 @@ pub struct GlobalConfigResponse {
 /// when it is `Some`. `validate_change_tracking` is the current state of the
 /// change-tracking validation toggle. The toggle shows when it is `Some`.
 /// `layout_config` holds the global auto-layout parameters, `snap` the drag
-/// snapping mode and `align` the drag-time snap-align options. All three are
+/// snapping mode, `align` the drag-time snap-align options and
+/// `follow_selection` which panes scroll to the selected node. All four are
 /// mutated in place. The config applies to all open heads.
 pub fn global_config(
     compile_config: Option<gantz_core::compile::Config>,
@@ -32,6 +36,7 @@ pub fn global_config(
     layout_config: &mut LayoutConfig,
     snap: &mut SnapConfig,
     align: &mut AlignConfig,
+    follow_selection: &mut FollowSelectionConfig,
     ui: &mut egui::Ui,
 ) -> GlobalConfigResponse {
     let mut changed_config = None;
@@ -158,6 +163,17 @@ pub fn global_config(
             ui.checkbox(&mut align.centers, "Centres")
                 .on_hover_text("Align to neighbours' horizontal/vertical centres.");
         });
+    });
+
+    section(ui, "Follow selection", |ui| {
+        ui.checkbox(&mut follow_selection.inspector, "Node inspector")
+            .on_hover_text(
+                "When the selection changes, scroll the Node Inspector to the selected node.",
+            );
+        ui.checkbox(&mut follow_selection.steel, "Steel")
+            .on_hover_text(
+                "When the selection changes, scroll the Steel pane to the selected node's code.",
+            );
     });
 
     // A recovery tool that drops egui's persisted UI memory when it has
