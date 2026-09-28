@@ -12,6 +12,7 @@ pub use fn_::{Fn, FnNodeTag};
 #[doc(inline)]
 pub use gantz_ca::{Input, Output};
 pub use id::{IDENTITY_NAME, Identity};
+pub use list::List;
 pub use pull::{Pull, WithPullEval};
 pub use push::{Push, WithPushEval};
 pub use ref_::{AsRefNode, Ref};
@@ -27,6 +28,7 @@ pub mod expr;
 pub mod fn_;
 pub mod graph;
 pub mod id;
+pub mod list;
 pub mod pull;
 pub mod push;
 pub mod ref_;
@@ -530,6 +532,7 @@ pub fn builtins() -> Vec<crate::builtin::Builtin> {
         Builtin::new("expr", &Expr::new("()").unwrap()),
         Builtin::new(IDENTITY_NAME, &Identity),
         Builtin::new("inlet", &graph::Inlet::default()),
+        Builtin::new("list", &List::default()),
         Builtin::new("outlet", &graph::Outlet::default()),
     ]
 }

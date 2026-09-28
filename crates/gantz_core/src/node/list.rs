@@ -1,4 +1,6 @@
-use gantz_core::node::{ExprCtx, ExprResult, MetaCtx};
+//! The [`List`] node. It collects its connected inputs into a list.
+
+use crate::node::{self, Node};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
@@ -39,18 +41,18 @@ impl Default for List {
     }
 }
 
-impl gantz_core::Node for List {
-    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
+impl Node for List {
+    fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
         self.count
     }
 
-    fn n_outputs(&self, _ctx: MetaCtx) -> usize {
+    fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
         1
     }
 
-    fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
+    fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         let items: Vec<&str> = ctx.inputs().iter().flatten().map(String::as_str).collect();
-        gantz_core::node::parse_expr(&format!("(list {})", items.join(" ")))
+        node::parse_expr(&format!("(list {})", items.join(" ")))
     }
 }
 
@@ -65,8 +67,7 @@ fn is_default_count(count: &usize) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gantz_core::Node;
-    use gantz_core::node::Conns;
+    use crate::node::{Conns, ExprCtx, MetaCtx};
 
     fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
         None

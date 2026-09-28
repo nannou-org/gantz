@@ -1,5 +1,5 @@
 use crate::{Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind};
-use gantz_std::List;
+use gantz_core::node::List;
 
 impl NodeUi for List {
     fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {

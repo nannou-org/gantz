@@ -12,7 +12,7 @@ pub struct LogView<'a> {
     logger: Logger,
     id: egui::Id,
     /// Labels for entries whose target identifies an emitting node, keyed by
-    /// node path. See `gantz_std::log::log_target`.
+    /// node path. See `gantz_io::log::log_target`.
     node_labels: Option<&'a HashMap<Vec<node::Id>, String>>,
 }
 
@@ -313,7 +313,7 @@ impl<'a> LogView<'a> {
 
                     if show_target {
                         row.col(|ui| {
-                            let node_path = gantz_std::log::parse_log_target(&entry.target);
+                            let node_path = gantz_io::log::parse_log_target(&entry.target);
                             match node_path {
                                 Some(path) => {
                                     let label = self

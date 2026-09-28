@@ -14,7 +14,7 @@ impl gantz_format::NodeSugar for NodeSet {
     fn sugar() -> gantz_format::Sugars<'static> {
         gantz_format::Sugars(vec![
             &gantz_format::CoreSugar,
-            &gantz_std::StdSugar,
+            &gantz_io::IoSugar,
             &gantz_egui::EguiSugar,
         ])
     }
@@ -31,12 +31,12 @@ fn conf() -> Conf {
                 gantz_core::node::Delay,
                 gantz_core::node::Expr,
                 gantz_core::node::Identity,
+                gantz_core::node::List,
                 gantz_core::node::graph::Inlet,
                 gantz_core::node::graph::Outlet,
-                gantz_std::Bang,
-                gantz_std::List,
-                gantz_std::Log,
-                gantz_std::Number,
+                gantz_egui::node::Bang,
+                gantz_io::Log,
+                gantz_egui::node::Number,
                 gantz_egui::node::FnNamedRef,
                 gantz_egui::node::NamedRef,
                 gantz_egui::node::Bind,
@@ -49,7 +49,7 @@ fn conf() -> Conf {
         builtins: gantz_core::Builtins::from_specs(
             gantz_core::node::builtins()
                 .into_iter()
-                .chain(gantz_std::builtins())
+                .chain(gantz_io::builtins())
                 .chain(gantz_egui::builtins()),
         ),
         steel_modules: gantz_ui::modules().to_vec(),

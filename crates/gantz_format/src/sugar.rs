@@ -19,6 +19,7 @@
 use crate::datum::{Datum, node_datum};
 use crate::error::{ErrorKind, FormatError};
 use crate::sexpr::{self, as_keyword, as_string, as_symbol, err_at, quote, span_src};
+use gantz_core::node::List;
 use gantz_nodetag::NodeTag;
 use steel::parser::ast::ExprKind;
 
@@ -330,8 +331,8 @@ pub trait NodeSugar {
 }
 
 /// The keyword sugars for `gantz_core`'s built-in node set. Those are `inlet`,
-/// `outlet`, `apply`, `delay`, `id`, `expr` and `branch`. Downstream crates
-/// provide a [`Sugar`] for their own nodes and compose via [`Sugars`].
+/// `outlet`, `apply`, `delay`, `id`, `expr`, `branch` and `list`. Downstream
+/// crates provide a [`Sugar`] for their own nodes and compose via [`Sugars`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct CoreSugar;
 
@@ -346,6 +347,7 @@ const KEYWORD_TAG: &[(&str, &str)] = &[
     ("id", <gantz_core::node::Identity as NodeTag>::TAG),
     ("expr", <gantz_core::node::Expr as NodeTag>::TAG),
     ("branch", <gantz_core::node::Branch as NodeTag>::TAG),
+    ("list", List::TAG),
 ];
 
 /// The node tag for a sugar keyword.
@@ -371,6 +373,7 @@ impl Sugar for CoreSugar {
             "outlet" => inlet_outlet_spec("Outlet", args),
             "expr" => expr_spec(args)?,
             "branch" => branch_spec(args)?,
+            "list" => list_spec(args)?,
             _ => return Ok(None),
         };
         Ok(Some(datum))
@@ -386,6 +389,7 @@ impl Sugar for CoreSugar {
             "Outlet" => Some(write_inlet_outlet("outlet", node)),
             "Expr" => Some(write_expr(node)),
             "Branch" => Some(write_branch(node)),
+            "List" => Some(write_list(node)),
             other => keyword_for_tag(other).map(str::to_string),
         }
     }
@@ -480,6 +484,26 @@ fn write_branch(node: &Datum) -> String {
         })
         .unwrap_or_default();
     format!("(branch {src} {masks})")
+}
+
+/// Read a `(list [#:count n])` form. The count is emitted only when given,
+/// so a bare `list` stays bare.
+fn list_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
+    let mut fields = Vec::new();
+    if let Some(count) = args.keyword_int("count")? {
+        let count = (count.max(1) as usize).min(List::MAX_COUNT);
+        fields.push(("count", Datum::U64(count as u64)));
+    }
+    Ok(node_datum(List::TAG, fields))
+}
+
+/// Write a `List` as a bare `list` at the default count, else
+/// `(list #:count n)`.
+fn write_list(node: &Datum) -> String {
+    match node.get("count").and_then(Datum::as_i64) {
+        Some(count) if count != List::DEFAULT_COUNT as i64 => format!("(list #:count {count})"),
+        _ => "list".to_string(),
+    }
 }
 
 /// Write an `Inlet` or `Outlet` as a bare keyword when it carries no socket
@@ -756,5 +780,29 @@ mod tests {
         // An undocumented inlet still writes as the bare keyword.
         let bare = s.read_bare("inlet").expect("bare inlet");
         assert_eq!(s.write_spec("Inlet", &bare).as_deref(), Some("inlet"));
+    }
+
+    #[test]
+    fn list_count_round_trips() {
+        let s = CoreSugar;
+
+        // A default list stays bare, whether read as a keyword or spec.
+        let bare = s.read_bare("list").expect("bare list");
+        assert_eq!(bare.get("type").and_then(Datum::as_str), Some("List"));
+        assert_eq!(s.write_spec("List", &bare).as_deref(), Some("list"));
+        let empty = read_spec(&s, "(list)").expect("empty spec");
+        assert_eq!(s.write_spec("List", &empty).as_deref(), Some("list"));
+        let default = read_spec(&s, "(list #:count 2)").expect("default count");
+        assert_eq!(s.write_spec("List", &default).as_deref(), Some("list"));
+
+        // A non-default count round-trips, clamped into range.
+        let three = read_spec(&s, "(list #:count 3)").expect("count");
+        assert_eq!(three.get("count").and_then(Datum::as_i64), Some(3));
+        assert_eq!(
+            s.write_spec("List", &three).as_deref(),
+            Some("(list #:count 3)"),
+        );
+        let zero = read_spec(&s, "(list #:count 0)").expect("count");
+        assert_eq!(zero.get("count").and_then(Datum::as_i64), Some(1));
     }
 }

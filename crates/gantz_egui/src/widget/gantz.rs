@@ -1809,7 +1809,7 @@ where
                     let paths: BTreeSet<Vec<node::Id>> = logger
                         .get_entries()
                         .iter()
-                        .filter_map(|e| gantz_std::log::parse_log_target(&e.target))
+                        .filter_map(|e| gantz_io::log::parse_log_target(&e.target))
                         .collect();
                     if !paths.is_empty() {
                         let env = gantz.env;

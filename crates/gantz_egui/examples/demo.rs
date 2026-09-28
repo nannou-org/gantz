@@ -111,7 +111,7 @@ impl Environment {
 fn builtins() -> gantz_core::Builtins {
     use gantz_core::Builtin;
     gantz_core::Builtins::from_specs([
-        Builtin::new("bang", &gantz_std::Bang::default()),
+        Builtin::new("bang", &gantz_egui::node::Bang::default()),
         Builtin::new("branch", &gantz_core::node::Branch::default()),
         Builtin::new("delay", &gantz_core::node::Delay::default()),
         Builtin::new("expr", &gantz_core::node::Expr::new("()").unwrap()),
@@ -119,8 +119,8 @@ fn builtins() -> gantz_core::Builtins {
         Builtin::new("inlet", &gantz_core::node::graph::Inlet::default()),
         Builtin::new("inspect", &gantz_egui::node::Inspect::default()),
         Builtin::new("outlet", &gantz_core::node::graph::Outlet::default()),
-        Builtin::new("log", &gantz_std::Log::default()),
-        Builtin::new("number", &gantz_std::Number::default()),
+        Builtin::new("log", &gantz_io::Log::default()),
+        Builtin::new("number", &gantz_egui::node::Number::default()),
         Builtin::new("plot", &gantz_egui::node::Plot::default()),
     ])
 }
@@ -135,9 +135,9 @@ fn codec() -> gantz_egui::node::NodeCodec {
             gantz_core::node::Expr,
             gantz_core::node::graph::Inlet,
             gantz_core::node::graph::Outlet,
-            gantz_std::Bang,
-            gantz_std::Log,
-            gantz_std::Number,
+            gantz_egui::node::Bang,
+            gantz_io::Log,
+            gantz_egui::node::Number,
             gantz_egui::node::Gui,
             gantz_egui::node::Inspect,
             gantz_egui::node::NamedRef,
@@ -147,7 +147,7 @@ fn codec() -> gantz_egui::node::NodeCodec {
 }
 
 /// The `.gantz` keyword sugar carrier for the demo's node set. It composes
-/// the `gantz_core`, `gantz_std` and `gantz_egui` node sugars. There are no
+/// the `gantz_core`, `gantz_io` and `gantz_egui` node sugars. There are no
 /// bevy nodes here.
 struct NodeSet;
 
@@ -155,7 +155,7 @@ impl gantz_format::NodeSugar for NodeSet {
     fn sugar() -> gantz_format::Sugars<'static> {
         gantz_format::Sugars(vec![
             &gantz_format::CoreSugar,
-            &gantz_std::StdSugar,
+            &gantz_io::IoSugar,
             &gantz_egui::EguiSugar,
         ])
     }

@@ -211,7 +211,7 @@ mod tests {
         graph.add_node(erase(
             &gantz_core::node::Expr::new("(begin (set! state 1) state)").unwrap(),
         )); // 1
-        graph.add_node(gantz_core::data::erase_node_typed(&gantz_std::Bang).unwrap()); // 2
+        graph.add_node(gantz_core::data::erase_node_typed(&crate::node::Bang).unwrap()); // 2
         graph.add_node(gantz_core::data::erase_node_typed(&Bind::default()).unwrap()); // 3
 
         let ids = |me| {
