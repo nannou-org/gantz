@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/nannou-org/gantz/compare/gantz_collab-v0.3.0...gantz_collab-v0.3.1) - 2026-09-28
+
+### Other
+
+- *(gantz_collab)* round-trip and pin every gossip variant
+- *(gantz_collab)* merge the store verification and objects tests
+- *(gantz_collab)* remove tests of iroh and getrandom behaviour
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_collab-v0.2.0...gantz_collab-v0.3.0) - 2026-09-26
 
 ### Fixed

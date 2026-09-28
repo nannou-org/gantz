@@ -1,6 +1,6 @@
 [package]
 name = "gantz_io"
-version = "0.1.0"
+version = "0.1.1"
 description = "Input and output nodes for gantz, an environment for creative systems."
 authors.workspace = true
 edition.workspace = true

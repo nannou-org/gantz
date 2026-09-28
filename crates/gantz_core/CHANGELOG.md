@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.6.1...gantz_core-v0.7.0) - 2026-09-28
+
+### Added
+
+- *(gantz_core)* add the gantz/list steel module
+- *(gantz_core)* [**breaking**] let a steel module carry a rust builtin module
+
+### Fixed
+
+- *(gantz_egui)* gate trace_view behind the tracing feature
+
+### Other
+
+- *(gantz_core)* move the list node into gantz_core
+- *(gantz_core)* run list/map, filter, fold and zip on transducers
+- *(gantz_core)* remove the unused env_logger dev-dependency
+- *(gantz_core)* merge and trim near-identical unit tests
+- *(gantz_core)* delete the closure and define-values integration tests
+- *(gantz_core)* trim and merge redundant nested.rs tests
+- *(gantz_core)* trim redundant graph.rs integration tests
+- *(gantz_core)* replace the IR pipeline tests with their unique cases
+- build each crate's integration tests as one binary
+
 ## [0.6.1](https://github.com/nannou-org/gantz/compare/gantz_core-v0.6.0...gantz_core-v0.6.1) - 2026-09-26
 
 ### Other

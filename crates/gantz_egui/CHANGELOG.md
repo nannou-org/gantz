@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.7.0...gantz_egui-v0.8.0) - 2026-09-28
+
+### Added
+
+- *(gantz_egui)* return the node labels of a parsed .gantz document
+- *(gantz_io)* add the main! node
+- *(gantz_io)* add the gantz_io crate with the log node
+
+### Fixed
+
+- *(gantz_egui)* gate trace_view behind the tracing feature
+
+### Other
+
+- *(gantz_egui)* move the bang and number nodes into gantz_egui
+- *(gantz_core)* move the list node into gantz_core
+- [**breaking**] move the pure base source items into gantz_egui
+- *(gantz_egui)* drop duplicate tests and merge near-identical ones
+
 ## [0.7.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.6.1...gantz_egui-v0.7.0) - 2026-09-26
 
 ### Added

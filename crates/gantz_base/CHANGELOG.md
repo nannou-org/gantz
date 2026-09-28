@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1](https://github.com/nannou-org/gantz/compare/gantz_base-v0.3.0...gantz_base-v0.3.1) - 2026-09-28
+
+### Added
+
+- *(gantz_base)* add higher-order list nodes
+- *(gantz_base)* add list slicing, generator and combining nodes
+
+### Other
+
+- Improve layout of several of the demo graphs
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_base-v0.2.3...gantz_base-v0.3.0) - 2026-09-26
 
 ### Added

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.7.0...bevy_gantz_egui-v0.8.0) - 2026-09-28
+
+### Added
+
+- *(bevy_gantz_egui)* add the load! node
+- *(gantz_io)* add the main! node
+- *(gantz_core)* [**breaking**] let a steel module carry a rust builtin module
+
+### Fixed
+
+- *(gantz_egui)* gate trace_view behind the tracing feature
+
+### Other
+
+- *(bevy_gantz)* move heads through one MoveHeadEvent
+- *(bevy_gantz_egui)* share one typed node finder
+- *(bevy_gantz_egui)* expose the entrypoint providers as one fn
+- [**breaking**] move the pure base source items into gantz_egui
+- *(bevy_gantz_egui)* fold the await driver test into the replace test
+- move small integration test files into unit test modules
+
 ## [0.7.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.6.0...bevy_gantz_egui-v0.7.0) - 2026-09-26
 
 ### Added
