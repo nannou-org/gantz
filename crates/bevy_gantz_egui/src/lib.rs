@@ -109,6 +109,7 @@ impl Plugin for GantzEguiPlugin {
             .register_head_response::<gantz_egui::DuplicateNodes>()
             .register_head_response::<gantz_egui::NestNodes>()
             .register_head_response::<gantz_egui::CreateNode>()
+            .register_head_response::<gantz_egui::ReplaceNode>()
             .register_head_response::<gantz_egui::CreateNestedGraph>()
             .register_head_response::<gantz_egui::InspectEdge>()
             .register_head_response::<gantz_egui::MergeHead>()
@@ -152,6 +153,7 @@ impl Plugin for GantzEguiPlugin {
             .add_observer(node::gui_refresh::mark_gui_dirty_on_push)
             // GUI response payload observers
             .add_observer(on_create_node)
+            .add_observer(on_replace_node)
             .add_observer(on_create_nested_graph)
             .add_observer(on_branch_node)
             .add_observer(on_inspect_edge)
@@ -897,6 +899,63 @@ pub fn on_create_node(
         vm,
         event.data.clone(),
     );
+    // See `head::WorkingGraph`.
+    bevy_gantz::commit_working_graph(
+        &mut registry,
+        &mut cmds,
+        event.head,
+        &mut data.head_ref.0,
+        &data.working_graph.0,
+    );
+    refresh_cache(&registry, &mut cache, &codec.0);
+}
+
+/// Handle replace node payloads.
+pub fn on_replace_node(
+    trigger: On<ForHead<gantz_egui::ReplaceNode>>,
+    mut registry: ResMut<Registry>,
+    mut cache: ResMut<GraphCache>,
+    builtins: Res<BuiltinNodes>,
+    codec: Res<NodeCodecRes>,
+    mut gui_state: ResMut<GuiState>,
+    mut vms: NonSendMut<head::HeadVms>,
+    mut cmds: Commands,
+    mut heads: Query<head::OpenHeadData, With<head::OpenHead>>,
+) {
+    let event = trigger.event();
+    let Ok(mut data) = heads.get_mut(event.head) else {
+        log::error!("ReplaceNode: head not found for entity {:?}", event.head);
+        return;
+    };
+    let editing = match &**data.head_ref {
+        ca::Head::Branch(name) => Some(name.to_string()),
+        ca::Head::Commit(_) => None,
+    };
+    let Some(vm) = vms.get_mut(&event.head) else {
+        log::error!("ReplaceNode: VM not found for entity {:?}", event.head);
+        return;
+    };
+    let Some(head_state) = gui_state.open_heads.get_mut(&**data.head_ref) else {
+        log::error!("ReplaceNode: GUI state not found for head");
+        return;
+    };
+
+    let node_reg = env(&registry, &cache, &builtins, &codec);
+    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+    let replaced = gantz_egui::ops::replace_node(
+        node_reg.registry,
+        editing.as_deref(),
+        &codec.0,
+        &get_node,
+        |node_type| node_reg.create_node(node_type),
+        &mut data.working_graph,
+        head_state,
+        vm,
+        event.data.clone(),
+    );
+    if !replaced {
+        return;
+    }
     // See `head::WorkingGraph`.
     bevy_gantz::commit_working_graph(
         &mut registry,

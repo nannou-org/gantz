@@ -10,7 +10,7 @@ use crate::cycle::named_ref_of;
 use crate::node::NodeCodec;
 use crate::widget::gantz::OpenHeadState;
 use crate::widget::graph_scene::NodeIndex;
-use crate::{CreateNode, InspectEdge, PastePos, export, node::NamedRef};
+use crate::{CreateNode, InspectEdge, PastePos, ReplaceNode, export, node::NamedRef};
 use gantz_ca::{CommitAddr, DataGraph, GraphAddr, Name, NodeData};
 use gantz_core::node::{self, GetNode};
 use petgraph::visit::EdgeRef;
@@ -175,14 +175,7 @@ pub fn create_node(
     cmd: CreateNode,
 ) -> Option<NodeIndex> {
     let CreateNode { node_type, pos } = cmd;
-    // Refuse references that would form a cycle back to the editing graph. See
-    // `crate::cycle`. A detached commit head has no name, so it cannot be a
-    // cycle target.
-    if editing.is_some_and(|editing| {
-        let target: Name = node_type.parse().expect("infallible");
-        let editing: Name = editing.parse().expect("infallible");
-        crate::cycle::would_cycle(registry, &target, &editing)
-    }) {
+    if creates_cycle(registry, editing, &node_type) {
         log::warn!("CreateNode: '{node_type}' would create a reference cycle; skipping");
         return None;
     }
@@ -216,6 +209,87 @@ pub fn create_node(
     sel.nodes.insert(node_ix);
 
     Some(node_ix)
+}
+
+/// Replace the node at `cmd.node` in `graph` with a new node of type
+/// `cmd.node_type`.
+///
+/// The new node takes the old node's index. Its layout entry, its selection
+/// and any `bind` path to it stay valid, and no [`Reindex`] is needed. Edges
+/// to sockets that the new node lacks are removed. The old node's VM state is
+/// removed and the new node registers its own.
+///
+/// Returns whether the node was replaced.
+#[allow(clippy::too_many_arguments)]
+pub fn replace_node(
+    registry: &gantz_ca::Registry,
+    editing: Option<&str>,
+    codec: &NodeCodec,
+    get_node: GetNode,
+    new_node: impl FnOnce(&str) -> Option<NodeData>,
+    graph: &mut DataGraph,
+    head_state: &mut OpenHeadState,
+    vm: &mut Engine,
+    cmd: ReplaceNode,
+) -> bool {
+    let ReplaceNode {
+        node: ix,
+        node_type,
+    } = cmd;
+    if graph.node_weight(ix).is_none() {
+        log::error!("ReplaceNode: no node at index {}", ix.index());
+        return false;
+    }
+    if creates_cycle(registry, editing, &node_type) {
+        log::warn!("ReplaceNode: '{node_type}' would create a reference cycle; skipping");
+        return false;
+    }
+    let Some(node) = new_node(&node_type) else {
+        log::error!("ReplaceNode: unknown node type: {node_type}");
+        return false;
+    };
+    let inst = match codec.reify_ui(&node) {
+        Ok(inst) => inst,
+        Err(e) => {
+            log::error!("ReplaceNode: cannot reify '{node_type}': {e}");
+            return false;
+        }
+    };
+    graph[ix] = node;
+
+    // Remove the edges to sockets that the new node lacks.
+    let meta_ctx = node::MetaCtx::new(get_node);
+    let n_inputs = inst.node.n_inputs(meta_ctx);
+    let n_outputs = inst.node.n_outputs(meta_ctx);
+    graph.retain_edges(|g, e| {
+        let (src, dst) = g.edge_endpoints(e).expect("a retained edge exists");
+        let edge = g[e];
+        (src != ix || usize::from(edge.output.0) < n_outputs)
+            && (dst != ix || usize::from(edge.input.0) < n_inputs)
+    });
+
+    // Replace the old node's state with the new node's.
+    let node_path = [ix.index()];
+    if let Err(e) = node::state::remove_value(vm, &node_path) {
+        log::error!("ReplaceNode: cannot remove the old node's state: {e}");
+    }
+    inst.node
+        .register(node::RegCtx::new(get_node, &node_path, vm));
+
+    // Removing edges shifts edge indices, so the edge selection is stale.
+    head_state.scene.interaction.selection.edges.clear();
+    true
+}
+
+/// Whether a node of `node_type` would reference the `editing` graph and so
+/// form a reference cycle. See `crate::cycle`. A detached commit head has no
+/// name, so it cannot be a cycle target.
+fn creates_cycle(registry: &gantz_ca::Registry, editing: Option<&str>, node_type: &str) -> bool {
+    editing.is_some_and(|editing| {
+        let target: Name = node_type.parse().expect("infallible");
+        let editing: Name = editing.parse().expect("infallible");
+        crate::cycle::would_cycle(registry, &target, &editing)
+    })
 }
 
 /// Create a nested graph. Commit a fresh empty graph to the registry under the
@@ -1039,6 +1113,101 @@ mod tests {
         };
         assert_eq!(path_of(2), vec![1, 7]);
         assert_eq!(path_of(3), Vec::<usize>::new());
+    }
+
+    fn expr(src: &str) -> NodeData {
+        gantz_core::data::erase_node_typed(&gantz_core::node::Expr::new(src).unwrap()).unwrap()
+    }
+
+    /// Replace the node at `node` with an `expr` whose source is `node_type`.
+    fn replace(
+        registry: &gantz_ca::Registry,
+        editing: Option<&str>,
+        graph: &mut DataGraph,
+        head_state: &mut OpenHeadState,
+        node: NodeIndex,
+        node_type: &str,
+    ) -> bool {
+        let codec = crate::test_node::codec();
+        let mut vm = Engine::new_base();
+        vm.register_value(gantz_core::ROOT_STATE, steel::SteelVal::empty_hashmap());
+        let cmd = ReplaceNode {
+            node,
+            node_type: node_type.to_string(),
+        };
+        let new_node = |ty: &str| Some(expr(ty));
+        replace_node(
+            registry,
+            editing,
+            &codec,
+            &|_| None,
+            new_node,
+            graph,
+            head_state,
+            &mut vm,
+            cmd,
+        )
+    }
+
+    // A replace keeps the node's index and the edges whose sockets the new
+    // node has, and removes the rest.
+    #[test]
+    fn replace_node_keeps_the_index_and_prunes_edges() {
+        let edge = |o: u16, i: u16| gantz_core::Edge::from((o, i));
+        let mut graph = DataGraph::default();
+        let src = graph.add_node(expr("1"));
+        let mid = graph.add_node(expr("(+ $a $b)"));
+        let sink = graph.add_node(expr("$x"));
+        graph.add_edge(src, mid, edge(0, 0));
+        graph.add_edge(src, mid, edge(0, 1));
+        graph.add_edge(mid, sink, edge(0, 0));
+        let mut head_state = OpenHeadState::default();
+        let sel = &mut head_state.scene.interaction.selection;
+        sel.nodes.insert(mid);
+        sel.edges.insert(petgraph::graph::EdgeIndex::new(2));
+
+        // The one-input replacement keeps input 0 and the output edge.
+        let registry = gantz_ca::Registry::default();
+        assert!(replace(
+            &registry,
+            None,
+            &mut graph,
+            &mut head_state,
+            mid,
+            "$x"
+        ));
+        assert_eq!(graph.node_count(), 3);
+        assert_eq!(graph[mid], expr("$x"));
+        let edges: BTreeSet<_> = graph
+            .edge_references()
+            .map(|e| (e.source(), e.target(), *e.weight()))
+            .collect();
+        assert_eq!(
+            edges,
+            BTreeSet::from([(src, mid, edge(0, 0)), (mid, sink, edge(0, 0))]),
+        );
+        let sel = &head_state.scene.interaction.selection;
+        assert_eq!(sel.nodes, HashSet::from([mid]), "node selection kept");
+        assert!(sel.edges.is_empty(), "edge selection cleared");
+    }
+
+    // A replace refuses a reference cycle back to the edited graph.
+    #[test]
+    fn replace_node_refuses_a_cycle() {
+        let mut graph = DataGraph::default();
+        let node = graph.add_node(expr("1"));
+        let mut head_state = OpenHeadState::default();
+        let registry = gantz_ca::Registry::default();
+        let editing = Some("g");
+        assert!(!replace(
+            &registry,
+            editing,
+            &mut graph,
+            &mut head_state,
+            node,
+            "g"
+        ));
+        assert_eq!(graph[node], expr("1"));
     }
 
     // carry_layout maps live positions through the navigation matching, keeps

@@ -435,8 +435,8 @@ pub fn resolve_paste_offset(pos: &PastePos, copied_positions: &egui_graph::Layou
 // the dynamic `response::Responses` channel and returned from `Gantz::show`.
 // Applications drain and handle these after the GUI pass and report unhandled
 // ones via `response::Responses::type_names`. `Gantz::show` handles
-// `OpenNodePalette`, `ResetTilesLayout`, `OpenLogs` and `OpenNodeView` itself,
-// so applications never see those.
+// `OpenNodePalette`, `OpenReplacePalette`, `ResetTilesLayout`, `OpenLogs` and
+// `OpenNodeView` itself, so applications never see those.
 
 /// Branch a named node. Create a new name with its own commit for the given
 /// content address, and replace the node with a reference to it.
@@ -479,6 +479,20 @@ pub struct CreateNode {
     /// Where to place the new node, in graph coordinates. When `None`, the node
     /// is placed at the center of the current view.
     pub pos: Option<egui::Pos2>,
+}
+
+/// Replace a node in the emitting head's graph with a new node of the given
+/// type.
+///
+/// The new node takes the old node's index, so its position and the edges
+/// between sockets that exist on both nodes carry over. Edges to sockets the
+/// new node lacks are removed.
+#[derive(Clone, Debug)]
+pub struct ReplaceNode {
+    /// The node to replace.
+    pub node: widget::graph_scene::NodeIndex,
+    /// The type name of the replacement node.
+    pub node_type: String,
 }
 
 /// Create a new nested graph in the emitting head's graph.
@@ -528,6 +542,11 @@ pub struct InspectEdge {
 /// Open the node palette for node creation. Handled by `Gantz::show`.
 #[derive(Clone, Copy, Debug)]
 pub struct OpenNodePalette;
+
+/// Open the node palette to replace the given node in the emitting head's
+/// graph. A choice emits [`ReplaceNode`]. Handled by `Gantz::show`.
+#[derive(Clone, Copy, Debug)]
+pub struct OpenReplacePalette(pub widget::graph_scene::NodeIndex);
 
 /// Reset the top-level tile layout to its default arrangement. Handled by
 /// `Gantz::show`.

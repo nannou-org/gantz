@@ -1,8 +1,8 @@
 use crate::{
     Action, CopyNodes, CreateNestedGraph, CreateNode, CutNodes, DuplicateNodes, Env,
     ExportAllNamed, ExportHead, ExportStyle, HeadAccess, ImportStyle, Keymap, NodeCtx, NodeUi,
-    OpenLogs, OpenNodePalette, OpenNodeView, Paste, Redo, ReplaceHead, ResetTilesLayout, Undo,
-    export,
+    OpenLogs, OpenNodePalette, OpenNodeView, OpenReplacePalette, Paste, Redo, ReplaceHead,
+    ReplaceNode, ResetTilesLayout, Undo, export,
     node::NodeCodec,
     response::{DynResponse, Responses},
     style::SeparatorConfig,
@@ -108,6 +108,11 @@ pub struct GantzState {
     pub view_toggles: ViewToggles,
     #[serde(default, alias = "command_palette")]
     pub node_palette: widget::NodePalette,
+    /// The node that the open node palette replaces, with its head. `None`
+    /// while the palette creates nodes. Not persisted, since a node index
+    /// can go stale.
+    #[serde(skip)]
+    pub palette_replace: Option<(gantz_ca::Head, graph_scene::NodeIndex)>,
     /// Global auto-layout parameters. These are the non-flow `egui_graph`
     /// layout params. Flow stays per-head in [`OpenHeadState::layout_flow`].
     #[serde(default)]
@@ -1113,10 +1118,18 @@ impl<'a> Gantz<'a> {
         response.file_drops = collect_gantz_file_drops(ui.ctx());
 
         // Apply payloads that only affect the widget's own state, so
-        // applications never see them. These are node palette toggling and
-        // resetting the tile layout to its default arrangement.
+        // applications never see them. These are node palette toggling,
+        // opening it to replace a node, and resetting the tile layout to its
+        // default arrangement.
         for _ in response.responses.take::<OpenNodePalette>() {
+            state.palette_replace = None;
             state.node_palette.toggle();
+        }
+        for (head, OpenReplacePalette(node)) in response.responses.take() {
+            if let Some(head) = head {
+                state.palette_replace = Some((head, node));
+                state.node_palette.open();
+            }
         }
         for _ in response.responses.take::<ResetTilesLayout>() {
             tree = create_tree();
@@ -1273,6 +1286,7 @@ impl GantzState {
         Self {
             open_heads,
             node_palette: widget::NodePalette::default(),
+            palette_replace: None,
             view_toggles: ViewToggles::default(),
             layout_config: LayoutConfig::default(),
             scene_config: SceneConfig::default(),
@@ -1783,9 +1797,21 @@ where
                     // graph coords recorded this frame. New nodes are placed
                     // here. It is `Copy`, so no borrow is held across the call.
                     let pointer_pos = head_state.scene.interaction.last_pointer_pos;
+                    // A pending replace applies only while the palette is open
+                    // over the head that requested it.
+                    if !state.node_palette.is_visible()
+                        || state
+                            .palette_replace
+                            .as_ref()
+                            .is_some_and(|(h, _)| h != &fh)
+                    {
+                        state.palette_replace = None;
+                    }
+                    let replace = state.palette_replace.as_ref().map(|&(_, n)| n);
                     let created = node_palette(
                         gantz.env,
                         editing,
+                        replace,
                         &mut state.node_palette,
                         &state.keymap,
                         ui,
@@ -1798,6 +1824,10 @@ where
                         Some(PaletteChoice::NestedGraph(mut create)) => {
                             create.pos = pointer_pos;
                             gantz_response.responses.push(Some(fh), create);
+                        }
+                        Some(PaletteChoice::Replace(replace)) => {
+                            state.palette_replace = None;
+                            gantz_response.responses.push(Some(fh), replace);
                         }
                         None => {}
                     }
@@ -3945,21 +3975,25 @@ fn name_breadcrumb(
     responses
 }
 
-/// A node-creation choice made in the node palette.
+/// A node choice made in the node palette.
 enum PaletteChoice {
     /// Create an ordinary node of the given type.
     Node(CreateNode),
     /// Create a new nested graph via the reserved [`NESTED_GRAPH_TYPE`] entry.
     NestedGraph(CreateNestedGraph),
+    /// Replace an existing node with a node of the chosen type.
+    Replace(ReplaceNode),
 }
 
-/// Returns a node-creation payload when a node type is chosen.
+/// Returns a node-creation payload when a node type is chosen, or a replace
+/// payload when `replace` holds the node the palette replaces.
 ///
 /// `editing` is the focused head's name when it is a branch. It hides node
 /// types whose reference would cycle back to the graph being edited.
 fn node_palette(
     env: &Env<'_>,
     editing: Option<&str>,
+    replace: Option<graph_scene::NodeIndex>,
     node_palette: &mut widget::NodePalette,
     keymap: &Keymap,
     ui: &mut egui::Ui,
@@ -3971,22 +4005,31 @@ fn node_palette(
 
     // Map the node types to commands for the node palette, dropping any type
     // whose reference would form a cycle back to the editing graph. The reserved
-    // nested-graph entry always mints a fresh child, so it is never cyclic.
+    // nested-graph entry always mints a fresh child, so it is never cyclic. A
+    // replace hides it, since a fresh nested graph has no sockets to keep.
     let types: Vec<&str> = env
         .node_types()
         .into_iter()
-        .filter(|&k| k == NESTED_GRAPH_TYPE || editing.is_none_or(|e| !env.would_ref_cycle(k, e)))
+        .filter(|&k| match k == NESTED_GRAPH_TYPE {
+            true => replace.is_none(),
+            false => editing.is_none_or(|e| !env.would_ref_cycle(k, e)),
+        })
         .collect();
     let cmds = types.iter().map(|&k| NodeTyCmd { env, name: k });
 
-    // The chosen node type becomes a creation payload. The reserved
+    // The chosen node type becomes a creation or replace payload. The reserved
     // `NESTED_GRAPH_TYPE` routes to the registry-aware nested-graph op. The
     // palette is centered over the graph scene, which is this `ui`'s rect.
     let scene_rect = ui.max_rect();
     node_palette.show(ui.ctx(), scene_rect, cmds).map(|cmd| {
         // The placement position is filled in by the caller, which has access to
         // the focused head's last pointer position.
-        if cmd.name == NESTED_GRAPH_TYPE {
+        if let Some(node) = replace {
+            PaletteChoice::Replace(ReplaceNode {
+                node,
+                node_type: cmd.name.to_string(),
+            })
+        } else if cmd.name == NESTED_GRAPH_TYPE {
             PaletteChoice::NestedGraph(CreateNestedGraph { pos: None })
         } else {
             PaletteChoice::Node(CreateNode {

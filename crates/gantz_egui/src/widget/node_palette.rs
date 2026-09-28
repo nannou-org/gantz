@@ -40,6 +40,16 @@ impl NodePalette {
         self.visible ^= true;
     }
 
+    /// Show the palette from the next [`Self::show`] call.
+    pub fn open(&mut self) {
+        self.visible = true;
+    }
+
+    /// Whether the palette is shown.
+    pub fn is_visible(&self) -> bool {
+        self.visible
+    }
+
     /// Show the node palette, if it is visible.
     ///
     /// `area` is the rect the palette is centered over, for example the graph

@@ -1,6 +1,6 @@
 use crate::{
-    CopyNodes, Env, InspectEdge, NestNodes, NodeUi, OpenHead, OpenNodePalette, OpenNodeView, Paste,
-    PastePos, ResetTilesLayout, SocketDoc,
+    CopyNodes, Env, InspectEdge, NestNodes, NodeUi, OpenHead, OpenNodePalette, OpenNodeView,
+    OpenReplacePalette, Paste, PastePos, ResetTilesLayout, SocketDoc,
     node::{NodeCodec, NodeInstances},
     response::DynResponse,
 };
@@ -889,6 +889,17 @@ fn nodes(
                     .clicked()
                 {
                     nodes_to_reset.extend(target.iter().copied());
+                    ui.close();
+                }
+                // Replace the right-clicked node via the node palette. Only
+                // for a single node.
+                if !multi
+                    && ui
+                        .button("replace")
+                        .on_hover_text("replace this node with another type, keeping its edges")
+                        .clicked()
+                {
+                    responses.push(DynResponse::new(OpenReplacePalette(n_id)));
                     ui.close();
                 }
                 if ui.button("delete").clicked() {
