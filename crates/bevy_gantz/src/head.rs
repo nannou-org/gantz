@@ -52,8 +52,8 @@ pub struct HeadRef(pub ca::Head);
 ///
 /// Any system that mutates a head's `WorkingGraph` must commit it before the
 /// system returns. In-place edits such as the GUI pass and graph ops commit
-/// via [`crate::vm::commit_working_graph`]. Head open, replace, branch move
-/// and resync instead replace the working graph with a registry commit's graph
+/// via [`crate::vm::commit_working_graph`]. Head open, replace, move and
+/// resync instead replace the working graph with a registry commit's graph
 /// and reset [`crate::vm::CompiledInputs`]. As a result, between systems the
 /// working graph's content address always equals the head's committed graph
 /// CA, `registry.head_commit(head).graph`.
@@ -96,7 +96,10 @@ pub struct OpenEvent(pub ca::Head);
 #[derive(Event)]
 pub struct CloseEvent(pub ca::Head);
 
-/// Event to replace the focused head with a different head.
+/// Event to load a different head into the focused tab, for example from the
+/// graph select or when entering a nested graph.
+///
+/// To navigate a head through its own history, use [`MoveHeadEvent`].
 #[derive(Event)]
 pub struct ReplaceEvent(pub ca::Head);
 
@@ -107,11 +110,14 @@ pub struct BranchHeadEvent {
     pub new_name: String,
 }
 
-/// Event to move a branch's commit pointer to a different commit.
+/// Event to move an open head to a different commit in place, as undo, redo
+/// and merges do.
+///
+/// A branch head moves its branch to the target. A detached commit head
+/// points at the target commit instead.
 #[derive(Event)]
-pub struct MoveBranchEvent {
+pub struct MoveHeadEvent {
     pub entity: Entity,
-    pub name: ca::Branch,
     pub target: ca::CommitAddr,
 }
 
@@ -132,7 +138,7 @@ pub struct ClosedEvent {
 }
 
 /// Emitted when a head's backing data has changed, such as on a replacement
-/// or a branch move.
+/// or a move.
 #[derive(Event)]
 pub struct ChangedEvent {
     pub entity: Entity,
@@ -170,8 +176,8 @@ pub struct CommittedEvent {
 /// Per-head VMs stored in a NonSend resource, keyed by entity because
 /// `Engine` is not `Send`.
 ///
-/// A head's VM owns its graph's runtime node state. When replace or branch
-/// move point a head at a different graph, they keep the VM and migrate its
+/// A head's VM owns its graph's runtime node state. When replace or move
+/// point a head at a different graph, they keep the VM and migrate its
 /// node state through the commits' node-identity mapping. See
 /// [`crate::vm::migrate_vm_state`]. They also reset
 /// [`crate::vm::CompiledInputs`] so `vm::sync` recompiles. A same-graph move
@@ -502,60 +508,176 @@ pub fn on_branch_head(
     }
 }
 
-/// Observer for [`MoveBranchEvent`].
+/// Observer for [`MoveHeadEvent`].
 ///
 /// Updates the registry and the [`WorkingGraph`] and emits [`ChangedEvent`]
 /// within one command flush, so no system observes an inconsistent state.
-pub fn on_move_branch(
-    trigger: On<MoveBranchEvent>,
+///
+/// Each head has at most one tab. When a commit head's target commit is
+/// already open in another tab, that tab takes focus and this head does not
+/// move.
+pub fn on_move_head(
+    trigger: On<MoveHeadEvent>,
     mut cmds: Commands,
     mut registry: ResMut<Registry>,
+    mut focused: ResMut<FocusedHead>,
     mut vms: NonSendMut<HeadVms>,
+    heads: Query<(Entity, &HeadRef), With<OpenHead>>,
 ) {
-    let event = trigger.event();
-    let head = ca::Head::Branch(event.name.clone());
+    let &MoveHeadEvent { entity, target } = trigger.event();
+    let Ok((_, head_ref)) = heads.get(entity) else {
+        log::error!("MoveHead: head not found for entity {entity:?}");
+        return;
+    };
+    let old_head = head_ref.0.clone();
+    let Some(graph) = registry.commit_graph_ref(&target).cloned() else {
+        log::error!("MoveHead: graph data missing for target commit");
+        return;
+    };
     // The current commit is needed below to detect a same-graph move and to
     // migrate node state.
-    let old_ca = registry.head_commit_ca(&head);
-    let old_graph = registry.head_commit(&head).map(|c| c.graph);
-    let prev = registry.set_head(event.name.clone(), event.target);
-    let Some(graph) = head_working_graph(&registry, &head) else {
-        log::error!("MoveBranch: graph data missing for target commit");
-        match prev {
-            Some(ca) => {
-                registry.set_head(event.name.clone(), ca);
-            }
-            None => {
-                registry.remove_head(&event.name);
-            }
+    let old_ca = registry.head_commit_ca(&old_head);
+    let old_graph = registry.head_commit(&old_head).map(|c| c.graph);
+    let new_head = match &old_head {
+        ca::Head::Branch(name) => {
+            registry.set_head(name.clone(), target);
+            old_head.clone()
         }
-        return;
+        ca::Head::Commit(_) => {
+            let new_head = ca::Head::Commit(target);
+            if let Some(open) = find_entity(&new_head, &heads) {
+                **focused = Some(open);
+                return;
+            }
+            new_head
+        }
     };
     // A same-graph target is a layout-only change. Keep the VM, its node state
     // and the compile memo, so `vm::sync` skips recompilation. Otherwise
     // migrate the node state through the commits' node-identity mapping and
     // reset the memo so `vm::sync` recompiles.
-    let new_graph = registry.head_commit(&head).map(|c| c.graph);
-    let same_graph = matches!((old_graph, new_graph), (Some(a), Some(b)) if a == b);
+    let same_graph = old_graph == Some(registry.commits()[&target].graph);
     if same_graph {
-        cmds.entity(event.entity).insert(WorkingGraph(graph));
+        cmds.entity(entity)
+            .insert((HeadRef(new_head.clone()), WorkingGraph(graph)));
     } else {
-        crate::vm::migrate_vm_state(
-            &registry,
-            &mut vms,
-            event.entity,
-            old_ca,
-            Some(event.target),
-        );
-        cmds.entity(event.entity)
-            .insert((WorkingGraph(graph), crate::vm::CompiledInputs::default()));
+        crate::vm::migrate_vm_state(&registry, &mut vms, entity, old_ca, Some(target));
+        cmds.entity(entity).insert((
+            HeadRef(new_head.clone()),
+            WorkingGraph(graph),
+            crate::vm::CompiledInputs::default(),
+        ));
     }
     cmds.trigger(ChangedEvent {
-        entity: event.entity,
-        old_head: head.clone(),
-        new_head: head,
+        entity,
+        old_head,
+        new_head,
         old_commit: old_ca,
-        new_commit: Some(event.target),
+        new_commit: Some(target),
         same_graph,
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An app with the head observers over the registry from
+    /// `vm::tests::base_and_child`.
+    fn app() -> (bevy_app::App, ca::CommitAddr, ca::CommitAddr) {
+        let (reg, base, child) = crate::vm::tests::base_and_child();
+        let mut app = bevy_app::App::new();
+        app.add_plugins(crate::GantzPlugin)
+            .insert_resource(Registry(reg));
+        (app, base, child)
+    }
+
+    /// Trigger the event and apply the commands its observers queue.
+    fn trigger<E: for<'a> Event<Trigger<'a>: Default>>(app: &mut bevy_app::App, event: E) {
+        app.world_mut().trigger(event);
+        app.world_mut().flush();
+    }
+
+    /// The entity of the open head.
+    fn entity(app: &mut bevy_app::App, head: &ca::Head) -> Entity {
+        let mut q = app
+            .world_mut()
+            .query_filtered::<(Entity, &HeadRef), With<OpenHead>>();
+        q.iter(app.world())
+            .find(|(_, h)| &h.0 == head)
+            .map(|(e, _)| e)
+            .expect("head is open")
+    }
+
+    /// The head and working graph address of an open head entity.
+    fn head_state(app: &bevy_app::App, entity: Entity) -> (ca::Head, ca::GraphAddr) {
+        let world = app.world();
+        let head = world.get::<HeadRef>(entity).unwrap().0.clone();
+        let graph = ca::graph_addr(&world.get::<WorkingGraph>(entity).unwrap().0);
+        (head, graph)
+    }
+
+    #[test]
+    fn move_head_moves_a_commit_head_in_place() {
+        let (mut app, base, child) = app();
+        let head = ca::Head::Commit(base);
+        trigger(&mut app, OpenEvent(head.clone()));
+        let e = entity(&mut app, &head);
+        trigger(
+            &mut app,
+            MoveHeadEvent {
+                entity: e,
+                target: child,
+            },
+        );
+        let child_graph = app.world().resource::<Registry>().commits()[&child].graph;
+        assert_eq!(head_state(&app, e), (ca::Head::Commit(child), child_graph));
+    }
+
+    #[test]
+    fn move_head_moves_a_branch_in_place() {
+        let (mut app, base, child) = app();
+        let name: ca::Branch = "g".parse().expect("infallible");
+        app.world_mut()
+            .resource_mut::<Registry>()
+            .set_head(name.clone(), base);
+        let head = ca::Head::Branch(name);
+        trigger(&mut app, OpenEvent(head.clone()));
+        let e = entity(&mut app, &head);
+        trigger(
+            &mut app,
+            MoveHeadEvent {
+                entity: e,
+                target: child,
+            },
+        );
+        let reg = app.world().resource::<Registry>();
+        assert_eq!(reg.head_commit_ca(&head), Some(child));
+        let child_graph = reg.commits()[&child].graph;
+        assert_eq!(head_state(&app, e), (head, child_graph));
+    }
+
+    /// A commit head never moves onto a commit that another tab has open.
+    /// That tab takes focus instead.
+    #[test]
+    fn move_head_focuses_an_open_target_commit() {
+        let (mut app, base, child) = app();
+        trigger(&mut app, OpenEvent(ca::Head::Commit(child)));
+        trigger(&mut app, OpenEvent(ca::Head::Commit(base)));
+        let child_e = entity(&mut app, &ca::Head::Commit(child));
+        let base_e = entity(&mut app, &ca::Head::Commit(base));
+        trigger(
+            &mut app,
+            MoveHeadEvent {
+                entity: base_e,
+                target: child,
+            },
+        );
+        assert_eq!(**app.world().resource::<FocusedHead>(), Some(child_e));
+        let base_graph = app.world().resource::<Registry>().commits()[&base].graph;
+        assert_eq!(
+            head_state(&app, base_e),
+            (ca::Head::Commit(base), base_graph)
+        );
+    }
 }

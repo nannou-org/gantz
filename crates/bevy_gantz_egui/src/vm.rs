@@ -79,10 +79,10 @@ fn compile_components(result: Result<Compiled, CompileError>) -> (head::Module, 
 /// config is sufficient to drive recompiles.
 ///
 /// VM presence in [`head::HeadVms`] decides between a fresh `init` and an
-/// in-place `compile`. Absent means a fresh init. Head replace and branch
-/// move remove the VM to discard the old graph's node state. Present means
-/// an in-place compile, which preserves node state across graph edits and
-/// config changes.
+/// in-place `compile`. Absent means a fresh init, for a newly opened head or
+/// when a replace or move found no node-identity mapping to migrate state
+/// through. Present means an in-place compile, which preserves node state
+/// across graph edits, config changes, replaces and moves.
 pub fn sync(
     registry: Res<Registry>,
     mut cache: ResMut<GraphCache>,

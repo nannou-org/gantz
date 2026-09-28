@@ -280,7 +280,7 @@ pub fn validate_committed(
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use gantz_ca::{DataGraph, Datum, NodeData};
     use std::time::Duration;
@@ -307,7 +307,7 @@ mod tests {
 
     /// A minimal registry. The base commit holds `[10, 20, 30]`. The child
     /// commit swap-removes index 1 to give `[10, 30]`.
-    fn base_and_child() -> (ca::Registry, ca::CommitAddr, ca::CommitAddr) {
+    pub(crate) fn base_and_child() -> (ca::Registry, ca::CommitAddr, ca::CommitAddr) {
         let mut reg = ca::Registry::default();
         let g = graph(&[10, 20, 30]);
         let base_ca = ca::graph_addr(&g);
