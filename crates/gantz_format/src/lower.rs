@@ -48,6 +48,8 @@ pub struct Loaded {
     pub index: HashMap<Addr, HashMap<String, usize>>,
     /// The head commit of each registry name.
     pub names: HashMap<String, CommitAddr>,
+    /// The graph id of each registry name.
+    pub name_graph: HashMap<String, Addr>,
     /// Unrecognised top-level forms, preserved for an extender.
     pub extra: Vec<Form>,
 }
@@ -218,6 +220,7 @@ pub fn lower_normalized(
         graph_head,
         index,
         names,
+        name_graph: name_to_graph_id,
         extra,
     })
 }
