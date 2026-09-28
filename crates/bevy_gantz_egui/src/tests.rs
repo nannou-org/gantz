@@ -5,6 +5,7 @@ use bevy_gantz::{EntrypointSet, GantzPlugin, VmSet};
 
 mod await_;
 mod load_bang;
+mod undo_resync;
 
 /// The test app's `.gantz` sugar carrier. The codec macro requires it. The
 /// tests never parse text.
@@ -25,6 +26,7 @@ fn codec() -> gantz_egui::node::NodeCodec {
             crate::node::LoadBang,
             crate::node::Sleep,
             gantz_egui::node::Inspect,
+            gantz_egui::node::NamedRef,
         }
     }
 }

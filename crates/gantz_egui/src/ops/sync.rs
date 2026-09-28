@@ -21,14 +21,20 @@ use steel::steel_vm::engine::Engine;
 /// [`gantz_ca::Side::Ours`]. Sessions pass whichever side the local tip
 /// landed on after canonical orientation via [`sync_remote_tip`].
 /// `other_view` is the opposite side's commit's stored view, if any.
+/// `local` is the pre-merge working graph and `merged` the merge result. A
+/// node whose type changed in the merge keeps its layout and selection but
+/// not its VM state. See [`gantz_ca::diff::same_tag_pairs`].
 ///
 /// Returns the mapping from pre-merge working-graph indices to merged
 /// indices, for any remaining index-keyed data of the caller's. It is the
 /// identity whenever the other side removed no nodes.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn apply_merge_migration(
     node_srcs: &[gantz_ca::merge::NodeSrc],
     local_side: gantz_ca::merge::Side,
     other_view: Option<&crate::SceneView>,
+    local: &DataGraph,
+    merged: &DataGraph,
     vm: &mut Engine,
     head_view: &mut crate::SceneView,
     selection: &mut crate::widget::graph_scene::Selection,
@@ -53,7 +59,8 @@ pub(crate) fn apply_merge_migration(
 
     // Migrate the index-keyed VM state, layout and selection. When the other
     // side removed no nodes the mapping is identity and this is a no-op.
-    if let Err(e) = node::state::remap_root(vm, &local_map) {
+    let state_map = gantz_ca::diff::same_tag_pairs(&local_map, local, merged);
+    if let Err(e) = node::state::remap_root(vm, &state_map) {
         log::error!("merge migration: failed to remap node state: {e}");
     }
     let old_layout = std::mem::take(&mut head_view.layout);
@@ -173,6 +180,8 @@ pub fn merge_head(
         &outcome.node_srcs,
         gantz_ca::merge::Side::Ours,
         theirs_view.as_ref(),
+        graph,
+        &outcome.graph,
         vm,
         head_view,
         selection,
@@ -303,6 +312,8 @@ pub fn sync_remote_tip(
         &outcome.node_srcs,
         local_side,
         other_view.as_ref(),
+        graph,
+        &outcome.graph,
         vm,
         head_view,
         selection,

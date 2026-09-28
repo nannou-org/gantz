@@ -7,7 +7,7 @@ use crate::node::Envgen;
 use crate::node::envgen::{SOCKETS, envelope_params};
 use crate::param::{param_value_keyed, params_state, with_param_value};
 use gantz_egui::node::PlotLook;
-use gantz_egui::widget::node_inspector::table_row_h;
+use gantz_egui::widget::node_inspector::{table_row_h, toggle_option};
 use gantz_egui::{
     ContextMenuResponse, Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse,
     NodeViewResponse, SocketDoc, SocketKind,
@@ -269,16 +269,10 @@ fn display_row(body: &mut egui_extras::TableBody, node: &mut Envgen) -> bool {
     let (mut grid, mut axes, mut compact) = (node.grid(), node.axes(), node.compact());
     let changed = row(body, "display", "how the node shows its envelope", |ui| {
         ui.horizontal(|ui| {
-            let grid = ui
-                .checkbox(&mut grid, "grid")
-                .on_hover_text("draw the background grid");
-            let axes = ui
-                .checkbox(&mut axes, "axes")
-                .on_hover_text("draw the time and level axes");
-            let compact = ui
-                .checkbox(&mut compact, "compact")
-                .on_hover_text(COMPACT_DOC);
-            grid.changed() | axes.changed() | compact.changed()
+            let grid = toggle_option(ui, &mut grid, "grid", "draw the background grid");
+            let axes = toggle_option(ui, &mut axes, "axes", "draw the time and level axes");
+            let compact = toggle_option(ui, &mut compact, "compact", COMPACT_DOC);
+            grid | axes | compact
         })
         .inner
     });

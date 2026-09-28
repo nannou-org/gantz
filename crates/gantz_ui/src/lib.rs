@@ -76,7 +76,7 @@
 //!
 //! | element | state shape | attrs |
 //! |---|---|---|
-//! | `(dialer)` | number | `bind`, `min`, `max`, `step` (numbers), `precision` (int), `label` (string), `push` (bool, default `#t`), `style` (reserved: `slider`/`knob`) |
+//! | `(dialer)` | number | `bind`, `min`, `max`, `step` (numbers), `precision` (int), `label` (string), `prefix` (string), `push` (bool, default `#t`), `style` (reserved: `slider`/`knob`) |
 //! | `(toggle)` | bool | `bind`, `label`, `push` (default `#t`) |
 //! | `(button)` | none | `bind`, `label`. A press queues a push eval, bang semantics stay in the node's expression |
 //! | `(matrix)` | list of rows of bool or number cells | `bind`, `cell-size` (number), `push` (default `#t`). Rows and columns come from the state shape, not attrs |

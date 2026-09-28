@@ -1,6 +1,6 @@
 use crate::{
-    CopyNodes, Env, InspectEdge, NestNodes, NodeUi, OpenHead, OpenNodePalette, OpenNodeView, Paste,
-    PastePos, ResetTilesLayout, SocketDoc,
+    CopyNodes, Env, InspectEdge, NestNodes, NodeUi, OpenHead, OpenNodePalette, OpenNodeView,
+    OpenReplacePalette, Paste, PastePos, ResetTilesLayout, SocketDoc,
     node::{NodeCodec, NodeInstances},
     response::DynResponse,
 };
@@ -347,6 +347,7 @@ impl<'a> GraphScene<'a> {
                         &mut responses,
                         &mut changed,
                         self.edge_styles,
+                        self.scene_config.edge.curvature,
                         ui,
                     )
                 });
@@ -890,6 +891,17 @@ fn nodes(
                     nodes_to_reset.extend(target.iter().copied());
                     ui.close();
                 }
+                // Replace the right-clicked node via the node palette. Only
+                // for a single node.
+                if !multi
+                    && ui
+                        .button("replace")
+                        .on_hover_text("replace this node with another type, keeping its edges")
+                        .clicked()
+                {
+                    responses.push(DynResponse::new(OpenReplacePalette(n_id)));
+                    ui.close();
+                }
                 if ui.button("delete").clicked() {
                     nodes_to_delete.extend(target);
                     ui.close();
@@ -1100,6 +1112,7 @@ pub(crate) fn socket_hover(resp: &egui::Response, doc: &SocketDoc) {
     });
 }
 
+#[allow(clippy::too_many_arguments)]
 fn edges(
     graph: &mut DataGraph,
     ectx: &mut egui_graph::EdgesCtx,
@@ -1107,6 +1120,7 @@ fn edges(
     responses: &mut Vec<DynResponse>,
     changed: &mut bool,
     edge_styles: Option<(&gantz_ca::Head, &[&dyn crate::widget::EdgeStyle])>,
+    curvature: f32,
     ui: &mut egui::Ui,
 ) {
     // Track whether any edge has a context menu open this frame.
@@ -1130,7 +1144,8 @@ fn edges(
             crate::widget::edge_style::edge_styling(styles, &ctx)
         });
 
-        let edge = egui_graph::edge::Edge::new((a, output), (b, input), &mut selected);
+        let edge = egui_graph::edge::Edge::new((a, output), (b, input), &mut selected)
+            .curvature_factor(curvature);
         let response = match &styling {
             None => edge.show(ectx, ui),
             Some(styling) => edge.show_with(ectx, ui, |ui, pctx| {
@@ -1215,7 +1230,7 @@ fn edges(
 
     // Draw the in-progress edge if there is one.
     if let Some(edge) = ectx.in_progress(ui) {
-        edge.show(ui, egui_graph::bezier::Cubic::DEFAULT_CURVATURE);
+        edge.show(ui, curvature);
     }
 }
 

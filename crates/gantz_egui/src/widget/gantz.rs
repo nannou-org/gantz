@@ -1,8 +1,8 @@
 use crate::{
     Action, CopyNodes, CreateNestedGraph, CreateNode, CutNodes, DuplicateNodes, Env,
     ExportAllNamed, ExportHead, ExportStyle, HeadAccess, ImportStyle, Keymap, NodeCtx, NodeUi,
-    OpenLogs, OpenNodePalette, OpenNodeView, Paste, Redo, ReplaceHead, ResetTilesLayout, Undo,
-    export,
+    OpenLogs, OpenNodePalette, OpenNodeView, OpenReplacePalette, Paste, Redo, ReplaceHead,
+    ReplaceNode, ResetTilesLayout, Undo, export,
     node::NodeCodec,
     response::{DynResponse, Responses},
     style::SeparatorConfig,
@@ -108,6 +108,11 @@ pub struct GantzState {
     pub view_toggles: ViewToggles,
     #[serde(default, alias = "command_palette")]
     pub node_palette: widget::NodePalette,
+    /// The node that the open node palette replaces, with its head. `None`
+    /// while the palette creates nodes. Not persisted, since a node index
+    /// can go stale.
+    #[serde(skip)]
+    pub palette_replace: Option<(gantz_ca::Head, graph_scene::NodeIndex)>,
     /// Global auto-layout parameters. These are the non-flow `egui_graph`
     /// layout params. Flow stays per-head in [`OpenHeadState::layout_flow`].
     #[serde(default)]
@@ -117,6 +122,10 @@ pub struct GantzState {
     /// options and apply to every open head.
     #[serde(default)]
     pub scene_config: SceneConfig,
+    /// Which panes scroll to follow the node selection. Edited in the
+    /// Settings Global subtab.
+    #[serde(default)]
+    pub follow_selection: FollowSelectionConfig,
     /// The egui theme preference and per-theme style overrides, applied to
     /// every gantz context. See [`crate::style`]. Edited in the Settings
     /// Style subtab.
@@ -260,9 +269,10 @@ impl LayoutConfig {
     }
 }
 
-/// Global interactive-scene configuration for the dot grid, drag snapping and
-/// snap-align. It mirrors the per-frame options on [`egui_graph::Graph`] and
-/// applies to every open head, like [`LayoutConfig`].
+/// Global interactive-scene configuration for the dot grid, drag snapping,
+/// snap-align and edge shape. It mirrors the per-frame options on
+/// [`egui_graph::Graph`] and its edges and applies to every open head, like
+/// [`LayoutConfig`].
 #[derive(Clone, Copy, Default, serde::Deserialize, serde::Serialize)]
 pub struct SceneConfig {
     #[serde(default)]
@@ -271,6 +281,29 @@ pub struct SceneConfig {
     pub snap: SnapConfig,
     #[serde(default)]
     pub align: AlignConfig,
+    #[serde(default)]
+    pub edge: EdgeConfig,
+}
+
+/// The shape of the edges drawn between sockets.
+#[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
+pub struct EdgeConfig {
+    /// How far each edge curves from a straight line, from `0.0` (straight)
+    /// to `1.0`. See [`egui_graph::edge::Edge::curvature_factor`].
+    #[serde(default = "default_edge_curvature")]
+    pub curvature: f32,
+}
+
+fn default_edge_curvature() -> f32 {
+    egui_graph::bezier::Cubic::DEFAULT_CURVATURE
+}
+
+impl Default for EdgeConfig {
+    fn default() -> Self {
+        Self {
+            curvature: default_edge_curvature(),
+        }
+    }
 }
 
 /// The dot grid drawn behind the graph. See [`egui_graph::Graph::dot_grid`].
@@ -397,6 +430,31 @@ impl SceneConfig {
                 edges: self.align.edges,
                 centers: self.align.centers,
             })
+    }
+}
+
+/// Which panes scroll to keep the selected node in view when the selection
+/// changes.
+#[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
+pub struct FollowSelectionConfig {
+    /// The Node Inspector pane scrolls to the selected node's entry.
+    #[serde(default = "default_follow_selection")]
+    pub inspector: bool,
+    /// The Steel pane scrolls to the selected node's code.
+    #[serde(default = "default_follow_selection")]
+    pub steel: bool,
+}
+
+fn default_follow_selection() -> bool {
+    true
+}
+
+impl Default for FollowSelectionConfig {
+    fn default() -> Self {
+        Self {
+            inspector: default_follow_selection(),
+            steel: default_follow_selection(),
+        }
     }
 }
 
@@ -947,12 +1005,15 @@ impl<'a> Gantz<'a> {
     }
 
     /// Set the performance capture sources for VM and GUI timing.
+    ///
+    /// `perf_vm` is the focused head's VM timing, if a head is focused. The VM
+    /// Perf pane is empty without it.
     pub fn perf_captures(
         mut self,
-        perf_vm: &'a mut widget::PerfCapture,
+        perf_vm: Option<&'a mut widget::PerfCapture>,
         perf_gui: &'a mut widget::PerfCapture,
     ) -> Self {
-        self.perf_vm = Some(perf_vm);
+        self.perf_vm = perf_vm;
         self.perf_gui = Some(perf_gui);
         self
     }
@@ -1057,10 +1118,18 @@ impl<'a> Gantz<'a> {
         response.file_drops = collect_gantz_file_drops(ui.ctx());
 
         // Apply payloads that only affect the widget's own state, so
-        // applications never see them. These are node palette toggling and
-        // resetting the tile layout to its default arrangement.
+        // applications never see them. These are node palette toggling,
+        // opening it to replace a node, and resetting the tile layout to its
+        // default arrangement.
         for _ in response.responses.take::<OpenNodePalette>() {
+            state.palette_replace = None;
             state.node_palette.toggle();
+        }
+        for (head, OpenReplacePalette(node)) in response.responses.take() {
+            if let Some(head) = head {
+                state.palette_replace = Some((head, node));
+                state.node_palette.open();
+            }
         }
         for _ in response.responses.take::<ResetTilesLayout>() {
             tree = create_tree();
@@ -1217,9 +1286,11 @@ impl GantzState {
         Self {
             open_heads,
             node_palette: widget::NodePalette::default(),
+            palette_replace: None,
             view_toggles: ViewToggles::default(),
             layout_config: LayoutConfig::default(),
             scene_config: SceneConfig::default(),
+            follow_selection: FollowSelectionConfig::default(),
             style: Default::default(),
             keymap: Keymap::default(),
             collab: Default::default(),
@@ -1726,9 +1797,21 @@ where
                     // graph coords recorded this frame. New nodes are placed
                     // here. It is `Copy`, so no borrow is held across the call.
                     let pointer_pos = head_state.scene.interaction.last_pointer_pos;
+                    // A pending replace applies only while the palette is open
+                    // over the head that requested it.
+                    if !state.node_palette.is_visible()
+                        || state
+                            .palette_replace
+                            .as_ref()
+                            .is_some_and(|(h, _)| h != &fh)
+                    {
+                        state.palette_replace = None;
+                    }
+                    let replace = state.palette_replace.as_ref().map(|&(_, n)| n);
                     let created = node_palette(
                         gantz.env,
                         editing,
+                        replace,
                         &mut state.node_palette,
                         &state.keymap,
                         ui,
@@ -1741,6 +1824,10 @@ where
                         Some(PaletteChoice::NestedGraph(mut create)) => {
                             create.pos = pointer_pos;
                             gantz_response.responses.push(Some(fh), create);
+                        }
+                        Some(PaletteChoice::Replace(replace)) => {
+                            state.palette_replace = None;
+                            gantz_response.responses.push(Some(fh), replace);
                         }
                         None => {}
                     }
@@ -1853,6 +1940,7 @@ where
         Pane::NodeInspector => {
             if let Some(fh) = access.heads().get(*focused_head).cloned() {
                 let immutable = head_immutable(&fh, gantz.base_immutable, base_names);
+                let follow_selection = state.follow_selection.inspector;
                 let head_state = state.open_heads.entry(fh.clone()).or_default();
                 let ref_ext_uis = gantz.ref_ext_uis;
                 let codec = gantz.codec;
@@ -1866,6 +1954,7 @@ where
                         head_state,
                         &fh,
                         immutable,
+                        follow_selection,
                         ref_ext_uis,
                         ui,
                     )
@@ -2027,13 +2116,17 @@ where
                         highlights.extend(spans.refs);
                     }
                     // Scroll to the first highlighted span when the
-                    // selection changes.
+                    // selection changes. The last-seen selection updates
+                    // even while follow is off, so enabling it does not jump
+                    // to an old selection.
                     let state_id = egui::Id::new("steel_view_selection");
                     let current = egui::Id::new(("steel_sel", h, &selected));
                     let prev: Option<egui::Id> = ui.ctx().data(|d| d.get_temp(state_id));
                     if prev != Some(current) {
                         ui.ctx().data_mut(|d| d.insert_temp(state_id, current));
-                        scroll_to = highlights.iter().map(|r| r.start).min();
+                        if state.follow_selection.steel {
+                            scroll_to = highlights.iter().map(|r| r.start).min();
+                        }
                     }
                 }
             }
@@ -2125,6 +2218,7 @@ where
                     validate_change_tracking,
                     &mut state.layout_config,
                     &mut state.scene_config,
+                    &mut state.follow_selection,
                     &mut state.style,
                     &mut state.keymap,
                     ext_tabs,
@@ -2646,7 +2740,7 @@ where
         Pane::Steel => with_head("Steel"),
         Pane::GuiPreview => with_head("GUI Preview"),
         Pane::GuiTree => with_head("GUI Tree"),
-        Pane::VmPerf => "VM Perf".to_string(),
+        Pane::VmPerf => with_head("VM Perf"),
     }
 }
 
@@ -3881,21 +3975,25 @@ fn name_breadcrumb(
     responses
 }
 
-/// A node-creation choice made in the node palette.
+/// A node choice made in the node palette.
 enum PaletteChoice {
     /// Create an ordinary node of the given type.
     Node(CreateNode),
     /// Create a new nested graph via the reserved [`NESTED_GRAPH_TYPE`] entry.
     NestedGraph(CreateNestedGraph),
+    /// Replace an existing node with a node of the chosen type.
+    Replace(ReplaceNode),
 }
 
-/// Returns a node-creation payload when a node type is chosen.
+/// Returns a node-creation payload when a node type is chosen, or a replace
+/// payload when `replace` holds the node the palette replaces.
 ///
 /// `editing` is the focused head's name when it is a branch. It hides node
 /// types whose reference would cycle back to the graph being edited.
 fn node_palette(
     env: &Env<'_>,
     editing: Option<&str>,
+    replace: Option<graph_scene::NodeIndex>,
     node_palette: &mut widget::NodePalette,
     keymap: &Keymap,
     ui: &mut egui::Ui,
@@ -3907,22 +4005,31 @@ fn node_palette(
 
     // Map the node types to commands for the node palette, dropping any type
     // whose reference would form a cycle back to the editing graph. The reserved
-    // nested-graph entry always mints a fresh child, so it is never cyclic.
+    // nested-graph entry always mints a fresh child, so it is never cyclic. A
+    // replace hides it, since a fresh nested graph has no sockets to keep.
     let types: Vec<&str> = env
         .node_types()
         .into_iter()
-        .filter(|&k| k == NESTED_GRAPH_TYPE || editing.is_none_or(|e| !env.would_ref_cycle(k, e)))
+        .filter(|&k| match k == NESTED_GRAPH_TYPE {
+            true => replace.is_none(),
+            false => editing.is_none_or(|e| !env.would_ref_cycle(k, e)),
+        })
         .collect();
     let cmds = types.iter().map(|&k| NodeTyCmd { env, name: k });
 
-    // The chosen node type becomes a creation payload. The reserved
+    // The chosen node type becomes a creation or replace payload. The reserved
     // `NESTED_GRAPH_TYPE` routes to the registry-aware nested-graph op. The
     // palette is centered over the graph scene, which is this `ui`'s rect.
     let scene_rect = ui.max_rect();
     node_palette.show(ui.ctx(), scene_rect, cmds).map(|cmd| {
         // The placement position is filled in by the caller, which has access to
         // the focused head's last pointer position.
-        if cmd.name == NESTED_GRAPH_TYPE {
+        if let Some(node) = replace {
+            PaletteChoice::Replace(ReplaceNode {
+                node,
+                node_type: cmd.name.to_string(),
+            })
+        } else if cmd.name == NESTED_GRAPH_TYPE {
             PaletteChoice::NestedGraph(CreateNestedGraph { pos: None })
         } else {
             PaletteChoice::Node(CreateNode {
@@ -3975,6 +4082,9 @@ fn head_immutable(
 
 /// Returns whether any inspected node had a CA-affecting edit, together with
 /// the payloads emitted by node UIs within the inspector.
+///
+/// `follow_selection` scrolls to the first selected node when the selection
+/// changes.
 #[allow(clippy::too_many_arguments)]
 fn node_inspector<'a>(
     registry: &'a Env<'a>,
@@ -3985,6 +4095,7 @@ fn node_inspector<'a>(
     head_state: &mut OpenHeadState,
     head: &gantz_ca::Head,
     immutable: bool,
+    follow_selection: bool,
     ref_ext_uis: &'a [&'a dyn crate::node::RefExtUi],
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<(bool, Vec<DynResponse>)> {
@@ -4070,7 +4181,9 @@ fn node_inspector<'a>(
                 }
 
                 // Scroll to the first selected node when the selection changes,
-                // mirroring the Steel view's scroll-to-span on selection.
+                // mirroring the Steel view's scroll-to-span on selection. The
+                // last-seen selection updates even while follow is off, so
+                // enabling it does not jump to an old selection.
                 let state_id = egui::Id::new("node_inspector_selection");
                 let mut selected: Vec<node::Id> = head_state
                     .scene
@@ -4085,7 +4198,7 @@ fn node_inspector<'a>(
                 let prev: Option<egui::Id> = ui.ctx().data(|d| d.get_temp(state_id));
                 if prev != Some(current) {
                     ui.ctx().data_mut(|d| d.insert_temp(state_id, current));
-                    if let Some(rect) = selected_rect {
+                    if let Some(rect) = selected_rect.filter(|_| follow_selection) {
                         ui.scroll_to_rect(rect, Some(egui::Align::Center));
                     }
                 }

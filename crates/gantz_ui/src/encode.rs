@@ -79,6 +79,7 @@ pub fn encode(elem: &Element) -> SExpr {
             push_f64(&mut attrs, "step", e.step);
             push_int(&mut attrs, "precision", e.precision.map(i64::from));
             push_string(&mut attrs, "label", &e.label);
+            push_string(&mut attrs, "prefix", &e.prefix);
             push_bool(&mut attrs, "push", e.push, true);
             push_ident(&mut attrs, "style", e.style.map(|s| s.name()));
             push_key(&mut attrs, &e.key);
@@ -386,6 +387,7 @@ mod tests {
             step: Some(0.5),
             precision: Some(2),
             label: Some("cutoff".to_string()),
+            prefix: Some("!".to_string()),
             push: false,
             style: Some(DialerStyle::Knob),
             key: Some(Key::Str("k".to_string())),

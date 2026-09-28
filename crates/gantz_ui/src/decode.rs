@@ -370,6 +370,7 @@ fn elem(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, expr: SExpr) -> Elem
             let step = a.f64("step");
             let precision = a.u8("precision");
             let label = a.string("label");
+            let prefix = a.string("prefix");
             let push = a.bool_or("push", true);
             let style = a.take("style", "one of slider, knob", |v| {
                 text(v).as_deref().and_then(DialerStyle::from_name)
@@ -384,6 +385,7 @@ fn elem(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, expr: SExpr) -> Elem
                 step,
                 precision,
                 label,
+                prefix,
                 push,
                 style,
                 key,
@@ -782,6 +784,7 @@ mod tests {
                 attr("step", float(0.1)),
                 attr("precision", int(3)),
                 attr("label", str_("cutoff")),
+                attr("prefix", str_("!")),
                 attr("push", SExpr::Bool(false)),
                 attr("style", ident("knob")),
                 attr("key", str_("k")),
@@ -794,6 +797,7 @@ mod tests {
             step: Some(0.1),
             precision: Some(3),
             label: Some("cutoff".to_string()),
+            prefix: Some("!".to_string()),
             push: false,
             style: Some(DialerStyle::Knob),
             key: Some(Key::Str("k".to_string())),

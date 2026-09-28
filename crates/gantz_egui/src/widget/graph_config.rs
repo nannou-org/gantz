@@ -451,13 +451,16 @@ fn merge_select(
     resolutions: gantz_ca::merge::Resolutions,
     ui: &mut egui::Ui,
 ) -> Option<crate::MergeHead> {
+    const MERGEABLE: &str = "merge the changes of another graph into this one. A graph \
+                             is mergeable when it shares an ancestor with this one, \
+                             for example a fork, and has changes this one lacks";
     let mut merge = None;
     egui::ComboBox::from_id_salt("merge_select")
         .selected_text("select branch\u{2026}")
         .show_ui(ui, |ui| {
             let candidates = crate::merge::merge_candidates(env.registry, head);
             if candidates.is_empty() {
-                ui.weak("no mergeable graphs");
+                ui.weak("no mergeable graphs").on_hover_text(MERGEABLE);
                 return;
             }
             let ours_tip = match head {
@@ -544,7 +547,9 @@ fn merge_select(
                     }
                 });
             }
-        });
+        })
+        .response
+        .on_hover_text(MERGEABLE);
     merge
 }
 

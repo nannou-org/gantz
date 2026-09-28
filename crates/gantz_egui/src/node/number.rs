@@ -1,5 +1,6 @@
 //! A number node with a dialer for editing its stored value.
 
+use crate::widget::node_inspector::radio_option;
 use crate::{
     ContextMenuResponse, Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse,
     NodeViewResponse, SocketDoc, SocketKind, ui_tree::UiTree,
@@ -16,6 +17,8 @@ use steel::SteelVal;
 /// - `min` and `max` clamp every value, including input-socket values.
 /// - `precision` controls how many decimals the dialer shows and edits. It
 ///   is display only.
+/// - `input` selects how an input-socket value is handled. See
+///   [`NumberInput`].
 /// - `push_eval_on_edit` toggles whether editing the dialer fires downstream.
 ///
 /// Each field is serialized only when non-default. A plain `number` keeps
@@ -30,11 +33,42 @@ pub struct Number {
     max: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     precision: Option<u8>,
+    #[serde(default, skip_serializing_if = "is_default_input")]
+    input: NumberInput,
     #[serde(
         default = "default_push_eval",
         skip_serializing_if = "is_default_push_eval"
     )]
     push_eval_on_edit: bool,
+}
+
+/// How a [`Number`] handles a value arriving at its input socket.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum NumberInput {
+    /// Store the value, clamped to the bounds, and output it.
+    #[default]
+    Store,
+    /// Treat the value as a bang. Output the stored value unchanged.
+    Bang,
+}
+
+impl NumberInput {
+    /// All input modes, in inspector order.
+    pub const ALL: [Self; 2] = [Self::Store, Self::Bang];
+
+    /// The lowercase name used in labels, sugar and the wire format.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Store => "store",
+            Self::Bang => "bang",
+        }
+    }
+
+    /// The input mode for its lowercase name.
+    pub fn from_str(s: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|m| m.as_str() == s)
+    }
 }
 
 impl Number {
@@ -51,6 +85,11 @@ impl Number {
     /// The number of decimal places the dialer shows/edits, if configured.
     pub fn precision(&self) -> Option<u8> {
         self.precision
+    }
+
+    /// How a value arriving at the input socket is handled.
+    pub fn input(&self) -> NumberInput {
+        self.input
     }
 
     /// Whether editing the dialer fires a push-eval downstream.
@@ -73,6 +112,12 @@ impl Number {
         self.precision = precision;
     }
 
+    /// Set how a value arriving at the input socket is handled. This affects
+    /// the content address.
+    pub fn set_input(&mut self, input: NumberInput) {
+        self.input = input;
+    }
+
     /// Set whether editing the dialer fires downstream. This is UI only.
     pub fn set_push_eval_on_edit(&mut self, push_eval_on_edit: bool) {
         self.push_eval_on_edit = push_eval_on_edit;
@@ -91,6 +136,7 @@ impl Default for Number {
             min: None,
             max: None,
             precision: None,
+            input: NumberInput::default(),
             push_eval_on_edit: true,
         }
     }
@@ -101,6 +147,7 @@ impl PartialEq for Number {
         self.min.map(f64::to_bits) == other.min.map(f64::to_bits)
             && self.max.map(f64::to_bits) == other.max.map(f64::to_bits)
             && self.precision == other.precision
+            && self.input == other.input
             && self.push_eval_on_edit == other.push_eval_on_edit
     }
 }
@@ -112,6 +159,7 @@ impl Hash for Number {
         Hash::hash(&self.min.map(f64::to_bits), state);
         Hash::hash(&self.max.map(f64::to_bits), state);
         Hash::hash(&self.precision, state);
+        Hash::hash(&self.input, state);
         Hash::hash(&self.push_eval_on_edit, state);
     }
 }
@@ -130,14 +178,15 @@ impl gantz_core::Node for Number {
     }
 
     fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
-        let expr = match ctx.inputs().get(0) {
+        let expr = match (ctx.inputs().get(0), self.input) {
             // If an input value was provided, clamp it, use it to update state
             // and forward that value.
-            Some(Some(val)) => {
+            (Some(Some(val)), NumberInput::Store) => {
                 let stored = clamp_steel(val, self.min, self.max);
                 format!("(begin (if (number? {val}) (set! state {stored}) void) state)")
             }
-            // If no input value was provided, forward the value in state.
+            // If no input value was provided, or the input is a bang, forward
+            // the value in state.
             _ => "(begin state)".to_string(),
         };
         node::parse_expr(&expr)
@@ -206,7 +255,7 @@ impl NodeUi for Number {
         body: &mut egui_extras::TableBody,
     ) -> InspectorRowsResponse {
         let row_h = crate::widget::node_inspector::table_row_h(body.ui_mut());
-        // All four config fields contribute to the content address. `changed`
+        // Every config field contributes to the content address. `changed`
         // tracks any edit. `bounds_changed` also drives a re-clamp of the
         // stored value.
         let mut changed = false;
@@ -267,10 +316,37 @@ impl NodeUi for Number {
 
         body.row(row_h, |mut row| {
             row.col(|ui| {
+                ui.label("input")
+                    .on_hover_text("how a value arriving at the input socket is handled");
+            });
+            row.col(|ui| {
+                ui.horizontal(|ui| {
+                    let mut input = self.input();
+                    changed |= radio_option(
+                        ui,
+                        &mut input,
+                        NumberInput::Store,
+                        NumberInput::Store.as_str(),
+                        "store each input value and output it",
+                    );
+                    changed |= radio_option(
+                        ui,
+                        &mut input,
+                        NumberInput::Bang,
+                        NumberInput::Bang.as_str(),
+                        "treat each input value as a bang and output the stored value unchanged",
+                    );
+                    self.set_input(input);
+                });
+            });
+        });
+
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
                 ui.label("push").on_hover_text(
                     "push-eval on edit: when enabled, editing the dialer fires a push \
-                     evaluation downstream. Values arriving via the input socket are \
-                     always passed through regardless.",
+                     evaluation downstream. A value arriving via the input socket \
+                     always evaluates downstream regardless.",
                 );
             });
             row.col(|ui| {
@@ -299,14 +375,31 @@ impl NodeUi for Number {
             self.set_push_eval_on_edit(push);
             resp.mark_changed();
         }
+        let mut bang = self.input() == NumberInput::Bang;
+        if ui
+            .checkbox(&mut bang, "bang input")
+            .on_hover_text("treat each input value as a bang and output the stored value")
+            .changed()
+        {
+            self.set_input(if bang {
+                NumberInput::Bang
+            } else {
+                NumberInput::Store
+            });
+            resp.mark_changed();
+        }
         resp
     }
 
     fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
         Some(match kind {
-            SocketKind::Input => SocketDoc::ty("number").with_description(
-                "new value to store. When unconnected the stored value is reused",
-            ),
+            SocketKind::Input => match self.input() {
+                NumberInput::Store => SocketDoc::ty("number").with_description(
+                    "new value to store. When unconnected the stored value is reused",
+                ),
+                NumberInput::Bang => SocketDoc::ty("any")
+                    .with_description("a bang. Any value outputs the stored value unchanged"),
+            },
             SocketKind::Output => {
                 SocketDoc::ty("number").with_description("the current stored value")
             }
@@ -320,6 +413,10 @@ fn default_push_eval() -> bool {
 
 fn is_default_push_eval(push_eval_on_edit: &bool) -> bool {
     *push_eval_on_edit == default_push_eval()
+}
+
+fn is_default_input(input: &NumberInput) -> bool {
+    *input == NumberInput::default()
 }
 
 /// Build a Steel expression that clamps `val` to the given bounds.
@@ -338,13 +435,15 @@ fn clamp_steel(val: &str, min: Option<f64>, max: Option<f64>) -> String {
 }
 
 /// The number's dialer fragment, bound to its own state. Attrs come from the
-/// weight, and the bind id is the node's id in its defining graph.
+/// weight, and the bind id is the node's id in its defining graph. A bang
+/// input shows a `!` prefix, echoing bang nodes such as `load!`.
 fn fragment(num: &Number, id: node::Id) -> gantz_ui::Element {
     gantz_ui::Element::Dialer(gantz_ui::Dialer {
         bind: Some(gantz_ui::BindPath(vec![id])),
         min: num.min(),
         max: num.max(),
         precision: num.precision(),
+        prefix: (num.input() == NumberInput::Bang).then(|| "!".to_string()),
         push: num.push_eval_on_edit(),
         ..Default::default()
     })
@@ -411,14 +510,14 @@ mod tests {
         n
     }
 
-    // Push `value` into a `Number` configured with `min` and `max`. The `check`
-    // expression asserts on the value forwarded downstream and panics on failure.
-    // A successful fire proves the bounds were applied.
-    fn assert_forwards(case: &str, value: &str, min: Option<f64>, max: Option<f64>, check: &str) {
+    // Push `value` into `num`. The `check` expression asserts on the value
+    // forwarded downstream and panics on failure. A successful fire proves the
+    // number's config was applied.
+    fn assert_forwards(case: &str, value: &str, num: Number, check: &str) {
         let mut g = petgraph::graph::DiGraph::new();
         let push =
             g.add_node(Box::new(node::expr(value).unwrap().with_push_eval()) as Box<dyn Node>);
-        let num = g.add_node(Box::new(bounded(min, max)) as Box<_>);
+        let num = g.add_node(Box::new(num) as Box<_>);
         let check = g.add_node(Box::new(node::expr(check).unwrap()) as Box<_>);
         g.add_edge(push, num, Edge::from((0, 0)));
         g.add_edge(num, check, Edge::from((0, 0)));
@@ -445,6 +544,7 @@ mod tests {
             min: Some(0.0),
             max: Some(10.0),
             precision: None,
+            input: NumberInput::Store,
             push_eval_on_edit: true,
         };
         assert_eq!(n.clamp(-5.0), 0.0);
@@ -523,8 +623,32 @@ mod tests {
             ),
         ];
         for &(case, value, min, max, check) in rows {
-            assert_forwards(case, value, min, max, check);
+            assert_forwards(case, value, bounded(min, max), check);
         }
+    }
+
+    #[test]
+    fn input_mode_erases_as_its_name_only_when_set() {
+        use gantz_core::data::{erase_node_typed, reify_node_concrete};
+        let plain = erase_node_typed(&Number::default()).unwrap();
+        assert_eq!(plain.data.get("input"), None, "store is skipped");
+        let mut num = Number::default();
+        num.set_input(NumberInput::Bang);
+        let bang = erase_node_typed(&num).unwrap();
+        assert_eq!(
+            bang.data.get("input").and_then(gantz_ca::Datum::as_str),
+            Some("bang"),
+        );
+        assert_eq!(reify_node_concrete::<Number>(&bang).unwrap(), num);
+    }
+
+    #[test]
+    fn bang_input_forwards_the_stored_value() {
+        let mut num = Number::default();
+        num.set_input(NumberInput::Bang);
+        // The stored value initialises to zero and the input value never
+        // replaces it.
+        assert_forwards("bang", "42", num, "(assert! (= $n 0))");
     }
 
     #[test]
@@ -543,6 +667,15 @@ mod tests {
             ..Default::default()
         });
         assert_eq!(fragment(&num, 3), expected, "custom weight");
+
+        let mut bang = Number::default();
+        bang.set_input(NumberInput::Bang);
+        let expected = gantz_ui::Element::Dialer(gantz_ui::Dialer {
+            bind: Some(gantz_ui::BindPath(vec![1])),
+            prefix: Some("!".to_string()),
+            ..Default::default()
+        });
+        assert_eq!(fragment(&bang, 1), expected, "bang input");
 
         let expected = gantz_ui::Element::Dialer(gantz_ui::Dialer {
             bind: Some(gantz_ui::BindPath(vec![0])),

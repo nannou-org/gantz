@@ -109,6 +109,7 @@ impl Plugin for GantzEguiPlugin {
             .register_head_response::<gantz_egui::DuplicateNodes>()
             .register_head_response::<gantz_egui::NestNodes>()
             .register_head_response::<gantz_egui::CreateNode>()
+            .register_head_response::<gantz_egui::ReplaceNode>()
             .register_head_response::<gantz_egui::CreateNestedGraph>()
             .register_head_response::<gantz_egui::InspectEdge>()
             .register_head_response::<gantz_egui::MergeHead>()
@@ -131,7 +132,6 @@ impl Plugin for GantzEguiPlugin {
             .init_resource::<base::BaseNameSources>()
             .init_resource::<GuiState>()
             .init_resource::<TraceCapture>()
-            .init_resource::<PerfVm>()
             .init_resource::<PerfGui>()
             .init_resource::<WindowedPanesRequested>()
             .init_resource::<SettingsTabs>()
@@ -153,6 +153,7 @@ impl Plugin for GantzEguiPlugin {
             .add_observer(node::gui_refresh::mark_gui_dirty_on_push)
             // GUI response payload observers
             .add_observer(on_create_node)
+            .add_observer(on_replace_node)
             .add_observer(on_create_nested_graph)
             .add_observer(on_branch_node)
             .add_observer(on_inspect_edge)
@@ -252,12 +253,11 @@ pub struct HeadGuiState(pub gantz_egui::widget::gantz::OpenHeadState);
 
 /// Views for a single head's graphs, keyed by subgraph path.
 ///
-/// Requires the rest of the per-head GUI state so every spawn path gets the
-/// full trio. App-side session restore bypasses the [`on_head_opened`]
-/// observer. The `OpenHeadViews` query silently skips entities missing any
-/// of them.
+/// Requires the rest of the per-head GUI state so every spawn path gets all
+/// of it. App-side session restore bypasses the [`on_head_opened`] observer.
+/// The `OpenHeadViews` query silently skips entities missing any of them.
 #[derive(Component, Default, Clone)]
-#[require(HeadGuiState, HeadNodeInstances)]
+#[require(HeadGuiState, HeadNodeInstances, PerfVm)]
 pub struct GraphView(pub gantz_egui::SceneView);
 
 /// Per-head cache of reified node instances for the working graph.
@@ -282,8 +282,9 @@ pub struct SessionHead;
 #[derive(Default, Resource)]
 pub struct TraceCapture(pub gantz_egui::widget::trace_view::TraceCapture);
 
-/// Performance capture for VM execution timing.
-#[derive(Default, Resource)]
+/// A head's performance capture for VM execution timing. The VM Perf pane
+/// shows the focused head's capture.
+#[derive(Component, Default)]
 pub struct PerfVm(pub gantz_egui::widget::PerfCapture);
 
 /// Performance capture for GUI frame timing.
@@ -632,10 +633,13 @@ impl DerefMut for GraphView {
 
 // Observers
 
-/// Record VM execution timing from `EvalEntryComplete` events into `PerfVm`
-/// for the performance widget.
-fn on_eval_entry_complete(trigger: On<EvalEntryComplete>, mut perf_vm: ResMut<PerfVm>) {
-    perf_vm.0.record(trigger.event().duration);
+/// Record VM execution timing from `EvalEntryComplete` events into the
+/// evaluated head's [`PerfVm`] for the performance widget.
+fn on_eval_entry_complete(trigger: On<EvalEntryComplete>, mut perf_vms: Query<&mut PerfVm>) {
+    let event = trigger.event();
+    if let Ok(mut perf_vm) = perf_vms.get_mut(event.entity) {
+        perf_vm.0.record(event.duration);
+    }
 }
 
 /// Initialize GUI state entry and components for an opened head.
@@ -895,6 +899,63 @@ pub fn on_create_node(
         vm,
         event.data.clone(),
     );
+    // See `head::WorkingGraph`.
+    bevy_gantz::commit_working_graph(
+        &mut registry,
+        &mut cmds,
+        event.head,
+        &mut data.head_ref.0,
+        &data.working_graph.0,
+    );
+    refresh_cache(&registry, &mut cache, &codec.0);
+}
+
+/// Handle replace node payloads.
+pub fn on_replace_node(
+    trigger: On<ForHead<gantz_egui::ReplaceNode>>,
+    mut registry: ResMut<Registry>,
+    mut cache: ResMut<GraphCache>,
+    builtins: Res<BuiltinNodes>,
+    codec: Res<NodeCodecRes>,
+    mut gui_state: ResMut<GuiState>,
+    mut vms: NonSendMut<head::HeadVms>,
+    mut cmds: Commands,
+    mut heads: Query<head::OpenHeadData, With<head::OpenHead>>,
+) {
+    let event = trigger.event();
+    let Ok(mut data) = heads.get_mut(event.head) else {
+        log::error!("ReplaceNode: head not found for entity {:?}", event.head);
+        return;
+    };
+    let editing = match &**data.head_ref {
+        ca::Head::Branch(name) => Some(name.to_string()),
+        ca::Head::Commit(_) => None,
+    };
+    let Some(vm) = vms.get_mut(&event.head) else {
+        log::error!("ReplaceNode: VM not found for entity {:?}", event.head);
+        return;
+    };
+    let Some(head_state) = gui_state.open_heads.get_mut(&**data.head_ref) else {
+        log::error!("ReplaceNode: GUI state not found for head");
+        return;
+    };
+
+    let node_reg = env(&registry, &cache, &builtins, &codec);
+    let get_node = |ca: &ca::ContentAddr| node_reg.node(ca);
+    let replaced = gantz_egui::ops::replace_node(
+        node_reg.registry,
+        editing.as_deref(),
+        &codec.0,
+        &get_node,
+        |node_type| node_reg.create_node(node_type),
+        &mut data.working_graph,
+        head_state,
+        vm,
+        event.data.clone(),
+    );
+    if !replaced {
+        return;
+    }
     // See `head::WorkingGraph`.
     bevy_gantz::commit_working_graph(
         &mut registry,
@@ -1397,6 +1458,7 @@ pub fn on_merge_head(
                 entity: event.head,
                 target,
             });
+            cmds.trigger(ResyncRefsEvent);
         }
         gantz_egui::ops::MergeHeadOutcome::Merged { new_commit, .. } => {
             log::debug!(
@@ -1543,9 +1605,14 @@ pub fn on_sync_remote_tip(
 
 /// Request a reference resync outside the usual committed flow. Bring
 /// sync-enabled `NamedRef`s up to date and refresh open heads whose commits
-/// moved. The collaborative-session layer triggers it after it moves scoped
-/// names that no open head points at, such as fast-forwards of nested or
-/// referenced graphs.
+/// moved.
+///
+/// A head move fires no [`head::CommittedEvent`], so the referrers of a moved
+/// graph follow only via this event. [`on_undo`], [`on_redo`] and a merge
+/// fast-forward trigger it after their [`head::MoveHeadEvent`]. The
+/// collaborative-session layer triggers it after it moves scoped names that
+/// no open head points at, such as fast-forwards of nested or referenced
+/// graphs.
 #[derive(Debug, Event)]
 pub struct ResyncRefsEvent;
 
@@ -1596,6 +1663,7 @@ pub fn on_undo(
     };
     if let Some(target) = target {
         cmds.trigger(head::MoveHeadEvent { entity, target });
+        cmds.trigger(ResyncRefsEvent);
     }
 }
 
@@ -1633,6 +1701,7 @@ pub fn on_redo(
     };
     if let Some(target) = target {
         cmds.trigger(head::MoveHeadEvent { entity, target });
+        cmds.trigger(ResyncRefsEvent);
     }
 }
 
@@ -2017,11 +2086,11 @@ fn poll_style_import_task(
 /// - Shows the Gantz widget in an egui CentralPanel
 /// - Processes GUI responses such as head open, close and replace
 /// - Dispatches dynamic response payloads via [`ResponseDispatchers`]
-/// - Uses TraceCapture for tracing and PerfVm and PerfGui for performance
-///   capture
+/// - Uses TraceCapture for tracing, and the focused head's PerfVm and PerfGui
+///   for performance capture
 pub fn update(
     trace_capture: Res<TraceCapture>,
-    mut perf_vm: ResMut<PerfVm>,
+    mut perf_vms: Query<&mut PerfVm>,
     mut perf_gui: ResMut<PerfGui>,
     mut ctxs: EguiContexts,
     mut registry: ResMut<Registry>,
@@ -2078,6 +2147,7 @@ pub fn update(
     let focused_ix = (**focused)
         .and_then(|e| tab_order.iter().position(|&x| x == e))
         .unwrap_or(0);
+    let mut perf_vm = (**focused).and_then(|e| perf_vms.get_mut(e).ok());
 
     // Map heads to entities for response payload dispatch after `show`.
     let head_to_entity: HashMap<ca::Head, Entity> = tab_order
@@ -2157,7 +2227,7 @@ pub fn update(
                 .compile_config(current_compile_config)
                 .validate_change_tracking(current_validate_change_tracking)
                 .trace_capture(trace_capture.0.clone(), level)
-                .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
+                .perf_captures(perf_vm.as_deref_mut().map(|p| &mut p.0), &mut perf_gui.0)
                 .pane_window_mode(pane_window_mode)
                 .settings_tabs(&mut tabs)
                 .ext_panes(&mut panes)

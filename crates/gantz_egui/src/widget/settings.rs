@@ -2,7 +2,7 @@
 //! the Global, Style, Keybinds and Panes subtabs, plus any application-supplied
 //! extension subtabs. See [`SettingsTab`].
 
-use super::gantz::{LayoutConfig, SceneConfig, ViewToggles};
+use super::gantz::{FollowSelectionConfig, LayoutConfig, SceneConfig, ViewToggles};
 use crate::{Keymap, Responses, StyleConfig};
 
 /// An application-supplied settings subtab.
@@ -64,6 +64,7 @@ pub fn settings(
     validate_change_tracking: Option<bool>,
     layout_config: &mut LayoutConfig,
     scene_config: &mut SceneConfig,
+    follow_selection: &mut FollowSelectionConfig,
     style: &mut StyleConfig,
     keymap: &mut Keymap,
     ext_tabs: &mut [&mut dyn SettingsTab],
@@ -81,8 +82,10 @@ pub fn settings(
     }
 
     // The subtab selector matches the shared tab widget. Plain labels with no
-    // box, the active tab in the strong text colour and the rest dim.
-    ui.horizontal(|ui| {
+    // box, the active tab in the strong text colour and the rest dim. A tab
+    // that does not fit moves whole onto a new row, since each label extends
+    // rather than wraps.
+    ui.horizontal_wrapped(|ui| {
         let mut tab_label = |ui: &mut egui::Ui, this: SubTab, label: &str| {
             let color = if tab == this {
                 ui.visuals().strong_text_color()
@@ -93,7 +96,8 @@ pub fn settings(
                 .add(
                     egui::Label::new(egui::RichText::new(label).color(color))
                         .sense(egui::Sense::click())
-                        .selectable(false),
+                        .selectable(false)
+                        .extend(),
                 )
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
             if resp.clicked() {
@@ -136,7 +140,7 @@ pub fn settings(
             let s = egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    super::style_config(style, &mut scene_config.grid, ui)
+                    super::style_config(style, &mut scene_config.grid, &mut scene_config.edge, ui)
                 })
                 .inner;
             res.export_style = s.export;
@@ -157,6 +161,7 @@ pub fn settings(
                         layout_config,
                         &mut scene_config.snap,
                         &mut scene_config.align,
+                        follow_selection,
                         ui,
                     )
                 })

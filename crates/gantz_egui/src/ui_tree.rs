@@ -329,6 +329,9 @@ impl Walk<'_> {
                         if let Some(s) = d.step {
                             dv = dv.speed(s);
                         }
+                        if let Some(p) = &d.prefix {
+                            dv = dv.prefix(p);
+                        }
                         ui.add(dv)
                     }
                     SteelVal::IntV(i) => {
@@ -340,6 +343,9 @@ impl Walk<'_> {
                         }
                         if let Some(s) = d.step {
                             dv = dv.speed(s);
+                        }
+                        if let Some(p) = &d.prefix {
+                            dv = dv.prefix(p);
                         }
                         ui.add(dv)
                     }

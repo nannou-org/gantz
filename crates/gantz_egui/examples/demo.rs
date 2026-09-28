@@ -902,6 +902,31 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         );
     }
 
+    for (head, replace) in responses.take::<gantz_egui::ReplaceNode>() {
+        let Some((head, ix)) = tagged_head(state, head) else {
+            continue;
+        };
+        let editing = match &head {
+            gantz_ca::Head::Branch(name) => Some(name.to_string()),
+            gantz_ca::Head::Commit(_) => None,
+        };
+        let head_state = state.gantz.open_heads.entry(head).or_default();
+        let env = &state.env;
+        let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
+        let (_, graph, _) = &mut state.heads[ix];
+        gantz_egui::ops::replace_node(
+            &state.env.registry,
+            editing.as_deref(),
+            &codec(),
+            &get_node,
+            |node_type| env.new_node(node_type),
+            graph,
+            head_state,
+            &mut state.vms[ix],
+            replace,
+        );
+    }
+
     for (head, create) in responses.take::<gantz_egui::CreateNestedGraph>() {
         let Some((head, ix)) = tagged_head(state, head) else {
             continue;
@@ -1092,6 +1117,7 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         match outcome {
             gantz_egui::ops::MergeHeadOutcome::FastForward(target) => {
                 navigate_head(ctx, state, &head, target);
+                resync_and_refresh(state);
             }
             gantz_egui::ops::MergeHeadOutcome::Merged { .. } => {
                 // The op already committed with both parents, so the commit
@@ -1123,6 +1149,7 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
             gantz_egui::ops::undo(&state.env.registry, &mut state.gantz.redo_stacks, &head);
         if let Some(parent) = parent {
             navigate_head(ctx, state, &head, parent);
+            resync_and_refresh(state);
         }
     }
 
@@ -1133,6 +1160,7 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         let redo_ca = gantz_egui::ops::redo(&mut state.gantz.redo_stacks, &head);
         if let Some(redo_ca) = redo_ca {
             navigate_head(ctx, state, &head, redo_ca);
+            resync_and_refresh(state);
         }
     }
 

@@ -131,6 +131,17 @@ pub fn radio_option<T: Copy + PartialEq>(
     }
 }
 
+/// Render `text` as a label-styled toggle for an independent on/off option. It
+/// is styled like [`radio_option`], dim when off and strong when on. Lay
+/// several out in a `ui.horizontal` to form a row of options. Returns whether
+/// it was toggled.
+pub fn toggle_option(ui: &mut egui::Ui, on: &mut bool, text: &str, hover: &str) -> bool {
+    let strong = ui.visuals().strong_text_color();
+    ui.add(crate::widget::LabelToggle::new(text, on).selected_color(strong))
+        .on_hover_text(hover)
+        .changed()
+}
+
 pub fn table(
     node: &mut (impl Node + NodeUi),
     ctx: &mut NodeCtx,
