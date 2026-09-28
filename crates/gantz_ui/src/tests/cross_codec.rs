@@ -30,6 +30,7 @@ fn full_tree() -> Element {
                             step: Some(0.5),
                             precision: Some(2),
                             label: Some("cutoff".to_string()),
+                            prefix: Some("!".to_string()),
                             push: false,
                             style: Some(DialerStyle::Knob),
                             key: Some(Key::Int(1)),

@@ -212,6 +212,8 @@ pub struct Dialer {
     pub precision: Option<u8>,
     /// An inline label.
     pub label: Option<String>,
+    /// Text drawn inside the value box, before the value.
+    pub prefix: Option<String>,
     /// Whether a `set` also queues a push eval at the bound node.
     pub push: bool,
     /// Rendering style, reserved.
@@ -530,6 +532,7 @@ impl Default for Dialer {
             step: None,
             precision: None,
             label: None,
+            prefix: None,
             push: true,
             style: None,
             key: None,
