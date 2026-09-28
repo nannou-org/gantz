@@ -131,8 +131,9 @@ pub fn navigation_matching(
 
 /// Migrate a navigating head's VM node state from the `from` commit's graph
 /// to the `to` commit's graph. The VM is kept, so every node present on both
-/// sides retains its state. `vm::sync` re-registers the new graph over the
-/// kept VM and initialises only the nodes without state.
+/// sides with the same type retains its state. `vm::sync` re-registers the
+/// new graph over the kept VM and initialises only the nodes without state.
+/// See [`ca::diff::same_tag_pairs`].
 ///
 /// The VM is dropped for a fresh init only when no mapping can be derived or
 /// the state fails to remap.
@@ -150,7 +151,12 @@ pub fn migrate_vm_state(
     let Some(vm) = vms.get_mut(&entity) else {
         return;
     };
-    match navigation_matching(registry, from, to) {
+    let mapping = navigation_matching(registry, from, to).and_then(|m| {
+        let from_g = registry.commit_graph_ref(&from)?;
+        let to_g = registry.commit_graph_ref(&to)?;
+        Some(ca::diff::same_tag_pairs(&m, from_g, to_g))
+    });
+    match mapping {
         Some(mapping) => {
             if let Err(e) = gantz_core::node::state::remap_root(vm, &mapping) {
                 log::error!("navigation: failed to remap node state: {e}; reinitialising");
@@ -332,6 +338,38 @@ pub(crate) mod tests {
             let m = navigation_matching(&reg, from, to).unwrap();
             assert_eq!(m, expected, "{case}");
         }
+    }
+
+    #[test]
+    fn migrate_vm_state_drops_state_across_a_type_change() {
+        use gantz_core::node::state;
+        use steel::{SteelVal, steel_vm::engine::Engine};
+
+        // Ix 1 changes type in place, as a node replace does.
+        let mut reg = ca::Registry::default();
+        let g = graph(&[10, 20]);
+        let base_ca = ca::graph_addr(&g);
+        let base = reg.commit_graph(Duration::from_secs(1), None, base_ca, || g);
+        let mut g = graph(&[10]);
+        let mut other = nd(20);
+        other.tag = "Other".to_string();
+        g.add_node(other);
+        let child_ca = ca::graph_addr(&g);
+        let child = reg.commit_graph(Duration::from_secs(2), Some(base), child_ca, || g);
+
+        let mut vm = Engine::new_base();
+        vm.register_value(gantz_core::ROOT_STATE, SteelVal::empty_hashmap());
+        for ix in 0..2 {
+            state::update_value(&mut vm, &[ix], SteelVal::IntV(ix as isize)).unwrap();
+        }
+        let entity = Entity::PLACEHOLDER;
+        let mut vms = head::HeadVms::default();
+        vms.0.insert(entity, vm);
+        migrate_vm_state(&reg, &mut vms, entity, Some(base), Some(child));
+        let vm = &vms.0[&entity];
+        let value = |ix| state::extract_value(vm, &[ix]).unwrap();
+        assert_eq!(value(0), Some(SteelVal::IntV(0)), "same type keeps state");
+        assert_eq!(value(1), None, "type change drops state");
     }
 
     #[test]

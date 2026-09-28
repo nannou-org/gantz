@@ -212,6 +212,24 @@ pub fn matching_with_times(
     Some((matching, times))
 }
 
+/// The pairs of `matching` whose nodes in `a` and `b` have the same type tag.
+///
+/// Step matching pairs an in-place edit by index. It therefore also pairs an
+/// in-place type change, such as a node replace, as one node. Node state is
+/// only meaningful to the type that wrote it, so a state migration keeps only
+/// these pairs.
+pub fn same_tag_pairs(matching: &Matching, a: &DataGraph, b: &DataGraph) -> Matching {
+    fn tag(g: &DataGraph, ix: usize) -> Option<&str> {
+        g.node_weight(petgraph::graph::NodeIndex::new(ix))
+            .map(|n| n.tag.as_str())
+    }
+    matching
+        .iter()
+        .filter(|&(&ia, &ib)| tag(a, ia).is_some_and(|t| tag(b, ib) == Some(t)))
+        .map(|(&ia, &ib)| (ia, ib))
+        .collect()
+}
+
 /// The structural diff of `other` relative to `base` under the given node
 /// [`Matching`]. See [`Diff`].
 pub fn diff(base: &DataGraph, other: &DataGraph, matching: &Matching) -> Diff {
@@ -400,6 +418,19 @@ mod tests {
         assert_eq!(m, Matching::from([(0, 0), (1, 1)]));
         // Node 1's last content change was the t=4 commit. Node 0 is untouched.
         assert_eq!(times, BTreeMap::from([(1, Timestamp::from_secs(4))]),);
+    }
+
+    #[test]
+    fn same_tag_pairs_drops_type_changes() {
+        // Ix 1 changes type in place. The helper names nodes by their tag.
+        let prev = graph(&["a", "b", "c"], &[]);
+        let next = graph(&["a", "x", "c"], &[]);
+        let m = match_step(&prev, &next);
+        assert_eq!(m, Matching::from([(0, 0), (1, 1), (2, 2)]), "step pairs");
+        assert_eq!(
+            same_tag_pairs(&m, &prev, &next),
+            Matching::from([(0, 0), (2, 2)]),
+        );
     }
 
     #[test]
