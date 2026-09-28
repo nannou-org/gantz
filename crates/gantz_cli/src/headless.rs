@@ -24,7 +24,15 @@ pub struct Loaded {
     /// Every successfully parsed source merged, in source order.
     pub registry: gantz_ca::Registry,
     /// Each source's own parse, index-aligned with the input.
-    pub parsed: Vec<Result<gantz_ca::Registry, ParseExportError>>,
+    pub parsed: Vec<Result<Parsed, ParseExportError>>,
+}
+
+/// One source's own parse.
+pub struct Parsed {
+    /// The graphs the source defines.
+    pub registry: gantz_ca::Registry,
+    /// The node labels of the source's named graphs.
+    pub labels: gantz_egui::format::NodeLabels,
 }
 
 /// The configured base sources, in load order, labelled `<base:NAME>`.
@@ -51,11 +59,14 @@ pub fn load_sources(
 ) -> Loaded {
     let mut names = gantz_egui::reg::Names::new();
     let mut registry = gantz_ca::Registry::default();
-    let mut parsed: Vec<Option<Result<gantz_ca::Registry, ParseExportError>>> =
+    let mut parsed: Vec<Option<Result<Parsed, ParseExportError>>> =
         sources.iter().map(|_| None).collect();
     let parse = |ix: usize, names: &gantz_egui::reg::Names, registry: &gantz_ca::Registry| {
         let seed = gantz_egui::base::seed_graph_addrs(names, registry);
-        gantz_egui::export::parse_export_seeded_at(&sources[ix].bytes, now, &seed, codec)
+        let text = std::str::from_utf8(&sources[ix].bytes).map_err(ParseExportError::Utf8)?;
+        let (registry, labels) = gantz_egui::format::from_str_labeled(text, now, &seed, codec)
+            .map_err(ParseExportError::Format)?;
+        Ok(Parsed { registry, labels })
     };
     let is_missing_dep = |e: &ParseExportError| {
         matches!(
@@ -71,10 +82,11 @@ pub fn load_sources(
             match parse(ix, &names, &registry) {
                 Err(e) if is_missing_dep(&e) => deferred.push(ix),
                 Err(e) => parsed[ix] = Some(Err(e)),
-                Ok(reg) => {
-                    names.extend(reg.heads().map(|(n, ca)| (n.clone(), ca)));
-                    registry.merge(reg.clone());
-                    parsed[ix] = Some(Ok(reg));
+                Ok(source) => {
+                    let heads = source.registry.heads();
+                    names.extend(heads.map(|(n, ca)| (n.clone(), ca)));
+                    registry.merge(source.registry.clone());
+                    parsed[ix] = Some(Ok(source));
                 }
             }
         }

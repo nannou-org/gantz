@@ -1,8 +1,8 @@
 //! The gantz command line, as a library.
 //!
 //! The subcommands work on `.gantz` files headlessly, with no window, store
-//! or network, so any editor or tool can validate and canonicalize graphs.
-//! An app built on gantz passes its node set in a [`Conf`], so the
+//! or network, so any editor or tool can validate, canonicalize and run
+//! graphs. An app built on gantz passes its node set in a [`Conf`], so the
 //! subcommands parse and compile exactly as the app does.
 //!
 //! Each subcommand is a pure core over in-memory [`Source`]s that returns an
@@ -43,6 +43,7 @@ use clap::{Args, Subcommand, ValueEnum};
 use gantz_egui::base::BASE_TIMESTAMP;
 use gantz_egui::export::ParseExportError;
 use std::borrow::Cow;
+use std::collections::HashMap;
 use std::ops::Range;
 use std::path::PathBuf;
 
@@ -90,6 +91,14 @@ pub enum Command {
     Check(CheckArgs),
     /// Print the Steel module compiled from one named graph.
     Compile(CompileArgs),
+    /// Run one named graph and print the values its log nodes emit.
+    ///
+    /// Fires the main! nodes at the graph's root together, or one push
+    /// source with --push. Each log node firing prints its value on one line
+    /// of stdout, in firing order. The graph compiles as the app compiles it.
+    /// Nothing runs after the entry returns, so update!, tick!, audio and
+    /// await do not run.
+    Run(RunArgs),
     /// Join a collaborative session and mirror its graphs to a directory.
     ///
     /// Each top-level graph in the session becomes a .gantz file named after
@@ -167,6 +176,31 @@ pub struct CompileArgs {
     emit: Emit,
 }
 
+#[derive(Args)]
+pub struct RunArgs {
+    #[command(flatten)]
+    seed: SeedArgs,
+    /// The .gantz file defining the graph.
+    file: PathBuf,
+    /// The graph to run. Defaults to the file's unique root graph, the one
+    /// no other graph in the file references.
+    #[arg(long, value_name = "NAME")]
+    graph: Option<String>,
+    /// Fire this push source instead of the main! nodes. A node label in the
+    /// graph, or a `/`-joined path of node ids such as `2/1`.
+    #[arg(long, value_name = "NODE")]
+    push: Option<String>,
+    /// Print the main! nodes and push sources, one per line, and run
+    /// nothing. Each line holds the kind, the node path and the node label,
+    /// or `-` for a node with no label.
+    #[arg(long, conflicts_with = "push")]
+    list: bool,
+    /// The program arguments. Each main! node outputs them as a list of
+    /// strings.
+    #[arg(last = true, value_name = "ARGS")]
+    args: Vec<String>,
+}
+
 #[derive(Clone, Copy, ValueEnum)]
 pub enum Emit {
     /// The Steel module text.
@@ -196,6 +230,19 @@ struct Ready {
     loaded: headless::Loaded,
     reified: headless::Reified,
     builtins: headless::Builtins,
+}
+
+/// The one graph that a `compile` or `run` target names.
+struct Target<'a> {
+    /// The target source's label.
+    label: &'a str,
+    /// The graph's name.
+    name: gantz_ca::Name,
+    /// The node index of each node label in the graph, if the source labels
+    /// its nodes.
+    labels: Option<&'a HashMap<String, usize>>,
+    /// The typed graph.
+    graph: &'a gantz_core::node::graph::Graph<gantz_egui::node::DynNode>,
 }
 
 impl Ready {
@@ -240,6 +287,18 @@ pub fn run(command: Command, conf: &Conf) -> i32 {
             let files = vec![args.file];
             let output = with_sources(conf, &args.seed, &files, |s, t| {
                 compile(conf, s, t.start, args.graph.as_deref(), args.emit)
+            });
+            (files, output)
+        }
+        Command::Run(args) => {
+            let files = vec![args.file];
+            let output = with_sources(conf, &args.seed, &files, |s, t| {
+                let name = args.graph.as_deref();
+                if args.list {
+                    list(conf, s, t.start, name)
+                } else {
+                    run_graph(conf, s, t.start, name, args.push.as_deref(), &args.args)
+                }
             });
             (files, output)
         }
@@ -323,11 +382,11 @@ fn load(
         };
         // Redefining a name with the same content, as checking a base file
         // does, is not a redefinition.
-        for (name, ca) in parsed.heads() {
+        for (name, ca) in parsed.registry.heads() {
             let earlier = sources[..ix]
                 .iter()
                 .zip(&loaded.parsed[..ix])
-                .filter_map(|(s, p)| p.as_ref().ok().map(|p| (s, p)))
+                .filter_map(|(s, p)| p.as_ref().ok().map(|p| (s, &p.registry)))
                 .find(|(_, p)| p.heads().any(|(n, c)| n == name && c != ca));
             if let Some((earlier, _)) = earlier {
                 output.warnings.push(format!(
@@ -389,9 +448,9 @@ pub fn fmt(conf: &Conf, sources: &[Source], targets: Range<usize>, check: bool) 
             continue;
         };
         let canonical = if is_address_mode(text) {
-            gantz_egui::format::to_string(parsed, &codec)
+            gantz_egui::format::to_string(&parsed.registry, &codec)
         } else {
-            gantz_egui::format::to_string_named(parsed, &codec)
+            gantz_egui::format::to_string_named(&parsed.registry, &codec)
         };
         let canonical = match canonical {
             Ok(canonical) => canonical,
@@ -440,15 +499,19 @@ fn compile_diagnostics(
     }
     diags
         .iter()
-        .map(|d| {
-            let node = if d.path.is_empty() {
-                String::new()
-            } else {
-                format!("node {}: ", path_text(&d.path))
-            };
-            format!("{label}: graph `{name}`: {node}{}", d.message)
-        })
+        .map(|d| diagnostic_line(label, name, d))
         .collect()
+}
+
+/// Render a diagnostic for the named graph as one line, prefixed by the
+/// path of the node it concerns, if any.
+fn diagnostic_line(label: &str, name: &gantz_ca::Name, d: &gantz_core::Diagnostic) -> String {
+    let node = if d.path.is_empty() {
+        String::new()
+    } else {
+        format!("node {}: ", path_text(&d.path))
+    };
+    format!("{label}: graph `{name}`: {node}{}", d.message)
 }
 
 /// A node path as `/`-joined ids.
@@ -469,7 +532,7 @@ pub fn check(conf: &Conf, sources: &[Source], targets: Range<usize>) -> Output {
             continue;
         };
         let label = &sources[ix].label;
-        for (name, _) in parsed.heads() {
+        for (name, _) in parsed.registry.heads() {
             let head = gantz_ca::Head::Branch(name.clone());
             let Some(graph) = headless::head_graph(&ready.reified, &ready.loaded.registry, &head)
             else {
@@ -498,42 +561,17 @@ pub fn compile(
     emit: Emit,
 ) -> Output {
     let (ready, mut output) = ready(conf, sources, target..target + 1);
-    let label = &sources[target].label;
-    let Ok(parsed) = &ready.loaded.parsed[target] else {
-        return output;
-    };
-    let name = match name {
-        Some(name) => {
-            let name: gantz_ca::Name = name.parse().expect("infallible");
-            if !parsed.heads().any(|(n, _)| *n == name) {
-                output
-                    .diagnostics
-                    .push(format!("{label}: no graph named `{name}`"));
-                return output;
-            }
-            name
+    let Target {
+        label, name, graph, ..
+    } = match target_graph(&ready, sources, target, name) {
+        Ok(target) => target,
+        Err(diagnostic) => {
+            output.diagnostics.extend(diagnostic);
+            return output;
         }
-        None => match gantz_egui::export::unique_root_name(parsed) {
-            Some(name) => name,
-            None => {
-                let names: Vec<String> = parsed.heads().map(|(n, _)| n.to_string()).collect();
-                output.diagnostics.push(format!(
-                    "{label}: no unique root graph, pass --graph <NAME>. Graphs: {}",
-                    names.join(", "),
-                ));
-                return output;
-            }
-        },
     };
     let env = ready.env();
     let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
-    let head = gantz_ca::Head::Branch(name.clone());
-    let Some(graph) = headless::head_graph(&ready.reified, &ready.loaded.registry, &head) else {
-        output
-            .diagnostics
-            .push(format!("{label}: graph `{name}`: no head graph"));
-        return output;
-    };
     let entrypoints = (conf.entrypoints)(&get_node, graph);
     let config = gantz_core::compile::Config::default();
     let exprs = match gantz_core::compile::module(&get_node, graph, &entrypoints, &config) {
@@ -555,6 +593,237 @@ pub fn compile(
         Emit::SourceMap => source_map_text(&src),
     };
     output
+}
+
+/// Print the root `main!` nodes and the push sources of the graph `name`
+/// names, or the target's unique root graph. One line per node holds its
+/// kind, its path and its label, or `-` for a node with no label.
+pub fn list(conf: &Conf, sources: &[Source], target: usize, name: Option<&str>) -> Output {
+    let (ready, mut output) = ready(conf, sources, target..target + 1);
+    let Target { labels, graph, .. } = match target_graph(&ready, sources, target, name) {
+        Ok(target) => target,
+        Err(diagnostic) => {
+            output.diagnostics.extend(diagnostic);
+            return output;
+        }
+    };
+    let env = ready.env();
+    let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
+    let line = |kind: &str, path: &[gantz_core::node::Id]| {
+        let node_label = node_label(labels, path).unwrap_or("-");
+        format!("{kind} {} {node_label}\n", path_text(path))
+    };
+    let main = gantz_io::main_bang::entrypoint(graph);
+    let mains = main
+        .iter()
+        .flat_map(|ep| &ep.0)
+        .map(|s| line("main!", &s.path));
+    let pushes = push_sources(&get_node, graph);
+    let pushes = pushes.iter().map(|(path, _)| line("push", path));
+    output.stdout = mains.chain(pushes).collect();
+    output
+}
+
+/// Run the graph `name` names, or the target's unique root graph.
+///
+/// Fires the root `main!` nodes together, each with `args` as its output.
+/// With `push`, fires that push source instead. Each value that the graph's
+/// `log` nodes emit becomes one line of stdout, in firing order.
+pub fn run_graph(
+    conf: &Conf,
+    sources: &[Source],
+    target: usize,
+    name: Option<&str>,
+    push: Option<&str>,
+    args: &[String],
+) -> Output {
+    let (ready, mut output) = ready(conf, sources, target..target + 1);
+    let Target {
+        label,
+        name,
+        labels,
+        graph,
+    } = match target_graph(&ready, sources, target, name) {
+        Ok(target) => target,
+        Err(diagnostic) => {
+            output.diagnostics.extend(diagnostic);
+            return output;
+        }
+    };
+    let env = ready.env();
+    let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
+    let main = gantz_io::main_bang::entrypoint(graph);
+    let pushes = push_sources(&get_node, graph);
+    let entry = match (push, &main) {
+        (Some(node), _) => {
+            let path = node_path(labels, node);
+            match pushes.iter().find(|(p, _)| Some(p) == path.as_ref()) {
+                Some((_, ep)) => ep.clone(),
+                None => {
+                    output.diagnostics.push(format!(
+                        "{label}: graph `{name}`: no push source `{node}`. Push sources: {}",
+                        push_sources_text(&pushes, labels),
+                    ));
+                    return output;
+                }
+            }
+        }
+        (None, Some(main)) => main.clone(),
+        (None, None) => {
+            output.diagnostics.push(format!(
+                "{label}: graph `{name}`: no main! node, pass --push <NODE>. Push sources: {}",
+                push_sources_text(&pushes, labels),
+            ));
+            return output;
+        }
+    };
+
+    // Compile as the app does, plus the entry if the app does not compile it.
+    let mut entrypoints = (conf.entrypoints)(&get_node, graph);
+    if !entrypoints.contains(&entry) {
+        entrypoints.push(entry.clone());
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut vm = gantz_core::vm::new_engine(&conf.steel_modules);
+    gantz_io::log::register_sink(&mut vm, move |_level, _path, val| {
+        let _ = tx.send(val.to_string());
+    });
+    gantz_core::graph::register(&get_node, graph, &[], &mut vm);
+    let config = gantz_core::compile::Config::default();
+    let compiled = match gantz_core::vm::compile(&get_node, graph, &mut vm, &entrypoints, &config) {
+        Ok(compiled) => compiled,
+        Err(e) => {
+            output
+                .diagnostics
+                .extend(compile_diagnostics(label, &name, &e));
+            return output;
+        }
+    };
+
+    for source in main.iter().flat_map(|ep| &ep.0) {
+        if let Err(e) = gantz_core::node::state::update(&mut vm, &source.path, args.to_vec()) {
+            let node = path_text(&source.path);
+            output
+                .diagnostics
+                .push(format!("{label}: graph `{name}`: node {node}: {e}"));
+            return output;
+        }
+    }
+    let entry_fn = gantz_core::compile::entry_fn_name(&entry.id());
+    let result = vm.call_function_by_name_with_args(&entry_fn, vec![]);
+    output.stdout = rx.try_iter().map(|line| line + "\n").collect();
+    if let Err(e) = result {
+        let diagnostic = gantz_core::diagnostic::from_eval_error(&e, &vm, &compiled);
+        output
+            .diagnostics
+            .push(diagnostic_line(label, &name, &diagnostic));
+    }
+    output
+}
+
+/// The graph `name` names in the target, or else the target's unique root
+/// graph.
+///
+/// An `Err` holds the diagnostic, or `None` when the target failed to parse.
+/// [`ready`] reports that failure.
+fn target_graph<'a>(
+    ready: &'a Ready,
+    sources: &'a [Source],
+    target: usize,
+    name: Option<&str>,
+) -> Result<Target<'a>, Option<String>> {
+    let label = &sources[target].label;
+    let Ok(parsed) = &ready.loaded.parsed[target] else {
+        return Err(None);
+    };
+    let registry = &parsed.registry;
+    let name = match name {
+        Some(name) => {
+            let name: gantz_ca::Name = name.parse().expect("infallible");
+            if !registry.heads().any(|(n, _)| *n == name) {
+                return Err(Some(format!("{label}: no graph named `{name}`")));
+            }
+            name
+        }
+        None => gantz_egui::export::unique_root_name(registry).ok_or_else(|| {
+            let names: Vec<String> = registry.heads().map(|(n, _)| n.to_string()).collect();
+            Some(format!(
+                "{label}: no unique root graph, pass --graph <NAME>. Graphs: {}",
+                names.join(", "),
+            ))
+        })?,
+    };
+    let head = gantz_ca::Head::Branch(name.clone());
+    let Some(graph) = headless::head_graph(&ready.reified, &ready.loaded.registry, &head) else {
+        return Err(Some(format!("{label}: graph `{name}`: no head graph")));
+    };
+    let labels = parsed.labels.get(&name);
+    Ok(Target {
+        label,
+        name,
+        labels,
+        graph,
+    })
+}
+
+/// The push sources of the graph and its nested graphs, as each node's path
+/// and push entrypoint, in path order.
+fn push_sources(
+    get_node: gantz_core::node::GetNode<'_>,
+    graph: &gantz_core::node::graph::Graph<gantz_egui::node::DynNode>,
+) -> Vec<(Vec<gantz_core::node::Id>, gantz_core::compile::Entrypoint)> {
+    let push = gantz_core::compile::EvalKind::Push;
+    let mut sources: Vec<_> = gantz_core::compile::push_pull_entrypoints(get_node, graph)
+        .into_iter()
+        .filter_map(|ep| {
+            let source = ep.0.first().filter(|s| s.kind == push)?;
+            Some((source.path.clone(), ep))
+        })
+        .collect();
+    sources.sort_by(|a, b| a.0.cmp(&b.0));
+    sources.dedup_by(|a, b| a.0 == b.0);
+    sources
+}
+
+/// The path of the node that `node` names. That is a node label at the
+/// graph's root, or else a `/`-joined path of node ids.
+fn node_path(
+    labels: Option<&HashMap<String, usize>>,
+    node: &str,
+) -> Option<Vec<gantz_core::node::Id>> {
+    match labels.and_then(|labels| labels.get(node)) {
+        Some(&ix) => Some(vec![ix]),
+        None => node.split('/').map(|id| id.parse().ok()).collect(),
+    }
+}
+
+/// The label of the node at `path`, if the node is at the graph's root and
+/// the file labels it.
+fn node_label<'a>(
+    labels: Option<&'a HashMap<String, usize>>,
+    path: &[gantz_core::node::Id],
+) -> Option<&'a str> {
+    let [id] = path else {
+        return None;
+    };
+    let (label, _) = labels?.iter().find(|(_, ix)| *ix == id)?;
+    Some(label)
+}
+
+/// The push sources as `--push` accepts them, by label or else by path.
+fn push_sources_text(
+    pushes: &[(Vec<gantz_core::node::Id>, gantz_core::compile::Entrypoint)],
+    labels: Option<&HashMap<String, usize>>,
+) -> String {
+    let names: Vec<String> = pushes
+        .iter()
+        .map(|(path, _)| node_label(labels, path).map_or_else(|| path_text(path), str::to_string))
+        .collect();
+    if names.is_empty() {
+        "none".to_string()
+    } else {
+        names.join(", ")
+    }
 }
 
 /// The source map as text. One `def` line per top-level form and one `ref`
