@@ -1102,6 +1102,7 @@ dependencies = [
  "gantz_core",
  "gantz_egui",
  "gantz_format",
+ "gantz_io",
  "gantz_nodetag",
  "petgraph",
  "rfd",
