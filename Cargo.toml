@@ -76,7 +76,6 @@ gantz_nodetag_derive = { version = "0.1.2", path = "crates/gantz_nodetag_derive"
 gantz_pattern = { version = "0.1.1", path = "crates/gantz_pattern" }
 gantz_plyphon = { version = "0.4.0", path = "crates/gantz_plyphon" }
 gantz_rng = { version = "0.1.0", path = "crates/gantz_rng" }
-gantz_std = { version = "0.5.2", path = "crates/gantz_std" }
 gantz_ui = { version = "0.3.0", path = "crates/gantz_ui" }
 hex = "0.4"
 hound = "3.5"

@@ -4118,21 +4118,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gantz_std"
-version = "0.5.2"
-dependencies = [
- "gantz_ca",
- "gantz_core",
- "gantz_format",
- "gantz_nodetag",
- "log",
- "petgraph",
- "serde",
- "steel-core",
- "steel-derive",
-]
-
-[[package]]
 name = "gantz_ui"
 version = "0.3.0"
 dependencies = [
