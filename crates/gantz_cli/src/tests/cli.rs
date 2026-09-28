@@ -1,6 +1,6 @@
 use super::conf;
 use crate::headless::{self, Source};
-use crate::{Emit, check, compile, fmt, is_address_mode};
+use crate::{Emit, check, compile, fmt, is_address_mode, list, run_graph};
 use gantz_egui::base::BASE_TIMESTAMP;
 use std::borrow::Cow;
 use std::ops::Range;
@@ -148,4 +148,88 @@ fn check_warns_on_redefined_name() {
     assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
     assert_eq!(output.warnings.len(), 1, "{:?}", output.warnings);
     assert!(output.warnings[0].contains("`add` redefines"));
+}
+
+/// A program that logs its arguments, with a push source at the root and
+/// one in a nested graph. The nested `main!` is not an entry.
+const PROG: &str = "\
+(graph inner
+  (m main!) (b bang) (l log)
+  (-> m l) (-> b l))
+
+(graph prog
+  (args main!) (show log)
+  (go bang) (answer (expr (begin $go 42))) (say log)
+  (i (ref inner))
+  (-> args show) (-> go answer) (-> answer say))";
+
+fn run_prog(push: Option<&str>, args: &[&str]) -> crate::Output {
+    let (sources, targets) = with_base(vec![source("prog.gantz", PROG)]);
+    let args: Vec<String> = args.iter().map(ToString::to_string).collect();
+    run_graph(&conf(), &sources, targets.start, None, push, &args)
+}
+
+#[test]
+fn run_fires_root_main_with_args() {
+    let output = run_prog(None, &["a", "b c"]);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(output.stdout, "(\"a\" \"b c\")\n");
+
+    let output = run_prog(None, &[]);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(output.stdout, "()\n");
+}
+
+#[test]
+fn run_push_by_label_or_path() {
+    for node in ["go", "2"] {
+        let output = run_prog(Some(node), &[]);
+        assert!(
+            output.diagnostics.is_empty(),
+            "{node}: {:?}",
+            output.diagnostics
+        );
+        assert_eq!(output.stdout, "42\n", "{node}");
+    }
+    let output = run_prog(Some("5/1"), &[]);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(output.stdout, "()\n");
+
+    let output = run_prog(Some("show"), &[]);
+    assert_eq!(
+        output.diagnostics,
+        ["prog.gantz: graph `prog`: no push source `show`. Push sources: go, 5/1"]
+    );
+    assert!(output.stdout.is_empty());
+}
+
+#[test]
+fn run_without_main_names_push_sources() {
+    let (sources, targets) = with_base(vec![source("root.gantz", ROOT)]);
+    let output = run_graph(&conf(), &sources, targets.start, None, None, &[]);
+    assert_eq!(
+        output.diagnostics,
+        ["root.gantz: graph `root`: no main! node, pass --push <NODE>. Push sources: b"]
+    );
+}
+
+#[test]
+fn run_reports_runtime_error_at_node() {
+    let text = "(graph boom (m main!) (e (expr (car $m))) (-> m e))";
+    let (sources, targets) = with_base(vec![source("boom.gantz", text)]);
+    let output = run_graph(&conf(), &sources, targets.start, None, None, &[]);
+    assert_eq!(output.diagnostics.len(), 1, "{:?}", output.diagnostics);
+    assert!(
+        output.diagnostics[0].starts_with("boom.gantz: graph `boom`: node 1: "),
+        "{}",
+        output.diagnostics[0]
+    );
+}
+
+#[test]
+fn list_prints_main_and_push_sources() {
+    let (sources, targets) = with_base(vec![source("prog.gantz", PROG)]);
+    let output = list(&conf(), &sources, targets.start, None);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(output.stdout, "main! 0 args\npush 2 go\npush 5/1 -\n");
 }

@@ -35,6 +35,7 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             gantz_core::node::graph::Outlet,
             gantz_egui::node::Bang,
             gantz_io::Log,
+            gantz_io::MainBang,
             gantz_egui::node::Number,
             gantz_egui::node::FnNamedRef,
             gantz_egui::node::NamedRef,

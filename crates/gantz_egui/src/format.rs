@@ -12,8 +12,13 @@ use crate::node::NodeCodec;
 use gantz_ca::{Datum, GraphAddr, Name, NodeData, Registry, Timestamp};
 use gantz_format::sexpr;
 use gantz_format::{Addr, Form, GraphLabels, Loaded};
+use std::collections::HashMap;
 
 pub use gantz_format::FormatError;
+
+/// The file-local node labels of each named graph in a document. Each label
+/// maps to its node index.
+pub type NodeLabels = HashMap<Name, HashMap<String, usize>>;
 
 /// The section ids this module renders itself as friendly forms. They are
 /// passed as `claimed` to [`gantz_format::to_string`], which then skips their
@@ -62,10 +67,28 @@ pub fn from_str_seeded(
     seed: &std::collections::BTreeMap<String, GraphAddr>,
     codec: &NodeCodec,
 ) -> Result<Registry, FormatError> {
+    from_str_labeled(text, now, seed, codec).map(|(registry, _)| registry)
+}
+
+/// [`from_str_seeded`], also returning the document's [`NodeLabels`].
+pub fn from_str_labeled(
+    text: &str,
+    now: Timestamp,
+    seed: &std::collections::BTreeMap<String, GraphAddr>,
+    codec: &NodeCodec,
+) -> Result<(Registry, NodeLabels), FormatError> {
     let loaded = gantz_format::from_str_normalized(text, now, &codec.sugars(), seed, &|datum| {
         normalize_datum(codec, datum)
     })?;
-    Ok(registry_from_loaded(loaded))
+    let labels = loaded
+        .name_graph
+        .iter()
+        .filter_map(|(name, id)| {
+            let index = loaded.index.get(id)?;
+            Some((name.parse().expect("infallible"), index.clone()))
+        })
+        .collect();
+    Ok((registry_from_loaded(loaded), labels))
 }
 
 /// Apply the GUI-layer extra forms `descriptions`, `layout` and `demo` to a
@@ -379,6 +402,30 @@ mod tests {
         );
         assert_eq!(view.camera.center, egui::pos2(3.0, 4.0));
         assert_eq!(view.camera.zoom, 2.0);
+    }
+
+    /// Each named graph's labels map to its node indices, in the inline-name
+    /// and the address format. Graphs with the same content keep their own
+    /// labels.
+    #[test]
+    fn labels_map_to_node_indices() {
+        let now = Duration::from_secs(0);
+        let seed = std::collections::BTreeMap::new();
+        let text = "\
+(graph a (x (expr 1)) (y (expr 2)))
+(graph b (p (expr 1)) (q (expr 2)))";
+        let (_, labels) = from_str_labeled(text, now, &seed, &codec()).unwrap();
+        let ix = |graph: &str, label: &str| labels[&name(graph)].get(label).copied();
+        assert_eq!((ix("a", "x"), ix("a", "y")), (Some(0), Some(1)));
+        assert_eq!((ix("b", "p"), ix("b", "q")), (Some(0), Some(1)));
+
+        let (reg, _) = test_registry();
+        let text = to_string(&reg, &codec()).unwrap();
+        let (_, labels) = from_str_labeled(&text, now, &seed, &codec()).unwrap();
+        for graph in ["leaf", "root"] {
+            let ixs: Vec<usize> = labels[&name(graph)].values().copied().collect();
+            assert_eq!(ixs, [0], "{graph}");
+        }
     }
 
     /// Descriptions, demos and views survive an address-based text

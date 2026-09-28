@@ -8,6 +8,7 @@ mod identity;
 mod inlet;
 mod list;
 mod log;
+mod main_bang;
 mod outlet;
 
 /// The `desired_width` a syntax-highlighted code [`egui::TextEdit`] needs so its

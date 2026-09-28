@@ -99,6 +99,7 @@ fn builtins_match_expected_name_set() {
         "inspect",
         "list",
         "log",
+        "main!",
         "number",
         "outlet",
         "plot",
@@ -310,6 +311,7 @@ fn node_set_cases() -> Vec<gantz_format::Datum> {
             ],
         ),
         node_datum("UpdateBang", vec![]),
+        node_datum("MainBang", vec![]),
         node_datum("Await", vec![]),
         node_datum("Sleep", vec![]),
         node_datum("Sleep", vec![("duration", Datum::F64(0.25))]),
@@ -635,6 +637,10 @@ fn node_set_addr_pins() {
         (
             "Log",
             "e342bc3f0fbb7f89223b045a6083a84de3e099074d969aec9b5a5c9f27169c09",
+        ),
+        (
+            "MainBang",
+            "8852e60a8d67d07457b145c200b7be7d0c3dc5061b1950b3980781219946af85",
         ),
         (
             "NamedRef",

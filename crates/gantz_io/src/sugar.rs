@@ -1,14 +1,15 @@
 //! `.gantz` keyword sugar for the io node set.
 //!
-//! [`IoSugar`] provides the keywords for this crate's nodes. That is
-//! `(log [level])`. Compose it with [`gantz_format::CoreSugar`] and the other
-//! crates' sugars via [`gantz_format::Sugars`].
+//! [`IoSugar`] provides the keywords for this crate's nodes. Those are
+//! `(log [level])` and a bare `main!`. Compose it with
+//! [`gantz_format::CoreSugar`] and the other crates' sugars via
+//! [`gantz_format::Sugars`].
 
-use crate::Log;
+use crate::{Log, MainBang};
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
 use gantz_nodetag::NodeTag;
 
-/// Keyword sugar for [`Log`].
+/// Keyword sugar for [`Log`] and [`MainBang`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct IoSugar;
 
@@ -28,6 +29,7 @@ impl Sugar for IoSugar {
                 Log::TAG,
                 vec![("level", Datum::Str("INFO".into()))],
             )),
+            "main!" => Some(node_datum(MainBang::TAG, vec![])),
             _ => None,
         }
     }
@@ -35,12 +37,17 @@ impl Sugar for IoSugar {
     fn write_spec(&self, tag: &str, node: &Datum) -> Option<String> {
         match tag {
             Log::TAG => Some(write_log(node)),
+            MainBang::TAG => Some("main!".to_string()),
             _ => None,
         }
     }
 
     fn keyword_for_tag(&self, tag: &str) -> Option<&str> {
-        (tag == Log::TAG).then_some("log")
+        match tag {
+            Log::TAG => Some("log"),
+            MainBang::TAG => Some("main!"),
+            _ => None,
+        }
     }
 }
 
@@ -88,6 +95,17 @@ mod tests {
         IoSugar
             .read_spec(&head, SugarArgs::new(&args[1..], text))
             .expect("read_spec")
+    }
+
+    #[test]
+    fn main_bang_round_trips() {
+        let bare = IoSugar.read_bare("main!").expect("bare main!");
+        assert_eq!(bare.get("type").and_then(Datum::as_str), Some("MainBang"));
+        assert_eq!(
+            IoSugar.write_spec("MainBang", &bare).as_deref(),
+            Some("main!")
+        );
+        assert_eq!(IoSugar.keyword_for_tag("MainBang"), Some("main!"));
     }
 
     #[test]
