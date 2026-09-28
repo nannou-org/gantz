@@ -1,7 +1,6 @@
 //! [`crate::NodeUi`] implementations for core and std gantz nodes.
 
 mod apply;
-mod bang;
 mod branch;
 mod delay;
 mod expr;
@@ -9,7 +8,6 @@ mod identity;
 mod inlet;
 mod list;
 mod log;
-mod number;
 mod outlet;
 
 /// The `desired_width` a syntax-highlighted code [`egui::TextEdit`] needs so its

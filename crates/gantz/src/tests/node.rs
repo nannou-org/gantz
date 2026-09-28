@@ -1055,7 +1055,7 @@ fn control_input_writes_dsp_node_state() {
     // input at index 0.
     let mut g: G = Graph::default();
     let sinosc = gantz_plyphon::UnitNode::from_unit("SinOsc").expect("SinOsc row");
-    let num = g.add_node(Box::new(gantz_std::Number::default()) as DynNode);
+    let num = g.add_node(Box::new(gantz_egui::node::Number::default()) as DynNode);
     let sine = g.add_node(Box::new(sinosc) as DynNode);
     g.add_edge(num, sine, Edge::new(0.into(), 0.into()));
 
@@ -1122,7 +1122,7 @@ fn dsp_wire_into_freq_leaves_param_state_untouched() {
     // the freq input.
     let unit = |name: &str| gantz_plyphon::UnitNode::from_unit(name).expect("table row");
     let mut g: G = Graph::default();
-    let num = g.add_node(Box::new(gantz_std::Number::default()) as DynNode);
+    let num = g.add_node(Box::new(gantz_egui::node::Number::default()) as DynNode);
     let lag = g.add_node(Box::new(unit("Lag")) as DynNode);
     let sine = g.add_node(Box::new(unit("SinOsc")) as DynNode);
     g.add_edge(num, lag, Edge::new(0.into(), 0.into()));
@@ -1170,7 +1170,7 @@ fn scopeout_trigger_outputs_rings_and_channels() {
     // The number feeds ~scopeout's trigger, input 1 after the dsp input.
     // Output 0 feeds `samples` and output 1 feeds `chans`.
     let mut g: G = Graph::default();
-    let num = g.add_node(Box::new(gantz_std::Number::default()) as DynNode);
+    let num = g.add_node(Box::new(gantz_egui::node::Number::default()) as DynNode);
     let tap = g.add_node(Box::new(gantz_plyphon::ScopeOut::default()) as DynNode);
     let samples = g.add_node(Box::new(gantz_egui::node::Inspect::default()) as DynNode);
     let chans = g.add_node(Box::new(gantz_egui::node::Inspect::default()) as DynNode);
@@ -1243,7 +1243,7 @@ fn scopeout_suppresses_output_without_trigger() {
     // inspect. Firing the number pushes the dsp input and leaves trigger
     // input 1 inactive.
     let mut g: G = Graph::default();
-    let num = g.add_node(Box::new(gantz_std::Number::default()) as DynNode);
+    let num = g.add_node(Box::new(gantz_egui::node::Number::default()) as DynNode);
     let tap = g.add_node(Box::new(gantz_plyphon::ScopeOut::default()) as DynNode);
     let inspect = g.add_node(Box::new(gantz_egui::node::Inspect::default()) as DynNode);
     g.add_edge(num, tap, Edge::new(0.into(), 0.into()));
@@ -2134,7 +2134,7 @@ fn demos_evaluate() {
             .node_indices()
             .find(|&ix| {
                 (&*graph[ix] as &dyn std::any::Any)
-                    .downcast_ref::<gantz_std::Bang>()
+                    .downcast_ref::<gantz_egui::node::Bang>()
                     .is_some()
             })
             .map(|ix| ix.index())
@@ -2256,7 +2256,7 @@ fn base_list_nodes_evaluate() {
         .node_indices()
         .find(|&ix| {
             (&*graph[ix] as &dyn std::any::Any)
-                .downcast_ref::<gantz_std::Bang>()
+                .downcast_ref::<gantz_egui::node::Bang>()
                 .is_some()
         })
         .expect("a bang");
@@ -2335,7 +2335,7 @@ fn base_pattern_combinator_nodes_evaluate() {
         .node_indices()
         .find(|&ix| {
             (&*graph[ix] as &dyn std::any::Any)
-                .downcast_ref::<gantz_std::Bang>()
+                .downcast_ref::<gantz_egui::node::Bang>()
                 .is_some()
         })
         .expect("a bang");
@@ -2388,7 +2388,7 @@ fn base_gui_markers_decode_clean() {
 
         let go = graph.node_indices().find(|&ix| {
             (&*graph[ix] as &dyn std::any::Any)
-                .downcast_ref::<gantz_std::Bang>()
+                .downcast_ref::<gantz_egui::node::Bang>()
                 .is_some()
         });
         if let Some(go) = go.map(|ix| ix.index()) {
@@ -2584,7 +2584,7 @@ fn demo_pattern_partial_evals_are_silent() {
         .node_indices()
         .find(|&ix| {
             (&*graph[ix] as &dyn std::any::Any)
-                .downcast_ref::<gantz_std::Number>()
+                .downcast_ref::<gantz_egui::node::Number>()
                 .is_some()
         })
         .expect("number node")

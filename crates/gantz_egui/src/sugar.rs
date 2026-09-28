@@ -2,27 +2,32 @@
 //!
 //! [`EguiSugar`] provides the keywords for the egui nodes. They are
 //! `(bind <id>...)`, `(comment <text> [w h])`,
-//! `(gui [<role>] [#:display <d>])` and bare `bind`,
-//! `inspect` and `gui`. Compose it with [`gantz_format::CoreSugar`] and the
-//! other crates' sugars via [`gantz_format::Sugars`].
+//! `(gui [<role>] [#:display <d>])`,
+//! `(number [#:min m] [#:max m] [#:precision n] [#:no-push-eval])` and bare
+//! `bang`, `bind`, `inspect`, `gui` and `number`. Compose it with
+//! [`gantz_format::CoreSugar`] and the other crates' sugars via
+//! [`gantz_format::Sugars`].
 
-use crate::node::{Bind, Comment, Gui, GuiDisplay, GuiRole, Inspect};
+use crate::node::{Bang, Bind, Comment, Gui, GuiDisplay, GuiRole, Inspect, Number};
 use gantz_format::sexpr::quote;
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
 use gantz_nodetag::NodeTag;
 
-/// Keyword sugar for [`Bind`], [`Comment`], [`Gui`] and [`Inspect`].
+/// Keyword sugar for [`Bang`], [`Bind`], [`Comment`], [`Gui`], [`Inspect`]
+/// and [`Number`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EguiSugar;
 
 /// Sugar keyword to node tag, for the egui builtins whose bare keyword lowers
 /// to a default node. Explicit `read_spec` and `write_spec` arms handle
-/// non-default `Comment` and `Gui` forms.
+/// non-default `Comment`, `Gui` and `Number` forms.
 const KEYWORD_TAG: &[(&str, &str)] = &[
+    ("bang", Bang::TAG),
     ("bind", Bind::TAG),
     ("inspect", Inspect::TAG),
     ("comment", Comment::TAG),
     ("gui", Gui::TAG),
+    ("number", Number::TAG),
 ];
 
 /// The node tag for a sugar keyword.
@@ -47,6 +52,7 @@ impl Sugar for EguiSugar {
             "bind" => bind_spec(args)?,
             "comment" => comment_spec(args)?,
             "gui" => gui_spec(args)?,
+            "number" => number_spec(args)?,
             _ => return Ok(None),
         };
         Ok(Some(datum))
@@ -60,9 +66,10 @@ impl Sugar for EguiSugar {
         match tag {
             "Bind" => Some(write_bind(node)),
             "Comment" => Some(write_comment(node)),
-            // Must precede the bare-keyword fallback. A non-default `Gui`
-            // written as bare `gui` would silently drop its role and display.
+            // These must precede the bare-keyword fallback. A non-default
+            // `Gui` or `Number` written bare would silently drop its config.
             "Gui" => Some(write_gui(node)),
+            "Number" => Some(write_number(node)),
             other => keyword_for_tag(other).map(str::to_string),
         }
     }
@@ -181,6 +188,55 @@ fn write_gui(node: &Datum) -> String {
     }
 }
 
+/// Read a `(number [#:min m] [#:max m] [#:precision n] [#:no-push-eval])` form.
+/// Only the non-default fields are emitted, so a bare `number` stays bare.
+fn number_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
+    let mut fields = Vec::new();
+    if let Some(min) = args.keyword_f64("min")? {
+        fields.push(("min", Datum::F64(min)));
+    }
+    if let Some(max) = args.keyword_f64("max")? {
+        fields.push(("max", Datum::F64(max)));
+    }
+    if let Some(precision) = args.keyword_int("precision")? {
+        fields.push(("precision", Datum::U64(precision.max(0) as u64)));
+    }
+    if args.has_flag("no-push-eval") {
+        fields.push(("push_eval_on_edit", Datum::Bool(false)));
+    }
+    Ok(node_datum("Number", fields))
+}
+
+/// Write a `Number` as a bare `number` when all config is default. Otherwise
+/// write `(number #:min m #:max m #:precision n #:no-push-eval)` with only
+/// the non-default fields.
+fn write_number(node: &Datum) -> String {
+    let min = node.get("min").and_then(Datum::as_f64);
+    let max = node.get("max").and_then(Datum::as_f64);
+    let precision = node.get("precision").and_then(Datum::as_i64);
+    let push = node
+        .get("push_eval_on_edit")
+        .and_then(Datum::as_bool)
+        .unwrap_or(true);
+    if min.is_none() && max.is_none() && precision.is_none() && push {
+        return "number".to_string();
+    }
+    let mut parts = Vec::new();
+    if let Some(min) = min {
+        parts.push(format!("#:min {min}"));
+    }
+    if let Some(max) = max {
+        parts.push(format!("#:max {max}"));
+    }
+    if let Some(precision) = precision {
+        parts.push(format!("#:precision {precision}"));
+    }
+    if !push {
+        parts.push("#:no-push-eval".to_string());
+    }
+    format!("(number {})", parts.join(" "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -288,6 +344,60 @@ mod tests {
         assert_eq!(
             s.write_spec("Comment", &sized).as_deref(),
             Some(r#"(comment "note" 220 80)"#),
+        );
+    }
+
+    #[test]
+    fn bang_round_trips() {
+        let bare = EguiSugar.read_bare("bang").expect("bare bang");
+        assert_eq!(bare.get("type").and_then(Datum::as_str), Some("Bang"));
+        assert_eq!(EguiSugar.write_spec("Bang", &bare).as_deref(), Some("bang"));
+    }
+
+    #[test]
+    fn number_config_round_trips() {
+        let s = EguiSugar;
+
+        // A default number stays bare, whether read as a keyword or spec.
+        let bare = s.read_bare("number").expect("bare number");
+        assert_eq!(s.write_spec("Number", &bare).as_deref(), Some("number"));
+        let empty = read_spec("(number)").expect("empty spec");
+        assert_eq!(s.write_spec("Number", &empty).as_deref(), Some("number"));
+
+        // Min/max bounds.
+        let mm = read_spec("(number #:min 0 #:max 100)").expect("min/max");
+        assert_eq!(mm.get("min").and_then(Datum::as_f64), Some(0.0));
+        assert_eq!(mm.get("max").and_then(Datum::as_f64), Some(100.0));
+        assert_eq!(
+            s.write_spec("Number", &mm).as_deref(),
+            Some("(number #:min 0 #:max 100)"),
+        );
+
+        // Display precision.
+        let p = read_spec("(number #:precision 2)").expect("precision");
+        assert_eq!(p.get("precision").and_then(Datum::as_i64), Some(2));
+        assert_eq!(
+            s.write_spec("Number", &p).as_deref(),
+            Some("(number #:precision 2)"),
+        );
+
+        // Disabled push-eval.
+        let np = read_spec("(number #:no-push-eval)").expect("no push-eval");
+        assert_eq!(
+            np.get("push_eval_on_edit").and_then(Datum::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            s.write_spec("Number", &np).as_deref(),
+            Some("(number #:no-push-eval)"),
+        );
+
+        // Everything at once round-trips in canonical order.
+        let all =
+            read_spec("(number #:min -1.5 #:max 1.5 #:precision 3 #:no-push-eval)").expect("all");
+        assert_eq!(
+            s.write_spec("Number", &all).as_deref(),
+            Some("(number #:min -1.5 #:max 1.5 #:precision 3 #:no-push-eval)"),
         );
     }
 }

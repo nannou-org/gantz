@@ -2,6 +2,7 @@
 //!
 //! Also re-exports some `gantz_core::node` items for convenience.
 
+pub use bang::Bang;
 pub use bind::Bind;
 pub use comment::Comment;
 pub use dyn_node::{DynNode, NodeCodec, NodeUiInstance, NormalizeNodeError, UiBuiltins};
@@ -12,9 +13,11 @@ pub use gui::{GUI_REF_EXT_KEY, Gui, GuiDisplay, GuiRefExt, GuiRole};
 pub use inspect::Inspect;
 pub use instance_cache::{InstanceEntry, NodeInstances};
 pub use named_ref::{NamedRef, missing_color, outdated_color};
+pub use number::Number;
 pub use plot::{F32, Plot, PlotLook, PlotMode, PlotStyle};
 pub use ref_ext::RefExtUi;
 
+pub mod bang;
 pub mod bind;
 pub mod comment;
 pub mod dyn_node;
@@ -23,6 +26,7 @@ pub mod gui;
 pub mod inspect;
 pub mod instance_cache;
 pub mod named_ref;
+pub mod number;
 pub mod plot;
 pub mod ref_ext;
 mod size_sync;
@@ -39,11 +43,13 @@ pub fn builtins() -> Vec<gantz_core::Builtin> {
     let name = gantz_core::node::IDENTITY_NAME.parse().expect("infallible");
     let named_ref = NamedRef::new(name, gantz_core::node::Ref::new(identity_ca));
     vec![
+        Builtin::new("bang", &Bang::default()),
         Builtin::new("bind", &Bind::default()),
         Builtin::new("comment", &Comment::default()),
         Builtin::new("fn", &gantz_core::node::Fn::new(named_ref)),
         Builtin::new("gui", &Gui::default()),
         Builtin::new("inspect", &Inspect::default()),
+        Builtin::new("number", &Number::default()),
         Builtin::new("plot", &Plot::default()),
     ]
 }

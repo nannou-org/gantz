@@ -14,14 +14,14 @@ pub type TestGraph = Graph<Box<dyn TestNode>>;
 dyn_clone::clone_trait_object!(TestNode);
 
 impl TestNode for gantz_core::node::Expr {}
-impl TestNode for gantz_std::Bang {}
+impl TestNode for crate::node::Bang {}
 impl TestNode for NamedRef {}
 impl TestNode for Box<dyn TestNode> {}
 
 gantz_format::impl_node_set_serde! {
     dyn TestNode {
         gantz_core::node::Expr,
-        gantz_std::Bang,
+        crate::node::Bang,
         crate::node::NamedRef,
     }
 }
@@ -38,7 +38,7 @@ pub fn codec() -> crate::node::NodeCodec {
     crate::ui_node_codec! {
         Box<dyn TestNode> {
             gantz_core::node::Expr,
-            gantz_std::Bang,
+            crate::node::Bang,
             crate::node::NamedRef,
         }
     }
