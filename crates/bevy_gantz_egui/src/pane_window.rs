@@ -146,7 +146,7 @@ fn reconcile_windowed_panes(
 fn render_windowed_panes(
     mut popouts: Query<(&mut EguiContext, &PopoutView), Without<EguiMultipassSchedule>>,
     trace_capture: Res<TraceCapture>,
-    mut perf_vm: ResMut<PerfVm>,
+    mut perf_vms: Query<&mut PerfVm>,
     mut perf_gui: ResMut<PerfGui>,
     mut registry: ResMut<Registry>,
     mut cache: ResMut<GraphCache>,
@@ -240,6 +240,7 @@ fn render_windowed_panes(
         let mut response = {
             let node_reg = env(&registry, &cache, &builtins, &codec);
             let mut access = HeadAccess::new(&tab_order, &mut heads_query, &mut vms);
+            let mut perf_vm = (**focused).and_then(|e| perf_vms.get_mut(e).ok());
             let mut tabs: Vec<&mut dyn gantz_egui::widget::SettingsTab> = settings_tabs
                 .0
                 .iter_mut()
@@ -265,7 +266,7 @@ fn render_windowed_panes(
                 .compile_config(compile_config.0)
                 .validate_change_tracking(change_validation.0)
                 .trace_capture(trace_capture.0.clone(), level)
-                .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
+                .perf_captures(perf_vm.as_deref_mut().map(|p| &mut p.0), &mut perf_gui.0)
                 .settings_tabs(&mut tabs)
                 .ext_panes(&mut panes)
                 .ref_ext_uis(&exts)

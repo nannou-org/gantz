@@ -947,12 +947,15 @@ impl<'a> Gantz<'a> {
     }
 
     /// Set the performance capture sources for VM and GUI timing.
+    ///
+    /// `perf_vm` is the focused head's VM timing, if a head is focused. The VM
+    /// Perf pane is empty without it.
     pub fn perf_captures(
         mut self,
-        perf_vm: &'a mut widget::PerfCapture,
+        perf_vm: Option<&'a mut widget::PerfCapture>,
         perf_gui: &'a mut widget::PerfCapture,
     ) -> Self {
-        self.perf_vm = Some(perf_vm);
+        self.perf_vm = perf_vm;
         self.perf_gui = Some(perf_gui);
         self
     }
@@ -2646,7 +2649,7 @@ where
         Pane::Steel => with_head("Steel"),
         Pane::GuiPreview => with_head("GUI Preview"),
         Pane::GuiTree => with_head("GUI Tree"),
-        Pane::VmPerf => "VM Perf".to_string(),
+        Pane::VmPerf => with_head("VM Perf"),
     }
 }
 

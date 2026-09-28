@@ -131,7 +131,6 @@ impl Plugin for GantzEguiPlugin {
             .init_resource::<base::BaseNameSources>()
             .init_resource::<GuiState>()
             .init_resource::<TraceCapture>()
-            .init_resource::<PerfVm>()
             .init_resource::<PerfGui>()
             .init_resource::<WindowedPanesRequested>()
             .init_resource::<SettingsTabs>()
@@ -252,12 +251,11 @@ pub struct HeadGuiState(pub gantz_egui::widget::gantz::OpenHeadState);
 
 /// Views for a single head's graphs, keyed by subgraph path.
 ///
-/// Requires the rest of the per-head GUI state so every spawn path gets the
-/// full trio. App-side session restore bypasses the [`on_head_opened`]
-/// observer. The `OpenHeadViews` query silently skips entities missing any
-/// of them.
+/// Requires the rest of the per-head GUI state so every spawn path gets all
+/// of it. App-side session restore bypasses the [`on_head_opened`] observer.
+/// The `OpenHeadViews` query silently skips entities missing any of them.
 #[derive(Component, Default, Clone)]
-#[require(HeadGuiState, HeadNodeInstances)]
+#[require(HeadGuiState, HeadNodeInstances, PerfVm)]
 pub struct GraphView(pub gantz_egui::SceneView);
 
 /// Per-head cache of reified node instances for the working graph.
@@ -282,8 +280,9 @@ pub struct SessionHead;
 #[derive(Default, Resource)]
 pub struct TraceCapture(pub gantz_egui::widget::trace_view::TraceCapture);
 
-/// Performance capture for VM execution timing.
-#[derive(Default, Resource)]
+/// A head's performance capture for VM execution timing. The VM Perf pane
+/// shows the focused head's capture.
+#[derive(Component, Default)]
 pub struct PerfVm(pub gantz_egui::widget::PerfCapture);
 
 /// Performance capture for GUI frame timing.
@@ -632,10 +631,13 @@ impl DerefMut for GraphView {
 
 // Observers
 
-/// Record VM execution timing from `EvalEntryComplete` events into `PerfVm`
-/// for the performance widget.
-fn on_eval_entry_complete(trigger: On<EvalEntryComplete>, mut perf_vm: ResMut<PerfVm>) {
-    perf_vm.0.record(trigger.event().duration);
+/// Record VM execution timing from `EvalEntryComplete` events into the
+/// evaluated head's [`PerfVm`] for the performance widget.
+fn on_eval_entry_complete(trigger: On<EvalEntryComplete>, mut perf_vms: Query<&mut PerfVm>) {
+    let event = trigger.event();
+    if let Ok(mut perf_vm) = perf_vms.get_mut(event.entity) {
+        perf_vm.0.record(event.duration);
+    }
 }
 
 /// Initialize GUI state entry and components for an opened head.
@@ -2017,11 +2019,11 @@ fn poll_style_import_task(
 /// - Shows the Gantz widget in an egui CentralPanel
 /// - Processes GUI responses such as head open, close and replace
 /// - Dispatches dynamic response payloads via [`ResponseDispatchers`]
-/// - Uses TraceCapture for tracing and PerfVm and PerfGui for performance
-///   capture
+/// - Uses TraceCapture for tracing, and the focused head's PerfVm and PerfGui
+///   for performance capture
 pub fn update(
     trace_capture: Res<TraceCapture>,
-    mut perf_vm: ResMut<PerfVm>,
+    mut perf_vms: Query<&mut PerfVm>,
     mut perf_gui: ResMut<PerfGui>,
     mut ctxs: EguiContexts,
     mut registry: ResMut<Registry>,
@@ -2078,6 +2080,7 @@ pub fn update(
     let focused_ix = (**focused)
         .and_then(|e| tab_order.iter().position(|&x| x == e))
         .unwrap_or(0);
+    let mut perf_vm = (**focused).and_then(|e| perf_vms.get_mut(e).ok());
 
     // Map heads to entities for response payload dispatch after `show`.
     let head_to_entity: HashMap<ca::Head, Entity> = tab_order
@@ -2157,7 +2160,7 @@ pub fn update(
                 .compile_config(current_compile_config)
                 .validate_change_tracking(current_validate_change_tracking)
                 .trace_capture(trace_capture.0.clone(), level)
-                .perf_captures(&mut perf_vm.0, &mut perf_gui.0)
+                .perf_captures(perf_vm.as_deref_mut().map(|p| &mut p.0), &mut perf_gui.0)
                 .pane_window_mode(pane_window_mode)
                 .settings_tabs(&mut tabs)
                 .ext_panes(&mut panes)
