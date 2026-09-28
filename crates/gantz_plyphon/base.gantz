@@ -11,8 +11,8 @@
   (-> ~freeverb4 ~out5))
 
 (graph demo-kick
-  (comment0 (comment "Kick drum.\nDial the tempo, then shape the envelopes." 180 30))
-  (number1 (number #:min 0.5 #:max 8))
+  (comment0 (comment "Kick drum.\nDial the rate, then shape the envelopes." 180 46))
+  (number1 (number #:min 0.5 #:max 256))
   (~impulse2 (~impulse #:rate kr))
   (~envgen3 (~envgen #:init 50 #:segs ((230 0.001) (50 0.15 -8)) #:rate kr #:x-range (0 0.2) #:y-range (0 250)))
   (~envgen4 (~envgen #:segs ((1 0.001) (0 0.4 -4)) #:rate kr #:x-range (0 0.5)))
@@ -51,16 +51,14 @@
   (~dust4 ~dust)
   (~pluck5 ~pluck)
   (~out6 ~out)
-  (bang7 bang)
-  (tick-bang8 (tick-bang #:rate 30))
+  (load-bang7 load-bang)
   (-> number1 ~dust4)
   (-> number2 (~pluck5 2))
   (-> ~whitenoise3 ~pluck5)
   (-> ~dust4 (~pluck5 1))
   (-> ~pluck5 ~out6)
-  (-> bang7 number1)
-  (-> bang7 number2)
-  (-> tick-bang8 bang7))
+  (-> load-bang7 number1)
+  (-> load-bang7 number2))
 
 (graph demo-ringmod
   (comment0 (comment "Ring modulation.\nDial the two freqs." 130 30))
@@ -70,11 +68,14 @@
   (~sinosc4 ~sinosc)
   (~mul5 ~mul)
   (~out6 ~out)
+  (load-bang7 load-bang)
   (-> number1 ~sinosc3)
   (-> number2 ~sinosc4)
   (-> ~sinosc3 ~mul5)
   (-> ~sinosc4 (~mul5 1))
-  (-> ~mul5 ~out6))
+  (-> ~mul5 ~out6)
+  (-> load-bang7 number1)
+  (-> load-bang7 number2))
 
 (graph demo-samplehold
   (comment0 (comment "Sample and hold.\nDial the step rate and the pitch range." 190 30))
@@ -87,8 +88,7 @@
   (~muladd7 ~muladd)
   (~sinosc8 ~sinosc)
   (~out9 ~out)
-  (tick-bang10 (tick-bang #:rate 30))
-  (bang11 bang)
+  (load-bang10 load-bang)
   (-> number1 ~impulse5)
   (-> number2 (~muladd7 1))
   (-> number3 (~muladd7 2))
@@ -97,10 +97,9 @@
   (-> ~latch6 ~muladd7)
   (-> ~muladd7 ~sinosc8)
   (-> ~sinosc8 ~out9)
-  (-> tick-bang10 bang11)
-  (-> bang11 number1)
-  (-> bang11 number2)
-  (-> bang11 number3))
+  (-> load-bang10 number1)
+  (-> load-bang10 number2)
+  (-> load-bang10 number3))
 
 (graph demo-sampler
   (comment0 (comment "Sample player.\nSelect the ~sample and press Load.\nDial the playback speed." 230 45))
@@ -136,10 +135,12 @@
   (~buffer3 (~buffer #:frames 1024 #:wavetable))
   (~osc4 ~osc)
   (~out5 ~out)
+  (load-bang6 load-bang)
   (-> number1 expr2)
   (-> expr2 ~buffer3)
   (-> ~buffer3 ~osc4)
-  (-> ~osc4 ~out5))
+  (-> ~osc4 ~out5)
+  (-> load-bang6 number1))
 
 (descriptions
   (demo-freeverb "Random impulses ring a resonator into a reverb. Dial the number for the wet mix.")
@@ -185,11 +186,10 @@
   (camera 0 160 1))
 
 (layout demo-pluck
-  (bang7 114 -69)
   (comment0 -235 2)
+  (load-bang7 114 -97)
   (number1 53 18)
   (number2 114 70)
-  (tick-bang8 114 -109)
   (~dust4 53 78)
   (~out6 0 220)
   (~pluck5 0 140)
@@ -198,6 +198,7 @@
 
 (layout demo-ringmod
   (comment0 -240 0)
+  (load-bang7 0 -69)
   (number1 -70 0)
   (number2 70 0)
   (~mul5 0 140)
@@ -207,12 +208,11 @@
   (camera 0 110 1))
 
 (layout demo-samplehold
-  (bang11 183 -56)
   (comment0 -260 0)
+  (load-bang10 155 -63)
   (number1 70 0)
   (number2 81 135)
   (number3 144 135)
-  (tick-bang10 183 -97)
   (~impulse5 70 60)
   (~latch6 0 120)
   (~muladd7 0 200)
@@ -222,7 +222,7 @@
   (camera 0 180 1))
 
 (layout demo-sampler
-  (comment0 -270 0)
+  (comment0 -250 0)
   (number1 104 -3)
   (~out4 0 160)
   (~playbuf3 0 80)
@@ -246,8 +246,9 @@
 (layout demo-wavetable
   (comment0 -240 0)
   (expr2 0 80)
+  (load-bang6 0 -42)
   (number1 0 0)
   (~buffer3 0 160)
   (~osc4 0 240)
   (~out5 0 320)
-  (camera 72.36194 159.99997 0.9999999))
+  (camera 72.36194 200.00012 0.99999964))
