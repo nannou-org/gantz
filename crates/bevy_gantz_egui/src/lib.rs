@@ -180,6 +180,15 @@ impl Plugin for GantzEguiPlugin {
                 (
                     // Recompiles whenever a head's compile inputs change.
                     vm::sync.in_set(bevy_gantz::VmSet),
+                    // Runs before the other drivers so a loaded graph
+                    // evaluates its `load!` nodes before its first `update!`
+                    // and `tick!` passes.
+                    node::load_bang::drive_load_bangs
+                        .after(bevy_gantz::VmSet)
+                        .before(node::update_bang::drive_update_bangs)
+                        .before(node::tick_bang::drive_tick_bangs)
+                        .before(node::await_::drive_awaits)
+                        .in_set(bevy_gantz::EntrypointSet),
                     node::update_bang::drive_update_bangs
                         .after(bevy_gantz::VmSet)
                         .in_set(bevy_gantz::EntrypointSet),
@@ -194,6 +203,7 @@ impl Plugin for GantzEguiPlugin {
                     // markers the same frame.
                     node::gui_refresh::refresh_gui_markers
                         .after(bevy_gantz::VmSet)
+                        .after(node::load_bang::drive_load_bangs)
                         .after(node::update_bang::drive_update_bangs)
                         .after(node::tick_bang::drive_tick_bangs)
                         .after(node::await_::drive_awaits)

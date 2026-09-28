@@ -49,8 +49,8 @@ pub use vm::{
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
 pub struct VmSet;
 
-/// The `Update` system set that groups the entrypoint drivers for timed
-/// evaluations such as `tick!` and `update!`.
+/// The `Update` system set that groups the entrypoint drivers for host-driven
+/// evaluations such as `load!`, `tick!` and `update!`.
 ///
 /// Consumers that read state written by those evaluations should run
 /// `.after(EntrypointSet)`. The dsp driver is one such consumer. It drains the

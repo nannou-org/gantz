@@ -31,11 +31,22 @@ pub struct OpenHeadData {
 
 /// Marker component for an open gantz head entity.
 ///
-/// It requires the compile-outcome components, so every spawn path gets them
-/// by default. `vm::sync` fills them in on the next `Update`.
+/// It requires the compile-outcome components and [`PendingLoad`], so every
+/// spawn path gets them by default. `vm::sync` fills in the compile outcome
+/// on the next `Update`.
 #[derive(Component)]
-#[require(Module, Diagnostics, crate::vm::CompiledInputs)]
+#[require(Module, Diagnostics, crate::vm::CompiledInputs, PendingLoad)]
 pub struct OpenHead;
+
+/// Marks an open head whose graph was loaded into its tab but has not yet run
+/// its load evaluation.
+///
+/// Every spawned head gets it through [`OpenHead`], and [`on_replace`] adds it
+/// again. A [`MoveHeadEvent`] navigates history and is not a load, so it does
+/// not add it. The UI layer's `load!` driver removes it once the loaded graph
+/// has compiled, then fires the graph's `load!` nodes.
+#[derive(Component, Default)]
+pub struct PendingLoad;
 
 /// The [`gantz_ca::Head`], a branch or commit reference.
 #[derive(Component, Clone)]
@@ -390,8 +401,9 @@ pub fn on_replace(
     // A same-graph commit is a layout-only change. Keep the VM, its node state
     // and the compile memo, so `vm::sync` skips recompilation. Otherwise
     // migrate the node state through the commits' node-identity mapping and
-    // reset the memo so `vm::sync` recompiles. The `GantzEguiPlugin` observer
-    // updates `HeadGuiState` and `GraphViews`.
+    // reset the memo so `vm::sync` recompiles. Either way the tab has loaded
+    // a head, so its load is pending. The `GantzEguiPlugin` observer updates
+    // `HeadGuiState` and `GraphViews`.
     let old_ca = old_head.as_ref().and_then(|h| registry.head_commit_ca(h));
     let old_graph = old_head
         .as_ref()
@@ -400,13 +412,17 @@ pub fn on_replace(
     let new_graph = registry.head_commit(new_head).map(|c| c.graph);
     let same_graph = matches!((old_graph, new_graph), (Some(a), Some(b)) if a == b);
     if same_graph {
-        cmds.entity(focused_entity)
-            .insert((HeadRef(new_head.clone()), WorkingGraph(graph)));
+        cmds.entity(focused_entity).insert((
+            HeadRef(new_head.clone()),
+            WorkingGraph(graph),
+            PendingLoad,
+        ));
     } else {
         crate::vm::migrate_vm_state(&registry, &mut vms, focused_entity, old_ca, new_ca);
         cmds.entity(focused_entity).insert((
             HeadRef(new_head.clone()),
             WorkingGraph(graph),
+            PendingLoad,
             crate::vm::CompiledInputs::default(),
         ));
     }
@@ -655,6 +671,28 @@ mod tests {
         assert_eq!(reg.head_commit_ca(&head), Some(child));
         let child_graph = reg.commits()[&child].graph;
         assert_eq!(head_state(&app, e), (head, child_graph));
+    }
+
+    /// Opening and replacing load a head into its tab and mark its load
+    /// pending. A move navigates history and does not.
+    #[test]
+    fn open_and_replace_mark_a_pending_load_and_move_does_not() {
+        let (mut app, base, child) = app();
+        let head = ca::Head::Commit(base);
+        trigger(&mut app, OpenEvent(head.clone()));
+        let e = entity(&mut app, &head);
+        assert!(app.world().get::<PendingLoad>(e).is_some());
+        app.world_mut().entity_mut(e).remove::<PendingLoad>();
+        trigger(
+            &mut app,
+            MoveHeadEvent {
+                entity: e,
+                target: child,
+            },
+        );
+        assert!(app.world().get::<PendingLoad>(e).is_none());
+        trigger(&mut app, ReplaceEvent(head));
+        assert!(app.world().get::<PendingLoad>(e).is_some());
     }
 
     /// A commit head never moves onto a commit that another tab has open.

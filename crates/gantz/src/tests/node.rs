@@ -98,6 +98,7 @@ fn builtins_match_expected_name_set() {
         "inlet",
         "inspect",
         "list",
+        "load!",
         "log",
         "main!",
         "number",
@@ -310,6 +311,7 @@ fn node_set_cases() -> Vec<gantz_format::Datum> {
                 ("display", Datum::Str("compact".into())),
             ],
         ),
+        node_datum("LoadBang", vec![]),
         node_datum("UpdateBang", vec![]),
         node_datum("MainBang", vec![]),
         node_datum("Await", vec![]),
@@ -633,6 +635,10 @@ fn node_set_addr_pins() {
         (
             "List",
             "f20aafcedb7d1c3ceb69ac6a7cb65e614c440aa448390fd5cd64f07ca2ca17b4",
+        ),
+        (
+            "LoadBang",
+            "a0407fcc617d3a5363dd484cf41df1fde19bb1ecd95a839fa3720fa0f4720430",
         ),
         (
             "Log",
@@ -1448,6 +1454,58 @@ fn tick_node_compiles() {
                 gantz_core::vm::error_chain(&e),
             )
         });
+    }
+}
+
+/// A graph with two `load!` nodes compiles with every app entrypoint, and
+/// its one load entrypoint covers both nodes and evaluates. Each `load!` also
+/// declares a push entrypoint for its double-click. The load entrypoint must
+/// compile beside them.
+#[test]
+fn load_node_compiles_and_evaluates() {
+    use std::time::Duration;
+
+    let text = "\
+(graph g
+  (a load-bang)
+  (b load-bang)
+  (l (log warn))
+  (-> a (l 0))
+  (-> b (l 0)))";
+    let registry: DataReg =
+        gantz_egui::format::from_str(text, Duration::from_secs(0), &crate::node::codec())
+            .expect("from_str");
+    let reified = reify_all(&registry);
+    let head = gantz_ca::Head::Branch(name("g"));
+    let graph = head_graph(&reified, &registry, &head).expect("g graph");
+
+    let builtins = builtins_with_instances(&crate::conf());
+    let codec = crate::node::codec();
+    let reg_env = env(&registry, &reified, &builtins, &codec);
+    let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
+
+    let load =
+        bevy_gantz_egui::node::load_bang::entrypoint(&get_node, graph).expect("load! entrypoint");
+    assert_eq!(load.0.len(), 2, "one source per load! node");
+    let entrypoints = bevy_gantz_egui::entrypoints(&get_node, graph);
+
+    for config in [
+        gantz_core::compile::Config::default(),
+        gantz_core::compile::Config {
+            validate_ir: true,
+            emit_all_node_fns: true,
+        },
+    ] {
+        let (mut vm, _) = gantz_core::vm::init(&get_node, graph, &entrypoints, &config)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "load! graph failed to compile:\n{}",
+                    gantz_core::vm::error_chain(&e),
+                )
+            });
+        let fn_name = gantz_core::compile::entry_fn_name(&load.id());
+        vm.call_function_by_name_with_args(&fn_name, vec![])
+            .expect("load! entry fn evaluates");
     }
 }
 

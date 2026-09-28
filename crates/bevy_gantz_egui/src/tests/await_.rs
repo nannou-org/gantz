@@ -140,66 +140,6 @@ fn await_delivers_value_error_and_passthrough() {
     }
 }
 
-/// The test app's `.gantz` sugar carrier. The codec macro requires it. This
-/// test never parses text.
-struct NodeSet;
-
-impl gantz_format::NodeSugar for NodeSet {
-    fn sugar() -> gantz_format::Sugars<'static> {
-        gantz_format::Sugars(vec![&gantz_format::CoreSugar])
-    }
-}
-
-/// The codec over the test's node set, through which the runtime's
-/// reified-graph cache serves the stored graph as typed nodes.
-fn codec() -> gantz_egui::node::NodeCodec {
-    gantz_egui::ui_node_codec! {
-        NodeSet {
-            crate::node::Await,
-            crate::node::Sleep,
-            gantz_egui::node::Inspect,
-        }
-    }
-}
-
-/// A headless app with the gantz plugin, the test codec, and the `vm::sync`
-/// and `drive_awaits` systems. The minimal plumbing the await driver needs.
-fn task_test_app() -> bevy_app::App {
-    use bevy_app::{App, TaskPoolPlugin, Update};
-    use bevy_ecs::prelude::IntoScheduleConfigs;
-    use bevy_gantz::{EntrypointSet, GantzPlugin, VmSet};
-
-    let mut app = App::new();
-    app.add_plugins(TaskPoolPlugin::default())
-        .add_plugins(GantzPlugin)
-        .insert_resource(crate::NodeCodecRes(codec()))
-        .init_resource::<crate::GraphCache>()
-        .init_resource::<crate::BuiltinNodes>()
-        .add_systems(
-            Update,
-            (
-                crate::vm::sync.in_set(VmSet),
-                await_::drive_awaits.after(VmSet).in_set(EntrypointSet),
-            ),
-        );
-    app.world_mut()
-        .get_resource_or_init::<crate::vm::EntrypointFns>()
-        .0
-        .push(Box::new(|get_node, graph| {
-            gantz_core::compile::push_pull_entrypoints(get_node, graph)
-        }));
-    app
-}
-
-/// Reify the registry's committed graphs into the app's graph cache.
-fn refresh_app_cache(app: &mut bevy_app::App) {
-    app.world_mut()
-        .resource_scope::<crate::GraphCache, _>(|world, mut cache| {
-            let registry = world.resource::<bevy_gantz::Registry>();
-            crate::refresh_cache(registry, &mut cache, &codec());
-        });
-}
-
 /// Deleting a node reindexes its successors via swap-remove. The editor's
 /// delete flow of `remove_value` and `move_value` must carry a pending task
 /// with the await node's state. Dropping an unmapped key must cancel its task.
@@ -269,7 +209,7 @@ fn pending_await_survives_reindexing_replace() {
     use bevy_gantz::{Registry, head, timestamp};
     use std::time::{Duration, Instant};
 
-    let mut app = task_test_app();
+    let mut app = super::test_app(await_::drive_awaits);
 
     // Base graph is `filler, sleep(0.5) -> await -> inspect`. The filler is a
     // content-distinct sleep. The migration matcher pairs nodes by content
@@ -303,7 +243,7 @@ fn pending_await_survives_reindexing_replace() {
         let mut registry = app.world_mut().resource_mut::<Registry>();
         registry.commit_graph(timestamp(), None, base_ca, move || base_dg)
     };
-    refresh_app_cache(&mut app);
+    super::refresh_app_cache(&mut app);
     app.world_mut()
         .trigger(head::OpenEvent(gantz_ca::Head::Commit(base_commit)));
     app.update();
@@ -332,7 +272,7 @@ fn pending_await_survives_reindexing_replace() {
         let mut registry = app.world_mut().resource_mut::<Registry>();
         registry.commit_graph(timestamp(), Some(base_commit), child_ca, move || child_dg)
     };
-    refresh_app_cache(&mut app);
+    super::refresh_app_cache(&mut app);
     app.world_mut()
         .trigger(head::ReplaceEvent(gantz_ca::Head::Commit(child_commit)));
 
