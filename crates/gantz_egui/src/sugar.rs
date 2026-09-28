@@ -3,12 +3,12 @@
 //! [`EguiSugar`] provides the keywords for the egui nodes. They are
 //! `(bind <id>...)`, `(comment <text> [w h])`,
 //! `(gui [<role>] [#:display <d>])`,
-//! `(number [#:min m] [#:max m] [#:precision n] [#:no-push-eval])` and bare
-//! `bang`, `bind`, `inspect`, `gui` and `number`. Compose it with
+//! `(number [#:min m] [#:max m] [#:precision n] [#:input <mode>] [#:no-push-eval])`
+//! and bare `bang`, `bind`, `inspect`, `gui` and `number`. Compose it with
 //! [`gantz_format::CoreSugar`] and the other crates' sugars via
 //! [`gantz_format::Sugars`].
 
-use crate::node::{Bang, Bind, Comment, Gui, GuiDisplay, GuiRole, Inspect, Number};
+use crate::node::{Bang, Bind, Comment, Gui, GuiDisplay, GuiRole, Inspect, Number, NumberInput};
 use gantz_format::sexpr::quote;
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
 use gantz_nodetag::NodeTag;
@@ -188,8 +188,9 @@ fn write_gui(node: &Datum) -> String {
     }
 }
 
-/// Read a `(number [#:min m] [#:max m] [#:precision n] [#:no-push-eval])` form.
-/// Only the non-default fields are emitted, so a bare `number` stays bare.
+/// Read a `(number [#:min m] [#:max m] [#:precision n] [#:input <mode>]
+/// [#:no-push-eval])` form. Only the non-default fields are emitted, so a bare
+/// `number` stays bare.
 fn number_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     let mut fields = Vec::new();
     if let Some(min) = args.keyword_f64("min")? {
@@ -201,6 +202,13 @@ fn number_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     if let Some(precision) = args.keyword_int("precision")? {
         fields.push(("precision", Datum::U64(precision.max(0) as u64)));
     }
+    if let Some(s) = args.keyword_symbol("input")? {
+        let input = NumberInput::from_str(&s)
+            .ok_or_else(|| FormatError::malformed(format!("unknown number input `{s}`")))?;
+        if input != NumberInput::default() {
+            fields.push(("input", Datum::Str(input.as_str().to_string())));
+        }
+    }
     if args.has_flag("no-push-eval") {
         fields.push(("push_eval_on_edit", Datum::Bool(false)));
     }
@@ -208,17 +216,18 @@ fn number_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
 }
 
 /// Write a `Number` as a bare `number` when all config is default. Otherwise
-/// write `(number #:min m #:max m #:precision n #:no-push-eval)` with only
-/// the non-default fields.
+/// write `(number #:min m #:max m #:precision n #:input <mode> #:no-push-eval)`
+/// with only the non-default fields.
 fn write_number(node: &Datum) -> String {
     let min = node.get("min").and_then(Datum::as_f64);
     let max = node.get("max").and_then(Datum::as_f64);
     let precision = node.get("precision").and_then(Datum::as_i64);
+    let input = node.get("input").and_then(Datum::as_str);
     let push = node
         .get("push_eval_on_edit")
         .and_then(Datum::as_bool)
         .unwrap_or(true);
-    if min.is_none() && max.is_none() && precision.is_none() && push {
+    if min.is_none() && max.is_none() && precision.is_none() && input.is_none() && push {
         return "number".to_string();
     }
     let mut parts = Vec::new();
@@ -230,6 +239,9 @@ fn write_number(node: &Datum) -> String {
     }
     if let Some(precision) = precision {
         parts.push(format!("#:precision {precision}"));
+    }
+    if let Some(input) = input {
+        parts.push(format!("#:input {input}"));
     }
     if !push {
         parts.push("#:no-push-eval".to_string());
@@ -392,12 +404,28 @@ mod tests {
             Some("(number #:no-push-eval)"),
         );
 
+        // Bang input. The default store mode stays bare.
+        let b = read_spec("(number #:input bang)").expect("bang input");
+        assert_eq!(b.get("input").and_then(Datum::as_str), Some("bang"));
+        assert_eq!(
+            s.write_spec("Number", &b).as_deref(),
+            Some("(number #:input bang)"),
+        );
+        let st = read_spec("(number #:input store)").expect("store input");
+        assert_eq!(s.write_spec("Number", &st).as_deref(), Some("number"));
+        let text = "(number #:input nope)";
+        let exprs = sexpr::read(text).expect("read");
+        let args = sexpr::list_args(&exprs[0]).expect("list");
+        let unknown = s.read_spec("number", SugarArgs::new(&args[1..], text));
+        assert!(unknown.is_err(), "unknown input");
+
         // Everything at once round-trips in canonical order.
         let all =
-            read_spec("(number #:min -1.5 #:max 1.5 #:precision 3 #:no-push-eval)").expect("all");
+            read_spec("(number #:min -1.5 #:max 1.5 #:precision 3 #:input bang #:no-push-eval)")
+                .expect("all");
         assert_eq!(
             s.write_spec("Number", &all).as_deref(),
-            Some("(number #:min -1.5 #:max 1.5 #:precision 3 #:no-push-eval)"),
+            Some("(number #:min -1.5 #:max 1.5 #:precision 3 #:input bang #:no-push-eval)"),
         );
     }
 }

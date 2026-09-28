@@ -13,7 +13,7 @@ pub use gui::{GUI_REF_EXT_KEY, Gui, GuiDisplay, GuiRefExt, GuiRole};
 pub use inspect::Inspect;
 pub use instance_cache::{InstanceEntry, NodeInstances};
 pub use named_ref::{NamedRef, missing_color, outdated_color};
-pub use number::Number;
+pub use number::{Number, NumberInput};
 pub use plot::{F32, Plot, PlotLook, PlotMode, PlotStyle};
 pub use ref_ext::RefExtUi;
 
