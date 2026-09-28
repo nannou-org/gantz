@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/nannou-org/gantz/compare/gantz_format-v0.4.2...gantz_format-v0.5.0) - 2026-09-28
+
+### Added
+
+- *(gantz_egui)* return the node labels of a parsed .gantz document
+
+### Other
+
+- *(gantz_core)* move the list node into gantz_core
+- *(gantz_format)* merge the datum round-trip tests into tables
+
 ## [0.4.2](https://github.com/nannou-org/gantz/compare/gantz_format-v0.4.1...gantz_format-v0.4.2) - 2026-09-26
 
 ### Added

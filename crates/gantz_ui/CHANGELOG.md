@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_ui-v0.3.0...gantz_ui-v0.4.0) - 2026-09-28
+
+### Added
+
+- *(gantz_core)* [**breaking**] let a steel module carry a rust builtin module
+
+### Fixed
+
+- *(gantz_egui)* gate trace_view behind the tracing feature
+- *(gantz_ui)* keep i64 integers intact on 32-bit targets
+
+### Other
+
+- *(gantz_ui)* drop duplicate codec tests and merge ui module cases
+- move small integration test files into unit test modules
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_ui-v0.2.1...gantz_ui-v0.3.0) - 2026-09-26
 
 ### Added

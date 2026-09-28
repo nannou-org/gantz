@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2](https://github.com/nannou-org/gantz/compare/gantz_ca-v0.4.1...gantz_ca-v0.4.2) - 2026-09-28
+
+### Fixed
+
+- *(gantz_egui)* gate trace_view behind the tracing feature
+
+### Other
+
+- *(gantz_ca)* remove registry, reach and node_data tests others cover
+- *(gantz_ca)* merge the three-way merge cases into one table
+- *(gantz_ca)* remove convergence sims that only test the harness
+- *(gantz_ca)* merge the sync, history and diff unit tests into tables
+- move small integration test files into unit test modules
+
 ## [0.4.1](https://github.com/nannou-org/gantz/compare/gantz_ca-v0.4.0...gantz_ca-v0.4.1) - 2026-09-26
 
 ### Other

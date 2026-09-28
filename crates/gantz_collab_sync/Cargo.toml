@@ -1,6 +1,6 @@
 [package]
 name = "gantz_collab_sync"
-version = "0.1.0"
+version = "0.1.1"
 description = "The host-agnostic sync plane for gantz collaborative sessions: join, fetch, converge and announce over gantz_collab."
 authors.workspace = true
 edition.workspace = true

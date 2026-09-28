@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/nannou-org/gantz/compare/bevy_gantz-v0.5.2...bevy_gantz-v0.6.0) - 2026-09-28
+
+### Added
+
+- *(bevy_gantz_egui)* add the load! node
+
+### Other
+
+- *(bevy_gantz)* move heads through one MoveHeadEvent
+- *(bevy_gantz)* trim the duplicate storage, task and vm tests
+
 ## [0.5.2](https://github.com/nannou-org/gantz/compare/bevy_gantz-v0.5.1...bevy_gantz-v0.5.2) - 2026-09-26
 
 ### Other

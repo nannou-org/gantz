@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.3.0...bevy_gantz_plyphon-v0.4.0) - 2026-09-28
+
+### Fixed
+
+- *(bevy_gantz_plyphon)* spawn synths with their bound params' values
+- *(gantz_egui)* gate trace_view behind the tracing feature
+
+### Other
+
+- [**breaking**] move the pure base source items into gantz_egui
+- *(bevy_gantz_plyphon)* trim spawn, buffer and fade tests
+- move small integration test files into unit test modules
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.2.1...bevy_gantz_plyphon-v0.3.0) - 2026-09-26
 
 ### Added
