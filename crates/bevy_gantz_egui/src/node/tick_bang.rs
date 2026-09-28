@@ -11,7 +11,6 @@ use bevy_ecs::prelude::*;
 use bevy_egui::egui;
 use bevy_time::prelude::*;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
-use gantz_core::visit;
 use gantz_egui::node::DynNode;
 use gantz_egui::widget::node_inspector::radio_option;
 use gantz_format::{Datum, FormatError, SugarArgs, node_datum};
@@ -331,21 +330,6 @@ impl gantz_egui::NodeUi for TickBang {
     }
 }
 
-/// Collects the path and configured duration of every [`TickBang`] node in
-/// the graph, found by [`Any`](std::any::Any) downcast of the erased UI node.
-struct TickBangCollector {
-    pub ticks: Vec<(Vec<usize>, f64)>,
-}
-
-impl visit::TypedVisitor<DynNode> for TickBangCollector {
-    fn visit_pre(&mut self, ctx: visit::Ctx<'_, '_>, node: &DynNode) {
-        let n: &dyn gantz_core::Node = &**node;
-        if let Some(tick) = (n as &dyn std::any::Any).downcast_ref::<TickBang>() {
-            self.ticks.push((ctx.path().to_vec(), tick.duration()));
-        }
-    }
-}
-
 /// Return one push entrypoint per `TickBang` node in the graph.
 ///
 /// `update!` nodes all fire together every update and share a single
@@ -356,12 +340,9 @@ pub fn entrypoints(
     get_node: node::GetNode<'_>,
     graph: &gantz_core::node::graph::Graph<DynNode>,
 ) -> Vec<gantz_core::compile::Entrypoint> {
-    let mut collector = TickBangCollector { ticks: vec![] };
-    gantz_core::graph::visit_typed(get_node, graph, &[], &mut collector);
-    collector
-        .ticks
+    super::find_nodes::<TickBang>(get_node, graph)
         .into_iter()
-        .map(|(path, _dur)| {
+        .map(|(path, _)| {
             let source = gantz_core::compile::entrypoint::push_source(path, 1);
             gantz_core::compile::entrypoint::from_sources([source])
         })
@@ -400,10 +381,12 @@ pub fn drive_tick_bangs(
         let get_node =
             |ca: &gantz_ca::ContentAddr| crate::lookup_node(&cache, &builtins.instances, ca);
 
-        let mut collector = TickBangCollector { ticks: vec![] };
-        gantz_core::graph::visit_typed(&get_node, graph, &[], &mut collector);
+        let ticks: Vec<_> = super::find_nodes::<TickBang>(&get_node, graph)
+            .into_iter()
+            .map(|(path, tick)| (path, tick.duration()))
+            .collect();
 
-        if collector.ticks.is_empty() {
+        if ticks.is_empty() {
             continue;
         }
 
@@ -411,7 +394,7 @@ pub fn drive_tick_bangs(
             continue;
         };
 
-        for (path, dur) in &collector.ticks {
+        for (path, dur) in &ticks {
             // The inspector clamps to `MIN_DURATION`, but never divide by a
             // non-positive duration.
             if !(*dur > 0.0) {

@@ -180,6 +180,15 @@ impl Plugin for GantzEguiPlugin {
                 (
                     // Recompiles whenever a head's compile inputs change.
                     vm::sync.in_set(bevy_gantz::VmSet),
+                    // Runs before the other drivers so a loaded graph
+                    // evaluates its `load!` nodes before its first `update!`
+                    // and `tick!` passes.
+                    node::load_bang::drive_load_bangs
+                        .after(bevy_gantz::VmSet)
+                        .before(node::update_bang::drive_update_bangs)
+                        .before(node::tick_bang::drive_tick_bangs)
+                        .before(node::await_::drive_awaits)
+                        .in_set(bevy_gantz::EntrypointSet),
                     node::update_bang::drive_update_bangs
                         .after(bevy_gantz::VmSet)
                         .in_set(bevy_gantz::EntrypointSet),
@@ -194,6 +203,7 @@ impl Plugin for GantzEguiPlugin {
                     // markers the same frame.
                     node::gui_refresh::refresh_gui_markers
                         .after(bevy_gantz::VmSet)
+                        .after(node::load_bang::drive_load_bangs)
                         .after(node::update_bang::drive_update_bangs)
                         .after(node::tick_bang::drive_tick_bangs)
                         .after(node::await_::drive_awaits)
@@ -1383,7 +1393,10 @@ pub fn on_merge_head(
 
     match outcome {
         gantz_egui::ops::MergeHeadOutcome::FastForward(target) => {
-            navigate_head(&mut cmds, event.head, &old_head, target);
+            cmds.trigger(head::MoveHeadEvent {
+                entity: event.head,
+                target,
+            });
         }
         gantz_egui::ops::MergeHeadOutcome::Merged { new_commit, .. } => {
             log::debug!(
@@ -1489,7 +1502,10 @@ pub fn on_sync_remote_tip(
             // newer work.
             gui_state.redo_stacks.remove(&old_head);
             gui_state.undo_cursors.remove(&old_head);
-            navigate_head(&mut cmds, event.head, &old_head, target);
+            cmds.trigger(head::MoveHeadEvent {
+                entity: event.head,
+                target,
+            });
         }
         gantz_egui::ops::SyncTipOutcome::Merged {
             new_commit,
@@ -1579,7 +1595,7 @@ pub fn on_undo(
         gantz_egui::ops::undo(&registry.0, &mut gui.redo_stacks, &head)
     };
     if let Some(target) = target {
-        navigate_head(&mut cmds, entity, &head, target);
+        cmds.trigger(head::MoveHeadEvent { entity, target });
     }
 }
 
@@ -1616,7 +1632,7 @@ pub fn on_redo(
         gantz_egui::ops::redo(&mut gui.redo_stacks, &head)
     };
     if let Some(target) = target {
-        navigate_head(&mut cmds, entity, &head, target);
+        cmds.trigger(head::MoveHeadEvent { entity, target });
     }
 }
 
@@ -2479,19 +2495,4 @@ fn dispatch_export_style(_: Option<Entity>, payload: DynResponse, cmds: &mut Com
 fn dispatch_import_style(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
     let gantz_egui::ImportStyle = downcast_payload(payload);
     cmds.trigger(ImportStyleEvent);
-}
-
-/// Trigger the appropriate event to move a head to a target commit.
-///
-/// Branch heads use `MoveBranchEvent` for atomic registry and graph updates,
-/// which avoids oscillation with `vm::sync`. Commit heads use `ReplaceEvent`.
-fn navigate_head(cmds: &mut Commands, entity: Entity, head: &ca::Head, target: ca::CommitAddr) {
-    match head {
-        ca::Head::Commit(_) => cmds.trigger(head::ReplaceEvent(ca::Head::Commit(target))),
-        ca::Head::Branch(name) => cmds.trigger(head::MoveBranchEvent {
-            entity,
-            name: name.clone(),
-            target,
-        }),
-    }
 }

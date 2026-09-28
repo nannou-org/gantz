@@ -13,7 +13,6 @@ use bevy_ecs::prelude::*;
 use bevy_egui::egui;
 use bevy_time::prelude::*;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
-use gantz_core::visit;
 use gantz_egui::node::DynNode;
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
@@ -85,24 +84,6 @@ impl gantz_egui::NodeUi for UpdateBang {
     }
 }
 
-/// Collects the path of every [`UpdateBang`] node in the graph, found by
-/// [`Any`](std::any::Any) downcast of the erased UI node.
-struct UpdateBangCollector {
-    pub paths: Vec<Vec<usize>>,
-}
-
-impl visit::TypedVisitor<DynNode> for UpdateBangCollector {
-    fn visit_pre(&mut self, ctx: visit::Ctx<'_, '_>, node: &DynNode) {
-        let n: &dyn gantz_core::Node = &**node;
-        if (n as &dyn std::any::Any)
-            .downcast_ref::<UpdateBang>()
-            .is_some()
-        {
-            self.paths.push(ctx.path().to_vec());
-        }
-    }
-}
-
 /// Collect all `UpdateBang` nodes in the graph and return a single multi-source
 /// entrypoint covering all of them.
 ///
@@ -111,15 +92,13 @@ pub fn entrypoints(
     get_node: node::GetNode<'_>,
     graph: &gantz_core::node::graph::Graph<DynNode>,
 ) -> Vec<gantz_core::compile::Entrypoint> {
-    let mut collector = UpdateBangCollector { paths: vec![] };
-    gantz_core::graph::visit_typed(get_node, graph, &[], &mut collector);
-    if collector.paths.is_empty() {
+    let found = super::find_nodes::<UpdateBang>(get_node, graph);
+    if found.is_empty() {
         return vec![];
     }
-    let sources = collector
-        .paths
+    let sources = found
         .into_iter()
-        .map(|path| gantz_core::compile::entrypoint::push_source(path, 1));
+        .map(|(path, _)| gantz_core::compile::entrypoint::push_source(path, 1));
     vec![gantz_core::compile::entrypoint::from_sources(sources)]
 }
 
@@ -151,24 +130,25 @@ pub fn drive_update_bangs(
         let get_node =
             |ca: &gantz_ca::ContentAddr| crate::lookup_node(&cache, &builtins.instances, ca);
 
-        let mut collector = UpdateBangCollector { paths: vec![] };
-        gantz_core::graph::visit_typed(&get_node, graph, &[], &mut collector);
+        let paths: Vec<_> = super::find_nodes::<UpdateBang>(&get_node, graph)
+            .into_iter()
+            .map(|(path, _)| path)
+            .collect();
 
-        if collector.paths.is_empty() {
+        if paths.is_empty() {
             continue;
         }
 
         let Some(vm) = vms.get_mut(&entity) else {
             continue;
         };
-        for path in &collector.paths {
+        for path in &paths {
             if let Err(e) = node::state::update_value(vm, path, SteelVal::NumV(dt)) {
                 bevy_log::error!("update! state update failed: {e}");
             }
         }
 
-        let sources = collector
-            .paths
+        let sources = paths
             .into_iter()
             .map(|path| gantz_core::compile::entrypoint::push_source(path, 1));
         let entrypoint = gantz_core::compile::entrypoint::from_sources(sources);

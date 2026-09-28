@@ -41,6 +41,7 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             gantz_egui::node::NamedRef,
             gantz_egui::node::Bind,
             gantz_egui::node::Comment,
+            bevy_gantz_egui::node::LoadBang,
             bevy_gantz_egui::node::UpdateBang,
             bevy_gantz_egui::node::TickBang,
             bevy_gantz_egui::node::Await,

@@ -20,8 +20,6 @@ use bevy_ecs::prelude::*;
 use bevy_egui::egui;
 use bevy_gantz::task::{TASK_CANCEL_FN, TASK_PREDICATE, TaskHandle};
 use gantz_core::node::{self, Conns, EvalConf, ExprCtx, ExprResult, MetaCtx, RegCtx};
-use gantz_core::visit;
-use gantz_egui::node::DynNode;
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 use steel::SteelVal;
@@ -199,21 +197,6 @@ pub fn pending_handle(state: &SteelVal) -> Option<TaskHandle> {
     TaskHandle::from_steelval(payload).ok()
 }
 
-/// Collects the path of every [`Await`] node in the graph, found by
-/// [`Any`](std::any::Any) downcast of the erased UI node.
-struct AwaitCollector {
-    pub paths: Vec<Vec<usize>>,
-}
-
-impl visit::TypedVisitor<DynNode> for AwaitCollector {
-    fn visit_pre(&mut self, ctx: visit::Ctx<'_, '_>, node: &DynNode) {
-        let n: &dyn gantz_core::Node = &**node;
-        if (n as &dyn std::any::Any).downcast_ref::<Await>().is_some() {
-            self.paths.push(ctx.path().to_vec());
-        }
-    }
-}
-
 /// Drives `await` nodes every update, independent of GUI visibility.
 ///
 /// For each open head and each `await` node whose state is a pending pair,
@@ -245,10 +228,9 @@ pub fn drive_awaits(
         let get_node =
             |ca: &gantz_ca::ContentAddr| crate::lookup_node(&cache, &builtins.instances, ca);
 
-        let mut collector = AwaitCollector { paths: vec![] };
-        gantz_core::graph::visit_typed(&get_node, graph, &[], &mut collector);
+        let found = super::find_nodes::<Await>(&get_node, graph);
 
-        if collector.paths.is_empty() {
+        if found.is_empty() {
             continue;
         }
 
@@ -256,7 +238,7 @@ pub fn drive_awaits(
             continue;
         };
 
-        for path in collector.paths {
+        for (path, _) in found {
             let state = match node::state::extract_value(vm, &path) {
                 Ok(Some(state)) => state,
                 Ok(None) => continue,

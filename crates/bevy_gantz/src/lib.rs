@@ -10,7 +10,7 @@
 //!
 //! - Request events ask for an operation. They are [`head::OpenEvent`],
 //!   [`head::CloseEvent`], [`head::ReplaceEvent`], [`head::BranchHeadEvent`],
-//!   [`head::MoveBranchEvent`] and [`vm::EvalEntryEvent`].
+//!   [`head::MoveHeadEvent`] and [`vm::EvalEntryEvent`].
 //! - Hook events announce that one happened. They decouple this crate from
 //!   downstream UI crates. They are [`head::OpenedEvent`],
 //!   [`head::ClosedEvent`], [`head::ChangedEvent`],
@@ -49,8 +49,8 @@ pub use vm::{
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
 pub struct VmSet;
 
-/// The `Update` system set that groups the entrypoint drivers for timed
-/// evaluations such as `tick!` and `update!`.
+/// The `Update` system set that groups the entrypoint drivers for host-driven
+/// evaluations such as `load!`, `tick!` and `update!`.
 ///
 /// Consumers that read state written by those evaluations should run
 /// `.after(EntrypointSet)`. The dsp driver is one such consumer. It drains the
@@ -110,7 +110,7 @@ impl Plugin for GantzPlugin {
             .add_observer(head::on_replace)
             .add_observer(head::on_close)
             .add_observer(head::on_branch_head)
-            .add_observer(head::on_move_branch)
+            .add_observer(head::on_move_head)
             .add_observer(vm::on_eval_entry)
             .add_systems(Update, vm::validate_committed.after(VmSet));
     }

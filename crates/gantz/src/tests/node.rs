@@ -98,6 +98,7 @@ fn builtins_match_expected_name_set() {
         "inlet",
         "inspect",
         "list",
+        "load!",
         "log",
         "main!",
         "number",
@@ -310,6 +311,7 @@ fn node_set_cases() -> Vec<gantz_format::Datum> {
                 ("display", Datum::Str("compact".into())),
             ],
         ),
+        node_datum("LoadBang", vec![]),
         node_datum("UpdateBang", vec![]),
         node_datum("MainBang", vec![]),
         node_datum("Await", vec![]),
@@ -633,6 +635,10 @@ fn node_set_addr_pins() {
         (
             "List",
             "f20aafcedb7d1c3ceb69ac6a7cb65e614c440aa448390fd5cd64f07ca2ca17b4",
+        ),
+        (
+            "LoadBang",
+            "a0407fcc617d3a5363dd484cf41df1fde19bb1ecd95a839fa3720fa0f4720430",
         ),
         (
             "Log",
@@ -1448,6 +1454,58 @@ fn tick_node_compiles() {
                 gantz_core::vm::error_chain(&e),
             )
         });
+    }
+}
+
+/// A graph with two `load!` nodes compiles with every app entrypoint, and
+/// its one load entrypoint covers both nodes and evaluates. Each `load!` also
+/// declares a push entrypoint for its double-click. The load entrypoint must
+/// compile beside them.
+#[test]
+fn load_node_compiles_and_evaluates() {
+    use std::time::Duration;
+
+    let text = "\
+(graph g
+  (a load-bang)
+  (b load-bang)
+  (l (log warn))
+  (-> a (l 0))
+  (-> b (l 0)))";
+    let registry: DataReg =
+        gantz_egui::format::from_str(text, Duration::from_secs(0), &crate::node::codec())
+            .expect("from_str");
+    let reified = reify_all(&registry);
+    let head = gantz_ca::Head::Branch(name("g"));
+    let graph = head_graph(&reified, &registry, &head).expect("g graph");
+
+    let builtins = builtins_with_instances(&crate::conf());
+    let codec = crate::node::codec();
+    let reg_env = env(&registry, &reified, &builtins, &codec);
+    let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
+
+    let load =
+        bevy_gantz_egui::node::load_bang::entrypoint(&get_node, graph).expect("load! entrypoint");
+    assert_eq!(load.0.len(), 2, "one source per load! node");
+    let entrypoints = bevy_gantz_egui::entrypoints(&get_node, graph);
+
+    for config in [
+        gantz_core::compile::Config::default(),
+        gantz_core::compile::Config {
+            validate_ir: true,
+            emit_all_node_fns: true,
+        },
+    ] {
+        let (mut vm, _) = gantz_core::vm::init(&get_node, graph, &entrypoints, &config)
+            .unwrap_or_else(|e| {
+                panic!(
+                    "load! graph failed to compile:\n{}",
+                    gantz_core::vm::error_chain(&e),
+                )
+            });
+        let fn_name = gantz_core::compile::entry_fn_name(&load.id());
+        vm.call_function_by_name_with_args(&fn_name, vec![])
+            .expect("load! entry fn evaluates");
     }
 }
 
@@ -2446,12 +2504,11 @@ fn base_gui_markers_decode_clean() {
     assert!(checked > 0, "base.gantz declares no gui markers");
 }
 
-/// One round of ticks over demo-pplot leaves every pplot holding plot
-/// data with events or signal samples, so each value kind reaches its
-/// plot.
+/// The load pass over demo-pplot leaves every pplot holding plot data with
+/// events or signal samples, so each value kind reaches its plot.
 #[test]
 fn demo_pplot_plots_every_source() {
-    use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
+    use gantz_core::compile::entry_fn_name;
     use gantz_core::steel::SteelVal;
 
     let ts = gantz_egui::base::BASE_TIMESTAMP;
@@ -2469,10 +2526,7 @@ fn demo_pplot_plots_every_source() {
     let head = gantz_ca::Head::Branch(name("demo-pplot"));
     let graph = head_graph(&reified, &merged, &head).expect("demo-pplot graph");
 
-    let mut eps = push_pull_entrypoints(&get_node, graph);
-    eps.extend(bevy_gantz_egui::node::tick_bang::entrypoints(
-        &get_node, graph,
-    ));
+    let eps = bevy_gantz_egui::entrypoints(&get_node, graph);
     let (mut vm, _c) = gantz_core::vm::init_with_modules(
         &get_node,
         graph,
@@ -2482,26 +2536,11 @@ fn demo_pplot_plots_every_source() {
     )
     .unwrap_or_else(|e| panic!("init: {}", gantz_core::vm::error_chain(&e)));
 
-    // Each source has its own tick, so fire every tick once.
-    let ticks: Vec<usize> = graph
-        .node_indices()
-        .filter(|&ix| {
-            (&*graph[ix] as &dyn std::any::Any).is::<bevy_gantz_egui::node::tick_bang::TickBang>()
-        })
-        .map(|ix| ix.index())
-        .collect();
-    assert!(!ticks.is_empty(), "demo-pplot has no tick");
-    for tick_ix in ticks {
-        let tick_ep = eps
-            .iter()
-            .find(|ep| {
-                ep.0.iter()
-                    .any(|s| s.kind == EvalKind::Push && s.path == [tick_ix])
-            })
-            .expect("tick ep");
-        vm.call_function_by_name_with_args(&entry_fn_name(&tick_ep.id()), vec![])
-            .unwrap_or_else(|e| panic!("tick {tick_ix} errored: {e}"));
-    }
+    // Each source has its own `load!`. The load pass fires them all at once.
+    let load = bevy_gantz_egui::node::load_bang::entrypoint(&get_node, graph)
+        .expect("demo-pplot has no load!");
+    vm.call_function_by_name_with_args(&entry_fn_name(&load.id()), vec![])
+        .unwrap_or_else(|e| panic!("load pass errored: {e}"));
 
     let plots: Vec<_> = graph
         .node_indices()

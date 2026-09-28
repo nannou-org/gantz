@@ -1,23 +1,25 @@
 //! `.gantz` keyword sugar for this crate's self-driven node set.
 //!
-//! [`BevySugar`] provides the keywords for the bevy nodes. `update-bang` and
-//! `await` are bare. `(tick-bang [#:duration secs | #:rate hz])` and `sleep`
-//! take arguments. Their read and write logic lives with each node in
-//! [`crate::node::tick_bang`] and [`crate::node::sleep`]. Compose it with
-//! [`gantz_format::CoreSugar`] and the other crates' sugars via
+//! [`BevySugar`] provides the keywords for the bevy nodes. `load-bang`,
+//! `update-bang` and `await` are bare. `(tick-bang [#:duration secs | #:rate
+//! hz])` and `sleep` take arguments. Their read and write logic lives with
+//! each node in [`crate::node::tick_bang`] and [`crate::node::sleep`]. Compose
+//! it with [`gantz_format::CoreSugar`] and the other crates' sugars via
 //! [`gantz_format::Sugars`].
 
-use crate::node::{Await, Sleep, TickBang, UpdateBang, sleep, tick_bang};
+use crate::node::{Await, LoadBang, Sleep, TickBang, UpdateBang, sleep, tick_bang};
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
 use gantz_nodetag::NodeTag;
 
-/// Keyword sugar for [`UpdateBang`], [`TickBang`], [`Await`] and [`Sleep`].
+/// Keyword sugar for [`LoadBang`], [`UpdateBang`], [`TickBang`], [`Await`] and
+/// [`Sleep`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct BevySugar;
 
 /// Sugar keyword to node tag, for the bevy builtins that lower to a plain
 /// serde object with no extra arguments.
 const KEYWORD_TAG: &[(&str, &str)] = &[
+    ("load-bang", LoadBang::TAG),
     ("update-bang", UpdateBang::TAG),
     ("tick-bang", TickBang::TAG),
     ("await", Await::TAG),
@@ -84,7 +86,11 @@ mod tests {
 
     #[test]
     fn bare_keywords_round_trip() {
-        for (keyword, tag) in [("update-bang", "UpdateBang"), ("await", "Await")] {
+        for (keyword, tag) in [
+            ("load-bang", "LoadBang"),
+            ("update-bang", "UpdateBang"),
+            ("await", "Await"),
+        ] {
             let bare = BevySugar
                 .read_bare(keyword)
                 .unwrap_or_else(|| panic!("bare {keyword}"));
