@@ -6,10 +6,14 @@
 //! This subtab only edits the selected theme's style. [`crate::style::apply`]
 //! applies it.
 //!
-//! The subtab also hosts the dot-grid and pane separator controls. The grid
-//! step feeds snap-to-grid, so it stays editable even when the grid is hidden.
+//! The subtab also hosts the dot-grid, edge and pane separator controls. The
+//! grid step feeds snap-to-grid, so it stays editable even when the grid is
+//! hidden.
 
-use super::{gantz::GridConfig, section};
+use super::{
+    gantz::{EdgeConfig, GridConfig},
+    section,
+};
 use crate::{
     StyleConfig,
     style::{VisualsColor, eq_style, reset_theme, set_style_of, style_of},
@@ -24,11 +28,12 @@ pub struct StyleConfigResponse {
     pub import: bool,
 }
 
-/// Render the style configuration controls. `style` and `grid` are mutated in
-/// place. Both apply to the whole UI, including all open heads.
+/// Render the style configuration controls. `style`, `grid` and `edge` are
+/// mutated in place. All apply to the whole UI, including all open heads.
 pub fn style_config(
     style: &mut StyleConfig,
     grid: &mut GridConfig,
+    edge: &mut EdgeConfig,
     ui: &mut egui::Ui,
 ) -> StyleConfigResponse {
     section(ui, "Theme", |ui| style.theme.radio_buttons(ui));
@@ -92,6 +97,14 @@ pub fn style_config(
                  when the grid is hidden.",
             );
             ui.label("Grid step");
+        });
+    });
+
+    section(ui, "Edges", |ui| {
+        ui.horizontal(|ui| {
+            ui.add(egui::Slider::new(&mut edge.curvature, 0.0..=1.0))
+                .on_hover_text("How far each edge curves. 0 draws straight lines.");
+            ui.label("Curvature");
         });
     });
 

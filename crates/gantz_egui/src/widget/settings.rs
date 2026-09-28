@@ -140,7 +140,7 @@ pub fn settings(
             let s = egui::ScrollArea::vertical()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
-                    super::style_config(style, &mut scene_config.grid, ui)
+                    super::style_config(style, &mut scene_config.grid, &mut scene_config.edge, ui)
                 })
                 .inner;
             res.export_style = s.export;

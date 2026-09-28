@@ -264,9 +264,10 @@ impl LayoutConfig {
     }
 }
 
-/// Global interactive-scene configuration for the dot grid, drag snapping and
-/// snap-align. It mirrors the per-frame options on [`egui_graph::Graph`] and
-/// applies to every open head, like [`LayoutConfig`].
+/// Global interactive-scene configuration for the dot grid, drag snapping,
+/// snap-align and edge shape. It mirrors the per-frame options on
+/// [`egui_graph::Graph`] and its edges and applies to every open head, like
+/// [`LayoutConfig`].
 #[derive(Clone, Copy, Default, serde::Deserialize, serde::Serialize)]
 pub struct SceneConfig {
     #[serde(default)]
@@ -275,6 +276,29 @@ pub struct SceneConfig {
     pub snap: SnapConfig,
     #[serde(default)]
     pub align: AlignConfig,
+    #[serde(default)]
+    pub edge: EdgeConfig,
+}
+
+/// The shape of the edges drawn between sockets.
+#[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
+pub struct EdgeConfig {
+    /// How far each edge curves from a straight line, from `0.0` (straight)
+    /// to `1.0`. See [`egui_graph::edge::Edge::curvature_factor`].
+    #[serde(default = "default_edge_curvature")]
+    pub curvature: f32,
+}
+
+fn default_edge_curvature() -> f32 {
+    egui_graph::bezier::Cubic::DEFAULT_CURVATURE
+}
+
+impl Default for EdgeConfig {
+    fn default() -> Self {
+        Self {
+            curvature: default_edge_curvature(),
+        }
+    }
 }
 
 /// The dot grid drawn behind the graph. See [`egui_graph::Graph::dot_grid`].
