@@ -554,6 +554,47 @@ fn node_set_erases_canonically() {
     }
 }
 
+/// Every node type keeps its content address through the store and the
+/// wire, which both carry graphs as RON. RON does not record whether an
+/// integer was signed, so this holds only for canonical integers.
+#[test]
+fn node_set_keeps_its_addresses_through_the_store_and_the_wire() {
+    #[derive(Default)]
+    struct Store(std::collections::HashMap<String, String>);
+    impl bevy_gantz::storage::Save for Store {
+        type Err = std::convert::Infallible;
+        fn set_string(&mut self, key: &str, value: &str) -> Result<(), Self::Err> {
+            self.0.insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+    }
+    impl bevy_gantz::storage::Load for Store {
+        type Err = std::convert::Infallible;
+        fn get_string(&self, key: &str) -> Result<Option<String>, Self::Err> {
+            Ok(self.0.get(key).cloned())
+        }
+    }
+
+    let graph = data_graph(node_set_data());
+    let ga = gantz_ca::graph_addr(&graph);
+    let mut registry = gantz_ca::Registry::default();
+    registry.commit_graph(std::time::Duration::ZERO, None, ga, || graph.clone());
+    let mut store = Store::default();
+    let mut persisted = bevy_gantz::storage::PersistedRegistry::default();
+    let registry = bevy_gantz::Registry(registry);
+    bevy_gantz::storage::save_registry_incremental(&mut store, &registry, &mut persisted);
+    let (loaded, _) = bevy_gantz::storage::load_registry(&store);
+    let stored = loaded.graph(&ga).expect("stored graph");
+    assert_eq!(gantz_ca::graph_addr(stored), ga, "store");
+
+    #[cfg(feature = "collab")]
+    {
+        let wire = gantz_collab::proto::encode_graph(&graph);
+        let decoded = gantz_collab::proto::decode_graph(&wire).expect("decode");
+        assert_eq!(gantz_ca::graph_addr(&decoded), ga, "wire");
+    }
+}
+
 /// Pin every node type's canonical content address, taken from the first
 /// `node_set_data` case per tag. Erased node addresses are
 /// wire-stability-critical. Any serde change that shifts one fails here

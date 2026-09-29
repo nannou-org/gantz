@@ -44,11 +44,14 @@ impl Plugin for PersistPlugin {
                     // After `settle_layout`, so a layout commit settled this frame
                     // and its seeded view are saved in the same pass.
                     .after(bevy_gantz_egui::settle_layout)
-                    .run_if(on_message::<DebouncedInputEvent>),
+                    .run_if(on_message::<DebouncedInputEvent>)
+                    .run_if(store_writable),
             )
             .add_systems(
                 Update,
-                persist_egui_memory.run_if(on_message::<PersistEguiMemory>),
+                persist_egui_memory
+                    .run_if(on_message::<PersistEguiMemory>)
+                    .run_if(store_writable),
             );
         // Native only. Wasm writes inline, and the runner consumes the World, so
         // this cannot run after `run()`.
@@ -140,12 +143,18 @@ fn setup_persister(pkv: Res<Pkv>, mut cmds: Commands) {
     cmds.insert_resource(spawn_persister(pkv.clone()));
 }
 
+/// Whether the store may be written. See
+/// [`bevy_gantz::storage::StoreReadOnly`].
+fn store_writable(read_only: Option<Res<bevy_gantz::storage::StoreReadOnly>>) -> bool {
+    read_only.is_none()
+}
+
 /// Collect the registry, heads, gui and window into a `(key, value)` batch
 /// to persist. Views, demos and descriptions ride the registry's sections.
 ///
-/// Registry writes dedup against `persisted`. Pass a fresh
-/// [`bevy_gantz::storage::PersistedRegistry`] to force a complete write.
-/// Everything else is written each call.
+/// Registry writes dedup against `persisted`. Pass a cleared tracker, see
+/// [`bevy_gantz::storage::PersistedRegistry::cleared`], to force a complete
+/// write. Everything else is written each call.
 fn collect_batch_to_persist(
     registry: &Registry,
     persisted: &mut bevy_gantz::storage::PersistedRegistry,
@@ -235,35 +244,40 @@ fn persist_egui_memory(mut persister: ResMut<Persister>, mut ctxs: EguiContexts)
 
 /// On exit, write the full current state and drain the worker before quitting.
 ///
-/// A fresh tracker forces a complete registry write. This is a backstop for
-/// any blob tracked as persisted but not yet drained by the worker. FIFO
+/// A cleared tracker forces a complete registry write. This is a backstop
+/// for any blob tracked as persisted but not yet drained by the worker. FIFO
 /// order and `shutdown` guarantee it lands last. egui memory is left to the
-/// worker's normal drain.
+/// worker's normal drain. A read-only store is not written.
 #[cfg(not(target_arch = "wasm32"))]
+#[allow(clippy::too_many_arguments)]
 fn flush_on_exit(
     mut exit: MessageReader<AppExit>,
     registry: Res<Registry>,
+    persisted: Res<bevy_gantz::storage::PersistedRegistry>,
     gui_state: Res<GuiState>,
     mut persister: ResMut<Persister>,
     tab_order: Res<HeadTabOrder>,
     focused: Res<FocusedHead>,
     heads_query: Query<OpenHeadDataReadOnly, With<OpenHead>>,
     primary_window: Query<&Window, With<PrimaryWindow>>,
+    read_only: Option<Res<bevy_gantz::storage::StoreReadOnly>>,
 ) {
     if exit.read().next().is_none() {
         return;
     }
-    let mut full = bevy_gantz::storage::PersistedRegistry::default();
-    let window = primary_window.single().ok();
-    let batch = collect_batch_to_persist(
-        &registry,
-        &mut full,
-        &gui_state,
-        &tab_order,
-        &focused,
-        &heads_query,
-        window,
-    );
-    persister.submit(batch);
+    if read_only.is_none() {
+        let mut full = persisted.cleared();
+        let window = primary_window.single().ok();
+        let batch = collect_batch_to_persist(
+            &registry,
+            &mut full,
+            &gui_state,
+            &tab_order,
+            &focused,
+            &heads_query,
+            window,
+        );
+        persister.submit(batch);
+    }
     persister.shutdown();
 }

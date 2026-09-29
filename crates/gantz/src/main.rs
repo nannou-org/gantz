@@ -168,12 +168,19 @@ fn setup_window(storage: Res<Pkv>, mut windows: Query<&mut Window, With<PrimaryW
     }
 }
 
-fn setup_resources(storage: Res<Pkv>, mut cmds: Commands) {
-    let registry: Registry = bevy_gantz::storage::load_registry(&*storage);
+fn setup_resources(mut storage: ResMut<Pkv>, mut cmds: Commands) {
+    let (registry, unreadable) = bevy_gantz::storage::load_registry(&*storage);
+    match store_read_only(&*storage, &unreadable) {
+        Some(reason) => {
+            error!("{reason}");
+            cmds.insert_resource(bevy_gantz::storage::StoreReadOnly(reason));
+        }
+        None => bevy_gantz::storage::save_store_meta(&mut *storage, BUILD),
+    }
     // Seed the persist tracker before `base::load` merges base graphs, so they
     // are written on first persist, and before `prune_unused`, so prunes are
     // detected on the first incremental save.
-    let persisted = bevy_gantz::storage::PersistedRegistry::from_registry(&registry);
+    let persisted = bevy_gantz::storage::PersistedRegistry::from_registry(&registry, unreadable);
     let gui_state = bevy_gantz_egui::storage::load_gui_state(&*storage);
     // Reify the loaded registry's graphs so typed reads are served from the
     // first frame.
@@ -183,6 +190,33 @@ fn setup_resources(storage: Res<Pkv>, mut cmds: Commands) {
     cmds.insert_resource(cache);
     cmds.insert_resource(persisted);
     cmds.insert_resource(gui_state);
+}
+
+/// This build, such as `gantz 0.4.0`. It stamps the store, see
+/// [`bevy_gantz::storage::StoreMeta`].
+const BUILD: &str = concat!("gantz ", env!("CARGO_PKG_VERSION"));
+
+/// Why the store must not be written, if it must not. A store written by a
+/// newer gantz, or one whose indices cannot be read, would lose data if this
+/// build saved over it.
+fn store_read_only(storage: &Pkv, unreadable: &bevy_gantz::storage::Unreadable) -> Option<String> {
+    use bevy_gantz::storage::STORE_FORMAT;
+    match bevy_gantz::storage::load_store_meta(storage) {
+        Err(e) => Some(format!(
+            "The store's format stamp cannot be read ({e}). gantz opens it read-only."
+        )),
+        Ok(meta) if meta.format > STORE_FORMAT => Some(format!(
+            "The store was written by {} in store format {}. This gantz supports up to \
+             format {STORE_FORMAT}, so it opens the store read-only. Update gantz to keep \
+             editing.",
+            meta.written_by, meta.format,
+        )),
+        Ok(_) if !unreadable.indices.is_empty() => Some(format!(
+            "The store's indices ({}) cannot be read. gantz opens it read-only.",
+            unreadable.indices.join(", "),
+        )),
+        Ok(_) => None,
+    }
 }
 
 /// Load the user's collaborative identity, or generate and persist one.

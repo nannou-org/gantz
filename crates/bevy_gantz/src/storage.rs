@@ -23,6 +23,7 @@
 //!   differs from the last persisted form.
 //! - `ns-index`: sorted `Vec<SectionId>`, rewritten on membership change.
 //! - `open-heads`, `focused-head`: session state.
+//! - `store-meta`: the [`StoreMeta`] stamp. See [`STORE_FORMAT`].
 //!
 //! `bevy_gantz_egui::storage` provides the GUI-related storage.
 
@@ -31,8 +32,8 @@ use base64::Engine as _;
 use bevy_ecs::prelude::Resource;
 use bevy_log as log;
 use gantz_ca as ca;
-use serde::{Serialize, de::DeserializeOwned};
-use std::collections::{BTreeMap, HashSet};
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 /// Read strings from a key-value store.
 pub trait Load {
@@ -56,6 +57,51 @@ pub struct BatchWriter {
     pub writes: Vec<(String, String)>,
 }
 
+/// The store format this build writes. Bump it when a change to the stored
+/// layout or encoding means an older build cannot safely write the store.
+/// See [`StoreMeta`].
+///
+/// - 0: before formats. An integer may be in either datum form, so a graph
+///   may sit under the address of another form.
+/// - 1: every integer datum is in its canonical form. See
+///   [`gantz_ca::datum`].
+pub const STORE_FORMAT: u32 = 1;
+
+/// Which format a store is in, and which build last wrote it.
+///
+/// A build must not write a store whose format is newer than
+/// [`STORE_FORMAT`]. It would drop the entries it cannot read and rewrite
+/// the rest in its older form.
+#[derive(Clone, Debug, Default, Deserialize, PartialEq, Serialize)]
+pub struct StoreMeta {
+    /// The store format. A store from before formats reads as 0.
+    #[serde(default)]
+    pub format: u32,
+    /// The app and version that last wrote the store, for display.
+    #[serde(default)]
+    pub written_by: String,
+}
+
+/// Present while the store must not be written, for example because a newer
+/// build wrote it. Holds the reason for display.
+#[derive(Clone, Debug, Resource)]
+pub struct StoreReadOnly(pub String);
+
+/// Stored registry entries that [`load_registry`] could not read.
+///
+/// They stay listed in the store's indices, so a later save does not orphan
+/// them. A newer build may be able to read them.
+#[derive(Clone, Debug, Default)]
+pub struct Unreadable {
+    /// The keys of index entries that could not be read. A store with an
+    /// unreadable index must not be written, since a save would rewrite the
+    /// index from what did load.
+    pub indices: Vec<String>,
+    pub graphs: BTreeSet<ca::GraphAddr>,
+    pub commits: BTreeSet<ca::CommitAddr>,
+    pub sections: BTreeSet<ca::SectionId>,
+}
+
 /// Tracks what is already written to storage, so [`save_registry_incremental`]
 /// only writes what changed.
 ///
@@ -73,6 +119,7 @@ pub struct PersistedRegistry {
     commits: HashSet<ca::CommitAddr>,
     blobs: BTreeMap<ca::SectionId, HashSet<ca::ContentAddr>>,
     sections: BTreeMap<ca::SectionId, ca::Section>,
+    unreadable: Unreadable,
 }
 
 impl BatchWriter {
@@ -84,7 +131,9 @@ impl BatchWriter {
 
 impl PersistedRegistry {
     /// Snapshot a registry whose contents are all known to be on disk.
-    pub fn from_registry(registry: &Registry) -> Self {
+    /// `unreadable` lists the stored entries that stay indexed. See
+    /// [`Unreadable`].
+    pub fn from_registry(registry: &Registry, unreadable: Unreadable) -> Self {
         Self {
             graphs: registry.graphs().keys().copied().collect(),
             commits: registry.commits().keys().copied().collect(),
@@ -94,6 +143,16 @@ impl PersistedRegistry {
                 .map(|(id, store)| (id.clone(), store.entries.keys().copied().collect()))
                 .collect(),
             sections: registry.sections().clone(),
+            unreadable,
+        }
+    }
+
+    /// A tracker that treats nothing as written, so the next save writes
+    /// everything. Unreadable entries stay indexed.
+    pub fn cleared(&self) -> Self {
+        Self {
+            unreadable: self.unreadable.clone(),
+            ..Self::default()
         }
     }
 
@@ -131,26 +190,48 @@ pub fn save<T: Serialize + ?Sized>(storage: &mut impl Save, key: &str, value: &T
     }
 }
 
-/// Load a RON-serialized value from `key`.
+/// Load a RON-serialized value from `key`. A value that cannot be read or
+/// parsed is logged and reads as `None`. See [`load_strict`] to tell the two
+/// apart.
 pub fn load<T: DeserializeOwned>(storage: &impl Load, key: &str) -> Option<T> {
+    load_strict(storage, key).unwrap_or_else(|e| {
+        log::error!("{e}");
+        None
+    })
+}
+
+/// Load a RON-serialized value from `key`. `Ok(None)` means the key is
+/// absent. A value that cannot be read or parsed is an error.
+pub fn load_strict<T: DeserializeOwned>(
+    storage: &impl Load,
+    key: &str,
+) -> Result<Option<T>, String> {
     let s = match storage.get_string(key) {
         Ok(Some(s)) => s,
-        Ok(None) => return None,
-        Err(e) => {
-            log::error!("Failed to read {key}: {e}");
-            return None;
-        }
+        Ok(None) => return Ok(None),
+        Err(e) => return Err(format!("Failed to read {key}: {e}")),
     };
     match ron::de::from_str(&s) {
         Ok(v) => {
             log::debug!("Loaded {key}");
-            Some(v)
+            Ok(Some(v))
         }
-        Err(e) => {
-            log::error!("Failed to deserialize {key}: {e}");
-            None
-        }
+        Err(e) => Err(format!("Failed to deserialize {key}: {e}")),
     }
+}
+
+/// Load the store's [`StoreMeta`]. A store without one reads as format 0.
+pub fn load_store_meta(storage: &impl Load) -> Result<StoreMeta, String> {
+    Ok(load_strict(storage, key::STORE_META)?.unwrap_or_default())
+}
+
+/// Stamp the store with [`STORE_FORMAT`] and the writing build.
+pub fn save_store_meta(storage: &mut impl Save, written_by: &str) {
+    let meta = StoreMeta {
+        format: STORE_FORMAT,
+        written_by: written_by.to_string(),
+    };
+    save(storage, key::STORE_META, &meta);
 }
 
 /// Storage keys. See the module docs for the schema.
@@ -161,6 +242,7 @@ mod key {
     pub const SECTION_INDEX: &str = "ns-index";
     pub const OPEN_HEADS: &str = "open-heads";
     pub const FOCUSED_HEAD: &str = "focused-head";
+    pub const STORE_META: &str = "store-meta";
 
     pub fn graph(ca: gantz_ca::GraphAddr) -> String {
         format!("o/g/{ca}")
@@ -184,7 +266,7 @@ mod key {
 /// The key of each content entry is its content hash, so an already-written
 /// entry never needs rewriting. The cost is proportional to the new content
 /// and changed sections, not to the registry. An unchanged registry writes
-/// nothing. A fresh [`PersistedRegistry::default`] makes this a full save.
+/// nothing. A [`PersistedRegistry::cleared`] tracker makes this a full save.
 pub fn save_registry_incremental(
     storage: &mut impl Save,
     registry: &Registry,
@@ -206,8 +288,15 @@ pub fn save_registry_incremental(
         graphs_changed = true;
     }
     if graphs_changed {
-        let mut addrs: Vec<_> = registry.graphs().keys().copied().collect();
+        let unreadable = persisted.unreadable.graphs.iter().copied();
+        let mut addrs: Vec<_> = registry
+            .graphs()
+            .keys()
+            .copied()
+            .chain(unreadable)
+            .collect();
         addrs.sort();
+        addrs.dedup();
         save(storage, key::GRAPH_ADDRS, &addrs);
     }
 
@@ -225,8 +314,15 @@ pub fn save_registry_incremental(
         commits_changed = true;
     }
     if commits_changed {
-        let mut addrs: Vec<_> = registry.commits().keys().copied().collect();
+        let unreadable = persisted.unreadable.commits.iter().copied();
+        let mut addrs: Vec<_> = registry
+            .commits()
+            .keys()
+            .copied()
+            .chain(unreadable)
+            .collect();
         addrs.sort();
+        addrs.dedup();
         save(storage, key::COMMIT_ADDRS, &addrs);
     }
 
@@ -278,32 +374,45 @@ pub fn save_registry_incremental(
         .retain(|id, _| registry.sections().contains_key(id));
     index_changed |= persisted.sections.len() != tracked_sections;
     if index_changed {
-        let ids: Vec<&ca::SectionId> = registry.sections().keys().collect();
+        let unreadable = persisted.unreadable.sections.iter();
+        let mut ids: Vec<&ca::SectionId> = registry.sections().keys().chain(unreadable).collect();
+        ids.sort();
+        ids.dedup();
         save(storage, key::SECTION_INDEX, &ids);
     }
 }
 
-/// Load the registry from storage.
-pub fn load_registry(storage: &impl Load) -> Registry {
-    let graph_addrs: Vec<ca::GraphAddr> = load(storage, key::GRAPH_ADDRS).unwrap_or_default();
+/// Load the registry from storage, with the stored entries that could not
+/// be read. Seed [`PersistedRegistry::from_registry`] with both, so a later
+/// save keeps the unreadable entries indexed.
+pub fn load_registry(storage: &impl Load) -> (Registry, Unreadable) {
+    let mut unreadable = Unreadable::default();
+
+    let graph_addrs: Vec<ca::GraphAddr> =
+        load_index(storage, key::GRAPH_ADDRS, &mut unreadable.indices);
     let graphs = graph_addrs
         .into_iter()
-        .filter_map(|ca| Some((ca, load(storage, &key::graph(ca))?)))
+        .filter_map(|ca| load_entry(storage, &key::graph(ca), ca, &mut unreadable.graphs))
         .collect();
 
-    let commit_addrs: Vec<ca::CommitAddr> = load(storage, key::COMMIT_ADDRS).unwrap_or_default();
+    let commit_addrs: Vec<ca::CommitAddr> =
+        load_index(storage, key::COMMIT_ADDRS, &mut unreadable.indices);
     let commits = commit_addrs
         .into_iter()
-        .filter_map(|ca| Some((ca, load(storage, &key::commit(ca))?)))
+        .filter_map(|ca| load_entry(storage, &key::commit(ca), ca, &mut unreadable.commits))
         .collect();
 
     let mut registry = ca::Registry::from_parts(graphs, commits, BTreeMap::new());
 
     // Sections load whole. The first write per section stamps its stored
     // policy and liveness.
-    let section_ids: Vec<ca::SectionId> = load(storage, key::SECTION_INDEX).unwrap_or_default();
+    let section_ids: Vec<ca::SectionId> =
+        load_index(storage, key::SECTION_INDEX, &mut unreadable.indices);
     for id in section_ids {
-        let Some(section) = load::<ca::Section>(storage, &key::section(&id)) else {
+        let section_key = key::section(&id);
+        let Some((id, section)) =
+            load_entry::<_, ca::Section>(storage, &section_key, id, &mut unreadable.sections)
+        else {
             continue;
         };
         for (key, value) in section.entries {
@@ -325,7 +434,40 @@ pub fn load_registry(storage: &impl Load) -> Registry {
         }
     }
 
-    Registry(registry)
+    (Registry(registry), unreadable)
+}
+
+/// Load an index, recording its key in `unreadable` when it cannot be read.
+fn load_index<T: DeserializeOwned>(
+    storage: &impl Load,
+    key: &str,
+    unreadable: &mut Vec<String>,
+) -> Vec<T> {
+    load_strict(storage, key)
+        .unwrap_or_else(|e| {
+            log::error!("{e}");
+            unreadable.push(key.to_string());
+            None
+        })
+        .unwrap_or_default()
+}
+
+/// Load the entry `id` under `key`. An entry that cannot be read is logged
+/// and recorded in `unreadable`. An absent entry is skipped.
+fn load_entry<Id: Ord, T: DeserializeOwned>(
+    storage: &impl Load,
+    key: &str,
+    id: Id,
+    unreadable: &mut BTreeSet<Id>,
+) -> Option<(Id, T)> {
+    match load_strict(storage, key) {
+        Ok(entry) => Some((id, entry?)),
+        Err(e) => {
+            log::error!("{e}");
+            unreadable.insert(id);
+            None
+        }
+    }
 }
 
 /// Persist raw blob bytes under `key`, base64-encoded to fit the string store.
@@ -603,7 +745,7 @@ mod tests {
         let mut persisted = PersistedRegistry::default();
         let mut store = MockStore::default();
         save_registry_incremental(&mut store, &reg, &mut persisted);
-        let loaded = load_registry(&store);
+        let (loaded, _) = load_registry(&store);
         assert_eq!(loaded.graphs().len(), reg.graphs().len());
         assert_eq!(loaded.commits(), reg.commits());
         assert_eq!(loaded.sections(), reg.sections());
@@ -653,11 +795,56 @@ mod tests {
         let mut persisted = PersistedRegistry::default();
         let mut store = MockStore::default();
         save_registry_incremental(&mut store, &reg, &mut persisted);
-        let loaded = load_registry(&store);
+        let (loaded, _) = load_registry(&store);
         assert_eq!(loaded.sections(), reg.sections());
         assert_eq!(
             loaded.blob("dsp.buffer", &blob_addr).map(|b| &b[..]),
             Some(&b"pcm"[..]),
         );
+    }
+
+    // A stored graph that cannot be read stays in the index through later
+    // saves, so it is not orphaned.
+    #[test]
+    fn unreadable_entries_stay_indexed() {
+        let reg = registry(&[(1, 11), (2, 12)], &[("alpha", 11)]);
+        let mut store = MockStore::default();
+        save_registry_incremental(&mut store, &reg, &mut PersistedRegistry::default());
+        let garbage = "not ron (".to_string();
+        store.map.insert(key::graph(graph_addr(2)), garbage);
+
+        let (loaded, unreadable) = load_registry(&store);
+        assert!(loaded.graphs().contains_key(&graph_addr(1)));
+        assert_eq!(unreadable.graphs, BTreeSet::from([graph_addr(2)]));
+        assert!(unreadable.indices.is_empty());
+
+        // A new graph rewrites the index, which keeps the unreadable graph.
+        let mut persisted = PersistedRegistry::from_registry(&loaded, unreadable);
+        let next = registry(&[(1, 11), (3, 13)], &[("alpha", 11)]);
+        save_registry_incremental(&mut store, &next, &mut persisted);
+        let index: Vec<GraphAddr> = load(&store, key::GRAPH_ADDRS).unwrap();
+        assert_eq!(index, vec![graph_addr(1), graph_addr(2), graph_addr(3)]);
+    }
+
+    #[test]
+    fn unreadable_indices_are_reported() {
+        let mut store = MockStore::default();
+        let garbage = "[".to_string();
+        store.map.insert(key::GRAPH_ADDRS.to_string(), garbage);
+        let (_, unreadable) = load_registry(&store);
+        assert_eq!(unreadable.indices, vec![key::GRAPH_ADDRS.to_string()]);
+    }
+
+    #[test]
+    fn store_meta_reads_absent_as_format_zero_and_rejects_garbage() {
+        let mut store = MockStore::default();
+        assert_eq!(load_store_meta(&store).unwrap(), StoreMeta::default());
+        save_store_meta(&mut store, "gantz 9.9.9");
+        let meta = load_store_meta(&store).unwrap();
+        assert_eq!(meta.format, STORE_FORMAT);
+        assert_eq!(meta.written_by, "gantz 9.9.9");
+        let garbage = "(format:".to_string();
+        store.map.insert(key::STORE_META.to_string(), garbage);
+        assert!(load_store_meta(&store).is_err());
     }
 }
