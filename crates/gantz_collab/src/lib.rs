@@ -49,6 +49,8 @@ pub use store::{SessionEntry, SessionRegistry};
 pub use ticket::{SessionTicket, VaultTicket};
 #[doc(inline)]
 pub use vault::{PairingSecret, Push, PushReply, VaultEntry, VaultId, WatchMsg};
+#[doc(inline)]
+pub use version::{Outdated, PROTO_MAX, PROTO_MIN, VERSION_ALPN, VersionInfo};
 
 pub mod identity;
 pub mod proto;
@@ -57,3 +59,4 @@ pub mod session;
 pub mod store;
 pub mod ticket;
 pub mod vault;
+pub mod version;

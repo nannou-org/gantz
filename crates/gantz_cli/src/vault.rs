@@ -23,8 +23,8 @@ use crate::{Conf, DirArgs, RevokeArgs, ServeArgs, VaultArgs, VaultCommand};
 use bevy_pkv::PkvStore;
 use gantz_ca as ca;
 use gantz_collab::{
-    Command, Event, Handle, Identity, Infra, PairingSecret, PeerId, RuntimeConfig, SessionId,
-    VaultEntry,
+    Command, Event, Handle, Identity, Infra, Outdated, PairingSecret, PeerId, RuntimeConfig,
+    SessionId, VaultEntry,
 };
 use gantz_collab_sync::PushOutcome;
 use gantz_store::{PersistedRegistry, Save};
@@ -184,6 +184,17 @@ impl Vault {
                     gantz_store::save(s, CONFIG_KEY, config)
                 })?;
                 info!("paired device {} ({app})", peer.to_hex());
+            }
+            Event::Probed {
+                peer,
+                info,
+                outdated: Some(outdated),
+            } => {
+                let update = match outdated {
+                    Outdated::Us => "needs a newer vault",
+                    Outdated::Them => "must update to sync",
+                };
+                warn!("device {} runs {}, which {update}", peer.to_hex(), info.app);
             }
             Event::PushRequest {
                 from, push, reply, ..

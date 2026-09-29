@@ -258,7 +258,10 @@ pub fn handle_event(
         | Event::LinkUp { .. }
         | Event::LinkChanged { .. }
         | Event::LinkDown { .. }
-        | Event::Pushed { .. } => (),
+        | Event::LinkIncompatible { .. }
+        | Event::LinkDenied { .. }
+        | Event::Pushed { .. }
+        | Event::Probed { .. } => (),
     }
 }
 

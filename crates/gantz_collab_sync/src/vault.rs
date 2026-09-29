@@ -26,7 +26,8 @@
 use crate::{Effect, JoinError, OpenHeads, Sessions, inbound, lifecycle::session_resolutions};
 use gantz_ca as ca;
 use gantz_collab::{
-    Command, ConnState, Event, Handle, ObjectRef, Objects, PeerId, Push, VaultId, VaultTicket, Want,
+    Command, ConnState, Event, Handle, ObjectRef, Objects, Outdated, PeerId, Push, VaultId,
+    VaultTicket, Want,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::mem;
@@ -160,10 +161,20 @@ pub(crate) fn owns(link: &VaultLink, event: &Event) -> bool {
         Event::LinkUp { vault, .. }
         | Event::LinkChanged { vault, .. }
         | Event::LinkDown { vault, .. }
+        | Event::LinkIncompatible { vault, .. }
+        | Event::LinkDenied { vault, .. }
         | Event::Pushed { vault, .. } => *vault == link.id,
         Event::Objects { session, .. } | Event::FetchFailed { session, .. } => *session == link.id,
         _ => false,
     }
+}
+
+/// Mark the link down with `error`. Work in flight will not be answered.
+fn down(link: &mut VaultLink, error: String) {
+    link.conn = ConnState::Degraded;
+    link.error = Some(error);
+    link.fetches.clear();
+    link.pushes.clear();
 }
 
 /// Apply one vault event to the link's state. Fetched content is staged
@@ -193,10 +204,25 @@ pub(crate) fn handle_event(
         }
         Event::LinkDown { error, .. } => {
             log::info!("vault link down: {error}");
-            link.conn = ConnState::Degraded;
-            link.error = Some(error);
-            link.fetches.clear();
-            link.pushes.clear();
+            down(link, error);
+        }
+        Event::LinkIncompatible {
+            theirs, outdated, ..
+        } => {
+            let update = match outdated {
+                Outdated::Us => "update gantz on this device",
+                Outdated::Them => "update the vault",
+            };
+            let error = format!(
+                "the vault runs {} on sync protocols {} to {}, so {update}",
+                theirs.app, theirs.proto_min, theirs.proto_max,
+            );
+            log::warn!("vault incompatible: {error}");
+            down(link, error);
+        }
+        Event::LinkDenied { reason, .. } => {
+            log::warn!("vault link denied: {reason}");
+            down(link, format!("link denied: {reason}"));
         }
         Event::Objects { want, objects, .. } => feed(link, registry, handle, open, want, objects),
         Event::FetchFailed { want, error, .. } => {

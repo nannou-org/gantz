@@ -242,14 +242,16 @@ fn restricted_sessions_deny_unlisted_peers() {
     assert!(message.contains("denied"), "unexpected error: {message}");
 }
 
-/// A relay-free runtime config, so the vault test needs no infrastructure.
-fn local() -> gantz_collab::RuntimeConfig {
+/// A relay-free runtime config for `app`, so the vault test needs no
+/// infrastructure.
+fn local(app: &str) -> gantz_collab::RuntimeConfig {
     gantz_collab::RuntimeConfig {
         infra: gantz_collab::Infra::Custom {
             relays: vec![],
             pkarr: None,
         },
-        ..Default::default()
+        port: None,
+        app: app.to_string(),
     }
 }
 
@@ -267,7 +269,7 @@ fn vaults_pair_link_push_fetch_and_notify() {
     let jam: Name = "jam".parse().unwrap();
 
     // The vault holds one name.
-    let vault = gantz_collab::spawn(Identity::generate(), local());
+    let vault = gantz_collab::spawn(Identity::generate(), local("gantz vault"));
     let vault_peer = wait_for(&vault, |e| match e {
         Event::Ready { peer } => Some(peer),
         _ => None,
@@ -299,7 +301,7 @@ fn vaults_pair_link_push_fetch_and_notify() {
     assert_eq!(ticket.host_id(), vault_peer);
 
     // A device with the ticket pairs, links and sees the vault's heads.
-    let device = gantz_collab::spawn(Identity::generate(), local());
+    let device = gantz_collab::spawn(Identity::generate(), local("gantz device"));
     let device_peer = wait_for(&device, |e| match e {
         Event::Ready { peer } => Some(peer),
         _ => None,
@@ -308,18 +310,24 @@ fn vaults_pair_link_push_fetch_and_notify() {
         .cmds
         .send_blocking(Command::Link(ticket.clone()))
         .unwrap();
-    let paired = wait_for(&vault, |e| match e {
+    // The vault sees the device's version, and the device the vault's.
+    let (paired, device_app) = wait_for(&vault, |e| match e {
         Event::DeviceSeen {
-            peer, paired: true, ..
-        } => Some(peer),
+            peer,
+            app,
+            paired: true,
+            ..
+        } => Some((peer, app)),
         _ => None,
     });
     assert_eq!(paired, device_peer);
-    let heads = wait_for(&device, |e| match e {
-        Event::LinkUp { heads, .. } => Some(heads),
+    assert_eq!(device_app, "gantz device");
+    let (heads, info) = wait_for(&device, |e| match e {
+        Event::LinkUp { heads, info, .. } => Some((heads, info)),
         _ => None,
     });
     assert_eq!(heads, vec![(jam.clone(), root_ca)]);
+    assert_eq!(info.app, "gantz vault");
 
     // The device fetches the whole history in one request.
     let want = Want {
@@ -396,7 +404,7 @@ fn vaults_pair_link_push_fetch_and_notify() {
     assert_eq!(changes, Some(vec![(jam, Some(tip_ca))]));
 
     // A device with the wrong secret is refused.
-    let stranger = gantz_collab::spawn(Identity::generate(), local());
+    let stranger = gantz_collab::spawn(Identity::generate(), local("gantz stranger"));
     wait_for(&stranger, |e| match e {
         Event::Ready { .. } => Some(()),
         _ => None,
@@ -406,9 +414,9 @@ fn vaults_pair_link_push_fetch_and_notify() {
         ..ticket
     };
     stranger.cmds.send_blocking(Command::Link(forged)).unwrap();
-    let error = wait_for(&stranger, |e| match e {
-        Event::LinkDown { error, .. } => Some(error),
+    let reason = wait_for(&stranger, |e| match e {
+        Event::LinkDenied { reason, .. } => Some(reason),
         _ => None,
     });
-    assert!(error.contains("denied"), "{error}");
+    assert_eq!(reason, "access denied");
 }

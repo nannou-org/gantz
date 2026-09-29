@@ -98,6 +98,7 @@ impl Net {
         let up = Event::LinkUp {
             vault: self.id,
             heads,
+            info: Default::default(),
         };
         self.devices[d].inbox.push_back(up);
     }
@@ -362,6 +363,7 @@ fn a_failed_fetch_holds_its_name_until_the_vault_moves() {
     let up = Event::LinkUp {
         vault: net.id,
         heads,
+        info: Default::default(),
     };
     let effects = device
         .fake

@@ -36,6 +36,7 @@ use crate::{
     store::{self, ServedVault, SessionEntry, Shared, SharedState},
     ticket::{SessionTicket, VaultTicket},
     vault::{Push, PushReply, VaultEntry, VaultId, WatchMsg},
+    version::{self, Outdated, VERSION_ALPN, VersionInfo, VersionServer},
 };
 use gantz_ca::{
     BlobLiveness, Bytes, Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, Key, Liveness,
@@ -55,6 +56,7 @@ use iroh_gossip::{
 use n0_future::{StreamExt, task::AbortOnDropHandle};
 use serde::{Serialize, de::DeserializeOwned};
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -134,6 +136,11 @@ const LINK_RETRY_MIN: Duration = Duration::from_secs(1);
 /// The longest delay between vault link attempts.
 const LINK_RETRY_MAX: Duration = Duration::from_secs(30);
 
+/// The delay before a link that only an update or a new ticket can fix
+/// retries. That is an incompatible vault or a refused pairing. A
+/// [`Command::Link`] retries at once.
+const LINK_RETRY_SLOW: Duration = Duration::from_secs(5 * 60);
+
 /// An instruction from the application to the runtime.
 ///
 /// Commands apply in send order on one channel, so a [`Register`] reliably
@@ -201,8 +208,10 @@ pub enum Command {
         blobs: Vec<(SectionId, BlobLiveness, ContentAddr, Bytes)>,
     },
     /// Link this device to a vault and hold the link open, reconnecting with
-    /// backoff. Emits [`Event::LinkUp`], [`Event::LinkChanged`] and
-    /// [`Event::LinkDown`].
+    /// backoff. Each attempt first probes the vault's version. Emits
+    /// [`Event::LinkUp`], [`Event::LinkChanged`], [`Event::LinkDown`],
+    /// [`Event::LinkIncompatible`] and [`Event::LinkDenied`]. Linking a vault
+    /// that is already linked restarts its link at once.
     Link(VaultTicket),
     /// Drop the link to a vault.
     Unlink(VaultId),
@@ -267,10 +276,12 @@ pub enum Event {
         push: Push,
         reply: PushReply,
     },
-    /// A link to a vault opened. Every head the vault holds.
+    /// A link to a vault opened. Every head the vault holds, and what the
+    /// vault speaks.
     LinkUp {
         vault: VaultId,
         heads: Vec<(Name, CommitAddr)>,
+        info: VersionInfo,
     },
     /// Names that moved on a linked vault. `None` means removed.
     LinkChanged {
@@ -280,6 +291,25 @@ pub enum Event {
     /// A link to a vault dropped or failed to open. It retries by itself
     /// until [`Command::Unlink`].
     LinkDown { vault: VaultId, error: String },
+    /// A vault speaks no protocol version that this build speaks, so the
+    /// `outdated` side must update. The link retries slowly until
+    /// [`Command::Unlink`].
+    LinkIncompatible {
+        vault: VaultId,
+        theirs: VersionInfo,
+        outdated: Outdated,
+    },
+    /// A vault refused this device, for example after a revoke. The link
+    /// retries slowly until [`Command::Unlink`].
+    LinkDenied { vault: VaultId, reason: String },
+    /// A peer probed this runtime's version. `outdated` tells which side
+    /// must update, when the two share no protocol version. See
+    /// [`crate::version`].
+    Probed {
+        peer: PeerId,
+        info: VersionInfo,
+        outdated: Option<Outdated>,
+    },
     /// A vault answered a [`Command::Push`]. `Ok` holds the vault's head for
     /// the name after the push, which is `tip` exactly when it was accepted.
     Pushed {
@@ -563,7 +593,7 @@ async fn drive(
         log::warn!("collab: {message}");
         send_evt(Event::Error { session, message })
     };
-    let app: Arc<str> = config.app.as_str().into();
+    let version = VersionInfo::this(&config.app);
     let builder = match infra_builder(&config.infra).and_then(|b| bind_port(b, config.port)) {
         Ok(builder) => builder,
         Err(e) => {
@@ -573,7 +603,11 @@ async fn drive(
     };
     let endpoint = match builder
         .secret_key(identity.secret_key())
-        .alpns(vec![SYNC_ALPN.to_vec(), iroh_gossip::ALPN.to_vec()])
+        .alpns(vec![
+            SYNC_ALPN.to_vec(),
+            VERSION_ALPN.to_vec(),
+            iroh_gossip::ALPN.to_vec(),
+        ])
         .bind()
         .await
     {
@@ -606,6 +640,13 @@ async fn drive(
             SYNC_ALPN,
             SyncServer {
                 shared: shared.clone(),
+                events: evt_tx.clone(),
+            },
+        )
+        .accept(
+            VERSION_ALPN,
+            VersionServer {
+                info: version.clone(),
                 events: evt_tx.clone(),
             },
         )
@@ -704,7 +745,7 @@ async fn drive(
                 let endpoint = endpoint.clone();
                 let evt_tx = evt_tx.clone();
                 let conns = conns.clone();
-                let app = app.clone();
+                let app = version.app.clone();
                 n0_future::task::spawn(async move {
                     let evt = join_snapshot(&endpoint, &conns, &app, &ticket).await;
                     let _ = evt_tx.send(evt).await;
@@ -823,7 +864,7 @@ async fn drive(
                     endpoint.clone(),
                     conns.clone(),
                     evt_tx.clone(),
-                    app.clone(),
+                    version.clone(),
                     ticket,
                 );
                 let task = n0_future::task::spawn(task);
@@ -1189,78 +1230,108 @@ async fn read_frame<T: DeserializeOwned>(recv: &mut RecvStream) -> Result<T, Str
     proto::decode(&body).map_err(|e| format!("undecodable frame: {e}"))
 }
 
+/// How one link attempt ended.
+enum LinkEnd {
+    /// The link dropped or never opened.
+    Down(String),
+    /// The vault speaks no protocol version this build speaks.
+    Incompatible(VersionInfo, Outdated),
+    /// The vault refused this device.
+    Denied(String),
+}
+
 /// Hold a device's link to its vault until the task is dropped. Each
-/// attempt greets or pairs with `Hello`, then follows the watch stream. A
-/// drop is reported and retried with backoff, which resets after an attempt
-/// that reached the vault's heads.
+/// attempt probes the vault's version, greets or pairs with `Hello`, then
+/// follows the watch stream. A drop is reported and retried with backoff,
+/// which resets once an attempt reaches the vault's heads. An incompatible
+/// vault or a refusal retries slowly, since only an update or a new ticket
+/// fixes it.
 async fn link(
     endpoint: Endpoint,
     conns: ConnCache,
     evt_tx: async_channel::Sender<Event>,
-    app: Arc<str>,
+    ours: VersionInfo,
     ticket: VaultTicket,
 ) {
     let vault = ticket.vault;
     let mut retry = LINK_RETRY_MIN;
     loop {
-        let (reached, error) = follow(&endpoint, &conns, &evt_tx, &app, &ticket).await;
-        if evt_tx.send(Event::LinkDown { vault, error }).await.is_err() {
+        let Err(end) = follow(&endpoint, &conns, &evt_tx, &ours, &ticket, &mut retry).await;
+        let (evt, delay) = match end {
+            LinkEnd::Down(error) => {
+                let delay = retry;
+                retry = (retry * 2).min(LINK_RETRY_MAX);
+                (Event::LinkDown { vault, error }, delay)
+            }
+            LinkEnd::Incompatible(theirs, outdated) => {
+                let evt = Event::LinkIncompatible {
+                    vault,
+                    theirs,
+                    outdated,
+                };
+                (evt, LINK_RETRY_SLOW)
+            }
+            LinkEnd::Denied(reason) => (Event::LinkDenied { vault, reason }, LINK_RETRY_SLOW),
+        };
+        if evt_tx.send(evt).await.is_err() {
             return;
         }
-        if reached {
-            retry = LINK_RETRY_MIN;
-        }
-        n0_future::time::sleep(retry).await;
-        retry = (retry * 2).min(LINK_RETRY_MAX);
+        n0_future::time::sleep(delay).await;
     }
 }
 
-/// One link attempt. Returns whether it reached the vault's heads and why
-/// it ended.
+/// One link attempt. It runs until the link ends, and resets `retry` once
+/// it reaches the vault's heads.
 async fn follow(
     endpoint: &Endpoint,
     conns: &ConnCache,
     evt_tx: &async_channel::Sender<Event>,
-    app: &str,
+    ours: &VersionInfo,
     ticket: &VaultTicket,
-) -> (bool, String) {
+    retry: &mut Duration,
+) -> Result<Infallible, LinkEnd> {
     let vault = ticket.vault;
+    let theirs = version::probe(endpoint, ticket.host.clone(), ours)
+        .await
+        .map_err(LinkEnd::Down)?;
+    if let Err(outdated) = version::compat(ours, &theirs) {
+        return Err(LinkEnd::Incompatible(theirs, outdated));
+    }
     let hello = SyncRequest::Hello {
         session: vault,
         proto: PROTO_VERSION,
         pairing: Some(ticket.pairing),
-        app: app.to_string(),
+        app: ours.app.clone(),
     };
-    match request(endpoint, conns, ticket.host.clone(), &hello).await {
-        Ok(SyncResponse::Hello { accepted: true, .. }) => (),
-        Ok(SyncResponse::Hello { proto, .. }) => {
-            let error =
-                format!("protocol mismatch: vault speaks v{proto}, this build v{PROTO_VERSION}");
-            return (false, error);
-        }
-        Ok(SyncResponse::Denied { reason }) => return (false, format!("link denied: {reason}")),
-        Ok(_) => return (false, "unexpected hello response".to_string()),
-        Err(e) => return (false, e),
+    match request(endpoint, conns, ticket.host.clone(), &hello)
+        .await
+        .map_err(LinkEnd::Down)?
+    {
+        SyncResponse::Hello { accepted: true, .. } => (),
+        // A vault that refuses a version it claims to speak must update.
+        SyncResponse::Hello { .. } => return Err(LinkEnd::Incompatible(theirs, Outdated::Them)),
+        SyncResponse::Denied { reason } => return Err(LinkEnd::Denied(reason)),
+        _ => return Err(LinkEnd::Down("unexpected hello response".to_string())),
     }
     let watch = &SyncRequest::Watch { session: vault };
     let open = |conn| async move { send_request(&conn, watch).await };
-    let mut recv = match with_conn(endpoint, conns, ticket.host.clone(), open).await {
-        Ok(recv) => recv,
-        Err(e) => return (false, e),
-    };
-    let mut reached = false;
+    let mut recv = with_conn(endpoint, conns, ticket.host.clone(), open)
+        .await
+        .map_err(LinkEnd::Down)?;
     loop {
-        let evt = match read_frame::<WatchMsg>(&mut recv).await {
-            Ok(WatchMsg::Heads(heads)) => {
-                reached = true;
-                Event::LinkUp { vault, heads }
+        let evt = match read_frame::<WatchMsg>(&mut recv)
+            .await
+            .map_err(LinkEnd::Down)?
+        {
+            WatchMsg::Heads(heads) => {
+                *retry = LINK_RETRY_MIN;
+                let info = theirs.clone();
+                Event::LinkUp { vault, heads, info }
             }
-            Ok(WatchMsg::Changed(changes)) => Event::LinkChanged { vault, changes },
-            Err(e) => return (reached, e),
+            WatchMsg::Changed(changes) => Event::LinkChanged { vault, changes },
         };
-        if evt_tx.send(evt).await.is_err() {
-            return (reached, "the application is gone".to_string());
-        }
+        let gone = |_| LinkEnd::Down("the application is gone".to_string());
+        evt_tx.send(evt).await.map_err(gone)?;
     }
 }
 
@@ -1390,5 +1461,75 @@ mod tests {
         };
         assert!(paired);
         assert_eq!(app, "gantz 0.0.1");
+    }
+
+    // A device that finds its vault on a newer protocol reports both sides
+    // and never says hello. The vault sees the device's version.
+    #[test]
+    #[ignore = "binds real sockets"]
+    fn a_vault_on_a_newer_protocol_is_incompatible() {
+        let local = Infra::Custom {
+            relays: vec![],
+            pkarr: None,
+        };
+        let newer = VersionInfo {
+            proto_min: PROTO_VERSION + 1,
+            proto_max: PROTO_VERSION + 1,
+            app: "gantz 9.0.0".to_string(),
+        };
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            // A stand-in vault that only answers the version probe.
+            let endpoint = infra_builder(&local)
+                .unwrap()
+                .alpns(vec![VERSION_ALPN.to_vec()])
+                .bind()
+                .await
+                .unwrap();
+            let (events, probes) = async_channel::unbounded();
+            let info = newer.clone();
+            let _router = Router::builder(endpoint.clone())
+                .accept(VERSION_ALPN, VersionServer { info, events })
+                .spawn();
+            let host = endpoint.watch_addr().stream().next().await.unwrap();
+
+            let config = RuntimeConfig {
+                infra: local,
+                app: "gantz 0.1.0".to_string(),
+                ..Default::default()
+            };
+            let device = crate::spawn(Identity::generate(), config);
+            let ticket = VaultTicket {
+                vault: SessionId([1; 32]),
+                pairing: PairingSecret::generate(),
+                host,
+            };
+            device.cmds.send(Command::Link(ticket)).await.unwrap();
+            let incompatible = async {
+                loop {
+                    match device.events.recv().await.unwrap() {
+                        Event::LinkIncompatible {
+                            theirs, outdated, ..
+                        } => return (theirs, outdated),
+                        Event::LinkUp { .. } => panic!("linked across protocols"),
+                        _ => (),
+                    }
+                }
+            };
+            let (theirs, outdated) =
+                n0_future::time::timeout(Duration::from_secs(30), incompatible)
+                    .await
+                    .expect("timed out waiting for the link to fail");
+            assert_eq!(theirs, newer);
+            assert_eq!(outdated, Outdated::Us);
+            let Ok(Event::Probed { info, outdated, .. }) = probes.recv().await else {
+                panic!("expected a probe");
+            };
+            assert_eq!(info, VersionInfo::this("gantz 0.1.0"));
+            assert_eq!(outdated, Some(Outdated::Them));
+        });
     }
 }
