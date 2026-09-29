@@ -3633,8 +3633,8 @@ mod tests {
                         Datum::Map(vec![
                             ("addr".to_string(), Datum::Str(ca.to_string())),
                             ("inline".to_string(), Datum::Bool(*inline)),
-                            ("n_in".to_string(), Datum::U64(*n_in as u64)),
-                            ("n_out".to_string(), Datum::U64(*n_out as u64)),
+                            ("n_in".to_string(), Datum::from_u64(*n_in as u64)),
+                            ("n_out".to_string(), Datum::from_u64(*n_out as u64)),
                         ]),
                     );
                     nd.refs.push(*ca);

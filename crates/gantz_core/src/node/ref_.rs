@@ -329,7 +329,7 @@ mod tests {
         assert_eq!(
             extended.ext("test.ext"),
             Some(&Datum::Map(vec![
-                ("alpha".to_string(), Datum::U64(3)),
+                ("alpha".to_string(), Datum::I64(3)),
                 ("zeta".to_string(), Datum::Bool(true)),
             ])),
         );

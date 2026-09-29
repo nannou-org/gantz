@@ -86,7 +86,7 @@ fn bind_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     while let Some(id) = args.int_at(path.len())? {
         let id = u64::try_from(id)
             .map_err(|_| args.malformed_at(path.len(), "bind ids must be non-negative"))?;
-        path.push(Datum::U64(id));
+        path.push(Datum::from_u64(id));
     }
     let fields = match path.is_empty() {
         true => vec![],
@@ -128,7 +128,10 @@ fn comment_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
         "Comment",
         vec![
             ("text", Datum::Str(text)),
-            ("size", Datum::Seq(vec![Datum::U64(w), Datum::U64(h)])),
+            (
+                "size",
+                Datum::Seq(vec![Datum::from_u64(w), Datum::from_u64(h)]),
+            ),
         ],
     ))
 }
@@ -200,7 +203,7 @@ fn number_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
         fields.push(("max", Datum::F64(max)));
     }
     if let Some(precision) = args.keyword_int("precision")? {
-        fields.push(("precision", Datum::U64(precision.max(0) as u64)));
+        fields.push(("precision", Datum::from_u64(precision.max(0) as u64)));
     }
     if let Some(s) = args.keyword_symbol("input")? {
         let input = NumberInput::from_str(&s)

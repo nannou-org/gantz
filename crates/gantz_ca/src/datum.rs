@@ -14,6 +14,13 @@
 //! node-set serde in `gantz_format::impl_node_set_serde!` and
 //! `#[serde(tag = ...)]` derives rely on this.
 //!
+//! Each integer has one canonical form. An integer that fits in `i64` is
+//! always [`Datum::I64`], and only larger ones are [`Datum::U64`]. Formats
+//! such as RON and JSON do not record whether an integer was signed. With
+//! one form per integer, a datum that is written and read back keeps its
+//! content address. [`to_datum`], `Datum`'s `Deserialize` and
+//! [`Datum::canonicalize`] all apply the rule.
+//!
 //! The one divergence from `serde_json::Value` is that `char` and `bytes`
 //! keep dedicated variants, [`Datum::Char`] and [`Datum::Bytes`], rather
 //! than collapsing to a string or array. The full serde data model then
@@ -42,9 +49,10 @@ pub enum Datum {
     Null,
     /// A boolean. Written as `#t` or `#f`.
     Bool(bool),
-    /// A signed integer. Written as a decimal literal.
+    /// An integer that fits in `i64`. Written as a decimal literal.
     I64(i64),
-    /// An unsigned integer. Written as a decimal literal.
+    /// An integer above `i64::MAX`. Written as a decimal literal. A smaller
+    /// value in this variant is not canonical.
     U64(u64),
     /// A finite float. Written as a decimal literal, always with a `.` or an
     /// exponent.
@@ -149,7 +157,13 @@ impl Datum {
         }
     }
 
-    /// Recursively sort map entries by key, in place.
+    /// The canonical datum for an unsigned integer. See the module docs.
+    pub fn from_u64(n: u64) -> Datum {
+        i64::try_from(n).map_or(Datum::U64(n), Datum::I64)
+    }
+
+    /// Recursively sort map entries by key and give each integer its
+    /// canonical variant, in place.
     ///
     /// [`to_datum`] preserves a struct's field declaration order, while the
     /// codec's free-form map serialization sorts keys. The same logical value
@@ -158,6 +172,7 @@ impl Datum {
     /// so one logical value has exactly one form.
     pub fn canonicalize(&mut self) {
         match self {
+            Datum::U64(n) => *self = Datum::from_u64(*n),
             Datum::Seq(items) => items.iter_mut().for_each(Self::canonicalize),
             Datum::Map(entries) => {
                 entries.iter_mut().for_each(|(_, v)| v.canonicalize());
@@ -378,10 +393,10 @@ impl ser::Serializer for Serializer {
     }
 
     fn serialize_i128(self, v: i128) -> Result<Datum, DatumError> {
-        if let Ok(v) = u64::try_from(v) {
-            Ok(Datum::U64(v))
-        } else if let Ok(v) = i64::try_from(v) {
+        if let Ok(v) = i64::try_from(v) {
             Ok(Datum::I64(v))
+        } else if let Ok(v) = u64::try_from(v) {
+            Ok(Datum::U64(v))
         } else {
             Err(DatumError("i128 out of range".into()))
         }
@@ -400,12 +415,12 @@ impl ser::Serializer for Serializer {
     }
 
     fn serialize_u64(self, v: u64) -> Result<Datum, DatumError> {
-        Ok(Datum::U64(v))
+        Ok(Datum::from_u64(v))
     }
 
     fn serialize_u128(self, v: u128) -> Result<Datum, DatumError> {
         match u64::try_from(v) {
-            Ok(v) => Ok(Datum::U64(v)),
+            Ok(v) => Ok(Datum::from_u64(v)),
             Err(_) => Err(DatumError("u128 out of range".into())),
         }
     }
@@ -932,7 +947,7 @@ impl<'de> Deserialize<'de> for Datum {
             }
 
             fn visit_u64<E>(self, n: u64) -> Result<Datum, E> {
-                Ok(Datum::U64(n))
+                Ok(Datum::from_u64(n))
             }
 
             fn visit_f64<E>(self, n: f64) -> Result<Datum, E> {
@@ -1242,7 +1257,7 @@ impl<'de> de::Deserializer<'de> for Datum {
         match self {
             Datum::Seq(v) => visit_seq(v, visitor),
             Datum::Bytes(b) => visit_seq(
-                b.into_iter().map(|b| Datum::U64(u64::from(b))).collect(),
+                b.into_iter().map(|b| Datum::I64(i64::from(b))).collect(),
                 visitor,
             ),
             _ => Err(self.invalid_type(&visitor)),
@@ -1701,5 +1716,58 @@ mod tests {
         assert_eq!(to_datum(&d).unwrap(), d);
         let rt: Datum = from_datum(d.clone()).unwrap();
         assert_eq!(rt, d);
+    }
+
+    /// Every integer type lands in one variant per value, and typed values
+    /// read back from it unchanged.
+    #[test]
+    fn integers_take_one_form() {
+        let big = i64::MAX as u64 + 1;
+        let cases = [
+            (to_datum(&3u8), Datum::I64(3)),
+            (to_datum(&3u32), Datum::I64(3)),
+            (to_datum(&3u64), Datum::I64(3)),
+            (to_datum(&3i64), Datum::I64(3)),
+            (to_datum(&-3i32), Datum::I64(-3)),
+            (to_datum(&3i128), Datum::I64(3)),
+            (to_datum(&3u128), Datum::I64(3)),
+            (to_datum(&big), Datum::U64(big)),
+            (to_datum(&u64::MAX), Datum::U64(u64::MAX)),
+        ];
+        for (datum, expected) in cases {
+            assert_eq!(datum.unwrap(), expected);
+        }
+        let mut d = Datum::Seq(vec![Datum::U64(3), Datum::U64(u64::MAX)]);
+        d.canonicalize();
+        assert_eq!(d, Datum::Seq(vec![Datum::I64(3), Datum::U64(u64::MAX)]));
+        // Verification rejects a node in the other form.
+        assert!(!crate::NodeData::new("t", Datum::U64(3)).is_canonical());
+
+        type Ints = (u8, u32, u64, i64, u64);
+        let ints: Ints = (3, 3, 3, -3, u64::MAX);
+        let back: Ints = from_datum(to_datum(&ints).unwrap()).unwrap();
+        assert_eq!(back, ints);
+    }
+
+    /// RON writes integers without their sign. Canonical datums still read
+    /// back unchanged, so their addresses hold.
+    #[test]
+    fn integers_keep_their_address_through_ron() {
+        let values = [
+            Datum::I64(0),
+            Datum::I64(3),
+            Datum::I64(-3),
+            Datum::I64(i64::MAX),
+            Datum::I64(i64::MIN),
+            Datum::U64(i64::MAX as u64 + 1),
+            Datum::U64(u64::MAX),
+            map(&[("range", Datum::Seq(vec![Datum::I64(1), Datum::I64(4)]))]),
+        ];
+        for value in values {
+            let text = ron::to_string(&value).unwrap();
+            let back: Datum = ron::de::from_str(&text).unwrap();
+            assert_eq!(back, value, "{text}");
+            assert_eq!(crate::content_addr(&back), crate::content_addr(&value));
+        }
     }
 }

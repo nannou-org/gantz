@@ -590,7 +590,7 @@ fn node_set_addr_pins() {
         ),
         (
             "Buffer",
-            "ea7bab6ba5b0acbd5f07b16b3e1cd1da636d24552cbeca6f5722a41f28df6344",
+            "a36b996894957580c7787919492d7d88fc2b8b510c238ea2e41bbdf5a61fdb69",
         ),
         (
             "Bus",
@@ -598,7 +598,7 @@ fn node_set_addr_pins() {
         ),
         (
             "Comment",
-            "ee0eb63753a269f48a387c812b4d96a2a8ef78c441c791bc9ea445613d7e514b",
+            "79f38aa5d65c9b89810731716826dccf21232aaa7d7b95e77389e917c221e30a",
         ),
         (
             "Delay",
@@ -606,7 +606,7 @@ fn node_set_addr_pins() {
         ),
         (
             "Envgen",
-            "4a072c3bb2625bf162e9e61a4cd019ecd1d03c3b5fe90d415e824b862107d803",
+            "e41e657926d5d8550f52be104fc560cd60aef20cc5e1789f08bb9c35415d50d8",
         ),
         (
             "Expr",
@@ -670,7 +670,7 @@ fn node_set_addr_pins() {
         ),
         (
             "Plot",
-            "deb280956a42f29de5d9515537c19b57a8ccb1575e2620dd68ab2d66aaae4484",
+            "123657d9ed4885c8b05380ef4234bbbd69f94313f069c5cd401531cab56eb256",
         ),
         (
             "Pmini",
@@ -678,11 +678,11 @@ fn node_set_addr_pins() {
         ),
         (
             "Pplot",
-            "119aca31f290bbb848b66dc8f5130c7a21757b425e061596ea4940b7d93c22ba",
+            "6dfe88ae422a217b5a836ee4ac12e047b620458c9c90826ef33d0263993c6ed4",
         ),
         (
             "Sample",
-            "92a1cf270d69e1d782ec83778359d7897d572d0b523f42c7a05be3438c0863c5",
+            "ca98f97638d6a61fbee18cdbad8adcf069df1fe385a32720b531edff647f82f6",
         ),
         (
             "ScopeOut",
