@@ -26,8 +26,7 @@
 use crate::{Effect, JoinError, OpenHeads, Sessions, inbound, lifecycle::session_resolutions};
 use gantz_ca as ca;
 use gantz_collab::{
-    Command, ConnState, Event, Handle, ObjectRef, Objects, PROTO_VERSION, PeerId, Push, VaultId,
-    VaultTicket, Want,
+    Command, ConnState, Event, Handle, ObjectRef, Objects, PeerId, Push, VaultId, VaultTicket, Want,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::mem;
@@ -126,12 +125,6 @@ pub fn link(
     synced: BTreeMap<ca::Name, ca::CommitAddr>,
     local_only: BTreeSet<ca::Name>,
 ) -> Result<VaultId, JoinError> {
-    if ticket.proto != PROTO_VERSION {
-        return Err(JoinError::Proto {
-            ticket: ticket.proto,
-            ours: PROTO_VERSION,
-        });
-    }
     let id = ticket.vault;
     let vault = ticket.host_id();
     handle

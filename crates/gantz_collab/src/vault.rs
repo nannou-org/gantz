@@ -19,8 +19,9 @@
 //!
 //! Access is by pairing. The vault ticket carries a [`PairingSecret`]. A
 //! `Hello` that presents it from an unknown peer adds that peer to the
-//! vault's allowlist and emits [`Event::Paired`]. Every other request needs
-//! an allowlisted peer.
+//! vault's allowlist and emits [`Event::DeviceSeen`]. Every other request
+//! needs an allowlisted peer. A `Hello` for another protocol version never
+//! pairs.
 //!
 //! [`SyncRequest::Hello`]: crate::SyncRequest::Hello
 //! [`SyncRequest::Watch`]: crate::SyncRequest::Watch
@@ -28,7 +29,7 @@
 //! [`SyncRequest::Push`]: crate::SyncRequest::Push
 //! [`ObjectRef::Closure`]: crate::ObjectRef::Closure
 //! [`Event::PushRequest`]: crate::Event::PushRequest
-//! [`Event::Paired`]: crate::Event::Paired
+//! [`Event::DeviceSeen`]: crate::Event::DeviceSeen
 
 use crate::{
     proto::Objects,

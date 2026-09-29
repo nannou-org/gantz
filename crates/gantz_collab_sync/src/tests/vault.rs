@@ -78,7 +78,11 @@ impl Net {
     /// Link device `d`, never synced before, and bring its link up.
     fn link(&mut self, d: usize, local_only: &[&str]) {
         let id = iroh::EndpointId::from_bytes(&self.peer.0).unwrap();
-        let ticket = VaultTicket::new(self.id, PairingSecret::generate(), id.into());
+        let ticket = VaultTicket {
+            vault: self.id,
+            pairing: PairingSecret::generate(),
+            host: id.into(),
+        };
         let local_only: BTreeSet<ca::Name> = local_only.iter().map(|n| name(n)).collect();
         let device = &mut self.devices[d];
         vault::link(
@@ -339,7 +343,11 @@ fn a_failed_fetch_holds_its_name_until_the_vault_moves() {
     net.settle();
     // Device 1 links but its fetch fails.
     let id = iroh::EndpointId::from_bytes(&net.peer.0).unwrap();
-    let ticket = VaultTicket::new(net.id, PairingSecret::generate(), id.into());
+    let ticket = VaultTicket {
+        vault: net.id,
+        pairing: PairingSecret::generate(),
+        host: id.into(),
+    };
     let heads = net.heads().into_iter().collect();
     let device = &mut net.devices[1];
     vault::link(

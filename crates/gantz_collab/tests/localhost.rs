@@ -249,7 +249,7 @@ fn local() -> gantz_collab::RuntimeConfig {
             relays: vec![],
             pkarr: None,
         },
-        port: None,
+        ..Default::default()
     }
 }
 
@@ -309,7 +309,9 @@ fn vaults_pair_link_push_fetch_and_notify() {
         .send_blocking(Command::Link(ticket.clone()))
         .unwrap();
     let paired = wait_for(&vault, |e| match e {
-        Event::Paired { peer, .. } => Some(peer),
+        Event::DeviceSeen {
+            peer, paired: true, ..
+        } => Some(peer),
         _ => None,
     });
     assert_eq!(paired, device_peer);

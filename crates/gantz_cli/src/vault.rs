@@ -80,7 +80,7 @@ const TICKET_FILE: &str = "ticket";
 impl Vault {
     /// Open the vault in `path`, creating it on first use, and start
     /// serving it.
-    pub fn open(path: &Path, infra: Infra, port: Option<u16>) -> Result<Self, String> {
+    pub fn open(path: &Path, app: &str, infra: Infra, port: Option<u16>) -> Result<Self, String> {
         let mut dir = Dir::create(path)?;
         let identity = match gantz_collab::identity::load(&dir.store) {
             Some(identity) => identity,
@@ -115,7 +115,12 @@ impl Vault {
             registry.heads().count(),
             config.devices.len(),
         );
-        let handle = gantz_collab::spawn(identity, RuntimeConfig { infra, port });
+        let runtime = RuntimeConfig {
+            infra,
+            port,
+            app: app.to_string(),
+        };
+        let handle = gantz_collab::spawn(identity, runtime);
         let entry = VaultEntry {
             id: config.id,
             access: config.devices.clone(),
@@ -167,13 +172,18 @@ impl Vault {
         match event {
             Event::Ready { peer } => info!("vault peer {peer}"),
             Event::VaultTicketReady { ticket, .. } => self.set_ticket(ticket)?,
-            Event::Paired { peer, .. } => {
+            Event::DeviceSeen {
+                peer,
+                app,
+                paired: true,
+                ..
+            } => {
                 self.config.devices.insert(peer);
                 let config = &self.config;
                 checked(&mut self.dir.store, |s| {
                     gantz_store::save(s, CONFIG_KEY, config)
                 })?;
-                info!("paired device {}", peer.to_hex());
+                info!("paired device {} ({app})", peer.to_hex());
             }
             Event::PushRequest {
                 from, push, reply, ..
@@ -289,7 +299,7 @@ pub fn run(args: VaultArgs, conf: &Conf) -> i32 {
 fn serve(args: ServeArgs, conf: &Conf) -> Result<(), String> {
     let path = vault_dir(&args.dir, conf)?;
     let infra = gantz_collab_sync::infra(args.relay.as_deref());
-    Vault::open(&path, infra, Some(args.port))?.serve()
+    Vault::open(&path, conf.build, infra, Some(args.port))?.serve()
 }
 
 /// Print each paired device's id.

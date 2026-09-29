@@ -23,7 +23,10 @@ fn ensure_runtime<'a>(
         let infra = gantz_collab_sync::infra(config.custom_relay.as_deref());
         gantz_collab::spawn(
             identity.clone(),
-            gantz_collab::RuntimeConfig { infra, port: None },
+            gantz_collab::RuntimeConfig {
+                infra,
+                ..Default::default()
+            },
         )
     })
 }

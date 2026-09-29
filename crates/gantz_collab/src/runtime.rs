@@ -81,6 +81,9 @@ pub struct RuntimeConfig {
     /// port. A vault fixes its port so that the addresses in its tickets
     /// stay valid across restarts. Ignored in the browser.
     pub port: Option<u16>,
+    /// The host app and its version, such as `gantz 0.4.0`. Peers see it
+    /// for display only. Compatibility is decided on [`PROTO_VERSION`].
+    pub app: String,
 }
 
 /// The relay and address-lookup infrastructure, for peer discovery.
@@ -245,9 +248,17 @@ pub enum Event {
     /// The link ticket for a hosted vault, minted from the endpoint's
     /// current address.
     VaultTicketReady { vault: VaultId, ticket: String },
-    /// A device presented the pairing secret and joined a hosted vault's
-    /// allowlist. The application persists it.
-    Paired { vault: VaultId, peer: PeerId },
+    /// A device greeted a hosted vault with a compatible protocol. `paired`
+    /// is true when it just presented the pairing secret and joined the
+    /// vault's allowlist. The application persists that, and may record the
+    /// device's `app` and `proto` for display.
+    DeviceSeen {
+        vault: VaultId,
+        peer: PeerId,
+        app: String,
+        proto: u32,
+        paired: bool,
+    },
     /// A paired device asks to move a name on a hosted vault. The
     /// application decides, persists, then answers through `reply`.
     PushRequest {
@@ -384,15 +395,26 @@ impl SyncServer {
     }
 
     /// Answer one request to a hosted vault. A `Hello` from an unknown peer
-    /// that presents the pairing secret pairs it.
+    /// that presents the pairing secret pairs it, but only when it speaks
+    /// this protocol version.
     fn respond_vault(
         &self,
         vault: &mut ServedVault,
         remote: PeerId,
         req: SyncRequest,
     ) -> SyncResponse {
-        if let SyncRequest::Hello { proto, pairing, .. } = &req {
-            if !vault.entry.access.contains(&remote) {
+        if let SyncRequest::Hello {
+            proto,
+            pairing,
+            app,
+            ..
+        } = &req
+        {
+            if *proto != PROTO_VERSION {
+                return hello(*proto);
+            }
+            let paired = !vault.entry.access.contains(&remote);
+            if paired {
                 if !pairing
                     .as_ref()
                     .is_some_and(|p| vault.entry.pairing.matches(p))
@@ -400,12 +422,15 @@ impl SyncServer {
                     return denied("access denied");
                 }
                 vault.entry.access.insert(remote);
-                let paired = Event::Paired {
-                    vault: vault.entry.id,
-                    peer: remote,
-                };
-                let _ = self.events.try_send(paired);
             }
+            let seen = Event::DeviceSeen {
+                vault: vault.entry.id,
+                peer: remote,
+                app: app.clone(),
+                proto: *proto,
+                paired,
+            };
+            let _ = self.events.try_send(seen);
             return hello(*proto);
         }
         if !vault.entry.access.contains(&remote) {
@@ -538,6 +563,7 @@ async fn drive(
         log::warn!("collab: {message}");
         send_evt(Event::Error { session, message })
     };
+    let app: Arc<str> = config.app.as_str().into();
     let builder = match infra_builder(&config.infra).and_then(|b| bind_port(b, config.port)) {
         Ok(builder) => builder,
         Err(e) => {
@@ -678,8 +704,9 @@ async fn drive(
                 let endpoint = endpoint.clone();
                 let evt_tx = evt_tx.clone();
                 let conns = conns.clone();
+                let app = app.clone();
                 n0_future::task::spawn(async move {
-                    let evt = join_snapshot(&endpoint, &conns, &ticket).await;
+                    let evt = join_snapshot(&endpoint, &conns, &app, &ticket).await;
                     let _ = evt_tx.send(evt).await;
                 });
             }
@@ -748,7 +775,12 @@ async fn drive(
                 let evt_tx = evt_tx.clone();
                 let task = n0_future::task::spawn(async move {
                     while let Some(addr) = addrs.next().await {
-                        let ticket = VaultTicket::new(vault, pairing, addr).to_string();
+                        let ticket = VaultTicket {
+                            vault,
+                            pairing,
+                            host: addr,
+                        }
+                        .to_string();
                         let ready = Event::VaultTicketReady { vault, ticket };
                         if evt_tx.send(ready).await.is_err() {
                             return;
@@ -787,7 +819,13 @@ async fn drive(
             Command::Link(ticket) => {
                 let vault = ticket.vault;
                 bootstrap.insert(vault, vec![ticket.host.clone()]);
-                let task = link(endpoint.clone(), conns.clone(), evt_tx.clone(), ticket);
+                let task = link(
+                    endpoint.clone(),
+                    conns.clone(),
+                    evt_tx.clone(),
+                    app.clone(),
+                    ticket,
+                );
                 let task = n0_future::task::spawn(task);
                 links.insert(vault, AbortOnDropHandle::new(task));
             }
@@ -1159,12 +1197,13 @@ async fn link(
     endpoint: Endpoint,
     conns: ConnCache,
     evt_tx: async_channel::Sender<Event>,
+    app: Arc<str>,
     ticket: VaultTicket,
 ) {
     let vault = ticket.vault;
     let mut retry = LINK_RETRY_MIN;
     loop {
-        let (reached, error) = follow(&endpoint, &conns, &evt_tx, &ticket).await;
+        let (reached, error) = follow(&endpoint, &conns, &evt_tx, &app, &ticket).await;
         if evt_tx.send(Event::LinkDown { vault, error }).await.is_err() {
             return;
         }
@@ -1182,6 +1221,7 @@ async fn follow(
     endpoint: &Endpoint,
     conns: &ConnCache,
     evt_tx: &async_channel::Sender<Event>,
+    app: &str,
     ticket: &VaultTicket,
 ) -> (bool, String) {
     let vault = ticket.vault;
@@ -1189,6 +1229,7 @@ async fn follow(
         session: vault,
         proto: PROTO_VERSION,
         pairing: Some(ticket.pairing),
+        app: app.to_string(),
     };
     match request(endpoint, conns, ticket.host.clone(), &hello).await {
         Ok(SyncResponse::Hello { accepted: true, .. }) => (),
@@ -1224,7 +1265,12 @@ async fn follow(
 }
 
 /// Hello and snapshot against each ticket host in turn.
-async fn join_snapshot(endpoint: &Endpoint, conns: &ConnCache, ticket: &SessionTicket) -> Event {
+async fn join_snapshot(
+    endpoint: &Endpoint,
+    conns: &ConnCache,
+    app: &str,
+    ticket: &SessionTicket,
+) -> Event {
     let session = ticket.session;
     let mut last_error = "ticket carries no host addresses".to_string();
     for host in &ticket.hosts {
@@ -1232,6 +1278,7 @@ async fn join_snapshot(endpoint: &Endpoint, conns: &ConnCache, ticket: &SessionT
             session,
             proto: PROTO_VERSION,
             pairing: None,
+            app: app.to_string(),
         };
         match request(endpoint, conns, host.clone(), &hello).await {
             Ok(SyncResponse::Hello { accepted: true, .. }) => {}
@@ -1278,5 +1325,70 @@ async fn join_snapshot(endpoint: &Endpoint, conns: &ConnCache, ticket: &SessionT
     Event::Error {
         session: Some(session),
         message: format!("join failed: {last_error}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::vault::PairingSecret;
+    use std::collections::BTreeSet;
+
+    /// A server hosting one vault, plus the events it raises.
+    fn server(pairing: PairingSecret) -> (SyncServer, ServedVault, async_channel::Receiver<Event>) {
+        let (events, rx) = async_channel::unbounded();
+        let server = SyncServer {
+            shared: Shared::default(),
+            events,
+        };
+        let vault = ServedVault {
+            entry: VaultEntry {
+                id: SessionId([1; 32]),
+                access: BTreeSet::new(),
+                pairing,
+                store: Default::default(),
+            },
+            watchers: vec![],
+        };
+        (server, vault, rx)
+    }
+
+    fn hello_with(proto: u32, pairing: PairingSecret) -> SyncRequest {
+        SyncRequest::Hello {
+            session: SessionId([1; 32]),
+            proto,
+            pairing: Some(pairing),
+            app: "gantz 0.0.1".to_string(),
+        }
+    }
+
+    // A device on another protocol version never pairs, even with the secret.
+    #[test]
+    fn a_hello_for_another_protocol_never_pairs() {
+        let pairing = PairingSecret::generate();
+        let (server, mut vault, events) = server(pairing);
+        let peer = PeerId([2; 32]);
+        let resp = server.respond_vault(&mut vault, peer, hello_with(99, pairing));
+        assert!(matches!(
+            resp,
+            SyncResponse::Hello {
+                accepted: false,
+                ..
+            }
+        ));
+        assert!(vault.entry.access.is_empty());
+        assert!(events.try_recv().is_err());
+
+        let resp = server.respond_vault(&mut vault, peer, hello_with(PROTO_VERSION, pairing));
+        let SyncResponse::Hello { accepted, .. } = resp else {
+            panic!("expected a hello");
+        };
+        assert!(accepted);
+        assert!(vault.entry.access.contains(&peer));
+        let Ok(Event::DeviceSeen { paired, app, .. }) = events.try_recv() else {
+            panic!("expected a device seen event");
+        };
+        assert!(paired);
+        assert_eq!(app, "gantz 0.0.1");
     }
 }

@@ -141,6 +141,7 @@ fn conf() -> gantz_cli::Conf {
         entrypoints: bevy_gantz_egui::entrypoints,
         org: "nannou-org",
         app: "gantz",
+        build: BUILD,
     }
 }
 

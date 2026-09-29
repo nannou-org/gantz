@@ -57,8 +57,8 @@ mod tests;
 #[cfg(feature = "collab")]
 mod vault;
 
-/// The CLI configuration: the node set to parse and compile with, and the
-/// names that locate the default data directories.
+/// The CLI configuration: the node set to parse and compile with, the names
+/// that locate the default data directories, and the build.
 pub struct Conf {
     /// The node set's codec. Its sugar reads and writes `.gantz` text.
     pub codec: gantz_egui::node::NodeCodec,
@@ -77,6 +77,9 @@ pub struct Conf {
     pub org: &'static str,
     /// The app name that locates the default data directories.
     pub app: &'static str,
+    /// This build: the app and its version, such as `gantz 0.4.0`. Peers see
+    /// it for display.
+    pub build: &'static str,
 }
 
 #[derive(Subcommand)]

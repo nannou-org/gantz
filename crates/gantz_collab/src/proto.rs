@@ -202,11 +202,13 @@ pub struct WireCommit {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum SyncRequest {
     /// Protocol negotiation and access check. A vault pairs an unknown peer
-    /// that presents its secret. See [`crate::vault`].
+    /// that presents its secret. See [`crate::vault`]. `app` names the
+    /// sender's app and version, for display.
     Hello {
         session: SessionId,
         proto: u32,
         pairing: Option<PairingSecret>,
+        app: String,
     },
     /// The full served store, for a joiner's initial sync.
     Snapshot { session: SessionId },

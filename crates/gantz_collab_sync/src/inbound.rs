@@ -253,7 +253,7 @@ pub fn handle_event(
         // The vault host handles these itself, and a vault link not held
         // by these sessions has nothing to update.
         Event::VaultTicketReady { .. }
-        | Event::Paired { .. }
+        | Event::DeviceSeen { .. }
         | Event::PushRequest { .. }
         | Event::LinkUp { .. }
         | Event::LinkChanged { .. }

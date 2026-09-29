@@ -16,7 +16,7 @@ impl Device {
     fn new() -> Self {
         let config = RuntimeConfig {
             infra: local(),
-            port: None,
+            ..Default::default()
         };
         Self {
             handle: gantz_collab::spawn(Identity::generate(), config),
@@ -109,7 +109,7 @@ fn devices_sync_through_a_vault_that_survives_a_restart() {
         .local_addr()
         .unwrap()
         .port();
-    let mut vault = Vault::open(&dir, local(), Some(port)).unwrap();
+    let mut vault = Vault::open(&dir, "gantz vault", local(), Some(port)).unwrap();
     let (mut a, mut b) = (Device::new(), Device::new());
     step_until(&mut vault, &mut [], |v, _| v.ticket.is_some());
     let ticket = vault.ticket.clone().unwrap();
@@ -136,7 +136,7 @@ fn devices_sync_through_a_vault_that_survives_a_restart() {
         v.head("riff") == Some(riff) && d[1].head("riff") == Some(riff)
     });
     vault.stop();
-    let mut vault = Vault::open(&dir, local(), Some(port)).unwrap();
+    let mut vault = Vault::open(&dir, "gantz vault", local(), Some(port)).unwrap();
     assert_eq!(vault.head("riff"), Some(riff));
     assert_eq!(vault.config.devices.len(), 2);
     let riff = a.edit("riff", "r2");
