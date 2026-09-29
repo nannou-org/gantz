@@ -1,8 +1,12 @@
-use crate::vault::{Dir, Vault};
+use crate::vault::{CONFIG_KEY, Dir, Vault};
+use bevy_pkv::PkvStore;
 use gantz_ca as ca;
+use gantz_collab::identity;
 use gantz_collab::{Handle, Identity, Infra, RuntimeConfig};
 use gantz_collab_sync::{OpenHeads, Sessions};
+use gantz_store::{Load, STORE_FORMAT};
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
 /// A device: its runtime, sync state and registry.
@@ -16,7 +20,8 @@ impl Device {
     fn new() -> Self {
         let config = RuntimeConfig {
             infra: local(),
-            ..Default::default()
+            port: None,
+            app: "gantz device".to_string(),
         };
         Self {
             handle: gantz_collab::spawn(Identity::generate(), config),
@@ -79,6 +84,29 @@ fn local() -> Infra {
     }
 }
 
+/// A new directory under the system temp dir.
+fn temp_dir(tag: &str) -> PathBuf {
+    let nanos = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let name = format!("gantz-vault-{tag}-{}-{nanos}", std::process::id());
+    std::env::temp_dir().join(name)
+}
+
+/// Write raw entries into the store in `dir`, as another build might.
+fn write_store(dir: &Path, entries: &[(&str, &str)]) {
+    std::fs::create_dir_all(dir).unwrap();
+    let mut store = PkvStore::new_in_dir(dir);
+    for (key, value) in entries {
+        store.set_string(key, value).unwrap();
+    }
+}
+
+fn read_store(dir: &Path, key: &str) -> Option<String> {
+    PkvStore::new_in_dir(dir).get_string(key).unwrap()
+}
+
 /// Step the vault and devices until `done`.
 fn step_until(
     vault: &mut Vault,
@@ -99,11 +127,7 @@ fn step_until(
 #[test]
 #[ignore = "binds real sockets"]
 fn devices_sync_through_a_vault_that_survives_a_restart() {
-    let nanos = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("gantz-vault-{}-{nanos}", std::process::id()));
+    let dir = temp_dir("sync");
     let port = std::net::UdpSocket::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -139,10 +163,58 @@ fn devices_sync_through_a_vault_that_survives_a_restart() {
     let mut vault = Vault::open(&dir, "gantz vault", local(), Some(port)).unwrap();
     assert_eq!(vault.head("riff"), Some(riff));
     assert_eq!(vault.config.devices.len(), 2);
+    assert!(
+        vault
+            .config
+            .devices
+            .values()
+            .all(|d| d.app == "gantz device")
+    );
     let riff = a.edit("riff", "r2");
     step_until(&mut vault, &mut [&mut a, &mut b], |_, d| {
         d[1].head("riff") == Some(riff)
     });
     vault.stop();
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn a_vault_written_by_a_newer_gantz_is_refused_untouched() {
+    let dir = temp_dir("newer");
+    let meta = format!("(format:{},written_by:\"gantz 9.0.0\")", STORE_FORMAT + 1);
+    write_store(&dir, &[("store-meta", &meta)]);
+    let Err(error) = Vault::open(&dir, "gantz vault", local(), None) else {
+        panic!("a vault from a newer gantz opened");
+    };
+    assert!(error.contains("written by gantz 9.0.0"), "{error}");
+    assert!(error.contains("Update gantz"), "{error}");
+    assert_eq!(read_store(&dir, "store-meta"), Some(meta));
+    assert_eq!(read_store(&dir, identity::KEY), None);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+#[test]
+fn an_unreadable_config_is_refused_untouched() {
+    let dir = temp_dir("config");
+    write_store(&dir, &[(CONFIG_KEY, "(id:")]);
+    let Err(error) = Vault::open(&dir, "gantz vault", local(), None) else {
+        panic!("a vault with an unreadable config opened");
+    };
+    assert!(error.contains("left untouched"), "{error}");
+    assert_eq!(read_store(&dir, CONFIG_KEY).as_deref(), Some("(id:"));
+    assert_eq!(read_store(&dir, identity::KEY), None);
+    assert_eq!(read_store(&dir, "store-meta"), None);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+// `devices` and `revoke` open the directory, so a mistyped one is reported
+// and left uncreated.
+#[test]
+fn a_missing_vault_is_refused_and_not_created() {
+    let dir = temp_dir("missing");
+    let Err(error) = Dir::open(&dir) else {
+        panic!("a missing vault opened");
+    };
+    assert!(error.contains("no vault"), "{error}");
+    assert!(!dir.exists());
 }

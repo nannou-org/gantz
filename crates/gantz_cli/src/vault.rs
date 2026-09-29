@@ -18,20 +18,25 @@
 //!   may read it.
 //! - `lock`: held by whichever vault command runs, so `devices` and
 //!   `revoke` cannot race a running `serve`.
+//!
+//! Every vault command refuses a directory that a newer gantz wrote, and
+//! refuses to replace an identity or config it cannot read. Either would
+//! cut off the paired devices. Update gantz to open such a vault.
 
 use crate::{Conf, DirArgs, RevokeArgs, ServeArgs, VaultArgs, VaultCommand};
 use bevy_pkv::PkvStore;
 use gantz_ca as ca;
 use gantz_collab::{
-    Command, Event, Handle, Identity, Infra, Outdated, PairingSecret, PeerId, RuntimeConfig,
-    SessionId, VaultEntry,
+    Command, Event, Handle, Identity, Infra, Outdated, PROTO_MAX, PROTO_MIN, PairingSecret, PeerId,
+    RuntimeConfig, SessionId, VaultEntry,
 };
 use gantz_collab_sync::PushOutcome;
-use gantz_store::{PersistedRegistry, Save};
+use gantz_store::{PersistedRegistry, STORE_FORMAT, Save, Unwritable};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 use tracing::{info, warn};
 
 /// The vault's persisted configuration.
@@ -39,7 +44,21 @@ use tracing::{info, warn};
 pub(crate) struct Config {
     id: SessionId,
     pairing: PairingSecret,
-    pub(crate) devices: BTreeSet<PeerId>,
+    pub(crate) devices: BTreeMap<PeerId, Device>,
+}
+
+/// A paired device, as last seen.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct Device {
+    /// The device's app and version, such as `gantz 0.4.0`.
+    pub(crate) app: String,
+    /// The newest sync protocol version the device speaks.
+    pub(crate) proto: u32,
+    /// When the device paired, in seconds since the Unix epoch.
+    paired: u64,
+    /// When the device last linked or probed, in seconds since the Unix
+    /// epoch.
+    seen: u64,
 }
 
 /// An open vault directory. Holds the lock while it lives.
@@ -72,17 +91,27 @@ struct Checked<'a> {
 pub const DEFAULT_PORT: u16 = 7447;
 
 /// The store key holding the vault's [`Config`].
-const CONFIG_KEY: &str = "vault";
+pub(crate) const CONFIG_KEY: &str = "vault";
 
 /// The file holding the latest link ticket.
 const TICKET_FILE: &str = "ticket";
 
 impl Vault {
     /// Open the vault in `path`, creating it on first use, and start
-    /// serving it.
+    /// serving it. `app` is the app and version this vault runs, such as
+    /// `gantz 0.4.0`.
     pub fn open(path: &Path, app: &str, infra: Infra, port: Option<u16>) -> Result<Self, String> {
         let mut dir = Dir::create(path)?;
-        let identity = match gantz_collab::identity::load(&dir.store)? {
+        let identity = gantz_collab::identity::load(&dir.store).map_err(|e| refused(path, e))?;
+        let config = load_config(&dir)?;
+        let (mut registry, unreadable) = gantz_store::load_registry(&dir.store);
+        let meta =
+            gantz_store::writable_meta(&dir.store, &unreadable).map_err(|e| refused(path, e))?;
+        let unread = unreadable.graphs.len() + unreadable.commits.len() + unreadable.sections.len();
+        if unread > 0 {
+            warn!("{unread} stored entries cannot be read. They stay as they are.");
+        }
+        let identity = match identity {
             Some(identity) => identity,
             None => {
                 let identity = Identity::generate();
@@ -92,13 +121,13 @@ impl Vault {
                 identity
             }
         };
-        let config = match gantz_store::load(&dir.store, CONFIG_KEY) {
+        let config = match config {
             Some(config) => config,
             None => {
                 let config = Config {
                     id: SessionId::generate(),
                     pairing: PairingSecret::generate(),
-                    devices: BTreeSet::new(),
+                    devices: BTreeMap::new(),
                 };
                 checked(&mut dir.store, |s| {
                     gantz_store::save(s, CONFIG_KEY, &config)
@@ -106,8 +135,22 @@ impl Vault {
                 config
             }
         };
-        let (registry, unreadable) = gantz_store::load_registry(&dir.store);
-        let persisted = PersistedRegistry::from_registry(&registry, unreadable);
+        let mut persisted = PersistedRegistry::from_registry(&registry, unreadable);
+        checked(&mut dir.store, |s| {
+            gantz_store::upgrade(s, meta.format, &mut registry, &mut persisted);
+            gantz_store::save_store_meta(s, app);
+        })?;
+        let unverified = registry
+            .graphs()
+            .iter()
+            .filter(|(ga, graph)| ca::sync::verify_graph(**ga, graph).is_err())
+            .count();
+        if unverified > 0 {
+            warn!(
+                "{unverified} stored graphs do not match their addresses. Devices cannot fetch them."
+            );
+        }
+        info!("{app}: sync protocols {PROTO_MIN} to {PROTO_MAX}, store format {STORE_FORMAT}");
         info!(
             "vault {} in {}: {} graphs, {} paired devices",
             config.id,
@@ -123,7 +166,7 @@ impl Vault {
         let handle = gantz_collab::spawn(identity, runtime);
         let entry = VaultEntry {
             id: config.id,
-            access: config.devices.clone(),
+            access: config.devices.keys().copied().collect(),
             pairing: config.pairing,
             store: registry.clone(),
         };
@@ -175,16 +218,17 @@ impl Vault {
             Event::DeviceSeen {
                 peer,
                 app,
-                paired: true,
+                proto,
+                paired,
                 ..
             } => {
-                self.config.devices.insert(peer);
-                let config = &self.config;
-                checked(&mut self.dir.store, |s| {
-                    gantz_store::save(s, CONFIG_KEY, config)
-                })?;
-                info!("paired device {} ({app})", peer.to_hex());
+                if paired {
+                    info!("paired device {} ({app})", peer.to_hex());
+                }
+                self.seen(peer, app, proto)?;
             }
+            // Only an incompatible device stops at the probe. A compatible
+            // one says hello next.
             Event::Probed {
                 peer,
                 info,
@@ -195,6 +239,9 @@ impl Vault {
                     Outdated::Them => "must update to sync",
                 };
                 warn!("device {} runs {}, which {update}", peer.to_hex(), info.app);
+                if self.config.devices.contains_key(&peer) {
+                    self.seen(peer, info.app, info.proto_max)?;
+                }
             }
             Event::PushRequest {
                 from, push, reply, ..
@@ -221,6 +268,23 @@ impl Vault {
             _ => (),
         }
         Ok(())
+    }
+
+    /// Record that `peer` linked or probed, running `app` on `proto`.
+    fn seen(&mut self, peer: PeerId, app: String, proto: u32) -> Result<(), String> {
+        let seen = unix_now();
+        let paired = self.config.devices.get(&peer).map_or(seen, |d| d.paired);
+        let device = Device {
+            app,
+            proto,
+            paired,
+            seen,
+        };
+        self.config.devices.insert(peer, device);
+        let config = &self.config;
+        checked(&mut self.dir.store, |s| {
+            gantz_store::save(s, CONFIG_KEY, config)
+        })
     }
 
     /// Write the registry's new content and moved heads to disk.
@@ -270,6 +334,12 @@ impl Dir {
             )
         })?;
         let store = PkvStore::new_in_dir(path);
+        let meta =
+            gantz_store::load_store_meta(&store).map_err(|e| refused(path, Unwritable::Meta(e)))?;
+        if meta.format > STORE_FORMAT {
+            let newer = Unwritable::Newer(meta);
+            return Err(refused(path, format!("{newer}. Update gantz to open it")));
+        }
         Ok(Self {
             path: path.to_path_buf(),
             store,
@@ -313,12 +383,26 @@ fn serve(args: ServeArgs, conf: &Conf) -> Result<(), String> {
     Vault::open(&path, conf.build, infra, Some(args.port))?.serve()
 }
 
-/// Print each paired device's id.
+/// Print each paired device, what it last ran and when.
 fn devices(args: DirArgs, conf: &Conf) -> Result<(), String> {
     let dir = Dir::open(&vault_dir(&args, conf)?)?;
-    let config = load_config(&dir)?;
-    for device in &config.devices {
-        println!("{}", device.to_hex());
+    let config = load_config(&dir)?.ok_or_else(|| no_vault(&dir))?;
+    if config.devices.is_empty() {
+        println!("No paired devices.");
+    }
+    let now = unix_now();
+    for (peer, device) in &config.devices {
+        let app = match device.app.as_str() {
+            "" => "an unknown app",
+            app => app,
+        };
+        println!(
+            "{}  {app} on sync protocol {}, paired {}, last seen {}",
+            peer.to_hex(),
+            device.proto,
+            ago(now, device.paired),
+            ago(now, device.seen),
+        );
     }
     Ok(())
 }
@@ -328,8 +412,8 @@ fn devices(args: DirArgs, conf: &Conf) -> Result<(), String> {
 fn revoke(args: RevokeArgs, conf: &Conf) -> Result<(), String> {
     let peer = args.peer.to_hex();
     let mut dir = Dir::open(&vault_dir(&args.dir, conf)?)?;
-    let mut config = load_config(&dir)?;
-    if !config.devices.remove(&args.peer) {
+    let mut config = load_config(&dir)?.ok_or_else(|| no_vault(&dir))?;
+    if config.devices.remove(&args.peer).is_none() {
         return Err(format!("{peer} is not a paired device"));
     }
     config.pairing = PairingSecret::generate();
@@ -349,13 +433,18 @@ fn vault_dir(args: &DirArgs, conf: &Conf) -> Result<PathBuf, String> {
         Some(dir) => Ok(dir.clone()),
         None => directories::ProjectDirs::from("", conf.org, conf.app)
             .map(|dirs| dirs.data_dir().join("vault"))
-            .ok_or_else(|| "no data directory for this user; pass --dir".to_string()),
+            .ok_or_else(|| "no data directory for this user, so pass --dir".to_string()),
     }
 }
 
-fn load_config(dir: &Dir) -> Result<Config, String> {
-    gantz_store::load(&dir.store, CONFIG_KEY)
-        .ok_or_else(|| format!("no vault in {}", dir.path.display()))
+/// The vault's config, or `None` in a new directory. Fails if a stored
+/// config cannot be read.
+fn load_config(dir: &Dir) -> Result<Option<Config>, String> {
+    gantz_store::load_strict(&dir.store, CONFIG_KEY).map_err(|e| refused(&dir.path, e))
+}
+
+fn no_vault(dir: &Dir) -> String {
+    format!("no vault in {}", dir.path.display())
 }
 
 /// Run `write` against `store`, and fail with its first failed write.
@@ -365,6 +454,35 @@ fn checked(store: &mut PkvStore, write: impl FnOnce(&mut Checked)) -> Result<(),
     checked
         .error
         .map_or(Ok(()), |e| Err(format!("failed to write {e}")))
+}
+
+/// Why the vault in `path` will not open. Nothing in it is changed.
+fn refused(path: &Path, reason: impl std::fmt::Display) -> String {
+    format!(
+        "cannot open the vault in {}: {reason}. It is left untouched.",
+        path.display()
+    )
+}
+
+/// How long before `now` the Unix time `then` was, roughly.
+fn ago(now: u64, then: u64) -> String {
+    let secs = now.saturating_sub(then);
+    let (n, unit) = match secs {
+        0..60 => return "just now".to_string(),
+        60..3_600 => (secs / 60, "minute"),
+        3_600..86_400 => (secs / 3_600, "hour"),
+        _ => (secs / 86_400, "day"),
+    };
+    let plural = if n == 1 { "" } else { "s" };
+    format!("{n} {unit}{plural} ago")
+}
+
+/// Seconds since the Unix epoch.
+fn unix_now() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 /// Write a file only its owner may read.
