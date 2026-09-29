@@ -6,8 +6,8 @@ use super::{Fake, commit, fake, graph, name};
 use crate::*;
 use gantz_ca as ca;
 use gantz_collab::{
-    Command, ConnState, Event, ObjectRef, PairingSecret, PeerId, Push, SessionId, VaultId,
-    VaultTicket,
+    Command, Event, ObjectRef, Outdated, PROTO_MAX, PROTO_MIN, PairingSecret, PeerId, Push,
+    SessionId, VaultId, VaultTicket, VersionInfo,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -246,7 +246,7 @@ fn first_link_uploads_local_graphs_and_a_second_device_adopts_them() {
     net.link(1, &[]);
     net.settle();
     net.assert_converged();
-    assert_eq!(net.devices[1].link().conn, ConnState::Live);
+    assert_eq!(net.devices[1].link().status, VaultStatus::Live);
 }
 
 #[test]
@@ -491,4 +491,93 @@ fn serve_push_mirrors_no_content_for_a_removal() {
     };
     assert!(commits.is_empty() && graphs.is_empty());
     assert_eq!(vault.head(&name("jam")), None);
+}
+
+#[test]
+fn an_incompatible_vault_pauses_sync_and_says_who_must_update() {
+    let mut net = Net::new(1);
+    net.link(0, &[]);
+    net.settle();
+    let info = |proto, app: &str| VersionInfo {
+        proto_min: proto,
+        proto_max: proto,
+        app: app.to_string(),
+    };
+    let ours = info(PROTO_MAX, "gantz 0.4.0");
+    let cases = [
+        (
+            info(PROTO_MAX + 1, "gantz 9.0.0"),
+            Outdated::Us,
+            VaultStatus::DeviceOutdated,
+        ),
+        (
+            info(PROTO_MIN - 1, "gantz 0.1.0"),
+            Outdated::Them,
+            VaultStatus::VaultOutdated,
+        ),
+    ];
+    for (theirs, outdated, status) in cases {
+        let incompatible = Event::LinkIncompatible {
+            vault: net.id,
+            theirs: theirs.clone(),
+            outdated,
+        };
+        net.devices[0].inbox.push_back(incompatible);
+        net.step(0);
+        let link = net.devices[0].link();
+        assert_eq!(link.status, status);
+        assert_eq!(link.vault_info.as_ref(), Some(&theirs));
+    }
+    // Local edits wait for the vault.
+    edit(&mut net, 0, "jam", 1, 1);
+    net.settle();
+    assert!(net.devices[0].sent.is_empty());
+    assert_eq!(net.registry.head(&name("jam")), None);
+    // Once the vault updates, the edit syncs.
+    let up = Event::LinkUp {
+        vault: net.id,
+        heads: vec![],
+        info: ours,
+    };
+    net.devices[0].inbox.push_back(up);
+    net.settle();
+    net.assert_converged();
+    assert_eq!(net.devices[0].link().status, VaultStatus::Live);
+}
+
+#[test]
+fn a_refused_push_is_recorded_until_the_name_syncs() {
+    let mut net = Net::new(1);
+    edit(&mut net, 0, "jam", 1, 1);
+    net.link(0, &[]);
+    // The link comes up and the device pushes, but the vault refuses.
+    let device = &mut net.devices[0];
+    let up = device.inbox.pop_front().unwrap();
+    device
+        .fake
+        .deliver(&mut device.sessions, &mut device.registry, &device.open, up);
+    let cmds = device.fake.drain();
+    let [Command::Push { push, .. }] = &cmds[..] else {
+        panic!("expected one push, got {cmds:?}");
+    };
+    let refused = Event::Pushed {
+        vault: net.id,
+        name: push.name.clone(),
+        tip: push.tip,
+        result: Err("the vault is full".to_string()),
+    };
+    device.fake.deliver(
+        &mut device.sessions,
+        &mut device.registry,
+        &device.open,
+        refused,
+    );
+    let failure = device.link().failures.get(&name("jam")).cloned();
+    assert_eq!(failure.as_deref(), Some("push failed: the vault is full"));
+    assert!(device.fake.drain().is_empty(), "a failed name is held");
+    // A later edit pushes again, and its acceptance clears the failure.
+    edit(&mut net, 0, "jam", 2, 2);
+    net.settle();
+    net.assert_converged();
+    assert!(net.devices[0].link().failures.is_empty());
 }

@@ -583,6 +583,8 @@ pub(crate) struct Decoded {
         ca::Key,
         ca::Value,
     )>,
+    /// Why each skipped graph could not be decoded.
+    pub errors: Vec<String>,
 }
 
 /// Why fetched or pushed content cannot apply. See [`advance`].
@@ -610,7 +612,11 @@ pub(crate) fn decode(objects: Objects) -> Decoded {
             Object::Commit(addr, wire) => decoded.commits.push((addr, wire.into())),
             Object::Graph(addr, blob) => match proto::decode_graph(&blob) {
                 Ok(graph) => decoded.graphs.push((addr, graph)),
-                Err(e) => log::warn!("fetch: undecodable graph {addr}: {e}"),
+                Err(e) => {
+                    let error = format!("undecodable graph {addr}: {e}");
+                    log::warn!("fetch: {error}");
+                    decoded.errors.push(error);
+                }
             },
             Object::Blob {
                 section,

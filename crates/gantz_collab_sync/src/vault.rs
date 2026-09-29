@@ -16,8 +16,9 @@
 //! Names the host has open change through [`Effect`]s, so the host can
 //! migrate live state. A name is then held until its local or remote head
 //! moves, so an effect the host could not act on is not repeated every pass.
-//! Failed fetches and pushes hold their name the same way. A fresh link
-//! clears every hold.
+//! A failed step holds its name the same way, and records why in
+//! [`VaultLink::failures`] until the name syncs. A fresh link clears every
+//! hold and failure.
 //!
 //! The host persists [`VaultLink::synced`] whenever
 //! [`VaultLink::synced_changed`] is set, after the registry. Persisting it
@@ -26,8 +27,8 @@
 use crate::{Effect, JoinError, OpenHeads, Sessions, inbound, lifecycle::session_resolutions};
 use gantz_ca as ca;
 use gantz_collab::{
-    Command, ConnState, Event, Handle, ObjectRef, Objects, Outdated, PeerId, Push, VaultId,
-    VaultTicket, Want,
+    Command, Event, Handle, ObjectRef, Objects, Outdated, PeerId, Push, VaultId, VaultTicket,
+    VersionInfo, Want,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::mem;
@@ -41,10 +42,13 @@ pub struct VaultLink {
     pub id: VaultId,
     /// The vault's identity.
     pub vault: PeerId,
-    /// Live while the watch stream is open.
-    pub conn: ConnState,
-    /// The most recent failure, cleared when the link comes up.
-    pub error: Option<String>,
+    pub status: VaultStatus,
+    /// What the vault speaks, as last heard. `None` until the vault first
+    /// answers.
+    pub vault_info: Option<VersionInfo>,
+    /// Why each name that failed to sync did so. An entry stays until the
+    /// name syncs or the link comes up again.
+    pub failures: BTreeMap<ca::Name, String>,
     /// Names that never sync, such as the base graphs every build seeds.
     pub local_only: BTreeSet<ca::Name>,
     /// The vault head each name was last agreed at. The host persists it.
@@ -60,6 +64,28 @@ pub struct VaultLink {
     pushes: HashMap<ca::Name, Option<ca::CommitAddr>>,
     /// Names left alone while their local and remote heads are these.
     held: HashMap<ca::Name, (Option<ca::CommitAddr>, Option<ca::CommitAddr>)>,
+}
+
+/// The state of a device's link to its vault. Names sync only while
+/// [`VaultStatus::Live`].
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum VaultStatus {
+    /// The first link attempt is in flight.
+    Connecting,
+    /// The link is open.
+    Live,
+    /// The link dropped or failed to open, for this reason. It retries by
+    /// itself.
+    Offline(String),
+    /// The vault refused this device, for this reason. That happens after
+    /// the device is revoked, and only a new ticket fixes it.
+    Denied(String),
+    /// The vault only speaks older sync protocols. Only an update of the
+    /// vault fixes it.
+    VaultOutdated,
+    /// The vault only speaks newer sync protocols. Only an update of this
+    /// device fixes it.
+    DeviceOutdated,
 }
 
 /// The outcome of a push on the vault's side.
@@ -90,16 +116,26 @@ struct Cx<'a> {
     handle: &'a Handle,
     open: &'a OpenHeads,
     effects: &'a mut Vec<Effect>,
-    /// Set when a background name moved, so referrers resync once.
+    /// Set when a name moved, so referrers resync once.
     resync: bool,
 }
 
 impl VaultLink {
-    /// Record `head` as the agreed head for `name`.
+    /// Record `head` as the agreed head for `name`, which clears its
+    /// failure.
     fn set_synced(&mut self, name: &ca::Name, head: Option<ca::CommitAddr>) {
         if set(&mut self.synced, name, head) {
             self.synced_changed = true;
         }
+        self.failures.remove(name);
+    }
+
+    /// Record why `name` failed to sync, and hold it until its local or
+    /// remote head moves.
+    fn fail(&mut self, registry: &ca::Registry, name: &ca::Name, reason: String) {
+        log::warn!("vault: '{name}': {reason}");
+        self.failures.insert(name.clone(), reason);
+        self.hold(registry, name);
     }
 
     /// Hold `name` until its local or remote head moves.
@@ -135,8 +171,9 @@ pub fn link(
     sessions.vault = Some(VaultLink {
         id,
         vault,
-        conn: ConnState::Connecting,
-        error: None,
+        status: VaultStatus::Connecting,
+        vault_info: None,
+        failures: BTreeMap::new(),
         local_only,
         synced,
         synced_changed: false,
@@ -169,10 +206,9 @@ pub(crate) fn owns(link: &VaultLink, event: &Event) -> bool {
     }
 }
 
-/// Mark the link down with `error`. Work in flight will not be answered.
-fn down(link: &mut VaultLink, error: String) {
-    link.conn = ConnState::Degraded;
-    link.error = Some(error);
+/// Take the link down with `status`. Work in flight will not be answered.
+fn down(link: &mut VaultLink, status: VaultStatus) {
+    link.status = status;
     link.fetches.clear();
     link.pushes.clear();
 }
@@ -187,13 +223,14 @@ pub(crate) fn handle_event(
     event: Event,
 ) {
     match event {
-        Event::LinkUp { heads, .. } => {
+        Event::LinkUp { heads, info, .. } => {
             link.remote = Some(heads.into_iter().collect());
-            link.conn = ConnState::Live;
-            link.error = None;
+            link.status = VaultStatus::Live;
+            link.vault_info = Some(info);
             link.fetches.clear();
             link.pushes.clear();
             link.held.clear();
+            link.failures.clear();
         }
         Event::LinkChanged { changes, .. } => {
             if let Some(remote) = &mut link.remote {
@@ -204,29 +241,25 @@ pub(crate) fn handle_event(
         }
         Event::LinkDown { error, .. } => {
             log::info!("vault link down: {error}");
-            down(link, error);
+            down(link, VaultStatus::Offline(error));
         }
         Event::LinkIncompatible {
             theirs, outdated, ..
         } => {
-            let update = match outdated {
-                Outdated::Us => "update gantz on this device",
-                Outdated::Them => "update the vault",
+            log::warn!("vault on {} is incompatible with this gantz", theirs.app);
+            let status = match outdated {
+                Outdated::Us => VaultStatus::DeviceOutdated,
+                Outdated::Them => VaultStatus::VaultOutdated,
             };
-            let error = format!(
-                "the vault runs {} on sync protocols {} to {}, so {update}",
-                theirs.app, theirs.proto_min, theirs.proto_max,
-            );
-            log::warn!("vault incompatible: {error}");
-            down(link, error);
+            link.vault_info = Some(theirs);
+            down(link, status);
         }
         Event::LinkDenied { reason, .. } => {
             log::warn!("vault link denied: {reason}");
-            down(link, format!("link denied: {reason}"));
+            down(link, VaultStatus::Denied(reason));
         }
         Event::Objects { want, objects, .. } => feed(link, registry, handle, open, want, objects),
         Event::FetchFailed { want, error, .. } => {
-            log::warn!("vault fetch failed: {error}");
             let failed: Vec<ca::Name> = link
                 .fetches
                 .iter()
@@ -235,9 +268,8 @@ pub(crate) fn handle_event(
                 .collect();
             for name in failed {
                 link.fetches.remove(&name);
-                link.hold(registry, &name);
+                link.fail(registry, &name, format!("fetch failed: {error}"));
             }
-            link.error = Some(error);
         }
         Event::Pushed {
             name, tip, result, ..
@@ -252,11 +284,7 @@ pub(crate) fn handle_event(
                         link.set_synced(&name, tip);
                     }
                 }
-                Err(error) => {
-                    log::warn!("vault push of '{name}' failed: {error}");
-                    link.hold(registry, &name);
-                    link.error = Some(error);
-                }
+                Err(error) => link.fail(registry, &name, format!("push failed: {error}")),
             }
         }
         _ => (),
@@ -272,7 +300,7 @@ pub(crate) fn sync(
     open: &OpenHeads,
     effects: &mut Vec<Effect>,
 ) {
-    if link.conn != ConnState::Live {
+    if link.status != VaultStatus::Live {
         return;
     }
     let Some(remote) = &link.remote else {
@@ -347,6 +375,7 @@ fn adopt(link: &mut VaultLink, cx: &mut Cx<'_>, name: &ca::Name, target: Option<
             name: name.clone(),
             to: target,
         });
+        cx.resync = true;
         link.hold(cx.registry, name);
         return;
     }
@@ -427,11 +456,7 @@ fn merge(
             push(link, cx, name, Some(to));
         }
         Ok(None) => link.hold(cx.registry, name),
-        Err(e) => {
-            log::warn!("vault: merge of '{name}' failed: {e}");
-            link.error = Some(format!("merge of '{name}' failed: {e}"));
-            link.hold(cx.registry, name);
-        }
+        Err(e) => link.fail(cx.registry, name, format!("merge failed: {e}")),
     }
 }
 
@@ -538,8 +563,7 @@ fn feed(
         let next = match inbound::advance(registry, &mut fetch.staged, fetch.tip, &decoded) {
             Ok(next) => next,
             Err(e) => {
-                log::warn!("vault: content for '{name}' {e}");
-                link.hold(registry, &name);
+                link.fail(registry, &name, format!("the vault's content {e}"));
                 continue;
             }
         };
@@ -548,8 +572,11 @@ fn feed(
         }
         let next = frontier(next, &fetch.have);
         if next.refs == fetch.want {
-            log::warn!("vault: no progress fetching '{name}'");
-            link.hold(registry, &name);
+            let reason = match decoded.errors.first() {
+                Some(e) => format!("the vault sent content this gantz cannot read: {e}"),
+                None => "the vault did not send the whole history".to_string(),
+            };
+            link.fail(registry, &name, reason);
             continue;
         }
         fetch.want = next.refs.clone();
@@ -584,7 +611,11 @@ pub fn serve_push(registry: &mut ca::Registry, vault: VaultId, push: Push) -> Pu
     match inbound::advance(registry, &mut staged, tip, &decoded) {
         Err(e) => return PushOutcome::Invalid(format!("push of '{name}' {e}")),
         Ok(next) if !next.is_empty() => {
-            return PushOutcome::Invalid(format!("push of '{name}' is missing objects"));
+            let reason = match decoded.errors.first() {
+                Some(e) => format!("push of '{name}' is missing objects: {e}"),
+                None => format!("push of '{name}' is missing objects"),
+            };
+            return PushOutcome::Invalid(reason);
         }
         Ok(_) => (),
     }
