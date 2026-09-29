@@ -28,6 +28,31 @@
 //! rides the request plane alone. Devices link to one vault peer, which
 //! referees every change to a name.
 //!
+//! ## Versions
+//!
+//! Peers decide whether they can sync on integer versions alone. App
+//! version strings are for display, since development builds share one.
+//!
+//! - The sync protocol, [`PROTO_VERSION`]. It is part of [`SYNC_ALPN`]. A
+//!   [`version`] probe on the frozen [`VERSION_ALPN`] tells a device which
+//!   versions its vault speaks before it says hello. Bump the protocol for
+//!   a breaking wire change, for a message that a server sends without a
+//!   request, such as a new [`WatchMsg`] variant, and for a change to how
+//!   content addresses are computed.
+//! - The store format, `gantz_store::STORE_FORMAT`. A build does not
+//!   write a store in a newer format. Bump it when a stored entry changes
+//!   shape or meaning. An address change bumps both.
+//! - The vault ticket layout. A build reports a ticket with a newer layout.
+//!
+//! A newer vault should keep serving the previous protocol version for one
+//! release. Users can then update the vault first and each device at its
+//! own pace. A device that finds its vault on another protocol pauses sync
+//! and tells which side must update. Nothing is lost while it waits.
+//!
+//! Node data is not versioned. When a node field is retired, keep it for
+//! one release as an optional field that is skipped when absent, so that
+//! older builds still read it.
+//!
 //! [iroh]: https://docs.rs/iroh
 
 #[doc(inline)]
