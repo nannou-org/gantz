@@ -125,6 +125,43 @@ pub fn load_egui_memory(storage: &impl Load, ctx: &egui::Context) {
     }
 }
 
+/// Point the saved open heads, focused head and GUI state at the commits
+/// that [`ca::Registry::canonicalize`] moved. Undo and redo history follows
+/// too.
+pub fn follow_moves(storage: &mut (impl Load + Save), moved: &ca::Moved) {
+    if let Some(heads) = bevy_gantz::storage::load_open_heads(storage) {
+        let heads: Vec<_> = heads.iter().map(|head| moved.head(head)).collect();
+        bevy_gantz::storage::save_open_heads(storage, &heads);
+    }
+    if let Some(head) = bevy_gantz::storage::load_focused_head(storage) {
+        bevy_gantz::storage::save_focused_head(storage, &moved.head(&head));
+    }
+    let mut gui_state = load_gui_state(storage);
+    let state = &mut gui_state.0;
+    state.open_heads = std::mem::take(&mut state.open_heads)
+        .into_iter()
+        .map(|(head, open)| (moved.head(&head), open))
+        .collect();
+    state.redo_stacks = std::mem::take(&mut state.redo_stacks)
+        .into_iter()
+        .map(|(head, stack)| {
+            let stack = stack.into_iter().map(|ca| moved.commit(ca)).collect();
+            (moved.head(&head), stack)
+        })
+        .collect();
+    state.undo_cursors = std::mem::take(&mut state.undo_cursors)
+        .into_iter()
+        .map(|(head, cursor)| {
+            let cursor = gantz_egui::ops::RevertCursor {
+                minted: moved.commit(cursor.minted),
+                target: moved.commit(cursor.target),
+            };
+            (moved.head(&head), cursor)
+        })
+        .collect();
+    save_gui_state(storage, &gui_state);
+}
+
 #[cfg(test)]
 mod tests {
     /// `egui::Memory` must survive a bincode round-trip, the format used by
