@@ -52,11 +52,11 @@ use std::sync::{Arc, Mutex};
 
 /// The ALPN identifying gantz's session-sync request protocol. The version
 /// is part of the string, so incompatible revisions are distinct protocols.
-pub const SYNC_ALPN: &[u8] = b"gantz/sync/1";
+pub const SYNC_ALPN: &[u8] = b"gantz/sync/2";
 
 /// The application-level protocol version negotiated in
 /// [`SyncRequest::Hello`].
-pub const PROTO_VERSION: u32 = 1;
+pub const PROTO_VERSION: u32 = 2;
 
 /// The domain-separation tag hashed with a session id to derive its gossip
 /// topic id. The raw session id never appears on the gossip wire. Versioned

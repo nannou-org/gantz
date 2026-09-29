@@ -447,6 +447,19 @@ mod tests {
         assert!(postcard_err.is_err());
     }
 
+    /// A graph keeps its address through the wire, which carries graphs as
+    /// RON. RON does not record whether an integer was signed.
+    #[test]
+    fn graphs_verify_after_the_wire() {
+        use gantz_ca::{Datum, NodeData};
+        let ints = vec![Datum::I64(3), Datum::I64(-3), Datum::U64(u64::MAX)];
+        let data = Datum::Map(vec![("n".into(), Datum::Seq(ints))]);
+        let mut graph = DataGraph::default();
+        graph.add_node(NodeData::new("Test", data));
+        let decoded = decode_graph(&encode_graph(&graph)).unwrap();
+        gantz_ca::verify_graph(gantz_ca::graph_addr(&graph), &decoded).unwrap();
+    }
+
     #[test]
     fn heads_digest_is_order_independent_and_content_sensitive() {
         let ca = |n| CommitAddr::from(gantz_ca::ContentAddr::from([n; 32]));
