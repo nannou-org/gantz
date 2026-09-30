@@ -554,6 +554,127 @@ fn node_set_erases_canonically() {
     }
 }
 
+/// Every node type keeps its content address through the store and the
+/// wire, which both carry graphs as RON. RON does not record whether an
+/// integer was signed, so this holds only for canonical integers.
+#[test]
+fn node_set_keeps_its_addresses_through_the_store_and_the_wire() {
+    #[derive(Default)]
+    struct Store(std::collections::HashMap<String, String>);
+    impl bevy_gantz::storage::Save for Store {
+        type Err = std::convert::Infallible;
+        fn set_string(&mut self, key: &str, value: &str) -> Result<(), Self::Err> {
+            self.0.insert(key.to_string(), value.to_string());
+            Ok(())
+        }
+    }
+    impl bevy_gantz::storage::Load for Store {
+        type Err = std::convert::Infallible;
+        fn get_string(&self, key: &str) -> Result<Option<String>, Self::Err> {
+            Ok(self.0.get(key).cloned())
+        }
+    }
+
+    let graph = data_graph(node_set_data());
+    let ga = gantz_ca::graph_addr(&graph);
+    let mut registry = gantz_ca::Registry::default();
+    registry.commit_graph(std::time::Duration::ZERO, None, ga, || graph.clone());
+    let mut store = Store::default();
+    let mut persisted = bevy_gantz::storage::PersistedRegistry::default();
+    let registry = bevy_gantz::Registry(registry);
+    bevy_gantz::storage::save_registry_incremental(&mut store, &registry, &mut persisted);
+    let (loaded, _) = bevy_gantz::storage::load_registry(&store);
+    let stored = loaded.graph(&ga).expect("stored graph");
+    assert_eq!(gantz_ca::graph_addr(stored), ga, "store");
+
+    #[cfg(feature = "collab")]
+    {
+        let wire = gantz_collab::proto::encode_graph(&graph);
+        let decoded = gantz_collab::proto::decode_graph(&wire).expect("decode");
+        assert_eq!(gantz_ca::graph_addr(&decoded), ga, "wire");
+    }
+}
+
+/// An older build read every non-negative integer back as unsigned, and
+/// stored each graph under the address of the form it was built in. The
+/// upgrade moves each graph to its canonical address. Its commits, the
+/// heads and the saved GUI state follow.
+#[test]
+fn a_format_zero_store_moves_to_canonical_addresses() {
+    use bevy_gantz::storage;
+    use gantz_ca::{Commit, Datum, Head};
+
+    fn old_form(datum: &mut Datum) {
+        match datum {
+            Datum::I64(n) if *n >= 0 => *datum = Datum::U64(*n as u64),
+            Datum::Seq(items) => items.iter_mut().for_each(old_form),
+            Datum::Map(entries) => entries.iter_mut().for_each(|(_, d)| old_form(d)),
+            _ => (),
+        }
+    }
+
+    let graph = data_graph(node_set_data());
+    let canonical = gantz_ca::graph_addr(&graph);
+    let mut old = graph;
+    for node in old.node_weights_mut() {
+        old_form(&mut node.data);
+    }
+    let old_ga = gantz_ca::graph_addr(&old);
+    assert_ne!(old_ga, canonical);
+    let commit = Commit::new(std::time::Duration::from_secs(1), None, old_ga);
+    let old_ca = gantz_ca::commit_addr(&commit);
+    let jam = name("jam");
+    let registry = gantz_ca::Registry::from_parts(
+        [(old_ga, old)].into(),
+        [(old_ca, commit)].into(),
+        [(jam.clone(), old_ca)].into(),
+    );
+
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("gantz-store-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut store = crate::storage::Pkv::new(bevy_pkv::PkvStore::new_in_dir(&dir));
+    let mut persisted = storage::PersistedRegistry::default();
+    let registry = bevy_gantz::Registry(registry);
+    storage::save_registry_incremental(&mut store, &registry, &mut persisted);
+    let old_heads = [Head::Commit(old_ca), Head::Branch(jam.clone())];
+    storage::save_open_heads(&mut store, &old_heads);
+    let mut gui_state = bevy_gantz_egui::GuiState::default();
+    let redo = Head::Branch(jam.clone());
+    gui_state.0.redo_stacks.insert(redo.clone(), vec![old_ca]);
+    bevy_gantz_egui::storage::save_gui_state(&mut store, &gui_state);
+
+    // Open the store as the app does.
+    let (mut registry, unreadable) = storage::load_registry(&store);
+    let meta = crate::writable_store_meta(&store, &unreadable).unwrap();
+    assert_eq!(meta.format, 0);
+    let mut persisted = storage::PersistedRegistry::from_registry(&registry, unreadable);
+    crate::upgrade_store(&mut store, meta, &mut registry, &mut persisted);
+
+    let (reloaded, _) = storage::load_registry(&store);
+    for registry in [&*registry, &*reloaded] {
+        let head = registry.head(&jam).unwrap();
+        assert_ne!(head, old_ca);
+        assert_eq!(registry.commits()[&head].graph, canonical);
+        for (ga, graph) in registry.graphs() {
+            gantz_ca::verify_graph(*ga, graph).unwrap();
+        }
+    }
+    reify_all(&reloaded);
+    let new_ca = reloaded.head(&jam).unwrap();
+    let heads = storage::load_open_heads(&store).unwrap();
+    assert_eq!(heads, vec![Head::Commit(new_ca), Head::Branch(jam)]);
+    let gui_state = bevy_gantz_egui::storage::load_gui_state(&store);
+    assert_eq!(gui_state.0.redo_stacks[&redo], vec![new_ca]);
+    let meta = storage::load_store_meta(&store).unwrap();
+    assert_eq!(meta.format, storage::STORE_FORMAT);
+    drop(store);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// Pin every node type's canonical content address, taken from the first
 /// `node_set_data` case per tag. Erased node addresses are
 /// wire-stability-critical. Any serde change that shifts one fails here
@@ -590,7 +711,7 @@ fn node_set_addr_pins() {
         ),
         (
             "Buffer",
-            "ea7bab6ba5b0acbd5f07b16b3e1cd1da636d24552cbeca6f5722a41f28df6344",
+            "a36b996894957580c7787919492d7d88fc2b8b510c238ea2e41bbdf5a61fdb69",
         ),
         (
             "Bus",
@@ -598,7 +719,7 @@ fn node_set_addr_pins() {
         ),
         (
             "Comment",
-            "ee0eb63753a269f48a387c812b4d96a2a8ef78c441c791bc9ea445613d7e514b",
+            "79f38aa5d65c9b89810731716826dccf21232aaa7d7b95e77389e917c221e30a",
         ),
         (
             "Delay",
@@ -606,7 +727,7 @@ fn node_set_addr_pins() {
         ),
         (
             "Envgen",
-            "4a072c3bb2625bf162e9e61a4cd019ecd1d03c3b5fe90d415e824b862107d803",
+            "e41e657926d5d8550f52be104fc560cd60aef20cc5e1789f08bb9c35415d50d8",
         ),
         (
             "Expr",
@@ -670,7 +791,7 @@ fn node_set_addr_pins() {
         ),
         (
             "Plot",
-            "deb280956a42f29de5d9515537c19b57a8ccb1575e2620dd68ab2d66aaae4484",
+            "123657d9ed4885c8b05380ef4234bbbd69f94313f069c5cd401531cab56eb256",
         ),
         (
             "Pmini",
@@ -678,11 +799,11 @@ fn node_set_addr_pins() {
         ),
         (
             "Pplot",
-            "119aca31f290bbb848b66dc8f5130c7a21757b425e061596ea4940b7d93c22ba",
+            "6dfe88ae422a217b5a836ee4ac12e047b620458c9c90826ef33d0263993c6ed4",
         ),
         (
             "Sample",
-            "92a1cf270d69e1d782ec83778359d7897d572d0b523f42c7a05be3438c0863c5",
+            "ca98f97638d6a61fbee18cdbad8adcf069df1fe385a32720b531edff647f82f6",
         ),
         (
             "ScopeOut",

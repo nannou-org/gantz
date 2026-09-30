@@ -41,6 +41,10 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+pub use canonicalize::Moved;
+
+mod canonicalize;
+
 /// A registry of content-addressed graphs, commits of those graphs, blob
 /// stores, and metadata sections. See the module docs.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

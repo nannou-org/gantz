@@ -421,7 +421,7 @@ fn expr_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     })?;
     let mut fields = vec![("src", Datum::Str(code.to_string()))];
     if let Some(out) = args.keyword_int("out")? {
-        fields.push(("outputs", Datum::U64(out.max(0) as u64)));
+        fields.push(("outputs", Datum::from_u64(out.max(0) as u64)));
     }
     let requires = args.keyword_strs("require")?;
     if !requires.is_empty() {
@@ -492,7 +492,7 @@ fn list_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     let mut fields = Vec::new();
     if let Some(count) = args.keyword_int("count")? {
         let count = (count.max(1) as usize).min(List::MAX_COUNT);
-        fields.push(("count", Datum::U64(count as u64)));
+        fields.push(("count", Datum::from_u64(count as u64)));
     }
     Ok(node_datum(List::TAG, fields))
 }

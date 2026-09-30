@@ -35,8 +35,8 @@ pub use node_data::{DataGraph, NodeData};
 pub use reach::{LiveSet, OutRefs, closure, closure_from, data_graph_out, export, prune};
 #[doc(inline)]
 pub use registry::{
-    HEADS_ID, Heads, MergeReport, Registry, section_get, section_insert, section_insert_datum,
-    section_iter, section_remove,
+    HEADS_ID, Heads, MergeReport, Moved, Registry, section_get, section_insert,
+    section_insert_datum, section_iter, section_remove,
 };
 #[doc(inline)]
 pub use section::{

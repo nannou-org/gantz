@@ -297,7 +297,7 @@ fn write_form(kw: &str, parts: Vec<String>) -> String {
 fn size_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     let mut fields = Vec::new();
     if let Some(size) = args.keyword_int("size")? {
-        fields.push(("size", Datum::U64(size.max(1) as u64)));
+        fields.push(("size", Datum::from_u64(size.max(1) as u64)));
     }
     Ok(node_datum("ScopeOut", fields))
 }
@@ -319,7 +319,7 @@ fn write_size(node: &Datum) -> String {
 fn count_spec(tag: &str, args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     let mut fields = Vec::new();
     if let Some(count) = args.keyword_int("count")? {
-        fields.push(("count", Datum::U64(count.max(1) as u64)));
+        fields.push(("count", Datum::from_u64(count.max(1) as u64)));
     }
     Ok(node_datum(tag, fields))
 }
@@ -331,11 +331,11 @@ fn buffer_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     let mut fields = Vec::new();
     if let Some(frames) = args.keyword_int("frames")? {
         let frames = (frames.max(1) as usize).min(crate::Buffer::MAX_FRAMES);
-        fields.push(("frames", Datum::U64(frames as u64)));
+        fields.push(("frames", Datum::from_u64(frames as u64)));
     }
     if let Some(channels) = args.keyword_int("channels")? {
         let channels = (channels.max(1) as usize).min(crate::Buffer::MAX_CHANNELS);
-        fields.push(("channels", Datum::U64(channels as u64)));
+        fields.push(("channels", Datum::from_u64(channels as u64)));
     }
     if args.has_flag("wavetable") {
         fields.push(("wavetable", Datum::Bool(true)));
@@ -613,7 +613,10 @@ mod tests {
         // A `ScopeOut` carrying the default size still writes bare.
         let defaulted = node_datum(
             "ScopeOut",
-            vec![("size", Datum::U64(crate::ScopeOut::DEFAULT_SIZE as u64))],
+            vec![(
+                "size",
+                Datum::from_u64(crate::ScopeOut::DEFAULT_SIZE as u64),
+            )],
         );
         assert_eq!(
             s.write_spec("ScopeOut", &defaulted).as_deref(),
@@ -709,7 +712,7 @@ mod tests {
             assert_eq!(s.write_spec(tag, &bare).as_deref(), Some(kw));
             let empty = read_spec(&format!("({kw})")).expect("empty");
             assert_eq!(s.write_spec(tag, &empty).as_deref(), Some(kw));
-            let defaulted = node_datum(tag, vec![("count", Datum::U64(default as u64))]);
+            let defaulted = node_datum(tag, vec![("count", Datum::from_u64(default as u64))]);
             assert_eq!(s.write_spec(tag, &defaulted).as_deref(), Some(kw));
             // A non-default count round-trips.
             let form = format!("({kw} #:count 4)");
