@@ -5,8 +5,8 @@
 use crate::{PeerPointer, PendingTip, SessionState, Sessions, vault};
 use gantz_ca as ca;
 use gantz_collab::{
-    Command, ConnState, Event, GossipMsg, Handle, Object, ObjectRef, Objects, PeerId, SessionId,
-    Want, proto,
+    Command, ConnState, Event, GossipMsg, Handle, Object, ObjectRef, Objects, PeerId, SectionEntry,
+    SessionId, Want, proto,
 };
 use std::collections::{BTreeMap, HashMap, HashSet};
 
@@ -431,13 +431,7 @@ fn apply_join_snapshot(
 /// never move the local viewport to a peer's.
 pub(crate) fn apply_sections(
     registry: &mut ca::Registry,
-    sections: Vec<(
-        ca::SectionId,
-        ca::MergePolicy,
-        ca::Liveness,
-        ca::Key,
-        ca::Value,
-    )>,
+    sections: Vec<SectionEntry>,
     local_camera: Option<gantz_egui::Camera>,
 ) {
     use gantz_ca::SectionDecl;
@@ -576,13 +570,7 @@ pub(crate) struct Decoded {
     pub commits: Vec<(ca::CommitAddr, ca::Commit)>,
     pub graphs: Vec<(ca::GraphAddr, ca::DataGraph)>,
     pub blobs: Vec<(ca::SectionId, ca::BlobLiveness, ca::ContentAddr, ca::Bytes)>,
-    pub sections: Vec<(
-        ca::SectionId,
-        ca::MergePolicy,
-        ca::Liveness,
-        ca::Key,
-        ca::Value,
-    )>,
+    pub sections: Vec<SectionEntry>,
     /// Why each skipped graph could not be decoded.
     pub errors: Vec<String>,
 }

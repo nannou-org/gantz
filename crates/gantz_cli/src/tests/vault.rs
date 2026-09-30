@@ -5,7 +5,7 @@ use gantz_collab::identity;
 use gantz_collab::{Handle, Identity, Infra, RuntimeConfig};
 use gantz_collab_sync::{OpenHeads, Sessions};
 use gantz_store::{Load, STORE_FORMAT};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -31,7 +31,7 @@ impl Device {
     }
 
     fn link(&mut self, ticket: &str) {
-        let (synced, local_only) = (BTreeMap::new(), BTreeSet::new());
+        let (synced, local_only) = (Default::default(), BTreeSet::new());
         gantz_collab_sync::vault::link(
             &mut self.sessions,
             &self.handle,
@@ -159,9 +159,18 @@ fn devices_sync_through_a_vault_that_survives_a_restart() {
     step_until(&mut vault, &mut [&mut a, &mut b], |v, d| {
         v.head("riff") == Some(riff) && d[1].head("riff") == Some(riff)
     });
+    // A description reaches the other device alone, without a graph edit.
+    let riff_name: ca::Name = "riff".parse().unwrap();
+    let described = |reg: &ca::Registry| gantz_egui::section::description(reg, &riff_name);
+    let text = "a riff".to_string();
+    gantz_egui::section::set_description(&mut a.registry, riff_name.clone(), text);
+    step_until(&mut vault, &mut [&mut a, &mut b], |v, d| {
+        described(&v.registry).is_some() && described(&d[1].registry).is_some()
+    });
     vault.stop();
     let mut vault = Vault::open(&dir, "gantz vault", local(), Some(port)).unwrap();
     assert_eq!(vault.head("riff"), Some(riff));
+    assert_eq!(described(&vault.registry).as_deref(), Some("a riff"));
     assert_eq!(vault.config.devices.len(), 2);
     assert!(
         vault

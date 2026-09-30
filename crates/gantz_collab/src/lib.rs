@@ -69,11 +69,13 @@ pub use runtime::{
 #[doc(inline)]
 pub use session::{Access, ConnState, ParsePeerIdError, PeerId, Role, Session, SessionId};
 #[doc(inline)]
-pub use store::{SessionEntry, SessionRegistry};
+pub use store::{SectionEntry, SessionEntry, SessionRegistry};
 #[doc(inline)]
 pub use ticket::{SessionTicket, VaultTicket};
 #[doc(inline)]
-pub use vault::{PairingSecret, Push, PushReply, VaultEntry, VaultId, WatchMsg};
+pub use vault::{
+    MetaChange, NameState, PairingSecret, Push, PushReply, VaultEntry, VaultId, WatchMsg,
+};
 #[doc(inline)]
 pub use version::{Outdated, PROTO_MAX, PROTO_MIN, VERSION_ALPN, VersionInfo};
 

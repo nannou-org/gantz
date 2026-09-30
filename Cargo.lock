@@ -3971,6 +3971,7 @@ dependencies = [
  "gantz_egui",
  "iroh",
  "log",
+ "serde",
  "web-time",
 ]
 

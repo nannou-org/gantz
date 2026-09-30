@@ -7,9 +7,10 @@
 //! and `gantz_collab_sync::vault`.
 //!
 //! The vault moves a name only when a push is made against its current
-//! head. It never merges, prunes or resyncs references, so it keeps every
-//! graph's whole history. An accepted push is on disk before the device
-//! hears it was accepted.
+//! head, and replaces a name's metadata, such as its description, only
+//! against its current metadata. It never merges, prunes or resyncs
+//! references, so it keeps every graph's whole history. An accepted push is
+//! on disk before the device hears it was accepted.
 //!
 //! The directory holds:
 //!
@@ -247,17 +248,19 @@ impl Vault {
                 from, push, reply, ..
             } => {
                 let (name, tip) = (push.name.clone(), push.tip);
+                let head = self.registry.head(&name);
                 match gantz_collab_sync::serve_push(&mut self.registry, self.config.id, push) {
                     PushOutcome::Accepted(update) => {
                         self.persist()?;
                         let _ = self.handle.cmds.try_send(update);
-                        reply.send(tip);
+                        reply.send(gantz_collab::store::name_state(&self.registry, &name));
                         match tip {
+                            _ if tip == head => info!("{from} changed the metadata of {name}"),
                             Some(tip) => info!("{from} moved {name} to {}", tip.display_short()),
                             None => info!("{from} removed {name}"),
                         }
                     }
-                    PushOutcome::Stale(head) => reply.send(head),
+                    PushOutcome::Stale(state) => reply.send(state),
                     PushOutcome::Invalid(reason) => {
                         warn!("{from}: {reason}");
                         reply.refuse(reason);

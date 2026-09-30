@@ -29,7 +29,7 @@ pub use inbound::{Effect, OpenHeads, handle_event, poll};
 pub use lifecycle::{JoinError, infra, join, leave, resync_headless, session_resolutions, share};
 pub use outbound::{announce, serve_scope};
 pub use state::{PeerPointer, PendingTip, SessionState, Sessions};
-pub use vault::{PushOutcome, VaultLink, VaultStatus, serve_push};
+pub use vault::{PushOutcome, Synced, VaultLink, VaultStatus, serve_push};
 
 mod inbound;
 mod lifecycle;

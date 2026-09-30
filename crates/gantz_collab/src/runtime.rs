@@ -33,14 +33,13 @@ use crate::{
     identity::Identity,
     proto::{self, GossipMsg, Objects, SyncRequest, SyncResponse, Want},
     session::{PeerId, SessionId},
-    store::{self, ServedVault, SessionEntry, Shared, SharedState},
+    store::{self, SectionEntry, ServedVault, SessionEntry, Shared, SharedState},
     ticket::{SessionTicket, VaultTicket},
-    vault::{Push, PushReply, VaultEntry, VaultId, WatchMsg},
+    vault::{NameState, Push, PushReply, VaultEntry, VaultId, WatchMsg},
     version::{self, Outdated, VERSION_ALPN, VersionInfo, VersionServer},
 };
 use gantz_ca::{
-    BlobLiveness, Bytes, Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, Key, Liveness,
-    MergePolicy, Name, SectionId, Value,
+    BlobLiveness, Bytes, Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, Name, SectionId,
 };
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, Watcher,
@@ -166,7 +165,7 @@ pub enum Command {
         heads: Vec<(Name, CommitAddr)>,
         commits: Vec<(CommitAddr, Commit)>,
         graphs: Vec<(GraphAddr, DataGraph)>,
-        sections: Vec<(SectionId, MergePolicy, Liveness, Key, Value)>,
+        sections: Vec<SectionEntry>,
         blobs: Vec<(SectionId, BlobLiveness, ContentAddr, Bytes)>,
     },
     /// Start serving and gossiping a session. The session must already be
@@ -196,15 +195,18 @@ pub enum Command {
     /// secret and emits [`Event::VaultTicketReady`], again whenever the
     /// endpoint's address changes.
     HostVault(VaultEntry),
-    /// Apply an accepted change to a hosted vault's served store, then
-    /// notify its watch streams of the moved heads. `None` removes a head.
-    /// See [`store::update_vault`].
+    /// Apply an accepted change of one name to a hosted vault's served
+    /// store, then notify its watch streams if the name's state changed. A
+    /// `None` head removes the name, and a `meta` replaces its metadata. See
+    /// [`store::update_vault`] and [`store::set_name_meta`].
     UpdateVault {
         vault: VaultId,
-        heads: Vec<(Name, Option<CommitAddr>)>,
+        name: Name,
+        head: Option<CommitAddr>,
+        meta: Option<Vec<SectionEntry>>,
         commits: Vec<(CommitAddr, Commit)>,
         graphs: Vec<(GraphAddr, DataGraph)>,
-        sections: Vec<(SectionId, MergePolicy, Liveness, Key, Value)>,
+        sections: Vec<SectionEntry>,
         blobs: Vec<(SectionId, BlobLiveness, ContentAddr, Bytes)>,
     },
     /// Link this device to a vault and hold the link open, reconnecting with
@@ -276,17 +278,19 @@ pub enum Event {
         push: Push,
         reply: PushReply,
     },
-    /// A link to a vault opened. Every head the vault holds, and what the
-    /// vault speaks.
+    /// A link to a vault opened. Every head the vault holds, the metadata
+    /// digest of every name with metadata, and what the vault speaks.
     LinkUp {
         vault: VaultId,
         heads: Vec<(Name, CommitAddr)>,
+        metas: Vec<(Name, ContentAddr)>,
         info: VersionInfo,
     },
-    /// Names that moved on a linked vault. `None` means removed.
+    /// A name's head or metadata changed on a linked vault.
     LinkChanged {
         vault: VaultId,
-        changes: Vec<(Name, Option<CommitAddr>)>,
+        name: Name,
+        state: NameState,
     },
     /// A link to a vault dropped or failed to open. It retries by itself
     /// until [`Command::Unlink`].
@@ -310,13 +314,13 @@ pub enum Event {
         info: VersionInfo,
         outdated: Option<Outdated>,
     },
-    /// A vault answered a [`Command::Push`]. `Ok` holds the vault's head for
-    /// the name after the push, which is `tip` exactly when it was accepted.
+    /// A vault answered a [`Command::Push`]. `Ok` holds the name's state on
+    /// the vault after the push. See [`PushReply::send`].
     Pushed {
         vault: VaultId,
         name: Name,
         tip: Option<CommitAddr>,
-        result: Result<Option<CommitAddr>, String>,
+        result: Result<NameState, String>,
     },
     /// A peer became a direct gossip neighbour for a session.
     PeerUp { session: SessionId, peer: PeerId },
@@ -479,20 +483,17 @@ impl SyncServer {
     /// under the same lock that applies updates, so no change is missed.
     async fn watch(&self, remote: PeerId, session: SessionId, mut send: SendStream) {
         let (tx, rx) = async_channel::unbounded();
-        let heads = {
+        let mut msg = {
             let mut state = self.shared.lock();
             let Ok(vault) = paired_vault(&mut state, session, remote) else {
                 return;
             };
             vault.watchers.push(tx);
-            vault
-                .entry
-                .store
-                .heads()
-                .map(|(n, ca)| (n.clone(), ca))
-                .collect()
+            let store = &vault.entry.store;
+            let heads = store.heads().map(|(n, ca)| (n.clone(), ca)).collect();
+            let metas = store::metas(store);
+            WatchMsg::Heads { heads, metas }
         };
-        let mut msg = WatchMsg::Heads(heads);
         loop {
             if write_frame(&mut send, &msg).await.is_err() {
                 return;
@@ -527,7 +528,7 @@ impl SyncServer {
             return denied("the vault stopped");
         }
         match rx.recv().await {
-            Ok(Ok(head)) => SyncResponse::Pushed { head },
+            Ok(Ok(state)) => SyncResponse::Pushed { state },
             Ok(Err(reason)) => denied(&reason),
             Err(_) => denied("the vault dropped the push"),
         }
@@ -832,7 +833,9 @@ async fn drive(
             }
             Command::UpdateVault {
                 vault,
-                heads,
+                name,
+                head,
+                meta,
                 commits,
                 graphs,
                 sections,
@@ -843,18 +846,20 @@ async fn drive(
                     log::warn!("collab: update for an unhosted vault");
                     continue;
                 };
-                let result = store::update_vault(
-                    &mut served.entry.store,
-                    &heads,
-                    commits,
-                    graphs,
-                    sections,
-                    blobs,
-                );
-                match result {
-                    Ok(()) if heads.is_empty() => (),
-                    Ok(()) => served.notify(&WatchMsg::Changed(heads)),
-                    Err(e) => log::warn!("collab: vault update rejected: {e}"),
+                let store = &mut served.entry.store;
+                let before = store::name_state(store, &name);
+                let result =
+                    store::update_vault(store, &name, head, commits, graphs, sections, blobs);
+                if let Err(e) = result {
+                    log::warn!("collab: vault update rejected: {e}");
+                    continue;
+                }
+                if let Some(entries) = meta {
+                    store::set_name_meta(store, &name, entries);
+                }
+                let after = store::name_state(store, &name);
+                if after != before {
+                    served.notify(&WatchMsg::Changed { name, state: after });
                 }
             }
             Command::Link(ticket) => {
@@ -892,7 +897,7 @@ async fn drive(
                                 push,
                             };
                             match request(&endpoint, &conns, host, &req).await {
-                                Ok(SyncResponse::Pushed { head }) => Ok(head),
+                                Ok(SyncResponse::Pushed { state }) => Ok(state),
                                 Ok(SyncResponse::Denied { reason }) => {
                                     Err(format!("push denied: {reason}"))
                                 }
@@ -1323,12 +1328,17 @@ async fn follow(
             .await
             .map_err(LinkEnd::Down)?
         {
-            WatchMsg::Heads(heads) => {
+            WatchMsg::Heads { heads, metas } => {
                 *retry = LINK_RETRY_MIN;
                 let info = theirs.clone();
-                Event::LinkUp { vault, heads, info }
+                Event::LinkUp {
+                    vault,
+                    heads,
+                    metas,
+                    info,
+                }
             }
-            WatchMsg::Changed(changes) => Event::LinkChanged { vault, changes },
+            WatchMsg::Changed { name, state } => Event::LinkChanged { vault, name, state },
         };
         let gone = |_| LinkEnd::Down("the application is gone".to_string());
         evt_tx.send(evt).await.map_err(gone)?;

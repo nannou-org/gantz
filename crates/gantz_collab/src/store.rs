@@ -25,7 +25,7 @@
 use crate::{
     proto::{self, Object, ObjectRef, Objects, Want},
     session::{Access, PeerId, Session, SessionId},
-    vault::{VaultEntry, VaultId, WatchMsg},
+    vault::{NameState, VaultEntry, VaultId, WatchMsg},
 };
 use gantz_ca::{
     BlobLiveness, Bytes, Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, HEADS_ID, Key,
@@ -33,12 +33,16 @@ use gantz_ca::{
     sync::VerifyError, verify_graph,
 };
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeSet, HashMap, HashSet, VecDeque},
     sync::{Arc, Mutex, MutexGuard, PoisonError},
 };
 
 /// One session's served content. See the module docs.
 pub type SessionRegistry = Registry;
+
+/// One section entry with its section's id and semantics, as content
+/// carries it. See [`Registry::set_section_value`].
+pub type SectionEntry = (SectionId, MergePolicy, Liveness, Key, Value);
 
 /// The graph and blob bytes one [`ObjectRef::Closure`] answer carries before
 /// it stops at the next commit boundary. Well under the runtime's response
@@ -119,7 +123,7 @@ pub fn merge(
     heads: impl IntoIterator<Item = (Name, CommitAddr)>,
     commits: impl IntoIterator<Item = (CommitAddr, Commit)>,
     graphs: impl IntoIterator<Item = (GraphAddr, DataGraph)>,
-    sections: impl IntoIterator<Item = (SectionId, MergePolicy, Liveness, Key, Value)>,
+    sections: impl IntoIterator<Item = SectionEntry>,
     blobs: impl IntoIterator<Item = (SectionId, BlobLiveness, ContentAddr, Bytes)>,
 ) -> Result<MergeReport, VerifyError> {
     let graphs: HashMap<GraphAddr, DataGraph> = graphs.into_iter().collect();
@@ -192,9 +196,79 @@ pub fn objects(store: &SessionRegistry, want: &Want) -> Objects {
             ObjectRef::Closure { tips, have } => {
                 closure_objects(store, tips, have, CLOSURE_BUDGET, &mut objects);
             }
+            ObjectRef::Meta(name) => objects.extend(name_meta(store, name).objects),
         }
     }
     Objects { objects }
+}
+
+/// A name's metadata: its entry in every section keyed by name, except its
+/// head. For example its description. In section order, so equal metadata
+/// encodes equally.
+pub fn name_meta(store: &SessionRegistry, name: &Name) -> Objects {
+    let objects = keyed_sections(store, Key::Name(name.clone())).collect();
+    Objects { objects }
+}
+
+/// The digest of `meta`, or `None` when it is empty. See [`name_meta`].
+pub fn meta_digest(meta: &Objects) -> Option<ContentAddr> {
+    (!meta.objects.is_empty()).then(|| blob_addr(&proto::encode(meta)))
+}
+
+/// The digest of a name's metadata, or `None` when it has none. Peers
+/// compare digests to tell whether a name's metadata changed.
+pub fn meta_addr(store: &SessionRegistry, name: &Name) -> Option<ContentAddr> {
+    meta_digest(&name_meta(store, name))
+}
+
+/// A name's head and metadata digest.
+pub fn name_state(store: &SessionRegistry, name: &Name) -> NameState {
+    NameState {
+        head: store.head(name),
+        meta: meta_addr(store, name),
+    }
+}
+
+/// Every name with metadata, and its digest.
+pub fn metas(store: &SessionRegistry) -> Vec<(Name, ContentAddr)> {
+    let names: BTreeSet<&Name> = store
+        .sections()
+        .iter()
+        .filter(|(id, _)| id.as_str() != HEADS_ID)
+        .flat_map(|(_, section)| section.entries.keys())
+        .filter_map(|key| match key {
+            Key::Name(name) => Some(name),
+            _ => None,
+        })
+        .collect();
+    names
+        .into_iter()
+        .filter_map(|name| Some((name.clone(), meta_addr(store, name)?)))
+        .collect()
+}
+
+/// Replace a name's metadata with `entries`. An entry keyed by anything but
+/// the name, or in the heads section, is skipped.
+pub fn set_name_meta(
+    store: &mut SessionRegistry,
+    name: &Name,
+    entries: impl IntoIterator<Item = SectionEntry>,
+) {
+    let key = Key::Name(name.clone());
+    let held: Vec<SectionId> = store
+        .sections()
+        .iter()
+        .filter(|(id, section)| id.as_str() != HEADS_ID && section.entries.contains_key(&key))
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in held {
+        store.remove_section_entry(&id, &key);
+    }
+    for (id, policy, liveness, entry_key, value) in entries {
+        if entry_key == key && id.as_str() != HEADS_ID {
+            store.set_section_value(id, policy, liveness, entry_key, value);
+        }
+    }
 }
 
 /// Everything reachable from `tips` that is not reachable from `have`, in
@@ -206,26 +280,25 @@ pub fn closure(store: &SessionRegistry, tips: &[CommitAddr], have: &[CommitAddr]
     Objects { objects }
 }
 
-/// Apply an accepted vault change to its served store. Content merges and
-/// verifies as in [`merge`]. Each head is set, or removed when `None`. An
-/// `Err` leaves the store untouched.
+/// Apply an accepted change of one name to a vault's served store. Content
+/// merges and verifies as in [`merge`]. The head is set, or removed when
+/// `None`. An `Err` leaves the store untouched.
 pub fn update_vault(
     store: &mut SessionRegistry,
-    heads: &[(Name, Option<CommitAddr>)],
+    name: &Name,
+    head: Option<CommitAddr>,
     commits: impl IntoIterator<Item = (CommitAddr, Commit)>,
     graphs: impl IntoIterator<Item = (GraphAddr, DataGraph)>,
-    sections: impl IntoIterator<Item = (SectionId, MergePolicy, Liveness, Key, Value)>,
+    sections: impl IntoIterator<Item = SectionEntry>,
     blobs: impl IntoIterator<Item = (SectionId, BlobLiveness, ContentAddr, Bytes)>,
 ) -> Result<(), VerifyError> {
     merge(store, [], commits, graphs, sections, blobs)?;
-    for (name, head) in heads {
-        match head {
-            Some(ca) => {
-                store.set_head(name.clone(), *ca);
-            }
-            None => {
-                store.remove_head(name);
-            }
+    match head {
+        Some(ca) => {
+            store.set_head(name.clone(), ca);
+        }
+        None => {
+            store.remove_head(name);
         }
     }
     Ok(())
@@ -537,7 +610,7 @@ mod tests {
     }
 
     /// An `egui.view`-shaped section entry keyed by the given commit.
-    fn view_entry(ca: CommitAddr) -> (SectionId, MergePolicy, Liveness, Key, Value) {
+    fn view_entry(ca: CommitAddr) -> SectionEntry {
         (
             "egui.view".to_string(),
             MergePolicy::KeepExisting,
@@ -787,11 +860,42 @@ mod tests {
     #[test]
     fn update_vault_sets_and_removes_heads() {
         let (mut store, root_ca, tip_ca, _ga1) = test_store();
-        let heads = [(name("jam"), None), (name("riff"), Some(root_ca))];
-        update_vault(&mut store, &heads, [], [], [], []).unwrap();
+        update_vault(&mut store, &name("jam"), None, [], [], [], []).unwrap();
+        update_vault(&mut store, &name("riff"), Some(root_ca), [], [], [], []).unwrap();
         assert_eq!(store.head(&name("jam")), None);
         assert_eq!(store.head(&name("riff")), Some(root_ca));
         // Content outlives its head.
         assert!(store.commits().contains_key(&tip_ca));
+    }
+
+    #[test]
+    fn name_meta_replaces_whole_and_digests_by_content() {
+        let jam: Name = "jam".parse().unwrap();
+        let entry = |id: &str, text: &str| {
+            let value = Value::Datum(Datum::Str(text.to_string()));
+            let key = Key::Name(jam.clone());
+            (
+                id.to_string(),
+                MergePolicy::KeepExisting,
+                Liveness::WithName,
+                key,
+                value,
+            )
+        };
+        let mut store = SessionRegistry::default();
+        store.set_head(jam.clone(), CommitAddr::from(ContentAddr::from([1; 32])));
+        assert_eq!(meta_addr(&store, &jam), None);
+        let meta = [entry("gantz.description", "a"), entry("egui.demo", "d")];
+        set_name_meta(&mut store, &jam, meta);
+        let a = meta_addr(&store, &jam).unwrap();
+        assert_eq!(metas(&store), vec![(jam.clone(), a)]);
+        // A replacement drops what it leaves out.
+        set_name_meta(&mut store, &jam, [entry("gantz.description", "b")]);
+        assert_ne!(meta_addr(&store, &jam), Some(a));
+        assert_eq!(name_meta(&store, &jam).objects.len(), 1);
+        // The head is never metadata.
+        set_name_meta(&mut store, &jam, []);
+        assert_eq!(meta_addr(&store, &jam), None);
+        assert!(store.head(&jam).is_some());
     }
 }

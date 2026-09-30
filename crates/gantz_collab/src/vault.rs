@@ -17,6 +17,13 @@
 //! [`Event::PushRequest`], which decides, persists and replies. See
 //! `gantz_collab_sync::vault` for the device side.
 //!
+//! A name also has metadata: its entry in every section keyed by name, such
+//! as its description. Metadata lives outside history, so an edit to it
+//! mints no commit. The vault reports a digest of each name's metadata next
+//! to its head. A push may carry a [`MetaChange`], which the vault accepts
+//! only while its digest is still the change's `base`. Devices fetch a
+//! name's metadata with [`ObjectRef::Meta`].
+//!
 //! Access is by pairing. The vault ticket carries a [`PairingSecret`]. A
 //! `Hello` that presents it from an unknown peer adds that peer to the
 //! vault's allowlist and emits [`Event::DeviceSeen`]. Every other request
@@ -28,6 +35,7 @@
 //! [`SyncRequest::Want`]: crate::SyncRequest::Want
 //! [`SyncRequest::Push`]: crate::SyncRequest::Push
 //! [`ObjectRef::Closure`]: crate::ObjectRef::Closure
+//! [`ObjectRef::Meta`]: crate::ObjectRef::Meta
 //! [`Event::PushRequest`]: crate::Event::PushRequest
 //! [`Event::DeviceSeen`]: crate::Event::DeviceSeen
 
@@ -35,7 +43,7 @@ use crate::{
     proto::Objects,
     session::{PeerId, SessionId},
 };
-use gantz_ca::{CommitAddr, Name, Registry};
+use gantz_ca::{CommitAddr, ContentAddr, Name, Registry};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeSet, fmt};
 
@@ -69,6 +77,30 @@ pub struct Push {
     pub base: Option<CommitAddr>,
     /// Everything reachable from `tip` that the vault lacks, given `base`.
     pub objects: Objects,
+    /// A change to the name's metadata, if any. A change to the metadata
+    /// alone pushes the vault's head as both `tip` and `base`.
+    pub meta: Option<MetaChange>,
+}
+
+/// A change to a name's metadata. See the module docs.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MetaChange {
+    /// The vault's metadata digest the device made this change against.
+    /// The vault rejects the push unless its digest is still this.
+    pub base: Option<ContentAddr>,
+    /// The name's metadata after the change, as section objects keyed by
+    /// the name. It replaces the vault's. See [`crate::store::name_meta`].
+    pub entries: Objects,
+}
+
+/// A name's state on a vault.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct NameState {
+    /// The head. `None` when the vault does not hold the name.
+    pub head: Option<CommitAddr>,
+    /// The digest of the name's metadata. `None` when it has none. See
+    /// [`crate::store::meta_addr`].
+    pub meta: Option<ContentAddr>,
 }
 
 /// A frame on a vault's watch stream.
@@ -76,16 +108,21 @@ pub struct Push {
 /// Variant order is part of the wire format. Append new variants at the end.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub enum WatchMsg {
-    /// Every head the vault holds. Always the stream's first frame.
-    Heads(Vec<(Name, CommitAddr)>),
-    /// Names that moved since the previous frame. `None` means removed.
-    Changed(Vec<(Name, Option<CommitAddr>)>),
+    /// Every head the vault holds, and the metadata digest of every name
+    /// with metadata. Always the stream's first frame.
+    Heads {
+        heads: Vec<(Name, CommitAddr)>,
+        metas: Vec<(Name, ContentAddr)>,
+    },
+    /// A name whose head or metadata changed since the previous frame, with
+    /// its state now.
+    Changed { name: Name, state: NameState },
 }
 
 /// The application's answer to a forwarded push. See
 /// [`Event::PushRequest`](crate::Event::PushRequest).
 #[derive(Debug)]
-pub struct PushReply(pub(crate) async_channel::Sender<Result<Option<CommitAddr>, String>>);
+pub struct PushReply(pub(crate) async_channel::Sender<Result<NameState, String>>);
 
 impl PairingSecret {
     /// A fresh random secret.
@@ -109,11 +146,12 @@ impl PairingSecret {
 }
 
 impl PushReply {
-    /// Answer with the vault's head for the name after the push. The push
-    /// was accepted exactly when this is its `tip`.
-    pub fn send(self, head: Option<CommitAddr>) {
+    /// Answer with the name's state on the vault after the push. The push
+    /// was accepted exactly when the state holds its `tip`, and the digest
+    /// of its metadata if it carried a [`MetaChange`].
+    pub fn send(self, state: NameState) {
         // The requesting stream may be gone. The answer then has no reader.
-        let _ = self.0.try_send(Ok(head));
+        let _ = self.0.try_send(Ok(state));
     }
 
     /// Refuse a push that cannot apply, such as one whose objects do not

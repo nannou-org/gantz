@@ -9,12 +9,18 @@
 //! rejection teaches the device the vault's head, and the name plans again
 //! on the next pass.
 //!
+//! A name's metadata, such as its description, syncs the same way once its
+//! head is in step. See [`gantz_collab::vault`]. The device tracks the
+//! metadata digest it last agreed with and the vault's current one. It
+//! pushes a change made only here, and fetches one made only on the vault.
+//! When both changed, the vault's wins, as a push would find it stale.
+//!
 //! Runtime events only update state. The vault pass of [`poll`](crate::poll)
 //! does all the planning, so a name moved by any means, locally or
 //! remotely, is caught by the same pass.
 //!
 //! Names the host has open change through [`Effect`]s, so the host can
-//! migrate live state. A name is then held until its local or remote head
+//! migrate live state. A name is then held until its local or remote state
 //! moves, so an effect the host could not act on is not repeated every pass.
 //! A failed step holds its name the same way, and records why in
 //! [`VaultLink::failures`] until the name syncs. A fresh link clears every
@@ -27,10 +33,11 @@
 use crate::{Effect, JoinError, OpenHeads, Sessions, inbound, lifecycle::session_resolutions};
 use gantz_ca as ca;
 use gantz_collab::{
-    Command, Event, Handle, ObjectRef, Objects, Outdated, PeerId, Push, VaultId, VaultTicket,
-    VersionInfo, Want,
+    Command, Event, Handle, MetaChange, NameState, ObjectRef, Objects, Outdated, PeerId, Push,
+    SectionEntry, VaultId, VaultTicket, VersionInfo, Want, store,
 };
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use serde::{Deserialize, Serialize};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::mem;
 use std::time::Duration;
 use step::Step;
@@ -51,19 +58,29 @@ pub struct VaultLink {
     pub failures: BTreeMap<ca::Name, String>,
     /// Names that never sync, such as the base graphs every build seeds.
     pub local_only: BTreeSet<ca::Name>,
-    /// The vault head each name was last agreed at. The host persists it.
-    pub synced: BTreeMap<ca::Name, ca::CommitAddr>,
+    /// What each name was last agreed at. The host persists it.
+    pub synced: Synced,
     /// Set when `synced` changes. The host clears it once persisted.
     pub synced_changed: bool,
-    /// The vault's heads as last heard. `None` until the link first comes
-    /// up, since nothing can be planned against unknown heads.
-    remote: Option<BTreeMap<ca::Name, ca::CommitAddr>>,
+    /// The vault's heads and metadata digests as last heard. `None` until
+    /// the link first comes up, since nothing can be planned against an
+    /// unknown vault.
+    remote: Option<Synced>,
     /// Fetches of vault heads in flight, per name.
     fetches: HashMap<ca::Name, Fetch>,
+    /// Fetches of vault metadata in flight.
+    meta_fetches: HashSet<ca::Name>,
     /// Pushes in flight, per name.
-    pushes: HashMap<ca::Name, Option<ca::CommitAddr>>,
-    /// Names left alone while their local and remote heads are these.
-    held: HashMap<ca::Name, (Option<ca::CommitAddr>, Option<ca::CommitAddr>)>,
+    pushes: HashMap<ca::Name, Pushing>,
+    /// Names left alone while their local and remote states are these.
+    held: HashMap<ca::Name, (NameState, NameState)>,
+}
+
+/// Heads and metadata digests per name.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct Synced {
+    pub heads: BTreeMap<ca::Name, ca::CommitAddr>,
+    pub metas: BTreeMap<ca::Name, ca::ContentAddr>,
 }
 
 /// The state of a device's link to its vault. Names sync only while
@@ -94,10 +111,19 @@ pub enum PushOutcome {
     /// The name moved. Send this [`Command::UpdateVault`] to mirror the
     /// change into the served store and notify linked devices.
     Accepted(Command),
-    /// The vault's head was not the push's base. Holds the vault's head.
-    Stale(Option<ca::CommitAddr>),
+    /// The vault's head or metadata was not the push's base. Holds the
+    /// name's state on the vault.
+    Stale(NameState),
     /// The push's objects do not verify or do not complete its tip.
     Invalid(String),
+}
+
+/// What a push in flight carries.
+enum Pushing {
+    /// A new head.
+    Head,
+    /// A metadata change, with the digest of the metadata it sets.
+    Meta(Option<ca::ContentAddr>),
 }
 
 /// A vault head's closure being fetched.
@@ -120,33 +146,68 @@ struct Cx<'a> {
     resync: bool,
 }
 
+impl Synced {
+    /// `name`'s head and metadata digest.
+    fn state(&self, name: &ca::Name) -> NameState {
+        NameState {
+            head: self.heads.get(name).copied(),
+            meta: self.metas.get(name).copied(),
+        }
+    }
+}
+
 impl VaultLink {
+    /// Record `state` as the vault's state of `name`.
+    fn set_remote(&mut self, name: &ca::Name, state: NameState) {
+        if let Some(remote) = &mut self.remote {
+            set(&mut remote.heads, name, state.head);
+            set(&mut remote.metas, name, state.meta);
+        }
+    }
+
     /// Record `head` as the agreed head for `name`, which clears its
-    /// failure.
+    /// failure. A removed name forgets its agreed metadata too.
     fn set_synced(&mut self, name: &ca::Name, head: Option<ca::CommitAddr>) {
-        if set(&mut self.synced, name, head) {
+        let mut changed = set(&mut self.synced.heads, name, head);
+        if head.is_none() {
+            changed |= set(&mut self.synced.metas, name, None);
+        }
+        self.synced_changed |= changed;
+        self.failures.remove(name);
+    }
+
+    /// Record `meta` as the agreed metadata digest for `name`, which clears
+    /// its failure.
+    fn set_synced_meta(&mut self, name: &ca::Name, meta: Option<ca::ContentAddr>) {
+        if set(&mut self.synced.metas, name, meta) {
             self.synced_changed = true;
         }
         self.failures.remove(name);
     }
 
     /// Record why `name` failed to sync, and hold it until its local or
-    /// remote head moves.
+    /// remote state moves.
     fn fail(&mut self, registry: &ca::Registry, name: &ca::Name, reason: String) {
         log::warn!("vault: '{name}': {reason}");
         self.failures.insert(name.clone(), reason);
         self.hold(registry, name);
     }
 
-    /// Hold `name` until its local or remote head moves.
+    /// Hold `name` until its local or remote state moves.
     fn hold(&mut self, registry: &ca::Registry, name: &ca::Name) {
-        let remote = self.remote_head(name);
-        self.held
-            .insert(name.clone(), (registry.head(name), remote));
+        let states = (store::name_state(registry, name), self.remote_state(name));
+        self.held.insert(name.clone(), states);
     }
 
     fn remote_head(&self, name: &ca::Name) -> Option<ca::CommitAddr> {
-        self.remote.as_ref().and_then(|r| r.get(name).copied())
+        self.remote_state(name).head
+    }
+
+    fn remote_state(&self, name: &ca::Name) -> NameState {
+        self.remote
+            .as_ref()
+            .map(|r| r.state(name))
+            .unwrap_or_default()
     }
 }
 
@@ -159,7 +220,7 @@ pub fn link(
     sessions: &mut Sessions,
     handle: &Handle,
     ticket: VaultTicket,
-    synced: BTreeMap<ca::Name, ca::CommitAddr>,
+    synced: Synced,
     local_only: BTreeSet<ca::Name>,
 ) -> Result<VaultId, JoinError> {
     let id = ticket.vault;
@@ -179,6 +240,7 @@ pub fn link(
         synced_changed: false,
         remote: None,
         fetches: HashMap::new(),
+        meta_fetches: HashSet::new(),
         pushes: HashMap::new(),
         held: HashMap::new(),
     });
@@ -210,6 +272,7 @@ pub(crate) fn owns(link: &VaultLink, event: &Event) -> bool {
 fn down(link: &mut VaultLink, status: VaultStatus) {
     link.status = status;
     link.fetches.clear();
+    link.meta_fetches.clear();
     link.pushes.clear();
 }
 
@@ -223,22 +286,22 @@ pub(crate) fn handle_event(
     event: Event,
 ) {
     match event {
-        Event::LinkUp { heads, info, .. } => {
-            link.remote = Some(heads.into_iter().collect());
+        Event::LinkUp {
+            heads, metas, info, ..
+        } => {
+            link.remote = Some(Synced {
+                heads: heads.into_iter().collect(),
+                metas: metas.into_iter().collect(),
+            });
             link.status = VaultStatus::Live;
             link.vault_info = Some(info);
             link.fetches.clear();
+            link.meta_fetches.clear();
             link.pushes.clear();
             link.held.clear();
             link.failures.clear();
         }
-        Event::LinkChanged { changes, .. } => {
-            if let Some(remote) = &mut link.remote {
-                for (name, head) in changes {
-                    set(remote, &name, head);
-                }
-            }
-        }
+        Event::LinkChanged { name, state, .. } => link.set_remote(&name, state),
         Event::LinkDown { error, .. } => {
             log::info!("vault link down: {error}");
             down(link, VaultStatus::Offline(error));
@@ -258,8 +321,16 @@ pub(crate) fn handle_event(
             log::warn!("vault link denied: {reason}");
             down(link, VaultStatus::Denied(reason));
         }
-        Event::Objects { want, objects, .. } => feed(link, registry, handle, open, want, objects),
+        Event::Objects { want, objects, .. } => match meta_fetch(link, &want) {
+            Some(name) => feed_meta(link, registry, &name, objects),
+            None => feed(link, registry, handle, open, want, objects),
+        },
         Event::FetchFailed { want, error, .. } => {
+            if let Some(name) = meta_fetch(link, &want) {
+                link.meta_fetches.remove(&name);
+                link.fail(registry, &name, format!("metadata fetch failed: {error}"));
+                return;
+            }
             let failed: Vec<ca::Name> = link
                 .fetches
                 .iter()
@@ -274,14 +345,16 @@ pub(crate) fn handle_event(
         Event::Pushed {
             name, tip, result, ..
         } => {
-            link.pushes.remove(&name);
+            let pushing = link.pushes.remove(&name);
             match result {
-                Ok(head) => {
-                    if let Some(remote) = &mut link.remote {
-                        set(remote, &name, head);
-                    }
-                    if head == tip {
-                        link.set_synced(&name, tip);
+                Ok(state) => {
+                    link.set_remote(&name, state);
+                    match pushing {
+                        Some(Pushing::Head) if state.head == tip => link.set_synced(&name, tip),
+                        Some(Pushing::Meta(meta)) if state.meta == meta => {
+                            link.set_synced_meta(&name, meta)
+                        }
+                        _ => (),
                     }
                 }
                 Err(error) => link.fail(registry, &name, format!("push failed: {error}")),
@@ -309,11 +382,12 @@ pub(crate) fn sync(
     let names: BTreeSet<ca::Name> = registry
         .heads()
         .map(|(n, _)| n)
-        .chain(link.synced.keys())
-        .chain(remote.keys())
+        .chain(link.synced.heads.keys())
+        .chain(remote.heads.keys())
+        .filter(|n| !link.local_only.contains(*n))
         .filter(|n| {
-            let synced = link.synced.get(*n).copied();
-            registry.head(n) != synced || remote.get(*n).copied() != synced
+            let synced = link.synced.state(n);
+            store::name_state(registry, n) != synced || remote.state(n) != synced
         })
         .cloned()
         .collect();
@@ -334,27 +408,34 @@ pub(crate) fn sync(
 
 /// Bring one name one step closer to agreement with the vault.
 fn reconcile(link: &mut VaultLink, cx: &mut Cx<'_>, name: &ca::Name) {
-    if link.local_only.contains(name)
-        || link.fetches.contains_key(name)
+    if link.fetches.contains_key(name)
+        || link.meta_fetches.contains(name)
         || link.pushes.contains_key(name)
     {
         return;
     }
     let local = cx.registry.head(name);
     let remote = link.remote_head(name);
-    if let Some(&held) = link.held.get(name) {
-        if held == (local, remote) {
+    if let Some(held) = link.held.get(name) {
+        let states = (
+            store::name_state(cx.registry, name),
+            link.remote_state(name),
+        );
+        if *held == states {
             return;
         }
         link.held.remove(name);
     }
-    let base = link.synced.get(name).copied();
+    let base = link.synced.heads.get(name).copied();
     if let Some(r) = remote.filter(|r| !cx.registry.commits().contains_key(r)) {
         fetch(link, cx, name, r, [local, base]);
         return;
     }
     match step::plan(cx.registry.commits(), local, base, remote) {
-        Step::InSync => link.set_synced(name, local),
+        Step::InSync => {
+            link.set_synced(name, local);
+            sync_meta(link, cx, name);
+        }
         // Planning again would find the same backwards move.
         Step::Keep => link.hold(cx.registry, name),
         Step::Adopt(target) => adopt(link, cx, name, target),
@@ -410,6 +491,7 @@ fn push(link: &mut VaultLink, cx: &mut Cx<'_>, name: &ca::Name, tip: Option<ca::
         tip,
         base,
         objects,
+        meta: None,
     };
     let vault = link.id;
     if cx
@@ -418,7 +500,7 @@ fn push(link: &mut VaultLink, cx: &mut Cx<'_>, name: &ca::Name, tip: Option<ca::
         .try_send(Command::Push { vault, push })
         .is_ok()
     {
-        link.pushes.insert(name.clone(), tip);
+        link.pushes.insert(name.clone(), Pushing::Head);
     }
 }
 
@@ -476,12 +558,16 @@ fn aside(
         .registry
         .heads()
         .map(|(n, _)| n)
-        .filter(|n| *n != name && !link.synced.contains_key(*n))
+        .filter(|n| *n != name && !link.synced.heads.contains_key(*n))
         .filter_map(|n| Some((n.clone(), n.replace_prefix(name, &aside)?)))
         .collect();
+    // Metadata moves with the local graph it describes, so the vault's
+    // metadata for the name wins.
     cx.registry.set_head(aside.clone(), local);
+    move_meta(cx.registry, name, &aside);
     gantz_egui::sync::fork_nested(cx.registry, now(), name, &aside);
     for (from, to) in moving {
+        move_meta(cx.registry, &from, &to);
         cx.registry.remove_head(&from);
         cx.effects.push(Effect::Renamed { from, to });
     }
@@ -498,6 +584,112 @@ fn aside(
     });
     cx.resync = true;
     link.set_synced(name, Some(remote));
+    link.set_synced_meta(name, None);
+}
+
+/// Bring a name's metadata into agreement with the vault, once its head is.
+fn sync_meta(link: &mut VaultLink, cx: &mut Cx<'_>, name: &ca::Name) {
+    let Some(head) = cx.registry.head(name) else {
+        return;
+    };
+    let local = store::meta_addr(cx.registry, name);
+    let remote = link.remote_state(name).meta;
+    let synced = link.synced.metas.get(name).copied();
+    if local == remote {
+        link.set_synced_meta(name, local);
+    } else if remote == synced {
+        push_meta(link, cx, name, head, remote);
+    } else {
+        fetch_meta(link, cx, name);
+    }
+}
+
+/// Push the local metadata against the vault's, with the head unchanged.
+fn push_meta(
+    link: &mut VaultLink,
+    cx: &mut Cx<'_>,
+    name: &ca::Name,
+    head: ca::CommitAddr,
+    base: Option<ca::ContentAddr>,
+) {
+    let entries = store::name_meta(cx.registry, name);
+    let meta = store::meta_digest(&entries);
+    let push = Push {
+        name: name.clone(),
+        tip: Some(head),
+        base: Some(head),
+        objects: Objects::default(),
+        meta: Some(MetaChange { base, entries }),
+    };
+    let vault = link.id;
+    if cx
+        .handle
+        .cmds
+        .try_send(Command::Push { vault, push })
+        .is_ok()
+    {
+        link.pushes.insert(name.clone(), Pushing::Meta(meta));
+    }
+}
+
+/// Start fetching the vault's metadata for `name`.
+fn fetch_meta(link: &mut VaultLink, cx: &mut Cx<'_>, name: &ca::Name) {
+    let want = Want {
+        refs: vec![ObjectRef::Meta(name.clone())],
+    };
+    let cmd = Command::Fetch {
+        session: link.id,
+        from: link.vault,
+        want,
+    };
+    if cx.handle.cmds.try_send(cmd).is_ok() {
+        link.meta_fetches.insert(name.clone());
+    }
+}
+
+/// The name whose metadata fetch `want` answers, if one is in flight.
+fn meta_fetch(link: &VaultLink, want: &Want) -> Option<ca::Name> {
+    match &want.refs[..] {
+        [ObjectRef::Meta(name)] if link.meta_fetches.contains(name) => Some(name.clone()),
+        _ => None,
+    }
+}
+
+/// Replace a name's metadata with the vault's. Metadata that this build
+/// cannot store exactly, such as entries it cannot read, is not agreed. The
+/// name is held instead of fetched again each pass.
+fn feed_meta(link: &mut VaultLink, registry: &mut ca::Registry, name: &ca::Name, objects: Objects) {
+    link.meta_fetches.remove(name);
+    let fetched = store::meta_digest(&objects);
+    store::set_name_meta(registry, name, inbound::decode(objects).sections);
+    if store::meta_addr(registry, name) == fetched {
+        link.set_synced_meta(name, fetched);
+    } else {
+        let reason = "this gantz cannot store the vault's metadata exactly";
+        link.fail(registry, name, reason.to_string());
+    }
+}
+
+/// Move `from`'s metadata to `to`.
+fn move_meta(registry: &mut ca::Registry, from: &ca::Name, to: &ca::Name) {
+    let (key, to_key) = (ca::Key::Name(from.clone()), ca::Key::Name(to.clone()));
+    let entries: Vec<_> = registry
+        .sections()
+        .iter()
+        .filter(|(id, _)| id.as_str() != ca::HEADS_ID)
+        .filter_map(|(id, section)| {
+            let value = section.entries.get(&key)?.clone();
+            Some((
+                id.clone(),
+                section.policy,
+                section.liveness,
+                to_key.clone(),
+                value,
+            ))
+        })
+        .collect();
+    store::set_name_meta(registry, to, entries);
+    store::set_name_meta(registry, from, Vec::new());
 }
 
 /// Start fetching the closure of a vault head.
@@ -592,20 +784,35 @@ fn feed(
 }
 
 /// Apply a device's push to the vault's registry, if it was made against
-/// the vault's current head and its objects complete its tip.
+/// the vault's current head and metadata, and its objects complete its tip.
+/// A removal drops the name's metadata too.
 pub fn serve_push(registry: &mut ca::Registry, vault: VaultId, push: Push) -> PushOutcome {
-    let head = registry.head(&push.name);
-    if head != push.base {
-        return PushOutcome::Stale(head);
+    let state = store::name_state(registry, &push.name);
+    let meta_stale = push.meta.as_ref().is_some_and(|m| m.base != state.meta);
+    if state.head != push.base || meta_stale {
+        return PushOutcome::Stale(state);
     }
     let Push {
-        name, tip, objects, ..
+        name,
+        tip,
+        objects,
+        meta,
+        ..
     } = push;
     let Some(tip) = tip else {
         registry.remove_head(&name);
-        let removed = update(vault, name, None, inbound::Decoded::default());
+        store::set_name_meta(registry, &name, Vec::new());
+        let removed = update(vault, name, None, Some(Vec::new()), Default::default());
         return PushOutcome::Accepted(removed);
     };
+    // The metadata replaces the vault's whole, so it may hold this name's
+    // entries alone.
+    let meta = meta.map(|m| inbound::decode(m.entries).sections);
+    let key = ca::Key::Name(name.clone());
+    let foreign = |(id, _, _, k, _): &SectionEntry| *k != key || id == ca::HEADS_ID;
+    if meta.iter().flatten().any(foreign) {
+        return PushOutcome::Invalid(format!("metadata for '{name}' holds other entries"));
+    }
     let decoded = inbound::decode(objects);
     let mut staged = ca::sync::Staged::new();
     match inbound::advance(registry, &mut staged, tip, &decoded) {
@@ -620,20 +827,26 @@ pub fn serve_push(registry: &mut ca::Registry, vault: VaultId, push: Push) -> Pu
         Ok(_) => (),
     }
     inbound::apply_sections(registry, decoded.sections.clone(), None);
+    if let Some(entries) = &meta {
+        store::set_name_meta(registry, &name, entries.clone());
+    }
     registry.set_head(name.clone(), tip);
-    PushOutcome::Accepted(update(vault, name, Some(tip), decoded))
+    PushOutcome::Accepted(update(vault, name, Some(tip), meta, decoded))
 }
 
-/// The update mirroring an accepted push into the served store.
+/// The update mirroring an accepted push of `name` into the served store.
 fn update(
     vault: VaultId,
     name: ca::Name,
     head: Option<ca::CommitAddr>,
+    meta: Option<Vec<SectionEntry>>,
     decoded: inbound::Decoded,
 ) -> Command {
     Command::UpdateVault {
         vault,
-        heads: vec![(name, head)],
+        name,
+        head,
+        meta,
         commits: decoded.commits,
         graphs: decoded.graphs,
         sections: decoded.sections,
@@ -681,16 +894,16 @@ fn free_name(registry: &ca::Registry, name: &ca::Name, local: ca::CommitAddr) ->
 }
 
 /// Insert or remove a map entry. Returns whether the map changed.
-fn set(
-    map: &mut BTreeMap<ca::Name, ca::CommitAddr>,
+fn set<V: Copy + PartialEq>(
+    map: &mut BTreeMap<ca::Name, V>,
     name: &ca::Name,
-    head: Option<ca::CommitAddr>,
+    value: Option<V>,
 ) -> bool {
-    let old = match head {
-        Some(ca) => map.insert(name.clone(), ca),
+    let old = match value {
+        Some(v) => map.insert(name.clone(), v),
         None => map.remove(name),
     };
-    old != head
+    old != value
 }
 
 /// The wall clock, for the commits an aside mints.

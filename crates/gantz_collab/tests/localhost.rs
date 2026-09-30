@@ -258,7 +258,9 @@ fn local(app: &str) -> gantz_collab::RuntimeConfig {
 #[test]
 #[ignore = "binds real sockets"]
 fn vaults_pair_link_push_fetch_and_notify() {
-    use gantz_collab::{PairingSecret, Push, PushReply, VaultEntry, VaultTicket};
+    use gantz_collab::{
+        MetaChange, NameState, PairingSecret, Push, PushReply, VaultEntry, VaultTicket,
+    };
     let vault_id = SessionId::generate();
     let pairing = PairingSecret::generate();
     let mut graph = DataGraph::default();
@@ -354,9 +356,23 @@ fn vaults_pair_link_push_fetch_and_notify() {
             .contains(&Object::Commit(root_ca, root.clone().into()))
     );
 
-    // A push reaches the application, which accepts it and notifies watchers.
+    // A push with a description reaches the application, which accepts it
+    // and notifies watchers.
     let tip = Commit::new(Duration::from_secs(2), Some(root_ca), graph_ca);
     let tip_ca = commit_addr(&tip);
+    let description = Value::Datum(Datum::Str("a jam".to_string()));
+    let entry = (
+        "gantz.description".to_string(),
+        MergePolicy::KeepExisting,
+        Liveness::WithName,
+        Key::Name(jam.clone()),
+        description.clone(),
+    );
+    let mut described = SessionRegistry::default();
+    let (id, policy, liveness, key, value) = entry.clone();
+    described.set_section_value(id, policy, liveness, key, value);
+    let entries = store::name_meta(&described, &jam);
+    let meta = store::meta_digest(&entries);
     let push = Push {
         name: jam.clone(),
         tip: Some(tip_ca),
@@ -364,6 +380,10 @@ fn vaults_pair_link_push_fetch_and_notify() {
         objects: gantz_collab::Objects {
             objects: vec![Object::Commit(tip_ca, tip.clone().into())],
         },
+        meta: Some(MetaChange {
+            base: None,
+            entries,
+        }),
     };
     device
         .cmds
@@ -381,27 +401,51 @@ fn vaults_pair_link_push_fetch_and_notify() {
         .cmds
         .send_blocking(Command::UpdateVault {
             vault: vault_id,
-            heads: vec![(jam.clone(), Some(tip_ca))],
+            name: jam.clone(),
+            head: Some(tip_ca),
+            meta: Some(vec![entry]),
             commits: vec![(tip_ca, tip)],
             graphs: vec![],
             sections: vec![],
             blobs: vec![],
         })
         .unwrap();
-    reply.send(Some(tip_ca));
+    let state = NameState {
+        head: Some(tip_ca),
+        meta,
+    };
+    reply.send(state);
     // The change notice and the push answer travel on different streams, so
     // either may arrive first.
-    let (mut result, mut changes) = (None, None);
+    let (mut result, mut changed) = (None, None);
     wait_for(&device, |e| {
         match e {
             Event::Pushed { result: r, .. } => result = Some(r),
-            Event::LinkChanged { changes: c, .. } => changes = Some(c),
+            Event::LinkChanged { name, state, .. } => changed = Some((name, state)),
             _ => (),
         }
-        (result.is_some() && changes.is_some()).then_some(())
+        (result.is_some() && changed.is_some()).then_some(())
     });
-    assert_eq!(result, Some(Ok(Some(tip_ca))));
-    assert_eq!(changes, Some(vec![(jam, Some(tip_ca))]));
+    assert_eq!(result, Some(Ok(state)));
+    assert_eq!(changed, Some((jam.clone(), state)));
+
+    // The device fetches the description by the name.
+    let want = Want {
+        refs: vec![ObjectRef::Meta(jam.clone())],
+    };
+    device
+        .cmds
+        .send_blocking(Command::Fetch {
+            session: vault_id,
+            from: vault_peer,
+            want,
+        })
+        .unwrap();
+    let objects = wait_for(&device, |e| match e {
+        Event::Objects { objects, .. } => Some(objects),
+        _ => None,
+    });
+    assert_eq!(store::meta_digest(&objects), meta);
 
     // A device with the wrong secret is refused.
     let stranger = gantz_collab::spawn(Identity::generate(), local("gantz stranger"));

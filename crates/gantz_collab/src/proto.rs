@@ -19,7 +19,7 @@
 
 use crate::{
     session::{PeerId, SessionId},
-    vault::{PairingSecret, Push},
+    vault::{NameState, PairingSecret, Push},
 };
 use gantz_ca::{
     BlobLiveness, Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, Key, Liveness,
@@ -136,6 +136,9 @@ pub enum ObjectRef {
         tips: Vec<CommitAddr>,
         have: Vec<CommitAddr>,
     },
+    /// A name's metadata: its entry in every section keyed by name. See
+    /// [`crate::store::name_meta`].
+    Meta(Name),
 }
 
 /// A fetched object under its claimed reference.
@@ -242,10 +245,10 @@ pub enum SyncResponse {
     Denied {
         reason: String,
     },
-    /// The vault's head for the pushed name after the push. The push was
-    /// accepted exactly when this is its tip.
+    /// The pushed name's state on the vault after the push. See
+    /// [`crate::PushReply::send`].
     Pushed {
-        head: Option<CommitAddr>,
+        state: NameState,
     },
 }
 
@@ -540,6 +543,7 @@ mod tests {
                 tip: Some(ca),
                 base: None,
                 objects: Objects::default(),
+                meta: None,
             },
         };
         let SyncRequest::Push { push: decoded, .. } = decode(&encode(&push)).unwrap() else {
@@ -559,17 +563,27 @@ mod tests {
             3
         );
 
-        let pushed = SyncResponse::Pushed { head: Some(ca) };
-        let SyncResponse::Pushed { head } = decode(&encode(&pushed)).unwrap() else {
+        let state = NameState {
+            head: Some(ca),
+            meta: Some(gantz_ca::ContentAddr::from([4; 32])),
+        };
+        let pushed = SyncResponse::Pushed { state };
+        let SyncResponse::Pushed { state: decoded } = decode(&encode(&pushed)).unwrap() else {
             panic!("wrong variant");
         };
-        assert_eq!(head, Some(ca));
+        assert_eq!(decoded, state);
         assert_eq!(encode(&pushed)[0], 5);
 
-        let changed = crate::WatchMsg::Changed(vec![(name("jam"), None)]);
-        let crate::WatchMsg::Changed(decoded) = decode(&encode(&changed)).unwrap() else {
+        let changed = crate::WatchMsg::Changed {
+            name: name("jam"),
+            state,
+        };
+        let crate::WatchMsg::Changed { name: n, state: s } = decode(&encode(&changed)).unwrap()
+        else {
             panic!("wrong variant");
         };
-        assert_eq!(decoded, vec![(name("jam"), None)]);
+        assert_eq!((n, s), (name("jam"), state));
+        let meta = ObjectRef::Meta(name("jam"));
+        assert_eq!(decode::<ObjectRef>(&encode(&meta)).unwrap(), meta);
     }
 }

@@ -6,8 +6,8 @@ use super::{Fake, commit, fake, graph, name};
 use crate::*;
 use gantz_ca as ca;
 use gantz_collab::{
-    Command, Event, ObjectRef, Outdated, PROTO_MAX, PROTO_MIN, PairingSecret, PeerId, Push,
-    SessionId, VaultId, VaultTicket, VersionInfo,
+    Command, Event, NameState, ObjectRef, Outdated, PROTO_MAX, PROTO_MIN, PairingSecret, PeerId,
+    Push, SessionId, VaultId, VaultTicket, VersionInfo, store,
 };
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
@@ -43,6 +43,15 @@ impl Device {
             .heads()
             .filter(|(n, _)| !local_only.contains(*n))
             .map(|(n, ca)| (n.clone(), ca))
+            .collect()
+    }
+
+    /// Metadata digests outside `local_only`.
+    fn metas(&self) -> BTreeMap<ca::Name, ca::ContentAddr> {
+        let local_only = &self.link().local_only;
+        store::metas(&self.registry)
+            .into_iter()
+            .filter(|(n, _)| !local_only.contains(n))
             .collect()
     }
 }
@@ -89,18 +98,24 @@ impl Net {
             &mut device.sessions,
             &device.fake.handle,
             ticket,
-            BTreeMap::new(),
+            Synced::default(),
             local_only,
         )
         .unwrap();
         assert!(matches!(device.fake.drain()[..], [Command::Link(_)]));
-        let heads = self.heads().into_iter().collect();
-        let up = Event::LinkUp {
-            vault: self.id,
-            heads,
-            info: Default::default(),
-        };
+        let up = self.up();
+
         self.devices[d].inbox.push_back(up);
+    }
+
+    /// The vault's answer to a new link.
+    fn up(&self) -> Event {
+        Event::LinkUp {
+            vault: self.id,
+            heads: self.heads().into_iter().collect(),
+            metas: store::metas(&self.registry),
+            info: Default::default(),
+        }
     }
 
     /// Deliver device `d`'s inbox, poll it, and answer what it sent.
@@ -144,20 +159,22 @@ impl Net {
             Command::Push { push, .. } => {
                 let (name, tip) = (push.name.clone(), push.tip);
                 let result = match serve_push(&mut self.registry, self.id, push.clone()) {
-                    PushOutcome::Accepted(Command::UpdateVault { heads, .. }) => {
-                        let changed = Event::LinkChanged {
-                            vault: self.id,
-                            changes: heads,
-                        };
+                    PushOutcome::Accepted(Command::UpdateVault { name, .. }) => {
+                        let state = store::name_state(&self.registry, &name);
                         for device in &mut self.devices {
                             if device.sessions.vault.is_some() {
-                                device.inbox.push_back(clone_changed(&changed));
+                                let changed = Event::LinkChanged {
+                                    vault: self.id,
+                                    name: name.clone(),
+                                    state,
+                                };
+                                device.inbox.push_back(changed);
                             }
                         }
-                        Ok(tip)
+                        Ok(state)
                     }
                     PushOutcome::Accepted(_) => unreachable!("an update"),
-                    PushOutcome::Stale(head) => Ok(head),
+                    PushOutcome::Stale(state) => Ok(state),
                     PushOutcome::Invalid(reason) => Err(reason),
                 };
                 let pushed = Event::Pushed {
@@ -189,21 +206,18 @@ impl Net {
     }
 
     fn assert_converged(&self) {
-        let expected = self.heads();
+        let heads = self.heads();
+        let metas: BTreeMap<_, _> = store::metas(&self.registry).into_iter().collect();
         for (d, device) in self.devices.iter().enumerate() {
-            assert_eq!(device.heads(), expected, "device {d} heads");
-            assert_eq!(device.link().synced, expected, "device {d} synced");
+            assert_eq!(device.heads(), heads, "device {d} heads");
+            assert_eq!(device.metas(), metas, "device {d} metas");
+            let synced = &device.link().synced;
+            assert_eq!(
+                (&synced.heads, &synced.metas),
+                (&heads, &metas),
+                "device {d} synced"
+            );
         }
-    }
-}
-
-fn clone_changed(event: &Event) -> Event {
-    let Event::LinkChanged { vault, changes } = event else {
-        unreachable!("a change notice");
-    };
-    Event::LinkChanged {
-        vault: *vault,
-        changes: changes.clone(),
     }
 }
 
@@ -349,22 +363,17 @@ fn a_failed_fetch_holds_its_name_until_the_vault_moves() {
         pairing: PairingSecret::generate(),
         host: id.into(),
     };
-    let heads = net.heads().into_iter().collect();
+    let up = net.up();
     let device = &mut net.devices[1];
     vault::link(
         &mut device.sessions,
         &device.fake.handle,
         ticket,
-        BTreeMap::new(),
+        Synced::default(),
         BTreeSet::new(),
     )
     .unwrap();
     device.fake.drain();
-    let up = Event::LinkUp {
-        vault: net.id,
-        heads,
-        info: Default::default(),
-    };
     let effects = device
         .fake
         .deliver(&mut device.sessions, &mut device.registry, &device.open, up);
@@ -390,7 +399,11 @@ fn a_failed_fetch_holds_its_name_until_the_vault_moves() {
     let device = &mut net.devices[1];
     let changed = Event::LinkChanged {
         vault: net.id,
-        changes: vec![(name("jam"), Some(tip))],
+        name: name("jam"),
+        state: NameState {
+            head: Some(tip),
+            meta: None,
+        },
     };
     device.fake.deliver(
         &mut device.sessions,
@@ -441,14 +454,20 @@ fn serve_push_refuses_stale_and_incomplete_pushes() {
         tip: Some(tip),
         base: None,
         objects: Default::default(),
+        meta: None,
     };
     let outcome = serve_push(&mut vault, id, stale);
-    assert!(matches!(outcome, PushOutcome::Stale(Some(h)) if h == root));
+    let at_root = NameState {
+        head: Some(root),
+        meta: None,
+    };
+    assert!(matches!(outcome, PushOutcome::Stale(state) if state == at_root));
     let incomplete = Push {
         name: name("jam"),
         tip: Some(tip),
         base: Some(root),
         objects: Default::default(),
+        meta: None,
     };
     assert!(matches!(
         serve_push(&mut vault, id, incomplete),
@@ -459,6 +478,7 @@ fn serve_push_refuses_stale_and_incomplete_pushes() {
         tip: Some(tip),
         base: Some(root),
         objects: gantz_collab::store::closure(&device, &[tip], &[root]),
+        meta: None,
     };
     assert!(matches!(
         serve_push(&mut vault, id, complete),
@@ -482,6 +502,7 @@ fn serve_push_mirrors_no_content_for_a_removal() {
         tip: None,
         base: Some(root),
         objects: gantz_collab::store::closure(&device, &[other], &[]),
+        meta: None,
     };
     let PushOutcome::Accepted(Command::UpdateVault {
         commits, graphs, ..
@@ -537,6 +558,7 @@ fn an_incompatible_vault_pauses_sync_and_says_who_must_update() {
     let up = Event::LinkUp {
         vault: net.id,
         heads: vec![],
+        metas: vec![],
         info: ours,
     };
     net.devices[0].inbox.push_back(up);
@@ -580,4 +602,190 @@ fn a_refused_push_is_recorded_until_the_name_syncs() {
     net.settle();
     net.assert_converged();
     assert!(net.devices[0].link().failures.is_empty());
+}
+
+/// Set `n`'s description on device `d`. An empty text clears it.
+fn describe(net: &mut Net, d: usize, n: &str, text: &str) {
+    let registry = &mut net.devices[d].registry;
+    gantz_egui::section::set_description(registry, name(n), text.to_string());
+}
+
+fn description(net: &Net, d: usize, n: &ca::Name) -> Option<String> {
+    gantz_egui::section::description(&net.devices[d].registry, n)
+}
+
+#[test]
+fn descriptions_follow_a_graph_between_devices() {
+    let mut net = Net::new(2);
+    edit(&mut net, 0, "jam", 1, 1);
+    describe(&mut net, 0, "jam", "a jam");
+    net.link(0, &[]);
+    net.link(1, &[]);
+    net.settle();
+    net.assert_converged();
+    let jam = name("jam");
+    assert_eq!(description(&net, 1, &jam).as_deref(), Some("a jam"));
+    // An edit to the description alone reaches the other device.
+    describe(&mut net, 1, "jam", "a better jam");
+    net.settle();
+    net.assert_converged();
+    assert_eq!(description(&net, 0, &jam).as_deref(), Some("a better jam"));
+    // So does clearing it.
+    describe(&mut net, 0, "jam", "");
+    net.settle();
+    net.assert_converged();
+    assert_eq!(description(&net, 1, &jam), None);
+}
+
+#[test]
+fn the_vaults_description_wins_over_a_concurrent_edit() {
+    let mut net = Net::new(2);
+    edit(&mut net, 0, "jam", 1, 1);
+    net.link(0, &[]);
+    net.link(1, &[]);
+    net.settle();
+    describe(&mut net, 0, "jam", "first");
+    describe(&mut net, 1, "jam", "second");
+    // Device 0 reaches the vault first.
+    net.step(0);
+    net.settle();
+    net.assert_converged();
+    let jam = name("jam");
+    assert_eq!(description(&net, 1, &jam).as_deref(), Some("first"));
+}
+
+#[test]
+fn an_aside_graph_keeps_its_description() {
+    let mut net = Net::new(2);
+    edit(&mut net, 0, "jam", 1, 1);
+    describe(&mut net, 0, "jam", "ours");
+    let theirs = edit(&mut net, 1, "jam", 2, 2);
+    describe(&mut net, 1, "jam", "theirs");
+    net.link(0, &[]);
+    net.settle();
+    net.link(1, &[]);
+    net.settle();
+    net.assert_converged();
+    let (jam, aside) = (
+        name("jam"),
+        name(&format!("jam-{}", theirs.display_short())),
+    );
+    for d in 0..2 {
+        assert_eq!(description(&net, d, &jam).as_deref(), Some("ours"));
+        assert_eq!(description(&net, d, &aside).as_deref(), Some("theirs"));
+    }
+}
+
+#[test]
+fn serve_push_refuses_stale_and_foreign_metadata() {
+    let mut vault = ca::Registry::default();
+    let id = SessionId::generate();
+    let (root, _) = commit(&mut vault, None, graph(&[1]), 1);
+    let jam = name("jam");
+    vault.set_head(jam.clone(), root);
+    let mut device = vault.clone();
+    gantz_egui::section::set_description(&mut device, jam.clone(), "a jam".to_string());
+    let meta_push = |base, entries| Push {
+        name: jam.clone(),
+        tip: Some(root),
+        base: Some(root),
+        objects: Default::default(),
+        meta: Some(gantz_collab::MetaChange { base, entries }),
+    };
+    let entries = store::name_meta(&device, &jam);
+    let stale_base = Some(ca::ContentAddr::from([9; 32]));
+    let stale = serve_push(&mut vault, id, meta_push(stale_base, entries.clone()));
+    let unchanged = NameState {
+        head: Some(root),
+        meta: None,
+    };
+    assert!(matches!(stale, PushOutcome::Stale(state) if state == unchanged));
+    let foreign = store::name_meta(&device, &jam)
+        .objects
+        .into_iter()
+        .map(|o| match o {
+            gantz_collab::Object::Section {
+                id,
+                policy,
+                liveness,
+                value,
+                ..
+            } => gantz_collab::Object::Section {
+                id,
+                policy,
+                liveness,
+                key: ca::Key::Name(name("riff")),
+                value,
+            },
+            o => o,
+        });
+    let foreign = gantz_collab::Objects {
+        objects: foreign.collect(),
+    };
+    assert!(matches!(
+        serve_push(&mut vault, id, meta_push(None, foreign)),
+        PushOutcome::Invalid(_)
+    ));
+    assert!(matches!(
+        serve_push(&mut vault, id, meta_push(None, entries)),
+        PushOutcome::Accepted(_)
+    ));
+    assert_eq!(
+        store::meta_addr(&vault, &jam),
+        store::meta_addr(&device, &jam)
+    );
+}
+
+// A description that moves aside with an unrelated local graph stays off the
+// vault's graph of the same name.
+#[test]
+fn an_aside_description_stays_off_the_vault_graph() {
+    let mut net = Net::new(2);
+    edit(&mut net, 0, "jam", 1, 1);
+    let theirs = edit(&mut net, 1, "jam", 2, 2);
+    describe(&mut net, 1, "jam", "theirs");
+    net.link(0, &[]);
+    net.settle();
+    net.link(1, &[]);
+    net.settle();
+    net.assert_converged();
+    let (jam, aside) = (
+        name("jam"),
+        name(&format!("jam-{}", theirs.display_short())),
+    );
+    for d in 0..2 {
+        assert_eq!(description(&net, d, &jam), None);
+        assert_eq!(description(&net, d, &aside).as_deref(), Some("theirs"));
+    }
+}
+
+// Metadata that a device cannot store exactly holds the name with a failure,
+// rather than fetching it again on every pass.
+#[test]
+fn metadata_a_device_cannot_store_exactly_is_held() {
+    let mut net = Net::new(2);
+    edit(&mut net, 0, "jam", 1, 1);
+    describe(&mut net, 0, "jam", "ours");
+    net.link(0, &[]);
+    net.settle();
+    // Device 1 already holds the description section with other semantics.
+    let other = ca::Value::Datum(ca::Datum::Str("other".to_string()));
+    net.devices[1].registry.set_section_value(
+        gantz_egui::section::DESCRIPTIONS_ID,
+        ca::MergePolicy::Replace,
+        ca::Liveness::Pinned,
+        ca::Key::Name(name("other")),
+        other,
+    );
+    net.link(1, &[]);
+    net.settle();
+    let link = net.devices[1].link();
+    let failure = link.failures.get(&name("jam")).cloned().unwrap_or_default();
+    assert!(failure.contains("metadata"), "{failure}");
+    let meta_fetches = net.devices[1]
+        .sent
+        .iter()
+        .filter(|c| matches!(c, Command::Fetch { want, .. } if matches!(want.refs[..], [ObjectRef::Meta(_)])))
+        .count();
+    assert_eq!(meta_fetches, 1);
 }
