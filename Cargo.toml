@@ -58,7 +58,7 @@ eframe = { version = "0.34", default-features = false, features = [
 ] }
 egui = { version = "0.34", default-features = false, features = ["serde", "persistence"] }
 egui_extras = { version = "0.34", default-features = false, features = ["syntect"] }
-egui_graph = "0.16.3"
+egui_graph = "0.16.4"
 egui_plot = "0.35"
 egui_tiles = "0.15"
 gantz_base = { version = "0.3.1", path = "crates/gantz_base" }

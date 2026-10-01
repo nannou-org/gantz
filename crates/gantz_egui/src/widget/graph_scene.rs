@@ -707,6 +707,10 @@ fn nodes(
         // whose weight round-trips untouched. Selection, movement, deletion
         // and edge edits still work.
         let mut instance = instances.take(codec, n_ix, &graph[n_id]).ok();
+        // A node holding data this build does not recognise is locked. See
+        // `InstanceEntry::lost`.
+        let lost = instance.as_ref().map_or_else(Vec::new, |e| e.lost.clone());
+        let locked = !lost.is_empty();
         let (inputs, outputs, flow) = match &instance {
             Some(entry) => (
                 entry.inst.node.n_inputs(meta_ctx),
@@ -726,6 +730,7 @@ fn nodes(
             .outputs(outputs)
             .flow(flow)
             .max_width(f32::INFINITY)
+            .content_enabled(!locked)
             .show(nctx, ui, |nui_ctx| match instance.as_mut() {
                 Some(entry) => {
                     // A node at this root level has the single-element state
@@ -740,7 +745,8 @@ fn nodes(
                         &[],
                         vm,
                         &mut writes,
-                    );
+                    )
+                    .read_only(locked);
                     let r = entry.inst.node.ui(node_ctx, nui_ctx);
                     node_changed |= r.changed;
                     responses.extend(r.payloads);
@@ -748,6 +754,9 @@ fn nodes(
                 }
                 None => placeholder_ui(&graph[n_id], nui_ctx),
             });
+        if locked {
+            lock_badge(ui, &response, &lost);
+        }
 
         // Attach on-hover docs to each socket. Each node describes its own
         // sockets. Markers read their stored docs. References resolve the
@@ -960,7 +969,8 @@ fn nodes(
                     &[],
                     vm,
                     &mut writes,
-                );
+                )
+                .read_only(locked);
                 let cm = entry.inst.node.context_menu(&mut node_ctx, ui);
                 node_changed |= cm.changed;
                 responses.extend(cm.payloads);
@@ -1048,6 +1058,25 @@ fn placeholder_socket_counts(graph: &DataGraph, n: NodeIndex) -> (usize, usize) 
         .max()
         .unwrap_or(0);
     (inputs, outputs)
+}
+
+/// Mark a locked node with a glyph by its top right corner. Hovering the
+/// node tells why. See [`crate::node::InstanceEntry::lost`].
+fn lock_badge(ui: &egui::Ui, node: &egui::Response, lost: &[String]) {
+    let mut painter = ui.ctx().layer_painter(node.layer_id);
+    // Node layers are transformed, so their clip is layer-local.
+    painter.set_clip_rect(node.rect.expand(32.0));
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let pos = node.rect.right_top() + egui::vec2(2.0, -2.0);
+    let color = ui.visuals().warn_fg_color;
+    painter.text(
+        pos,
+        egui::Align2::LEFT_BOTTOM,
+        super::LOCK_GLYPH,
+        font,
+        color,
+    );
+    node.clone().on_hover_text(super::locked_text(lost));
 }
 
 /// Render the opaque placeholder for a node whose tag is unknown to the

@@ -401,6 +401,7 @@ pub struct NodeCtx<'a> {
     ref_ext_uis: &'a [&'a dyn node::RefExtUi],
     vm: &'a mut Engine,
     writes: &'a mut Vec<action::StateWrite>,
+    read_only: bool,
 }
 
 /// How to position pasted nodes.
@@ -717,7 +718,21 @@ impl<'a> NodeCtx<'a> {
             ref_ext_uis,
             vm,
             writes,
+            read_only: false,
         }
+    }
+
+    /// Mark the node read-only, for example because it holds data this build
+    /// does not recognise. See [`node::InstanceEntry::lost`]. A read-only
+    /// node must not change its own data, not even silently.
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    /// Whether the node is read-only. See [`Self::read_only`].
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     /// Provide access to the node environment.

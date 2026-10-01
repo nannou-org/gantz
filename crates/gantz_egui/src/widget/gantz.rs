@@ -2026,6 +2026,14 @@ where
                                 // completes within its site. Erase back only
                                 // when changed, updating the witness.
                                 let mut entry = data.instances.take(codec, n_ix, weight).ok()?;
+                                // A locked node's view is read-only. See
+                                // `InstanceEntry::lost`.
+                                let locked = !entry.lost.is_empty();
+                                if locked {
+                                    let text = widget::locked_text(&entry.lost);
+                                    let text = format!("{} {text}", widget::LOCK_GLYPH);
+                                    ui.colored_label(ui.visuals().warn_fg_color, text);
+                                }
                                 let ctx = NodeCtx::new(
                                     env,
                                     data.graph,
@@ -2035,8 +2043,11 @@ where
                                     &[],
                                     data.vm,
                                     &mut writes,
-                                );
-                                let r = entry.inst.node.view_ui(ctx, ui);
+                                )
+                                .read_only(locked);
+                                let node = &mut entry.inst.node;
+                                let r =
+                                    ui.add_enabled_ui(!locked, |ui| node.view_ui(ctx, ui)).inner;
                                 let changed = if r.changed {
                                     let weight = &mut data.graph[n_id];
                                     data.instances.write_back(n_ix, entry, weight)
@@ -4124,6 +4135,14 @@ fn node_inspector<'a>(
                             ui.weak(format!("{} (unknown node type)", weight.tag));
                             return;
                         };
+                        // A locked node shows why above its disabled rows. See
+                        // `InstanceEntry::lost`.
+                        let locked = !entry.lost.is_empty();
+                        if locked {
+                            let text = widget::locked_text(&entry.lost);
+                            let text = format!("{} {text}", widget::LOCK_GLYPH);
+                            ui.colored_label(ui.visuals().warn_fg_color, text);
+                        }
                         let path = [ix];
                         let ctx = NodeCtx::new(
                             registry,
@@ -4134,9 +4153,11 @@ fn node_inspector<'a>(
                             ref_ext_uis,
                             vm,
                             &mut writes,
-                        );
-                        let resp = widget::NodeInspector::new(&mut entry.inst.node, ctx, immutable)
-                            .show(ui);
+                        )
+                        .read_only(locked);
+                        let node = &mut entry.inst.node;
+                        let resp =
+                            widget::NodeInspector::new(node, ctx, immutable || locked).show(ui);
                         if resp.changed {
                             changed |= instances.write_back(ix, entry, &mut graph[id]);
                         } else {
