@@ -900,6 +900,12 @@ fn nodes(
                     nodes_to_reset.extend(target.iter().copied());
                     ui.close();
                 }
+                // Drop the settings of a locked node that this build does not
+                // recognise. See `InstanceEntry::lost`.
+                if locked && super::discard_button(ui) {
+                    responses.push(DynResponse::new(crate::DropUnknownData { node: n_id }));
+                    ui.close();
+                }
                 // Replace the right-clicked node via the node palette. Only
                 // for a single node.
                 if !multi

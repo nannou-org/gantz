@@ -496,6 +496,16 @@ pub struct ReplaceNode {
     pub node_type: String,
 }
 
+/// Rewrite a node in the emitting head's graph as this build writes it,
+/// dropping the settings that this build does not recognise. See
+/// [`node::InstanceEntry::lost`]. It is an edit like any other, so undo
+/// restores the settings.
+#[derive(Clone, Copy, Debug)]
+pub struct DropUnknownData {
+    /// The node to rewrite.
+    pub node: widget::graph_scene::NodeIndex,
+}
+
 /// Create a new nested graph in the emitting head's graph.
 ///
 /// Commits a fresh empty graph to the registry under the name `<parent>:<n>`,

@@ -10,7 +10,9 @@ use crate::cycle::named_ref_of;
 use crate::node::NodeCodec;
 use crate::widget::gantz::OpenHeadState;
 use crate::widget::graph_scene::NodeIndex;
-use crate::{CreateNode, InspectEdge, PastePos, ReplaceNode, export, node::NamedRef};
+use crate::{
+    CreateNode, DropUnknownData, InspectEdge, PastePos, ReplaceNode, export, node::NamedRef,
+};
 use gantz_ca::{CommitAddr, DataGraph, GraphAddr, Name, NodeData};
 use gantz_core::node::{self, GetNode};
 use petgraph::visit::EdgeRef;
@@ -279,6 +281,27 @@ pub fn replace_node(
     // Removing edges shifts edge indices, so the edge selection is stale.
     head_state.scene.interaction.selection.edges.clear();
     true
+}
+
+/// Rewrite a node as this build's node type writes it, dropping the data
+/// that the type does not recognise. Returns whether the node changed.
+pub fn drop_unknown_data(codec: &NodeCodec, graph: &mut DataGraph, cmd: DropUnknownData) -> bool {
+    let ix = cmd.node;
+    let Some(weight) = graph.node_weight(ix) else {
+        log::error!("DropUnknownData: no node at index {}", ix.index());
+        return false;
+    };
+    match codec.normalize(weight) {
+        Ok(normal) if normal != *weight => {
+            graph[ix] = normal;
+            true
+        }
+        Ok(_) => false,
+        Err(e) => {
+            log::error!("DropUnknownData: cannot rewrite node {}: {e}", ix.index());
+            false
+        }
+    }
 }
 
 /// Whether a node of `node_type` would reference the `editing` graph and so
@@ -1477,5 +1500,22 @@ mod tests {
 
         assert!(result.is_none());
         assert_eq!(graph.node_count(), 2);
+    }
+
+    #[test]
+    fn drop_unknown_data_rewrites_only_a_node_that_needs_it() {
+        let codec = crate::test_node::codec();
+        let mut graph = DataGraph::default();
+        let mut stored = expr("1");
+        let gantz_ca::Datum::Map(entries) = &mut stored.data else {
+            panic!("a map");
+        };
+        entries.push(("future".to_string(), gantz_ca::Datum::Bool(true)));
+        stored.canonicalize();
+        let node = graph.add_node(stored);
+        let cmd = DropUnknownData { node };
+        assert!(drop_unknown_data(&codec, &mut graph, cmd));
+        assert_eq!(graph[node], expr("1"));
+        assert!(!drop_unknown_data(&codec, &mut graph, cmd));
     }
 }

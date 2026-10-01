@@ -4,6 +4,7 @@ use bevy_ecs::system::ScheduleSystem;
 use bevy_gantz::{EntrypointSet, GantzPlugin, VmSet};
 
 mod await_;
+mod drop_unknown;
 mod load_bang;
 mod undo_resync;
 

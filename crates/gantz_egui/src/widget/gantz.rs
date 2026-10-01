@@ -4142,6 +4142,10 @@ fn node_inspector<'a>(
                             let text = widget::locked_text(&entry.lost);
                             let text = format!("{} {text}", widget::LOCK_GLYPH);
                             ui.colored_label(ui.visuals().warn_fg_color, text);
+                            if !immutable && widget::discard_button(ui) {
+                                let drop = crate::DropUnknownData { node: id };
+                                responses.push(DynResponse::new(drop));
+                            }
                         }
                         let path = [ix];
                         let ctx = NodeCtx::new(
