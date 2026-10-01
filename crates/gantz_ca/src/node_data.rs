@@ -79,6 +79,53 @@ impl NodeData {
     pub fn content_addr(&self) -> ContentAddr {
         crate::content_addr(self)
     }
+
+    /// The parts of this node's data that `roundtrip` drops or changes, as
+    /// key paths such as `style.color` or `items[2]`. A change to the whole
+    /// value reports as `data`.
+    ///
+    /// `roundtrip` is this node read and written back through a build's
+    /// node types, so each path is data that build would lose on a write.
+    /// Keys that `roundtrip` adds are not losses, and neither are stored
+    /// nulls that it leaves out. Only `data` is compared, since `refs` and
+    /// `blobs` derive from it.
+    pub fn lost_in(&self, roundtrip: &NodeData) -> Vec<String> {
+        let mut lost = Vec::new();
+        lost_datum(&self.data, &roundtrip.data, &mut String::new(), &mut lost);
+        lost
+    }
+}
+
+/// Push the path of each part of `stored` that `roundtrip` drops or changes.
+fn lost_datum(stored: &Datum, roundtrip: &Datum, path: &mut String, lost: &mut Vec<String>) {
+    match (stored, roundtrip) {
+        (Datum::Map(stored), Datum::Map(roundtrip)) => {
+            for (key, value) in stored {
+                let len = path.len();
+                if len > 0 {
+                    path.push('.');
+                }
+                path.push_str(key);
+                match roundtrip.iter().find(|(k, _)| k == key) {
+                    Some((_, kept)) => lost_datum(value, kept, path, lost),
+                    None if *value == Datum::Null => (),
+                    None => lost.push(path.clone()),
+                }
+                path.truncate(len);
+            }
+        }
+        (Datum::Seq(stored), Datum::Seq(roundtrip)) if stored.len() == roundtrip.len() => {
+            for (i, (value, kept)) in stored.iter().zip(roundtrip).enumerate() {
+                let len = path.len();
+                path.push_str(&format!("[{i}]"));
+                lost_datum(value, kept, path, lost);
+                path.truncate(len);
+            }
+        }
+        _ if stored == roundtrip => (),
+        _ if path.is_empty() => lost.push("data".to_string()),
+        _ => lost.push(path.clone()),
+    }
 }
 
 impl CaHash for NodeData {
@@ -190,5 +237,43 @@ mod tests {
             "e89011c7a8461d3ec787c95641617e7cdcc9265d449ebc4bfecb3c1201721a82",
             "NodeData CaHash scheme changed - this breaks existing node addresses",
         );
+    }
+
+    #[test]
+    fn lost_in_names_what_a_round_trip_drops_or_changes() {
+        fn map(entries: &[(&str, Datum)]) -> Datum {
+            let entries = entries.iter().map(|(k, v)| (k.to_string(), v.clone()));
+            Datum::Map(entries.collect())
+        }
+        let node = |data| NodeData::new("t", data);
+        let n = |i| Datum::I64(i);
+        let style = |entries: &[(&str, Datum)]| map(&[("style", map(entries))]);
+        let items = |entries: &[(&str, Datum)]| map(&[("items", Datum::Seq(vec![map(entries)]))]);
+        let cases: [(Datum, Datum, &[&str]); 8] = [
+            (map(&[("a", n(1))]), map(&[("a", n(1))]), &[]),
+            (map(&[("a", n(1))]), map(&[("a", n(1)), ("b", n(2))]), &[]),
+            (
+                map(&[("a", n(1)), ("b", n(2))]),
+                map(&[("a", n(1))]),
+                &["b"],
+            ),
+            (map(&[("a", Datum::Null)]), map(&[]), &[]),
+            (map(&[("a", n(3))]), map(&[("a", n(4))]), &["a"]),
+            (
+                style(&[("color", n(1)), ("glow", n(2))]),
+                style(&[("color", n(1))]),
+                &["style.glow"],
+            ),
+            (
+                items(&[("a", n(1)), ("b", n(2))]),
+                items(&[("a", n(1))]),
+                &["items[0].b"],
+            ),
+            (n(1), n(2), &["data"]),
+        ];
+        for (stored, roundtrip, lost) in cases {
+            let found = node(stored.clone()).lost_in(&node(roundtrip.clone()));
+            assert_eq!(found, lost, "{stored:?} -> {roundtrip:?}");
+        }
     }
 }
