@@ -2037,22 +2037,14 @@ where
                                     &mut writes,
                                 );
                                 let r = entry.inst.node.view_ui(ctx, ui);
-                                if r.changed {
-                                    match entry.inst.erase() {
-                                        Ok(node_data) => {
-                                            entry.src = node_data.clone();
-                                            data.graph[n_id] = node_data;
-                                            data.instances.put(n_ix, entry);
-                                        }
-                                        Err(e) => log::error!(
-                                            "node view {n_ix}: failed to erase edited node, \
-                                             edit dropped: {e}"
-                                        ),
-                                    }
+                                let changed = if r.changed {
+                                    let weight = &mut data.graph[n_id];
+                                    data.instances.write_back(n_ix, entry, weight)
                                 } else {
                                     data.instances.put(n_ix, entry);
-                                }
-                                Some((r.changed, r.payloads))
+                                    false
+                                };
+                                Some((changed, r.payloads))
                             })
                         })
                         .inner;
@@ -4146,18 +4138,7 @@ fn node_inspector<'a>(
                         let resp = widget::NodeInspector::new(&mut entry.inst.node, ctx, immutable)
                             .show(ui);
                         if resp.changed {
-                            changed = true;
-                            match entry.inst.erase() {
-                                Ok(node_data) => {
-                                    entry.src = node_data.clone();
-                                    graph[id] = node_data;
-                                    instances.put(ix, entry);
-                                }
-                                Err(e) => log::error!(
-                                    "inspector: failed to erase edited node {ix}, \
-                                     edit dropped: {e}"
-                                ),
-                            }
+                            changed |= instances.write_back(ix, entry, &mut graph[id]);
                         } else {
                             instances.put(ix, entry);
                         }

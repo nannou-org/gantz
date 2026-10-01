@@ -14,20 +14,31 @@
 //! while the stored weight equals that witness. External mutations of the
 //! graph such as undo, paste, collab edits or checkout need no hooks. A
 //! rewritten weight misses and reifies fresh.
+//!
+//! A weight from a newer gantz can hold data that this build's node type
+//! drops. Each fresh entry records what its round trip loses. See
+//! [`InstanceEntry::lost`]. [`NodeInstances::write_back`] never writes such
+//! a node, so an edit cannot drop data that this build does not recognise.
 
 use crate::node::{NodeCodec, NodeUiInstance};
-use gantz_ca::NodeData;
+use gantz_ca::{ContentAddr, NodeData};
 use gantz_core::data::ReifyNodeError;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// A cached reified instance paired with the weight it was reified from.
 pub struct InstanceEntry {
     /// The `NodeData` this instance was reified from. It is the validity
-    /// witness. After an edit, set this to the newly erased data before the
-    /// entry goes back through [`NodeInstances::put`].
+    /// witness. [`NodeInstances::write_back`] updates it after an edit.
     pub src: NodeData,
     /// The reified instance and its eraser.
     pub inst: NodeUiInstance,
+    /// The address of the instance's data when it was reified or last
+    /// written back. Change-tracking validation compares against it, since a
+    /// weight from another build may not erase back to `src` exactly.
+    pub baseline: ContentAddr,
+    /// The parts of `src` that this build's node type drops. See
+    /// [`NodeData::lost_in`]. A node with any is never written back.
+    pub lost: Vec<String>,
 }
 
 /// A cache of reified node instances for one head's working graph, keyed by
@@ -42,6 +53,8 @@ pub struct InstanceEntry {
 #[derive(Default)]
 pub struct NodeInstances {
     entries: HashMap<usize, InstanceEntry>,
+    /// Stored weights already warned about by [`NodeInstances::write_back`].
+    warned: HashSet<ContentAddr>,
 }
 
 impl NodeInstances {
@@ -64,10 +77,55 @@ impl NodeInstances {
             }
         }
         let inst = codec.reify_ui(data)?;
+        let (baseline, lost) = match inst.erase() {
+            Ok(roundtrip) => (roundtrip.content_addr(), data.lost_in(&roundtrip)),
+            Err(_) => (data.content_addr(), Vec::new()),
+        };
         Ok(InstanceEntry {
             src: data.clone(),
             inst,
+            baseline,
+            lost,
         })
+    }
+
+    /// Write an edited entry's node into `weight`, then restore the entry.
+    /// Returns whether `weight` changed.
+    ///
+    /// A node that holds data this build does not recognise is never written,
+    /// since the write would drop that data. See [`InstanceEntry::lost`]. Its
+    /// edit is dropped with a warning, once per stored weight, and the next
+    /// pass reifies the unchanged weight.
+    pub fn write_back(
+        &mut self,
+        n_ix: usize,
+        mut entry: InstanceEntry,
+        weight: &mut NodeData,
+    ) -> bool {
+        if !entry.lost.is_empty() {
+            if self.warned.insert(entry.src.content_addr()) {
+                log::warn!(
+                    "node {n_ix} ({}) holds data this gantz does not recognise ({}). \
+                     Its edit is dropped.",
+                    entry.src.tag,
+                    entry.lost.join(", "),
+                );
+            }
+            return false;
+        }
+        match entry.inst.erase() {
+            Ok(node_data) => {
+                entry.baseline = node_data.content_addr();
+                entry.src = node_data.clone();
+                *weight = node_data;
+                self.put(n_ix, entry);
+                true
+            }
+            Err(e) => {
+                log::error!("node {n_ix}: failed to erase edited node, edit dropped: {e}");
+                false
+            }
+        }
     }
 
     /// Restore an entry after its pass, making it available to the next
@@ -264,5 +322,47 @@ mod tests {
         // Slot 0 is untouched, slot 2 is gone.
         assert!(cache.peek(0, &datas[0]).is_some());
         assert!(cache.peek(2, &datas[2]).is_none());
+    }
+
+    // A weight holding data this build's node type drops is never written
+    // back, so an edit cannot lose that data.
+    #[test]
+    fn a_node_with_unknown_data_is_never_written_back() {
+        let codec = codec();
+        let mut data = expr_data("(+ $l $r)");
+        let gantz_ca::Datum::Map(entries) = &mut data.data else {
+            panic!("a map");
+        };
+        let future = gantz_ca::Datum::Str("from a newer gantz".to_string());
+        entries.push(("future".to_string(), future));
+        data.canonicalize();
+        let mut cache = NodeInstances::default();
+        let mut entry = cache.take(&codec, 0, &data).unwrap();
+        assert_eq!(entry.lost, vec!["future".to_string()]);
+        // Stand-in for an in-place UI edit of the instance.
+        entry.inst = codec.reify_ui(&expr_data("(* $l $r)")).unwrap();
+        let mut weight = data.clone();
+        assert!(!cache.write_back(0, entry, &mut weight));
+        assert_eq!(weight, data);
+        assert!(cache.is_empty());
+    }
+
+    // An edit to a node this build reads whole is written back, and the
+    // entry hits on the new weight.
+    #[test]
+    fn an_edit_writes_back_and_updates_the_baseline() {
+        let codec = codec();
+        let old = expr_data("(+ $l $r)");
+        let new = expr_data("(* $l $r)");
+        let mut cache = NodeInstances::default();
+        let mut entry = cache.take(&codec, 0, &old).unwrap();
+        assert!(entry.lost.is_empty());
+        assert_eq!(entry.baseline, old.content_addr());
+        entry.inst = codec.reify_ui(&new).unwrap();
+        let mut weight = old;
+        assert!(cache.write_back(0, entry, &mut weight));
+        assert_eq!(weight, new);
+        let entry = cache.take(&codec, 0, &new).unwrap();
+        assert_eq!(entry.baseline, new.content_addr());
     }
 }

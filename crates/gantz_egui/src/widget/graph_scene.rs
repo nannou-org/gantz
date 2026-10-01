@@ -972,29 +972,16 @@ fn nodes(
         // contract on `NodeUi`. The entry's witness updates in the same breath,
         // so the cache hits exactly while the stored weight is untouched.
         // Non-CA state lives in VM or egui memory by contract.
-        if let Some(mut entry) = instance {
+        if let Some(entry) = instance {
             if node_changed {
-                *changed = true;
-                match entry.inst.erase() {
-                    Ok(node_data) => {
-                        entry.src = node_data.clone();
-                        graph[n_id] = node_data;
-                        instances.put(n_ix, entry);
-                    }
-                    Err(e) => {
-                        // Dropping the entry restores the uncached semantics.
-                        // The edit is lost and the next pass reifies from the
-                        // unchanged stored weight.
-                        log::error!("node {n_ix}: failed to erase edited node, edit dropped: {e}");
-                    }
-                }
-            } else if validate {
+                *changed |= instances.write_back(n_ix, entry, &mut graph[n_id]);
+            } else if validate && entry.lost.is_empty() {
                 // An unmarked weight mutation would otherwise persist
                 // invisibly in the cached instance. Warn and evict, so the
                 // mutation drops exactly as it would uncached.
                 match entry.inst.erase() {
                     Ok(node_data) => {
-                        if node_data.content_addr() != graph[n_id].content_addr() {
+                        if node_data.content_addr() != entry.baseline {
                             log::warn!(
                                 "node {n_ix} ({}): CA-affecting state changed without a \
                                  `changed` response; the edit was dropped (see `NodeUi`)",
