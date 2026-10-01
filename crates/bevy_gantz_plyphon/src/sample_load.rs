@@ -96,10 +96,11 @@ pub(crate) fn poll_sample_load(
     refresh_cache(&registry, &mut cache, &codec.0);
 }
 
-/// Replace the `~sample` node at `path` in `graph` with one that plays
-/// `asset`. The node must still be a `~sample` at the same index, since the
-/// graph can change while the file dialog is open. Only a root-level path is
-/// supported, which is what the inspector emits.
+/// Set the `~sample` node at `path` in `graph` to play `asset`. The node must
+/// still be a `~sample` at the same index, since the graph can change while
+/// the file dialog is open. Only a root-level path is supported, which is
+/// what the inspector emits. Data that this build does not recognise stays.
+/// See [`gantz_core::data::edit_node_typed`].
 fn assign_sample(
     graph: &mut ca::DataGraph,
     path: &[gantz_core::node::Id],
@@ -114,8 +115,12 @@ fn assign_sample(
     if node.tag != <Sample as NodeTag>::TAG {
         return Err(format!("the node at index {ix} is no longer a `~sample`"));
     }
-    *node = gantz_core::data::erase_node_typed(&Sample::from_asset(asset))
-        .map_err(|e| format!("failed to erase the `~sample`: {e}"))?;
+    let sample = Sample::from_asset(asset);
+    gantz_core::data::edit_node_typed(node, |s: &mut Sample| {
+        *s = sample;
+        true
+    })
+    .map_err(|e| format!("failed to set the `~sample`: {e}"))?;
     Ok(())
 }
 

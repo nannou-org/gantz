@@ -16,7 +16,7 @@ use gantz_ca::{
 };
 use petgraph::visit::EdgeRef;
 use serde::{Serialize, de::DeserializeOwned};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 
 /// An append-only cache of reified registry graphs, keyed by graph address.
 ///
@@ -318,6 +318,89 @@ where
     datum::from_datum(node_data.data.clone()).map_err(err)
 }
 
+/// Failure to edit a stored node through its type. See [`edit_node_typed`].
+#[derive(Clone, Debug, thiserror::Error)]
+pub enum EditNodeError {
+    #[error(transparent)]
+    Reify(#[from] ReifyNodeError),
+    #[error(transparent)]
+    Erase(#[from] EraseNodeError),
+    /// The edit changes fields that hold data this build does not recognise,
+    /// so writing them would lose that data. Holds the lost paths. See
+    /// [`NodeData::lost_in`].
+    #[error("the edit changes fields that hold unrecognised data: {}", .0.join(", "))]
+    Lossy(Vec<String>),
+}
+
+/// Edit a stored node through its concrete type `T`, keeping the data that
+/// `T` does not recognise. Returns whether `f` changed the node.
+///
+/// A plain [`reify_node_concrete`] and [`erase_node_typed`] round trip drops
+/// such data, for example a field that a newer gantz wrote. This writes
+/// back only the top-level fields that `f` changed, and keeps every other
+/// stored field as it is. The `refs` and `blobs` columns keep the stored
+/// entries that `T` does not report, plus those that the edited node does.
+/// An edit to a field that itself holds unrecognised data fails with
+/// [`EditNodeError::Lossy`] and leaves `node_data` as it is.
+pub fn edit_node_typed<T>(
+    node_data: &mut NodeData,
+    f: impl FnOnce(&mut T) -> bool,
+) -> Result<bool, EditNodeError>
+where
+    T: gantz_nodetag::NodeTag + Serialize + DeserializeOwned + Node,
+{
+    let mut node: T = reify_node_concrete(node_data)?;
+    let before = erase_node_typed(&node)?;
+    if !f(&mut node) {
+        return Ok(false);
+    }
+    let after = erase_node_typed(&node)?;
+    let lost = node_data.lost_in(&before);
+    if lost.is_empty() {
+        *node_data = after;
+        return Ok(true);
+    }
+    let (Datum::Map(stored), Datum::Map(old), Datum::Map(new)) =
+        (&mut node_data.data, &before.data, &after.data)
+    else {
+        return Err(EditNodeError::Lossy(lost));
+    };
+    let field = |fields: &'_ [(String, Datum)], key: &str| {
+        fields
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.clone())
+    };
+    let keys: BTreeSet<&String> = old.iter().chain(new).map(|(k, _)| k).collect();
+    let changed: Vec<&String> = keys
+        .into_iter()
+        .filter(|k| field(old, k) != field(new, k))
+        .collect();
+    let clash: Vec<String> = lost
+        .into_iter()
+        .filter(|path| changed.iter().any(|k| is_under(path, k)))
+        .collect();
+    if !clash.is_empty() {
+        return Err(EditNodeError::Lossy(clash));
+    }
+    for key in changed {
+        stored.retain(|(k, _)| k != key);
+        stored.extend(field(new, key).map(|value| (key.clone(), value)));
+    }
+    node_data.refs.retain(|r| !before.refs.contains(r));
+    node_data.refs.extend(after.refs);
+    node_data.blobs.retain(|b| !before.blobs.contains(b));
+    node_data.blobs.extend(after.blobs);
+    node_data.canonicalize();
+    Ok(true)
+}
+
+/// Whether the data `path` names is the field `key` or lies within it.
+fn is_under(path: &str, key: &str) -> bool {
+    path.strip_prefix(key)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(['.', '[']))
+}
+
 /// Erase a typed graph and compute its registry address in one pass.
 ///
 /// Registry graph addresses are always computed on the erased form. Typed
@@ -571,5 +654,73 @@ mod tests {
 
         // Ensuring again is a no-op walk over cached entries.
         cache.ensure(&reg, [root.into()]).unwrap();
+    }
+
+    /// A node with a nested field, for `edit_node_typed`.
+    #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+    struct Styled {
+        name: String,
+        style: Style,
+    }
+
+    #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+    struct Style {
+        color: i64,
+    }
+
+    impl gantz_nodetag::NodeTag for Styled {
+        const TAG: &'static str = "Styled";
+    }
+
+    impl Node for Styled {
+        fn expr(&self, _: node::ExprCtx) -> ExprResult {
+            unimplemented!("not compiled in these tests")
+        }
+    }
+
+    /// `Styled` as stored by a newer gantz, with an unknown top-level field
+    /// and an unknown field in its style.
+    fn newer_styled() -> NodeData {
+        let mut node_data = erase_node_typed(&Styled::default()).unwrap();
+        let Datum::Map(fields) = &mut node_data.data else {
+            panic!("a map");
+        };
+        fields.push(("future".to_string(), Datum::Bool(true)));
+        for (key, value) in fields.iter_mut() {
+            if let ("style", Datum::Map(style)) = (key.as_str(), value) {
+                style.push(("glow".to_string(), Datum::I64(2)));
+            }
+        }
+        node_data.canonicalize();
+        node_data
+    }
+
+    #[test]
+    fn edit_node_typed_keeps_data_the_edit_leaves_alone() {
+        let mut node_data = newer_styled();
+        let renamed = edit_node_typed(&mut node_data, |s: &mut Styled| {
+            s.name = "renamed".to_string();
+            true
+        });
+        assert!(renamed.unwrap());
+        let named: Styled = reify_node_concrete(&node_data).unwrap();
+        assert_eq!(named.name, "renamed");
+        let roundtrip = erase_node_typed(&named).unwrap();
+        assert_eq!(node_data.lost_in(&roundtrip), ["future", "style.glow"]);
+    }
+
+    #[test]
+    fn edit_node_typed_refuses_to_rewrite_unrecognised_data() {
+        let mut node_data = newer_styled();
+        let before = node_data.clone();
+        let recoloured = edit_node_typed(&mut node_data, |s: &mut Styled| {
+            s.style.color = 3;
+            true
+        });
+        let Err(EditNodeError::Lossy(lost)) = recoloured else {
+            panic!("expected a lossy edit, got {recoloured:?}");
+        };
+        assert_eq!(lost, ["style.glow"]);
+        assert_eq!(node_data, before);
     }
 }

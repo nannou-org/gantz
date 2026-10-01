@@ -66,3 +66,19 @@ pub fn commit_named(
     let ca = reg.commit_graph_to_name(timestamp, ga, || dg, name);
     (ca, ga)
 }
+
+/// `node_data` as a newer gantz might store it, with a `future` field that
+/// this build does not recognise.
+pub fn with_unknown_field(mut node_data: gantz_ca::NodeData) -> gantz_ca::NodeData {
+    let gantz_ca::Datum::Map(fields) = &mut node_data.data else {
+        panic!("node data is a map");
+    };
+    fields.push(("future".to_string(), gantz_ca::Datum::Bool(true)));
+    node_data.canonicalize();
+    node_data
+}
+
+/// Whether `node_data` still holds the field that [`with_unknown_field`] adds.
+pub fn has_unknown_field(node_data: &gantz_ca::NodeData) -> bool {
+    node_data.data.get("future").is_some()
+}

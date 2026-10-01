@@ -34,36 +34,31 @@ pub struct Moved {
 ///
 /// Tag-gated. Only a weight whose tag is exactly `NamedRef`'s matches. `Fn`
 /// and `FnNamedRef` reference a graph without standing in for it, so they
-/// never match. The round-trip is [`reify_node_concrete`], mutate, then
-/// [`erase_node_typed`], so the refs column is recomputed for free. Codec
-/// failures are logged and reported as unchanged.
+/// never match. The edit goes through [`edit_node_typed`], which recomputes
+/// the refs column and keeps data that this build does not recognise.
+/// Failures are logged and reported as unchanged.
 ///
-/// [`reify_node_concrete`]: gantz_core::data::reify_node_concrete
-/// [`erase_node_typed`]: gantz_core::data::erase_node_typed
+/// [`edit_node_typed`]: gantz_core::data::edit_node_typed
 pub(crate) fn with_named_ref_mut(
     weight: &mut NodeData,
     f: impl FnOnce(&mut NamedRef) -> bool,
 ) -> bool {
+    use gantz_core::data::{EditNodeError, edit_node_typed};
     if weight.tag != <NamedRef as NodeTag>::TAG {
         return false;
     }
-    let mut named_ref = match gantz_core::data::reify_node_concrete::<NamedRef>(weight) {
-        Ok(named_ref) => named_ref,
-        Err(e) => {
-            log::error!("failed to decode a stored `NamedRef`: {e}");
-            return false;
-        }
-    };
-    if !f(&mut named_ref) {
-        return false;
-    }
-    match gantz_core::data::erase_node_typed(&named_ref) {
-        Ok(node_data) => {
-            *weight = node_data;
-            true
+    match edit_node_typed(weight, f) {
+        Ok(changed) => changed,
+        Err(EditNodeError::Lossy(lost)) => {
+            log::warn!(
+                "a `NamedRef` holds data this gantz does not recognise ({}), so it keeps its \
+                 reference",
+                lost.join(", "),
+            );
+            false
         }
         Err(e) => {
-            log::error!("failed to erase a rewritten `NamedRef`: {e}");
+            log::error!("failed to edit a stored `NamedRef`: {e}");
             false
         }
     }
@@ -456,5 +451,23 @@ mod tests {
 
         let scope = scope_names(&registry, "a");
         assert_eq!(scope, names(["a", "b"]));
+    }
+
+    // A resync keeps a ref's data that this build does not recognise, and
+    // its refs column follows the new target.
+    #[test]
+    fn a_resync_keeps_unknown_data() {
+        use crate::test_node::{has_unknown_field, with_unknown_field};
+        let mut weight = with_unknown_field(ref_node("jam", true));
+        let target = ContentAddr::from([2; 32]);
+        let resynced = with_named_ref_mut(&mut weight, |named_ref| {
+            let ref_ = named_ref.ref_().retarget(target);
+            *named_ref = NamedRef::with_sync("jam".parse().unwrap(), ref_);
+            true
+        });
+        assert!(resynced);
+        assert!(has_unknown_field(&weight));
+        assert_eq!(named_ref_of(&weight).unwrap().ref_().content_addr(), target);
+        assert_eq!(weight.refs, [target]);
     }
 }
