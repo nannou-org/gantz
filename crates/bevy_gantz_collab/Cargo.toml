@@ -27,4 +27,5 @@ web-time.workspace = true
 
 [dev-dependencies]
 async-channel.workspace = true
+gantz_format.workspace = true
 iroh.workspace = true

@@ -1,7 +1,7 @@
 //! The Bevy side of the sync plane. The systems gather the world's inputs,
 //! call [`gantz_collab_sync`] and replay its effects as triggers.
 
-use crate::{CollabIdentity, CollabRuntime, CollabSessions, action};
+use crate::{CollabIdentity, CollabRuntime, CollabSessions, VaultLinkState, action};
 use bevy_ecs::prelude::*;
 use bevy_gantz::head;
 use bevy_gantz::reg::Registry;
@@ -18,6 +18,8 @@ pub(crate) fn poll_collab_events(
     mut sessions: ResMut<CollabSessions>,
     mut inbox: ResMut<action::ActionInbox>,
     mut registry: ResMut<Registry>,
+    codec: Res<bevy_gantz_egui::NodeCodecRes>,
+    mut vault_state: ResMut<VaultLinkState>,
     open: Query<
         (Entity, &head::HeadRef, Option<&bevy_gantz_egui::GraphView>),
         With<head::OpenHead>,
@@ -35,6 +37,8 @@ pub(crate) fn poll_collab_events(
         })
         .collect();
     let effects = gantz_collab_sync::poll(&mut sessions.0, &mut registry.0, handle, &open_heads);
+    let vault = sessions.vault.as_ref().map(|link| link.id);
+    crate::vault::track_newer_data(&mut vault_state, &registry, &codec.0, vault, &effects);
     for effect in effects {
         match effect {
             Effect::Open(name) => cmds.trigger(head::OpenEvent(ca::Head::Branch(name))),

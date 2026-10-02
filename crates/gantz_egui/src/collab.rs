@@ -61,6 +61,16 @@ fn default_action_rate_ms() -> u64 {
     16
 }
 
+/// A line counting `n` graphs, with what is true of one graph or of many.
+/// `None` for no graphs.
+fn graphs(n: usize, one: &str, many: &str) -> Option<String> {
+    match n {
+        0 => None,
+        1 => Some(format!("1 graph {one}")),
+        n => Some(format!("{n} graphs {many}")),
+    }
+}
+
 /// Everything the widgets need to render collaboration state.
 #[derive(Clone, Debug, Default)]
 pub struct CollabUiState {
@@ -88,6 +98,9 @@ pub struct VaultDisplay {
     pub this_app: String,
     /// Each name that failed to sync, and why.
     pub failures: Vec<(String, String)>,
+    /// The names that the vault synced from a newer gantz, whose graphs hold
+    /// settings that this gantz locks.
+    pub newer: Vec<String>,
 }
 
 /// The vault link's state, for display.
@@ -227,10 +240,14 @@ impl VaultDisplay {
         if let Some(reason) = self.state.reason() {
             text.push_str(&format!("\n{reason}"));
         }
-        match self.failures.len() {
-            0 => (),
-            1 => text.push_str("\n1 graph cannot sync"),
-            n => text.push_str(&format!("\n{n} graphs cannot sync")),
+        let failed = graphs(self.failures.len(), "cannot sync", "cannot sync");
+        let newer = graphs(
+            self.newer.len(),
+            "holds settings from a newer gantz",
+            "hold settings from a newer gantz",
+        );
+        for line in [failed, newer].into_iter().flatten() {
+            text.push_str(&format!("\n{line}"));
         }
         text
     }
@@ -325,6 +342,7 @@ mod tests {
             vault_app: None,
             this_app: "gantz 0.4.0, protocol 2".to_string(),
             failures: vec![("jam".to_string(), "push failed".to_string())],
+            newer: vec![],
         };
         let hover = vault.hover_text();
         assert!(hover.starts_with("vault 2af6d9e8: The vault is offline."));

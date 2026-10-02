@@ -19,7 +19,10 @@ use bevy_ecs::prelude::*;
 use bevy_gantz::head;
 use bevy_gantz_egui::SessionHead;
 use gantz_ca as ca;
-use gantz_collab::VaultTicket;
+use gantz_collab::{VaultId, VaultTicket};
+use gantz_collab_sync::Effect;
+use gantz_egui::node::NodeCodec;
+use std::collections::BTreeMap;
 
 /// The vault agreement as persisted. The app loads it at startup, and it
 /// follows the link from then on. It seeds a link to the vault it names.
@@ -33,6 +36,9 @@ pub struct VaultLinkState {
     ticket: Option<String>,
     /// Why the last attempt to link failed.
     pub error: Option<String>,
+    /// Names that the vault moved to a commit whose graph holds data this
+    /// build does not recognise, with that commit. See [`newer_names`].
+    newer: BTreeMap<ca::Name, ca::CommitAddr>,
 }
 
 /// Link, relink or unlink to match the configured vault ticket.
@@ -89,6 +95,58 @@ pub(crate) fn sync_vault_link(
     {
         state.error = Some(e.to_string());
     }
+}
+
+/// Record each name that the vault moved to a graph holding data this build
+/// does not recognise, and forget each name it moved to one without.
+pub(crate) fn track_newer_data(
+    state: &mut VaultLinkState,
+    registry: &ca::Registry,
+    codec: &NodeCodec,
+    vault: Option<VaultId>,
+    effects: &[Effect],
+) {
+    for effect in effects {
+        let (name, commit) = match effect {
+            Effect::Moved {
+                session, name, to, ..
+            } if Some(*session) == vault => (name, *to),
+            Effect::Reset { name, to: Some(to) } => (name, *to),
+            _ => continue,
+        };
+        if holds_newer_data(registry, codec, commit) {
+            state.newer.insert(name.clone(), commit);
+        } else {
+            state.newer.remove(name);
+        }
+    }
+}
+
+/// The names whose graph still holds the newer data that
+/// [`track_newer_data`] found. A name drops out once its head moves on, for
+/// example after its unrecognised settings are discarded.
+pub(crate) fn newer_names(state: &VaultLinkState, registry: &ca::Registry) -> Vec<String> {
+    let current =
+        |(name, commit): &(&ca::Name, &ca::CommitAddr)| registry.head(name) == Some(**commit);
+    state
+        .newer
+        .iter()
+        .filter(current)
+        .map(|(name, _)| name.to_string())
+        .collect()
+}
+
+/// Whether the graph at `commit` holds a node that this build cannot read
+/// whole: one of an unknown type, or one with settings it does not
+/// recognise. See `gantz_ca::NodeData::lost_in`.
+fn holds_newer_data(registry: &ca::Registry, codec: &NodeCodec, commit: ca::CommitAddr) -> bool {
+    let Some(graph) = registry.commit_graph_ref(&commit) else {
+        return false;
+    };
+    graph.node_weights().any(|node| {
+        let roundtrip = codec.normalize(node);
+        roundtrip.map_or(true, |roundtrip| !node.lost_in(&roundtrip).is_empty())
+    })
 }
 
 /// Dispatch the [`gantz_egui::CheckVault`] payload. Forgetting the link as
@@ -301,5 +359,64 @@ mod tests {
         let error = world.resource::<VaultLinkState>().error.clone();
         assert!(error.is_some_and(|e| e.starts_with("invalid ticket")));
         assert!(world.resource::<CollabRuntime>().0.is_none());
+    }
+
+    /// The `.gantz` sugar carrier the codec macro requires. These tests never
+    /// parse text.
+    struct NodeSet;
+
+    impl gantz_format::NodeSugar for NodeSet {
+        fn sugar() -> gantz_format::Sugars<'static> {
+            gantz_format::Sugars(vec![&gantz_format::CoreSugar])
+        }
+    }
+
+    #[test]
+    fn graphs_synced_with_newer_data_are_named_until_their_head_moves() {
+        let codec = gantz_egui::ui_node_codec! { NodeSet { gantz_egui::node::NamedRef } };
+        let target = gantz_core::node::Ref::new(ca::ContentAddr::from([7; 32]));
+        let named_ref = gantz_egui::node::NamedRef::new(name("riff"), target);
+        let known = gantz_core::data::erase_node_typed(&named_ref).unwrap();
+        // The same node as a newer gantz stores it, with a field this build
+        // lacks.
+        let mut newer = known.clone();
+        let ca::Datum::Map(fields) = &mut newer.data else {
+            panic!("a map");
+        };
+        fields.push(("future".to_string(), ca::Datum::Bool(true)));
+        newer.canonicalize();
+
+        let mut registry = ca::Registry::default();
+        let mut commit = |node, secs| {
+            let mut graph = ca::DataGraph::default();
+            graph.add_node(node);
+            let ga = registry.add_graph(graph);
+            let ts = std::time::Duration::from_secs(secs);
+            registry.add_commit(ca::Commit::new(ts, None, ga))
+        };
+        let (old, new) = (commit(known, 1), commit(newer, 2));
+        let vault = SessionId::generate();
+        let moved = |session| Effect::Moved {
+            session,
+            name: name("jam"),
+            from: Some(old),
+            to: new,
+        };
+
+        let mut state = VaultLinkState::default();
+        track_newer_data(&mut state, &registry, &codec, Some(vault), &[moved(vault)]);
+        registry.set_head(name("jam"), new);
+        assert_eq!(newer_names(&state, &registry), ["jam"]);
+        // Once the head moves on, as a discard or a later sync moves it, the
+        // name drops out.
+        registry.set_head(name("jam"), old);
+        assert!(newer_names(&state, &registry).is_empty());
+
+        // A move that another session made is not the vault's.
+        let mut state = VaultLinkState::default();
+        let other = SessionId::generate();
+        track_newer_data(&mut state, &registry, &codec, Some(vault), &[moved(other)]);
+        registry.set_head(name("jam"), new);
+        assert!(newer_names(&state, &registry).is_empty());
     }
 }

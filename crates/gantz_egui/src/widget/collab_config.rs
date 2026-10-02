@@ -159,27 +159,30 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> Responses {
             }
             ui.end_row();
             if let Some(vault) = vault.filter(|_| config.vault.is_some()) {
-                ui.label("");
-                ui.vertical(|ui| {
-                    ui.set_max_width(control_w);
+                wrapped_row(ui, "", control_w, |ui| {
                     ui.label(vault.state.guidance());
                     if let Some(reason) = vault.state.reason() {
                         ui.label(egui::RichText::new(reason).weak());
                     }
                 });
-                ui.end_row();
-                ui.label("versions");
-                ui.label(egui::RichText::new(vault.versions()).weak());
-                ui.end_row();
+                wrapped_row(ui, "versions", control_w, |ui| {
+                    ui.label(egui::RichText::new(vault.versions()).weak());
+                });
                 if !vault.failures.is_empty() {
-                    ui.label("not synced");
-                    ui.vertical(|ui| {
-                        ui.set_max_width(control_w);
+                    wrapped_row(ui, "not synced", control_w, |ui| {
                         for (name, reason) in &vault.failures {
                             ui.label(egui::RichText::new(format!("{name}: {reason}")).weak());
                         }
                     });
-                    ui.end_row();
+                }
+                if !vault.newer.is_empty() {
+                    wrapped_row(ui, "locked", control_w, |ui| {
+                        ui.label(
+                            "A newer gantz synced settings that this gantz does not \
+                             recognise. Update gantz to edit these graphs.",
+                        );
+                        ui.label(egui::RichText::new(vault.newer.join(", ")).weak());
+                    });
                 }
             }
 
@@ -270,4 +273,14 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> Responses {
             }
         });
     responses
+}
+
+/// One grid row of `label` and `body`, with the body wrapped to `width`.
+fn wrapped_row(ui: &mut egui::Ui, label: &str, width: f32, body: impl FnOnce(&mut egui::Ui)) {
+    ui.label(label);
+    ui.vertical(|ui| {
+        ui.set_max_width(width);
+        body(ui);
+    });
+    ui.end_row();
 }

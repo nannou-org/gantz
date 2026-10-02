@@ -101,6 +101,7 @@ pub fn update_collab_ui(
     vault: Res<VaultLinkState>,
     identity: Option<Res<CollabIdentity>>,
     app: Res<AppVersion>,
+    registry: Res<bevy_gantz::reg::Registry>,
     mut ui: ResMut<bevy_gantz_egui::CollabUi>,
 ) {
     let state = &mut ui.0;
@@ -113,7 +114,9 @@ pub fn update_collab_ui(
             .collect::<String>()
     });
     state.relays = sessions.relays.clone();
-    state.vault = vault_display(sessions.vault.as_ref(), vault.error.as_deref(), &app.0);
+    let newer = crate::vault::newer_names(&vault, &registry);
+    let link = sessions.vault.as_ref();
+    state.vault = vault_display(link, vault.error.as_deref(), &app.0, newer);
     // Session counts are tiny, so recompute each frame.
     state.sessions.clear();
     for session_state in sessions.sessions.values() {
@@ -152,8 +155,14 @@ pub fn update_collab_ui(
 }
 
 /// The vault link's display state. `error` is why the last attempt to link
-/// failed, and `app` is this app and its version.
-fn vault_display(link: Option<&VaultLink>, error: Option<&str>, app: &str) -> Option<VaultDisplay> {
+/// failed, `app` is this app and its version, and `newer` names the graphs
+/// that hold data from a newer gantz.
+fn vault_display(
+    link: Option<&VaultLink>,
+    error: Option<&str>,
+    app: &str,
+    newer: Vec<String>,
+) -> Option<VaultDisplay> {
     let this_app = app_line(&VersionInfo::this(app));
     let Some(link) = link else {
         return error.map(|error| VaultDisplay {
@@ -177,6 +186,7 @@ fn vault_display(link: Option<&VaultLink>, error: Option<&str>, app: &str) -> Op
         vault_app: link.vault_info.as_ref().map(app_line),
         this_app,
         failures: failures.map(|(n, r)| (n.to_string(), r.clone())).collect(),
+        newer,
     })
 }
 
@@ -322,10 +332,10 @@ mod tests {
     #[test]
     fn the_vault_display_tells_the_status_versions_and_failures() {
         let this = format!("gantz 0.4.0, protocol {}", gantz_collab::PROTO_MAX);
-        let not_linked = vault_display(None, Some("bad ticket"), "gantz 0.4.0").unwrap();
+        let not_linked = vault_display(None, Some("bad ticket"), "gantz 0.4.0", vec![]).unwrap();
         assert_eq!(not_linked.state, VaultState::NotLinked("bad ticket".into()));
         assert_eq!(not_linked.this_app, this);
-        assert!(vault_display(None, None, "gantz 0.4.0").is_none());
+        assert!(vault_display(None, None, "gantz 0.4.0", vec![]).is_none());
 
         let (cmds, _cmd_rx) = async_channel::unbounded();
         let (_events_tx, events) = async_channel::unbounded();
@@ -348,7 +358,7 @@ mod tests {
         });
         let jam: ca::Name = "jam".parse().unwrap();
         link.failures.insert(jam, "push failed".into());
-        let display = vault_display(sessions.vault.as_ref(), None, "gantz 0.4.0").unwrap();
+        let display = vault_display(sessions.vault.as_ref(), None, "gantz 0.4.0", vec![]).unwrap();
         assert_eq!(display.state, VaultState::VaultOutdated);
         assert_eq!(
             display.vault_app.as_deref(),

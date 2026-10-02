@@ -1072,6 +1072,7 @@ dependencies = [
  "gantz_collab_sync",
  "gantz_core",
  "gantz_egui",
+ "gantz_format",
  "gantz_store",
  "iroh",
  "ron 0.10.1",
