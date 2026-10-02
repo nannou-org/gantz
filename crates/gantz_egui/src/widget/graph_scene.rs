@@ -707,6 +707,10 @@ fn nodes(
         // whose weight round-trips untouched. Selection, movement, deletion
         // and edge edits still work.
         let mut instance = instances.take(codec, n_ix, &graph[n_id]).ok();
+        // A node holding data this build does not recognise is locked. See
+        // `InstanceEntry::lost`.
+        let lost = instance.as_ref().map_or_else(Vec::new, |e| e.lost.clone());
+        let locked = !lost.is_empty();
         let (inputs, outputs, flow) = match &instance {
             Some(entry) => (
                 entry.inst.node.n_inputs(meta_ctx),
@@ -726,6 +730,7 @@ fn nodes(
             .outputs(outputs)
             .flow(flow)
             .max_width(f32::INFINITY)
+            .content_enabled(!locked)
             .show(nctx, ui, |nui_ctx| match instance.as_mut() {
                 Some(entry) => {
                     // A node at this root level has the single-element state
@@ -740,7 +745,8 @@ fn nodes(
                         &[],
                         vm,
                         &mut writes,
-                    );
+                    )
+                    .read_only(locked);
                     let r = entry.inst.node.ui(node_ctx, nui_ctx);
                     node_changed |= r.changed;
                     responses.extend(r.payloads);
@@ -748,6 +754,9 @@ fn nodes(
                 }
                 None => placeholder_ui(&graph[n_id], nui_ctx),
             });
+        if locked {
+            lock_badge(ui, &response, &lost);
+        }
 
         // Attach on-hover docs to each socket. Each node describes its own
         // sockets. Markers read their stored docs. References resolve the
@@ -891,6 +900,12 @@ fn nodes(
                     nodes_to_reset.extend(target.iter().copied());
                     ui.close();
                 }
+                // Drop the settings of a locked node that this build does not
+                // recognise. See `InstanceEntry::lost`.
+                if locked && super::discard_button(ui) {
+                    responses.push(DynResponse::new(crate::DropUnknownData { node: n_id }));
+                    ui.close();
+                }
                 // Replace the right-clicked node via the node palette. Only
                 // for a single node.
                 if !multi
@@ -960,7 +975,8 @@ fn nodes(
                     &[],
                     vm,
                     &mut writes,
-                );
+                )
+                .read_only(locked);
                 let cm = entry.inst.node.context_menu(&mut node_ctx, ui);
                 node_changed |= cm.changed;
                 responses.extend(cm.payloads);
@@ -972,29 +988,16 @@ fn nodes(
         // contract on `NodeUi`. The entry's witness updates in the same breath,
         // so the cache hits exactly while the stored weight is untouched.
         // Non-CA state lives in VM or egui memory by contract.
-        if let Some(mut entry) = instance {
+        if let Some(entry) = instance {
             if node_changed {
-                *changed = true;
-                match entry.inst.erase() {
-                    Ok(node_data) => {
-                        entry.src = node_data.clone();
-                        graph[n_id] = node_data;
-                        instances.put(n_ix, entry);
-                    }
-                    Err(e) => {
-                        // Dropping the entry restores the uncached semantics.
-                        // The edit is lost and the next pass reifies from the
-                        // unchanged stored weight.
-                        log::error!("node {n_ix}: failed to erase edited node, edit dropped: {e}");
-                    }
-                }
-            } else if validate {
+                *changed |= instances.write_back(n_ix, entry, &mut graph[n_id]);
+            } else if validate && entry.lost.is_empty() {
                 // An unmarked weight mutation would otherwise persist
                 // invisibly in the cached instance. Warn and evict, so the
                 // mutation drops exactly as it would uncached.
                 match entry.inst.erase() {
                     Ok(node_data) => {
-                        if node_data.content_addr() != graph[n_id].content_addr() {
+                        if node_data.content_addr() != entry.baseline {
                             log::warn!(
                                 "node {n_ix} ({}): CA-affecting state changed without a \
                                  `changed` response; the edit was dropped (see `NodeUi`)",
@@ -1061,6 +1064,25 @@ fn placeholder_socket_counts(graph: &DataGraph, n: NodeIndex) -> (usize, usize) 
         .max()
         .unwrap_or(0);
     (inputs, outputs)
+}
+
+/// Mark a locked node with a glyph by its top right corner. Hovering the
+/// node tells why. See [`crate::node::InstanceEntry::lost`].
+fn lock_badge(ui: &egui::Ui, node: &egui::Response, lost: &[String]) {
+    let mut painter = ui.ctx().layer_painter(node.layer_id);
+    // Node layers are transformed, so their clip is layer-local.
+    painter.set_clip_rect(node.rect.expand(32.0));
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let pos = node.rect.right_top() + egui::vec2(2.0, -2.0);
+    let color = ui.visuals().warn_fg_color;
+    painter.text(
+        pos,
+        egui::Align2::LEFT_BOTTOM,
+        super::LOCK_GLYPH,
+        font,
+        color,
+    );
+    node.clone().on_hover_text(super::locked_text(lost));
 }
 
 /// Render the opaque placeholder for a node whose tag is unknown to the

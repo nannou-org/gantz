@@ -401,6 +401,7 @@ pub struct NodeCtx<'a> {
     ref_ext_uis: &'a [&'a dyn node::RefExtUi],
     vm: &'a mut Engine,
     writes: &'a mut Vec<action::StateWrite>,
+    read_only: bool,
 }
 
 /// How to position pasted nodes.
@@ -493,6 +494,16 @@ pub struct ReplaceNode {
     pub node: widget::graph_scene::NodeIndex,
     /// The type name of the replacement node.
     pub node_type: String,
+}
+
+/// Rewrite a node in the emitting head's graph as this build writes it,
+/// dropping the settings that this build does not recognise. See
+/// [`node::InstanceEntry::lost`]. It is an edit like any other, so undo
+/// restores the settings.
+#[derive(Clone, Copy, Debug)]
+pub struct DropUnknownData {
+    /// The node to rewrite.
+    pub node: widget::graph_scene::NodeIndex,
 }
 
 /// Create a new nested graph in the emitting head's graph.
@@ -717,7 +728,21 @@ impl<'a> NodeCtx<'a> {
             ref_ext_uis,
             vm,
             writes,
+            read_only: false,
         }
+    }
+
+    /// Mark the node read-only, for example because it holds data this build
+    /// does not recognise. See [`node::InstanceEntry::lost`]. A read-only
+    /// node must not change its own data, not even silently.
+    pub fn read_only(mut self, read_only: bool) -> Self {
+        self.read_only = read_only;
+        self
+    }
+
+    /// Whether the node is read-only. See [`Self::read_only`].
+    pub fn is_read_only(&self) -> bool {
+        self.read_only
     }
 
     /// Provide access to the node environment.

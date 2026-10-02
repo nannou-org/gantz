@@ -110,6 +110,7 @@ impl Plugin for GantzEguiPlugin {
             .register_head_response::<gantz_egui::NestNodes>()
             .register_head_response::<gantz_egui::CreateNode>()
             .register_head_response::<gantz_egui::ReplaceNode>()
+            .register_head_response::<gantz_egui::DropUnknownData>()
             .register_head_response::<gantz_egui::CreateNestedGraph>()
             .register_head_response::<gantz_egui::InspectEdge>()
             .register_head_response::<gantz_egui::MergeHead>()
@@ -154,6 +155,7 @@ impl Plugin for GantzEguiPlugin {
             // GUI response payload observers
             .add_observer(on_create_node)
             .add_observer(on_replace_node)
+            .add_observer(on_drop_unknown_data)
             .add_observer(on_create_nested_graph)
             .add_observer(on_branch_node)
             .add_observer(on_inspect_edge)
@@ -954,6 +956,38 @@ pub fn on_replace_node(
         event.data.clone(),
     );
     if !replaced {
+        return;
+    }
+    // See `head::WorkingGraph`.
+    bevy_gantz::commit_working_graph(
+        &mut registry,
+        &mut cmds,
+        event.head,
+        &mut data.head_ref.0,
+        &data.working_graph.0,
+    );
+    refresh_cache(&registry, &mut cache, &codec.0);
+}
+
+/// Handle drop unknown data payloads. The rewrite commits like any edit, so
+/// undo restores the dropped data.
+pub fn on_drop_unknown_data(
+    trigger: On<ForHead<gantz_egui::DropUnknownData>>,
+    mut registry: ResMut<Registry>,
+    mut cache: ResMut<GraphCache>,
+    codec: Res<NodeCodecRes>,
+    mut cmds: Commands,
+    mut heads: Query<head::OpenHeadData, With<head::OpenHead>>,
+) {
+    let event = trigger.event();
+    let Ok(mut data) = heads.get_mut(event.head) else {
+        log::error!(
+            "DropUnknownData: head not found for entity {:?}",
+            event.head
+        );
+        return;
+    };
+    if !gantz_egui::ops::drop_unknown_data(&codec.0, &mut data.working_graph, event.data) {
         return;
     }
     // See `head::WorkingGraph`.

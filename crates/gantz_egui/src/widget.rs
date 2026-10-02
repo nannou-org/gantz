@@ -92,6 +92,27 @@ pub(crate) fn to_local_datetime(datetime: OffsetDateTime) -> OffsetDateTime {
 /// The glyph for a widget's options button. Swap it if it does not render.
 pub(crate) const OPTIONS_GLYPH: &str = "⛭";
 
+/// The glyph that marks a locked node. See [`locked_text`].
+pub(crate) const LOCK_GLYPH: &str = "🔒";
+
+/// The button that discards a locked node's unrecognised settings. Returns
+/// whether it was clicked. See [`crate::DropUnknownData`].
+pub(crate) fn discard_button(ui: &mut egui::Ui) -> bool {
+    ui.button("discard unrecognised settings")
+        .on_hover_text("rewrite this node as this gantz writes it. Undo restores the settings")
+        .clicked()
+}
+
+/// Why a node is locked, given the data it holds that this build drops. See
+/// [`crate::node::InstanceEntry::lost`].
+pub(crate) fn locked_text(lost: &[String]) -> String {
+    format!(
+        "This node holds settings this gantz does not recognise: {}. \
+         Update gantz to edit it.",
+        lost.join(", "),
+    )
+}
+
 /// Format a SystemTime as a local string using the given `time` format
 /// description.
 fn format_local(system_time: std::time::SystemTime, desc: &str) -> String {

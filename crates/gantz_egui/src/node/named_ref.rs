@@ -237,15 +237,16 @@ impl NodeUi for NamedRef {
         let mut changed = false;
 
         // Nested graphs always sync so parents follow their children's edits.
-        // `sync` is part of the CA, so flipping it on is a genuine edit.
-        if self.is_nested() && !self.sync {
+        // `sync` is part of the CA, so flipping it on is a genuine edit. A
+        // read-only ref makes neither silent edit.
+        if !ctx.is_read_only() && self.is_nested() && !self.sync {
             self.sync = true;
             changed = true;
         }
 
         // Auto-sync when enabled and the name points at newer content. No
         // widget is touched, but this silent mutation still changes the CA.
-        if self.resync(|name| registry.name_ca(&name.to_string())) {
+        if !ctx.is_read_only() && self.resync(|name| registry.name_ca(&name.to_string())) {
             changed = true;
         }
 

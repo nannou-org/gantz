@@ -10,7 +10,9 @@ use crate::cycle::named_ref_of;
 use crate::node::NodeCodec;
 use crate::widget::gantz::OpenHeadState;
 use crate::widget::graph_scene::NodeIndex;
-use crate::{CreateNode, InspectEdge, PastePos, ReplaceNode, export, node::NamedRef};
+use crate::{
+    CreateNode, DropUnknownData, InspectEdge, PastePos, ReplaceNode, export, node::NamedRef,
+};
 use gantz_ca::{CommitAddr, DataGraph, GraphAddr, Name, NodeData};
 use gantz_core::node::{self, GetNode};
 use petgraph::visit::EdgeRef;
@@ -79,39 +81,50 @@ pub fn branch_node(
         log::error!("BranchNode: graph not found for {graph_addr:?}");
         return;
     }
-    let parent = newest_commit_for_graph(registry, graph_addr);
-    let new_commit_ca = registry.commit_graph(timestamp, parent, graph_addr, || {
-        unreachable!("graph already exists in registry")
-    });
-    let name: Name = new_name.parse().expect("infallible");
-    registry.set_head(name.clone(), new_commit_ca);
-
-    // Replace the NamedRef node in the working graph.
     let Some(&node_ix) = path.last() else {
         log::error!("BranchNode: empty node path");
         return;
     };
     let node_id = node::graph::NodeIx::new(node_ix);
-    // Carry the old reference's ext data over. The forked content is
-    // identical, so domain flags still apply. `sync` resets, since a fork
-    // pins.
-    let new_ref = match graph.node_weight(node_id).and_then(named_ref_of) {
-        Some(old) => old.ref_().retarget(graph_addr.into()),
-        None => node::Ref::new(graph_addr.into()),
+    let Some(weight) = graph.node_weight(node_id) else {
+        log::error!("BranchNode: node not found at index {node_ix}");
+        return;
     };
-    let named_ref = NamedRef::new(name, new_ref);
-    let node_data = match gantz_core::data::erase_node_typed(&named_ref) {
-        Ok(node_data) => node_data,
-        Err(e) => {
-            log::error!("BranchNode: failed to erase the new `NamedRef`: {e}");
-            return;
+    let name: Name = new_name.parse().expect("infallible");
+
+    // Rewrite the node as a NamedRef to the new name, before anything is
+    // committed. The old reference's ext data carries over, since the forked
+    // content is identical, and so does data this build does not recognise.
+    // `sync` resets, since a fork pins.
+    let mut node_data = weight.clone();
+    let rewritten = match named_ref_of(weight) {
+        Some(old) => {
+            let new_ref = old.ref_().retarget(graph_addr.into());
+            let branched = NamedRef::new(name.clone(), new_ref);
+            gantz_core::data::edit_node_typed(&mut node_data, |r: &mut NamedRef| {
+                *r = branched;
+                true
+            })
+            .map(|_| ())
+        }
+        None => {
+            let branched = NamedRef::new(name.clone(), node::Ref::new(graph_addr.into()));
+            gantz_core::data::erase_node_typed(&branched)
+                .map(|branched| node_data = branched)
+                .map_err(Into::into)
         }
     };
-    if let Some(node) = graph.node_weight_mut(node_id) {
-        *node = node_data;
-    } else {
-        log::error!("BranchNode: node not found at index {node_ix}");
+    if let Err(e) = rewritten {
+        log::warn!("BranchNode: cannot branch node {node_ix}: {e}");
+        return;
     }
+
+    let parent = newest_commit_for_graph(registry, graph_addr);
+    let new_commit_ca = registry.commit_graph(timestamp, parent, graph_addr, || {
+        unreachable!("graph already exists in registry")
+    });
+    registry.set_head(name, new_commit_ca);
+    graph[node_id] = node_data;
 }
 
 /// The newest commit pointing at the given graph, if any. Ties are broken by
@@ -279,6 +292,27 @@ pub fn replace_node(
     // Removing edges shifts edge indices, so the edge selection is stale.
     head_state.scene.interaction.selection.edges.clear();
     true
+}
+
+/// Rewrite a node as this build's node type writes it, dropping the data
+/// that the type does not recognise. Returns whether the node changed.
+pub fn drop_unknown_data(codec: &NodeCodec, graph: &mut DataGraph, cmd: DropUnknownData) -> bool {
+    let ix = cmd.node;
+    let Some(weight) = graph.node_weight(ix) else {
+        log::error!("DropUnknownData: no node at index {}", ix.index());
+        return false;
+    };
+    match codec.normalize(weight) {
+        Ok(normal) if normal != *weight => {
+            graph[ix] = normal;
+            true
+        }
+        Ok(_) => false,
+        Err(e) => {
+            log::error!("DropUnknownData: cannot rewrite node {}: {e}", ix.index());
+            false
+        }
+    }
 }
 
 /// Whether a node of `node_type` would reference the `editing` graph and so
@@ -606,25 +640,20 @@ pub fn remove_nodes(
 
 /// Replay `reindex` onto the target of every `bind` node in `graph`. Only
 /// the first path segment lives at this level. A bind whose target was
-/// removed is emptied, which its expr reports as a compile diagnostic.
+/// removed is emptied, which its expr reports as a compile diagnostic. The
+/// edit keeps data that this build does not recognise. See
+/// [`gantz_core::data::edit_node_typed`].
 fn retarget_binds(graph: &mut DataGraph, reindex: &Reindex) {
     use gantz_nodetag::NodeTag;
     if reindex.is_empty() {
         return;
     }
-    for ix in graph.node_indices() {
-        let nd = &graph[ix];
-        if nd.tag != crate::node::Bind::TAG {
-            continue;
-        }
-        let Ok(mut bind) = gantz_core::data::reify_node_concrete::<crate::node::Bind>(nd) else {
-            continue;
-        };
+    let retarget = |bind: &mut crate::node::Bind| {
         let Some(&first) = bind.path().first() else {
-            continue;
+            return false;
         };
         let path = match reindex.apply_to_index(first) {
-            Some(new) if new == first => continue,
+            Some(new) if new == first => return false,
             Some(new) => {
                 let mut path = bind.path().to_vec();
                 path[0] = new;
@@ -633,8 +662,14 @@ fn retarget_binds(graph: &mut DataGraph, reindex: &Reindex) {
             None => vec![],
         };
         bind.set_path(path);
-        if let Ok(nd) = gantz_core::data::erase_node_typed(&bind) {
-            graph[ix] = nd;
+        true
+    };
+    for ix in graph.node_indices() {
+        if graph[ix].tag != crate::node::Bind::TAG {
+            continue;
+        }
+        if let Err(e) = gantz_core::data::edit_node_typed(&mut graph[ix], retarget) {
+            log::warn!("bind node {}: cannot retarget: {e}", ix.index());
         }
     }
 }
@@ -1477,5 +1512,60 @@ mod tests {
 
         assert!(result.is_none());
         assert_eq!(graph.node_count(), 2);
+    }
+
+    #[test]
+    fn drop_unknown_data_rewrites_only_a_node_that_needs_it() {
+        let codec = crate::test_node::codec();
+        let mut graph = DataGraph::default();
+        let node = graph.add_node(crate::test_node::with_unknown_field(expr("1")));
+        let cmd = DropUnknownData { node };
+        assert!(drop_unknown_data(&codec, &mut graph, cmd));
+        assert_eq!(graph[node], expr("1"));
+        assert!(!drop_unknown_data(&codec, &mut graph, cmd));
+    }
+
+    // A retarget keeps a bind's data that this build does not recognise.
+    #[test]
+    fn retarget_binds_keeps_unknown_data() {
+        use crate::test_node::{has_unknown_field, with_unknown_field};
+        let bind = crate::node::Bind::new(vec![5, 7]);
+        let bind = gantz_core::data::erase_node_typed(&bind).unwrap();
+        let mut graph = DataGraph::default();
+        let ix = graph.add_node(with_unknown_field(bind));
+        let reindex = Reindex(vec![RemoveOp {
+            removed: 3,
+            moved_from: Some(5),
+        }]);
+        retarget_binds(&mut graph, &reindex);
+        let bind = gantz_core::data::reify_node_concrete::<crate::node::Bind>(&graph[ix]);
+        assert_eq!(bind.unwrap().path(), [3, 7]);
+        assert!(has_unknown_field(&graph[ix]));
+    }
+
+    // A branch keeps the ref's data that this build does not recognise.
+    #[test]
+    fn branch_node_keeps_unknown_data() {
+        use crate::test_node::{has_unknown_field, with_unknown_field};
+        let mut registry = gantz_ca::Registry::default();
+        let target = registry.add_graph(DataGraph::default());
+        let named_ref = NamedRef::new("riff".parse().unwrap(), node::Ref::new(target.into()));
+        let mut graph = DataGraph::default();
+        let weight = gantz_core::data::erase_node_typed(&named_ref).unwrap();
+        let ix = graph.add_node(with_unknown_field(weight));
+        let ts = std::time::Duration::from_secs(1);
+        branch_node(
+            &mut registry,
+            ts,
+            &mut graph,
+            "fork".into(),
+            target.into(),
+            &[0],
+        );
+        let fork: Name = "fork".parse().unwrap();
+        assert!(registry.head(&fork).is_some());
+        let branched = named_ref_of(&graph[ix]).unwrap();
+        assert_eq!(branched.name(), &fork);
+        assert!(has_unknown_field(&graph[ix]));
     }
 }

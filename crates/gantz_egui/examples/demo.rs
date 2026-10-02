@@ -927,6 +927,14 @@ fn process_responses(ctx: &egui::Context, state: &mut State, mut responses: gant
         );
     }
 
+    for (head, drop) in responses.take::<gantz_egui::DropUnknownData>() {
+        let Some((_, ix)) = tagged_head(state, head) else {
+            continue;
+        };
+        let (_, graph, _) = &mut state.heads[ix];
+        gantz_egui::ops::drop_unknown_data(&codec(), graph, drop);
+    }
+
     for (head, create) in responses.take::<gantz_egui::CreateNestedGraph>() {
         let Some((head, ix)) = tagged_head(state, head) else {
             continue;
