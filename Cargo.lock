@@ -1043,7 +1043,6 @@ dependencies = [
 name = "bevy_gantz"
 version = "0.6.0"
 dependencies = [
- "base64",
  "bevy_app",
  "bevy_ecs",
  "bevy_input",
@@ -1053,8 +1052,6 @@ dependencies = [
  "bevy_window",
  "gantz_ca",
  "gantz_core",
- "ron 0.10.1",
- "serde",
  "steel-core",
  "web-sys",
  "web-time",
@@ -1074,6 +1071,7 @@ dependencies = [
  "gantz_collab_sync",
  "gantz_core",
  "gantz_egui",
+ "gantz_store",
  "ron 0.10.1",
  "serde",
  "steel-core",
@@ -1104,6 +1102,7 @@ dependencies = [
  "gantz_format",
  "gantz_io",
  "gantz_nodetag",
+ "gantz_store",
  "petgraph",
  "rfd",
  "serde",
@@ -1519,8 +1518,6 @@ version = "0.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "09dc6bd33eaed770b9855effd718fbe626814d2e930c1013c423d76c73e5a9d4"
 dependencies = [
- "bevy_app",
- "bevy_ecs",
  "cfg_aliases",
  "directories",
  "redb",
@@ -3886,6 +3883,7 @@ dependencies = [
  "gantz_pattern",
  "gantz_plyphon",
  "gantz_rng",
+ "gantz_store",
  "gantz_ui",
  "serde",
  "steel-core",
@@ -4116,6 +4114,18 @@ dependencies = [
  "num-bigint",
  "num-rational",
  "num-traits",
+]
+
+[[package]]
+name = "gantz_store"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "bevy_pkv",
+ "gantz_ca",
+ "ron 0.10.1",
+ "serde",
+ "tracing",
 ]
 
 [[package]]

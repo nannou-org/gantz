@@ -6,7 +6,7 @@
 //! node data, [`DataGraph`], and section [`Value`]s are self-describing, so
 //! they travel inside [`Objects`] as RON blobs. See [`encode_graph`] and
 //! [`encode_value`]. That is the same encoding as the persisted registry in
-//! `bevy_gantz::storage`, so wire and persistence cannot drift. A received
+//! `gantz_store`, so wire and persistence cannot drift. A received
 //! graph only applies if its decoded content re-verifies against the
 //! announced address. See [`gantz_ca::verify_graph`].
 //!

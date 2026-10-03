@@ -135,7 +135,7 @@ fn setup_open(
     mut focused: ResMut<FocusedHead>,
 ) {
     let loaded = bevy_gantz_egui::storage::load_open(&*storage, &mut *registry, timestamp());
-    let focused_head = bevy_gantz::storage::load_focused_head(&*storage);
+    let focused_head = gantz_store::load_focused_head(&*storage);
 
     // `OpenHead`'s required components cover the compile outcome. `GraphView`'s
     // cover the rest of the per-head GUI state. `vm::sync` initializes the VMs
@@ -180,10 +180,10 @@ fn persist_state(
                 .map(|data| (**data.head_ref).clone())
         })
         .collect();
-    bevy_gantz::storage::save_open_heads(&mut *storage, &heads);
+    gantz_store::save_open_heads(&mut *storage, &heads);
     if let Some(focused_entity) = **focused {
         if let Ok(data) = heads_query.get(focused_entity) {
-            bevy_gantz::storage::save_focused_head(&mut *storage, &**data.head_ref);
+            gantz_store::save_focused_head(&mut *storage, &**data.head_ref);
         }
     }
     bevy_gantz_egui::storage::save_gui_state(&mut *storage, &gui_state);

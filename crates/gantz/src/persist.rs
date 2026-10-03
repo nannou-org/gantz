@@ -31,6 +31,11 @@ use bevy::tasks::{IoTaskPool, Task, block_on};
 /// app.
 pub struct PersistPlugin;
 
+/// The registry content already in the store. See
+/// [`gantz_store::PersistedRegistry`].
+#[derive(Default, Deref, DerefMut, Resource)]
+pub struct Persisted(pub gantz_store::PersistedRegistry);
+
 impl Plugin for PersistPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(DebouncedInputPlugin::<PersistEguiMemory>::new(0.3))
@@ -153,19 +158,19 @@ fn store_writable(read_only: Option<Res<bevy_gantz::storage::StoreReadOnly>>) ->
 /// to persist. Views, demos and descriptions ride the registry's sections.
 ///
 /// Registry writes dedup against `persisted`. Pass a cleared tracker, see
-/// [`bevy_gantz::storage::PersistedRegistry::cleared`], to force a complete
+/// [`gantz_store::PersistedRegistry::cleared`], to force a complete
 /// write. Everything else is written each call.
 fn collect_batch_to_persist(
     registry: &Registry,
-    persisted: &mut bevy_gantz::storage::PersistedRegistry,
+    persisted: &mut gantz_store::PersistedRegistry,
     gui_state: &GuiState,
     tab_order: &HeadTabOrder,
     focused: &FocusedHead,
     heads_query: &Query<OpenHeadDataReadOnly, With<OpenHead>>,
     window: Option<&Window>,
 ) -> Vec<(String, String)> {
-    let mut batch = bevy_gantz::storage::BatchWriter::default();
-    bevy_gantz::storage::save_registry_incremental(&mut batch, registry, persisted);
+    let mut batch = gantz_store::BatchWriter::default();
+    gantz_store::save_registry_incremental(&mut batch, registry, persisted);
     let heads: Vec<_> = tab_order
         .iter()
         .filter_map(|&entity| {
@@ -175,10 +180,10 @@ fn collect_batch_to_persist(
                 .map(|data| (**data.head_ref).clone())
         })
         .collect();
-    bevy_gantz::storage::save_open_heads(&mut batch, &heads);
+    gantz_store::save_open_heads(&mut batch, &heads);
     if let Some(focused_entity) = **focused {
         if let Ok(data) = heads_query.get(focused_entity) {
-            bevy_gantz::storage::save_focused_head(&mut batch, &**data.head_ref);
+            gantz_store::save_focused_head(&mut batch, &**data.head_ref);
         }
     }
     bevy_gantz_egui::storage::save_gui_state(&mut batch, gui_state);
@@ -190,7 +195,7 @@ fn collect_batch_to_persist(
 
 fn persist_resources(
     registry: Res<Registry>,
-    mut persisted: ResMut<bevy_gantz::storage::PersistedRegistry>,
+    mut persisted: ResMut<Persisted>,
     gui_state: Res<GuiState>,
     mut persister: ResMut<Persister>,
     tab_order: Res<HeadTabOrder>,
@@ -234,7 +239,7 @@ impl DebouncedEvent for PersistEguiMemory {
 /// Persist egui memory on the [`PersistEguiMemory`] debounce.
 fn persist_egui_memory(mut persister: ResMut<Persister>, mut ctxs: EguiContexts) {
     let start = web_time::Instant::now();
-    let mut batch = bevy_gantz::storage::BatchWriter::default();
+    let mut batch = gantz_store::BatchWriter::default();
     if let Ok(ctx) = ctxs.ctx_mut() {
         bevy_gantz_egui::storage::save_egui_memory(&mut batch, ctx);
     }
@@ -253,7 +258,7 @@ fn persist_egui_memory(mut persister: ResMut<Persister>, mut ctxs: EguiContexts)
 fn flush_on_exit(
     mut exit: MessageReader<AppExit>,
     registry: Res<Registry>,
-    persisted: Res<bevy_gantz::storage::PersistedRegistry>,
+    persisted: Res<Persisted>,
     gui_state: Res<GuiState>,
     mut persister: ResMut<Persister>,
     tab_order: Res<HeadTabOrder>,

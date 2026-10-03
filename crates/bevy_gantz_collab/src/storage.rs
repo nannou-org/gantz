@@ -1,8 +1,8 @@
 //! Persistence for the collab identity and session configurations over the
-//! app's key-value storage in `bevy_gantz::storage`.
+//! app's key-value storage in `gantz_store`.
 
-use bevy_gantz::storage::{Load, Save, load, save};
 use gantz_collab::{Identity, Session};
+use gantz_store::{Load, Save, load, save};
 
 /// The key holding the user's secret identity bytes.
 pub const IDENTITY_KEY: &str = "collab-identity";
