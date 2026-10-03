@@ -37,7 +37,7 @@ use gantz_collab::{
     SectionEntry, VaultId, VaultTicket, VersionInfo, Want, store,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::mem;
 use std::time::Duration;
 use step::Step;
@@ -62,18 +62,11 @@ pub struct VaultLink {
     pub synced: Synced,
     /// Set when `synced` changes. The host clears it once persisted.
     pub synced_changed: bool,
-    /// The vault's heads and metadata digests as last heard. `None` until
-    /// the link first comes up, since nothing can be planned against an
-    /// unknown vault.
-    remote: Option<Synced>,
-    /// Fetches of vault heads in flight, per name.
-    fetches: HashMap<ca::Name, Fetch>,
-    /// Fetches of vault metadata in flight.
-    meta_fetches: HashSet<ca::Name>,
-    /// Pushes in flight, per name.
-    pushes: HashMap<ca::Name, Pushing>,
-    /// Names left alone while their local and remote states are these.
-    held: HashMap<ca::Name, (NameState, NameState)>,
+    /// The vault's heads and metadata digests as last heard. Names sync only
+    /// while the link is live, so only once the vault's heads arrived.
+    remote: Synced,
+    /// The work on each name between passes. A name has one piece at most.
+    work: HashMap<ca::Name, Work>,
 }
 
 /// Heads and metadata digests per name.
@@ -118,12 +111,19 @@ pub enum PushOutcome {
     Invalid(String),
 }
 
-/// What a push in flight carries.
-enum Pushing {
-    /// A new head.
-    Head,
-    /// A metadata change, with the digest of the metadata it sets.
-    Meta(Option<ca::ContentAddr>),
+/// The work on one name between passes. See [`VaultLink`].
+enum Work {
+    /// Its vault head's closure is being fetched.
+    Fetch(Fetch),
+    /// Its vault metadata is being fetched.
+    FetchMeta,
+    /// A new head is being pushed.
+    PushHead,
+    /// A metadata change is being pushed, with the digest of the metadata
+    /// it sets.
+    PushMeta(Option<ca::ContentAddr>),
+    /// The name is left alone while its local and vault states are these.
+    Held(NameState, NameState),
 }
 
 /// A vault head's closure being fetched.
@@ -159,10 +159,8 @@ impl Synced {
 impl VaultLink {
     /// Record `state` as the vault's state of `name`.
     fn set_remote(&mut self, name: &ca::Name, state: NameState) {
-        if let Some(remote) = &mut self.remote {
-            set(&mut remote.heads, name, state.head);
-            set(&mut remote.metas, name, state.meta);
-        }
+        set(&mut self.remote.heads, name, state.head);
+        set(&mut self.remote.metas, name, state.meta);
     }
 
     /// Record `head` as the agreed head for `name`, which clears its
@@ -195,19 +193,24 @@ impl VaultLink {
 
     /// Hold `name` until its local or remote state moves.
     fn hold(&mut self, registry: &ca::Registry, name: &ca::Name) {
-        let states = (store::name_state(registry, name), self.remote_state(name));
-        self.held.insert(name.clone(), states);
+        let (local, remote) = self.states(registry, name);
+        self.work.insert(name.clone(), Work::Held(local, remote));
+    }
+
+    /// Send `cmd` for `name`, and record `work` once it is sent.
+    fn start(&mut self, handle: &Handle, name: &ca::Name, cmd: Command, work: Work) {
+        if handle.cmds.try_send(cmd).is_ok() {
+            self.work.insert(name.clone(), work);
+        }
+    }
+
+    /// `name`'s local and vault states.
+    fn states(&self, registry: &ca::Registry, name: &ca::Name) -> (NameState, NameState) {
+        (store::name_state(registry, name), self.remote.state(name))
     }
 
     fn remote_head(&self, name: &ca::Name) -> Option<ca::CommitAddr> {
-        self.remote_state(name).head
-    }
-
-    fn remote_state(&self, name: &ca::Name) -> NameState {
-        self.remote
-            .as_ref()
-            .map(|r| r.state(name))
-            .unwrap_or_default()
+        self.remote.heads.get(name).copied()
     }
 }
 
@@ -238,11 +241,8 @@ pub fn link(
         local_only,
         synced,
         synced_changed: false,
-        remote: None,
-        fetches: HashMap::new(),
-        meta_fetches: HashSet::new(),
-        pushes: HashMap::new(),
-        held: HashMap::new(),
+        remote: Synced::default(),
+        work: HashMap::new(),
     });
     Ok(id)
 }
@@ -268,12 +268,11 @@ pub(crate) fn owns(link: &VaultLink, event: &Event) -> bool {
     }
 }
 
-/// Take the link down with `status`. Work in flight will not be answered.
-fn down(link: &mut VaultLink, status: VaultStatus) {
+/// Set the link's status, and drop all work. Work in flight will not be
+/// answered, and a new link plans every name afresh.
+fn reset(link: &mut VaultLink, status: VaultStatus) {
     link.status = status;
-    link.fetches.clear();
-    link.meta_fetches.clear();
-    link.pushes.clear();
+    link.work.clear();
 }
 
 /// Apply one vault event to the link's state. Fetched content is staged
@@ -289,22 +288,18 @@ pub(crate) fn handle_event(
         Event::LinkUp {
             heads, metas, info, ..
         } => {
-            link.remote = Some(Synced {
+            link.remote = Synced {
                 heads: heads.into_iter().collect(),
                 metas: metas.into_iter().collect(),
-            });
-            link.status = VaultStatus::Live;
+            };
             link.vault_info = Some(info);
-            link.fetches.clear();
-            link.meta_fetches.clear();
-            link.pushes.clear();
-            link.held.clear();
             link.failures.clear();
+            reset(link, VaultStatus::Live);
         }
         Event::LinkChanged { name, state, .. } => link.set_remote(&name, state),
         Event::LinkDown { error, .. } => {
             log::info!("vault link down: {error}");
-            down(link, VaultStatus::Offline(error));
+            reset(link, VaultStatus::Offline(error));
         }
         Event::LinkIncompatible {
             theirs, outdated, ..
@@ -315,43 +310,39 @@ pub(crate) fn handle_event(
                 Outdated::Them => VaultStatus::VaultOutdated,
             };
             link.vault_info = Some(theirs);
-            down(link, status);
+            reset(link, status);
         }
         Event::LinkDenied { reason, .. } => {
             log::warn!("vault link denied: {reason}");
-            down(link, VaultStatus::Denied(reason));
+            reset(link, VaultStatus::Denied(reason));
         }
         Event::Objects { want, objects, .. } => match meta_fetch(link, &want) {
             Some(name) => feed_meta(link, registry, &name, objects),
             None => feed(link, registry, handle, open, want, objects),
         },
-        Event::FetchFailed { want, error, .. } => {
-            if let Some(name) = meta_fetch(link, &want) {
-                link.meta_fetches.remove(&name);
-                link.fail(registry, &name, format!("metadata fetch failed: {error}"));
-                return;
+        // A failure holds its name, which ends the fetch.
+        Event::FetchFailed { want, error, .. } => match meta_fetch(link, &want) {
+            Some(name) => link.fail(registry, &name, format!("metadata fetch failed: {error}")),
+            None => {
+                for name in fetches(link, &want) {
+                    link.fail(registry, &name, format!("fetch failed: {error}"));
+                }
             }
-            let failed: Vec<ca::Name> = link
-                .fetches
-                .iter()
-                .filter(|(_, f)| f.want == want.refs)
-                .map(|(name, _)| name.clone())
-                .collect();
-            for name in failed {
-                link.fetches.remove(&name);
-                link.fail(registry, &name, format!("fetch failed: {error}"));
-            }
-        }
+        },
         Event::Pushed {
             name, tip, result, ..
         } => {
-            let pushing = link.pushes.remove(&name);
+            // An answer from before the link last came up finds other work.
+            let pushing = match link.work.get(&name) {
+                Some(Work::PushHead | Work::PushMeta(_)) => link.work.remove(&name),
+                _ => None,
+            };
             match result {
                 Ok(state) => {
                     link.set_remote(&name, state);
                     match pushing {
-                        Some(Pushing::Head) if state.head == tip => link.set_synced(&name, tip),
-                        Some(Pushing::Meta(meta)) if state.meta == meta => {
+                        Some(Work::PushHead) if state.head == tip => link.set_synced(&name, tip),
+                        Some(Work::PushMeta(meta)) if state.meta == meta => {
                             link.set_synced_meta(&name, meta)
                         }
                         _ => (),
@@ -376,9 +367,7 @@ pub(crate) fn sync(
     if link.status != VaultStatus::Live {
         return;
     }
-    let Some(remote) = &link.remote else {
-        return;
-    };
+    let remote = &link.remote;
     let names: BTreeSet<ca::Name> = registry
         .heads()
         .map(|(n, _)| n)
@@ -408,24 +397,19 @@ pub(crate) fn sync(
 
 /// Bring one name one step closer to agreement with the vault.
 fn reconcile(link: &mut VaultLink, cx: &mut Cx<'_>, name: &ca::Name) {
-    if link.fetches.contains_key(name)
-        || link.meta_fetches.contains(name)
-        || link.pushes.contains_key(name)
-    {
-        return;
+    // Work in flight waits for its answer. A hold lasts until the name's
+    // local or vault state moves.
+    if let Some(work) = link.work.get(name) {
+        let Work::Held(local, remote) = work else {
+            return;
+        };
+        if (*local, *remote) == link.states(cx.registry, name) {
+            return;
+        }
+        link.work.remove(name);
     }
     let local = cx.registry.head(name);
     let remote = link.remote_head(name);
-    if let Some(held) = link.held.get(name) {
-        let states = (
-            store::name_state(cx.registry, name),
-            link.remote_state(name),
-        );
-        if *held == states {
-            return;
-        }
-        link.held.remove(name);
-    }
     let base = link.synced.heads.get(name).copied();
     if let Some(r) = remote.filter(|r| !cx.registry.commits().contains_key(r)) {
         fetch(link, cx, name, r, [local, base]);
@@ -493,15 +477,11 @@ fn push(link: &mut VaultLink, cx: &mut Cx<'_>, name: &ca::Name, tip: Option<ca::
         objects,
         meta: None,
     };
-    let vault = link.id;
-    if cx
-        .handle
-        .cmds
-        .try_send(Command::Push { vault, push })
-        .is_ok()
-    {
-        link.pushes.insert(name.clone(), Pushing::Head);
-    }
+    let cmd = Command::Push {
+        vault: link.id,
+        push,
+    };
+    link.start(cx.handle, name, cmd, Work::PushHead);
 }
 
 /// Merge the local head with the vault's, then push the merge.
@@ -593,7 +573,7 @@ fn sync_meta(link: &mut VaultLink, cx: &mut Cx<'_>, name: &ca::Name) {
         return;
     };
     let local = store::meta_addr(cx.registry, name);
-    let remote = link.remote_state(name).meta;
+    let remote = link.remote.state(name).meta;
     let synced = link.synced.metas.get(name).copied();
     if local == remote {
         link.set_synced_meta(name, local);
@@ -621,15 +601,11 @@ fn push_meta(
         objects: Objects::default(),
         meta: Some(MetaChange { base, entries }),
     };
-    let vault = link.id;
-    if cx
-        .handle
-        .cmds
-        .try_send(Command::Push { vault, push })
-        .is_ok()
-    {
-        link.pushes.insert(name.clone(), Pushing::Meta(meta));
-    }
+    let cmd = Command::Push {
+        vault: link.id,
+        push,
+    };
+    link.start(cx.handle, name, cmd, Work::PushMeta(meta));
 }
 
 /// Start fetching the vault's metadata for `name`.
@@ -642,24 +618,33 @@ fn fetch_meta(link: &mut VaultLink, cx: &mut Cx<'_>, name: &ca::Name) {
         from: link.vault,
         want,
     };
-    if cx.handle.cmds.try_send(cmd).is_ok() {
-        link.meta_fetches.insert(name.clone());
-    }
+    link.start(cx.handle, name, cmd, Work::FetchMeta);
 }
 
 /// The name whose metadata fetch `want` answers, if one is in flight.
 fn meta_fetch(link: &VaultLink, want: &Want) -> Option<ca::Name> {
     match &want.refs[..] {
-        [ObjectRef::Meta(name)] if link.meta_fetches.contains(name) => Some(name.clone()),
+        [ObjectRef::Meta(name)] if matches!(link.work.get(name), Some(Work::FetchMeta)) => {
+            Some(name.clone())
+        }
         _ => None,
     }
+}
+
+/// The names whose head fetch `want` answers.
+fn fetches(link: &VaultLink, want: &Want) -> Vec<ca::Name> {
+    link.work
+        .iter()
+        .filter(|(_, w)| matches!(w, Work::Fetch(f) if f.want == want.refs))
+        .map(|(name, _)| name.clone())
+        .collect()
 }
 
 /// Replace a name's metadata with the vault's. Metadata that this build
 /// cannot store exactly, such as entries it cannot read, is not agreed. The
 /// name is held instead of fetched again each pass.
 fn feed_meta(link: &mut VaultLink, registry: &mut ca::Registry, name: &ca::Name, objects: Objects) {
-    link.meta_fetches.remove(name);
+    link.work.remove(name);
     let fetched = store::meta_digest(&objects);
     store::set_name_meta(registry, name, inbound::decode(objects).sections);
     if store::meta_addr(registry, name) == fetched {
@@ -722,9 +707,7 @@ fn fetch(
         from: link.vault,
         want,
     };
-    if cx.handle.cmds.try_send(cmd).is_ok() {
-        link.fetches.insert(name.clone(), fetch);
-    }
+    link.start(cx.handle, name, cmd, Work::Fetch(fetch));
 }
 
 /// Stage the objects answering `want`. Apply each completed closure, or
@@ -737,19 +720,14 @@ fn feed(
     want: Want,
     objects: gantz_collab::Objects,
 ) {
-    let names: Vec<ca::Name> = link
-        .fetches
-        .iter()
-        .filter(|(_, f)| f.want == want.refs)
-        .map(|(name, _)| name.clone())
-        .collect();
+    let names = fetches(link, &want);
     let mut decoded = inbound::decode(objects);
     // An adopted view keeps the local camera of an open head, so syncing
     // never moves the viewport.
     let camera = names.iter().find_map(|n| open.get(n).copied().flatten());
     inbound::apply_sections(registry, mem::take(&mut decoded.sections), camera);
     for name in names {
-        let Some(mut fetch) = link.fetches.remove(&name) else {
+        let Some(Work::Fetch(mut fetch)) = link.work.remove(&name) else {
             continue;
         };
         let next = match inbound::advance(registry, &mut fetch.staged, fetch.tip, &decoded) {
@@ -777,9 +755,7 @@ fn feed(
             from: link.vault,
             want: next,
         };
-        if handle.cmds.try_send(cmd).is_ok() {
-            link.fetches.insert(name, fetch);
-        }
+        link.start(handle, &name, cmd, Work::Fetch(fetch));
     }
 }
 
