@@ -1,10 +1,11 @@
 //! The user's collaborative identity: an ed25519 key pair.
 //!
-//! Generated implicitly on first use and persisted by the application. The
-//! secret is 32 bytes. Deriving the key from another source later is a new
-//! constructor, not a type change.
+//! Generated implicitly on first use. An app persists it in its store with
+//! [`save`] and [`load`]. The secret is 32 bytes. Deriving the key from
+//! another source later is a new constructor, not a type change.
 
 use crate::session::PeerId;
+use gantz_store::{Load, Save};
 use iroh::SecretKey;
 
 /// An ed25519 key pair identifying this user across sessions.
@@ -15,6 +16,9 @@ use iroh::SecretKey;
 pub struct Identity {
     secret: SecretKey,
 }
+
+/// The store key holding the identity's secret bytes.
+pub const KEY: &str = "collab-identity";
 
 impl Identity {
     /// Generate a fresh random identity.
@@ -47,4 +51,14 @@ impl Identity {
     pub(crate) fn secret_key(&self) -> SecretKey {
         self.secret.clone()
     }
+}
+
+/// Persist the identity's secret bytes under [`KEY`].
+pub fn save(storage: &mut impl Save, identity: &Identity) {
+    gantz_store::save(storage, KEY, &identity.to_bytes());
+}
+
+/// Load the persisted identity, if any.
+pub fn load(storage: &impl Load) -> Option<Identity> {
+    gantz_store::load::<[u8; 32]>(storage, KEY).map(Identity::from_bytes)
 }

@@ -223,11 +223,11 @@ fn upgrade_store(
 /// Load the user's collaborative identity, or generate and persist one.
 #[cfg(feature = "collab")]
 fn setup_collab_identity(mut storage: ResMut<Pkv>, mut cmds: Commands) {
-    let identity = match bevy_gantz_collab::storage::load_identity(&*storage) {
+    let identity = match gantz_collab::identity::load(&*storage) {
         Some(identity) => identity,
         None => {
             let identity = gantz_collab::Identity::generate();
-            bevy_gantz_collab::storage::save_identity(&mut *storage, &identity);
+            gantz_collab::identity::save(&mut *storage, &identity);
             identity
         }
     };

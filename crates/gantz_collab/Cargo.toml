@@ -11,6 +11,7 @@ repository.workspace = true
 [dependencies]
 async-channel.workspace = true
 gantz_ca.workspace = true
+gantz_store.workspace = true
 getrandom = "0.3"
 hex.workspace = true
 iroh.workspace = true

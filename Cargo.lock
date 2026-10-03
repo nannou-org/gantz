@@ -3943,6 +3943,7 @@ version = "0.3.1"
 dependencies = [
  "async-channel",
  "gantz_ca",
+ "gantz_store",
  "getrandom 0.3.4",
  "hex",
  "iroh",
