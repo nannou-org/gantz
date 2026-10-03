@@ -257,6 +257,7 @@ pub fn handle_event(
         // by these sessions has nothing to update.
         Event::VaultTicketReady { .. }
         | Event::DeviceSeen { .. }
+        | Event::DeviceRefused { .. }
         | Event::PushRequest { .. }
         | Event::LinkUp { .. }
         | Event::LinkChanged { .. }

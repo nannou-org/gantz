@@ -228,6 +228,10 @@ impl Vault {
                 }
                 self.seen(peer, app, proto)?;
             }
+            Event::DeviceRefused { peer, app, .. } => warn!(
+                "refused device {} ({app}). Its ticket is old, or its pairing was revoked",
+                peer.to_hex()
+            ),
             // Only an incompatible device stops at the probe. A compatible
             // one says hello next.
             Event::Probed {
