@@ -1,11 +1,11 @@
 //! App-specific storage utilities.
 //!
-//! Provides the [`Pkv`] newtype implementing [`bevy_gantz::storage::Load`] and
-//! [`bevy_gantz::storage::Save`] for [`bevy_pkv::PkvStore`].
+//! Provides the [`Pkv`] newtype implementing [`gantz_store::Load`] and
+//! [`gantz_store::Save`] for a shared [`bevy_pkv::PkvStore`].
 
 use bevy::prelude::Resource;
-use bevy_gantz::storage::{Load, Save};
 use bevy_pkv::PkvStore;
+use gantz_store::{Load, Save};
 use std::sync::{Arc, Mutex};
 
 /// A [`Resource`] wrapping a shared [`PkvStore`] that implements [`Load`] and
@@ -34,11 +34,7 @@ impl Pkv {
 impl Load for Pkv {
     type Err = bevy_pkv::GetError;
     fn get_string(&self, key: &str) -> Result<Option<String>, Self::Err> {
-        match self.0.lock().unwrap().get::<String>(key) {
-            Ok(v) => Ok(Some(v)),
-            Err(bevy_pkv::GetError::NotFound) => Ok(None),
-            Err(e) => Err(e),
-        }
+        self.0.lock().unwrap().get_string(key)
     }
 }
 

@@ -30,6 +30,7 @@ gantz_nodetag.workspace = true
 gantz_pattern = { workspace = true, features = ["egui"] }
 gantz_plyphon = { workspace = true, features = ["egui"] }
 gantz_rng.workspace = true
+gantz_store = { workspace = true, features = ["pkv"] }
 gantz_ui.workspace = true
 serde.workspace = true
 steel-core.workspace = true

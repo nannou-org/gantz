@@ -561,14 +561,14 @@ fn node_set_erases_canonically() {
 fn node_set_keeps_its_addresses_through_the_store_and_the_wire() {
     #[derive(Default)]
     struct Store(std::collections::HashMap<String, String>);
-    impl bevy_gantz::storage::Save for Store {
+    impl gantz_store::Save for Store {
         type Err = std::convert::Infallible;
         fn set_string(&mut self, key: &str, value: &str) -> Result<(), Self::Err> {
             self.0.insert(key.to_string(), value.to_string());
             Ok(())
         }
     }
-    impl bevy_gantz::storage::Load for Store {
+    impl gantz_store::Load for Store {
         type Err = std::convert::Infallible;
         fn get_string(&self, key: &str) -> Result<Option<String>, Self::Err> {
             Ok(self.0.get(key).cloned())
@@ -580,10 +580,9 @@ fn node_set_keeps_its_addresses_through_the_store_and_the_wire() {
     let mut registry = gantz_ca::Registry::default();
     registry.commit_graph(std::time::Duration::ZERO, None, ga, || graph.clone());
     let mut store = Store::default();
-    let mut persisted = bevy_gantz::storage::PersistedRegistry::default();
-    let registry = bevy_gantz::Registry(registry);
-    bevy_gantz::storage::save_registry_incremental(&mut store, &registry, &mut persisted);
-    let (loaded, _) = bevy_gantz::storage::load_registry(&store);
+    let mut persisted = gantz_store::PersistedRegistry::default();
+    gantz_store::save_registry_incremental(&mut store, &registry, &mut persisted);
+    let (loaded, _) = gantz_store::load_registry(&store);
     let stored = loaded.graph(&ga).expect("stored graph");
     assert_eq!(gantz_ca::graph_addr(stored), ga, "store");
 
@@ -601,7 +600,6 @@ fn node_set_keeps_its_addresses_through_the_store_and_the_wire() {
 /// heads and the saved GUI state follow.
 #[test]
 fn a_format_zero_store_moves_to_canonical_addresses() {
-    use bevy_gantz::storage;
     use gantz_ca::{Commit, Datum, Head};
 
     fn old_form(datum: &mut Datum) {
@@ -637,25 +635,24 @@ fn a_format_zero_store_moves_to_canonical_addresses() {
     let dir = std::env::temp_dir().join(format!("gantz-store-{}-{nanos}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let mut store = crate::storage::Pkv::new(bevy_pkv::PkvStore::new_in_dir(&dir));
-    let mut persisted = storage::PersistedRegistry::default();
-    let registry = bevy_gantz::Registry(registry);
-    storage::save_registry_incremental(&mut store, &registry, &mut persisted);
+    let mut persisted = gantz_store::PersistedRegistry::default();
+    gantz_store::save_registry_incremental(&mut store, &registry, &mut persisted);
     let old_heads = [Head::Commit(old_ca), Head::Branch(jam.clone())];
-    storage::save_open_heads(&mut store, &old_heads);
+    gantz_store::save_open_heads(&mut store, &old_heads);
     let mut gui_state = bevy_gantz_egui::GuiState::default();
     let redo = Head::Branch(jam.clone());
     gui_state.0.redo_stacks.insert(redo.clone(), vec![old_ca]);
     bevy_gantz_egui::storage::save_gui_state(&mut store, &gui_state);
 
     // Open the store as the app does.
-    let (mut registry, unreadable) = storage::load_registry(&store);
-    let meta = crate::writable_store_meta(&store, &unreadable).unwrap();
+    let (mut registry, unreadable) = gantz_store::load_registry(&store);
+    let meta = gantz_store::writable_meta(&store, &unreadable).unwrap();
     assert_eq!(meta.format, 0);
-    let mut persisted = storage::PersistedRegistry::from_registry(&registry, unreadable);
-    crate::upgrade_store(&mut store, meta, &mut registry, &mut persisted);
+    let mut persisted = gantz_store::PersistedRegistry::from_registry(&registry, unreadable);
+    crate::upgrade_store(&mut store, meta.format, &mut registry, &mut persisted);
 
-    let (reloaded, _) = storage::load_registry(&store);
-    for registry in [&*registry, &*reloaded] {
+    let (reloaded, _) = gantz_store::load_registry(&store);
+    for registry in [&registry, &reloaded] {
         let head = registry.head(&jam).unwrap();
         assert_ne!(head, old_ca);
         assert_eq!(registry.commits()[&head].graph, canonical);
@@ -665,12 +662,12 @@ fn a_format_zero_store_moves_to_canonical_addresses() {
     }
     reify_all(&reloaded);
     let new_ca = reloaded.head(&jam).unwrap();
-    let heads = storage::load_open_heads(&store).unwrap();
+    let heads = gantz_store::load_open_heads(&store).unwrap();
     assert_eq!(heads, vec![Head::Commit(new_ca), Head::Branch(jam)]);
     let gui_state = bevy_gantz_egui::storage::load_gui_state(&store);
     assert_eq!(gui_state.0.redo_stacks[&redo], vec![new_ca]);
-    let meta = storage::load_store_meta(&store).unwrap();
-    assert_eq!(meta.format, storage::STORE_FORMAT);
+    let meta = gantz_store::load_store_meta(&store).unwrap();
+    assert_eq!(meta.format, gantz_store::STORE_FORMAT);
     drop(store);
     std::fs::remove_dir_all(&dir).unwrap();
 }

@@ -42,7 +42,7 @@ bevy_gantz_collab = { version = "0.2.1", path = "crates/bevy_gantz_collab" }
 bevy_gantz_egui = { version = "0.8.0", path = "crates/bevy_gantz_egui" }
 bevy_gantz_plyphon = { version = "0.4.0", path = "crates/bevy_gantz_plyphon" }
 bevy_input = "0.19"
-bevy_pkv = "0.16"
+bevy_pkv = { version = "0.16", default-features = false, features = ["redb"] }
 bevy_time = "0.19"
 bevy_window = "0.19"
 blake3 = "1"
@@ -76,6 +76,7 @@ gantz_nodetag_derive = { version = "0.1.2", path = "crates/gantz_nodetag_derive"
 gantz_pattern = { version = "0.1.1", path = "crates/gantz_pattern" }
 gantz_plyphon = { version = "0.4.1", path = "crates/gantz_plyphon" }
 gantz_rng = { version = "0.1.0", path = "crates/gantz_rng" }
+gantz_store = { version = "0.1.0", path = "crates/gantz_store" }
 gantz_ui = { version = "0.4.0", path = "crates/gantz_ui" }
 hex = "0.4"
 hound = "3.5"

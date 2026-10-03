@@ -1,16 +1,16 @@
 //! Storage utilities for GUI-related state.
 //!
 //! This module provides storage functions for the gantz GUI state and egui
-//! memory. `bevy_gantz::storage` provides registry storage. Views, demos and
+//! memory. `gantz_store` provides registry storage. Views, demos and
 //! descriptions ride the registry's metadata sections.
 
 use crate::{GraphView, GuiState};
 use base64::Engine as _;
 use bevy_egui::egui;
 use bevy_gantz::reg::Registry;
-use bevy_gantz::storage::{Load, Save, load, save};
 use bevy_log as log;
 use gantz_ca as ca;
+use gantz_store::{Load, Save, load, save};
 use std::time::Duration;
 
 mod key {
@@ -21,7 +21,7 @@ mod key {
 }
 
 /// Save the GUI state to storage.
-pub fn save_gui_state(storage: &mut impl bevy_gantz::storage::Save, state: &GuiState) {
+pub fn save_gui_state(storage: &mut impl Save, state: &GuiState) {
     save(storage, key::GUI_STATE, &**state);
 }
 
@@ -55,7 +55,7 @@ pub fn load_open(
 
     // Load all open heads from storage. Drop heads whose data is missing
     // from the registry.
-    let heads: Vec<_> = bevy_gantz::storage::load_open_heads(storage)
+    let heads: Vec<_> = gantz_store::load_open_heads(storage)
         .unwrap_or_default()
         .into_iter()
         .filter_map(|head| {
@@ -129,12 +129,12 @@ pub fn load_egui_memory(storage: &impl Load, ctx: &egui::Context) {
 /// that [`ca::Registry::canonicalize`] moved. Undo and redo history follows
 /// too.
 pub fn follow_moves(storage: &mut (impl Load + Save), moved: &ca::Moved) {
-    if let Some(heads) = bevy_gantz::storage::load_open_heads(storage) {
+    if let Some(heads) = gantz_store::load_open_heads(storage) {
         let heads: Vec<_> = heads.iter().map(|head| moved.head(head)).collect();
-        bevy_gantz::storage::save_open_heads(storage, &heads);
+        gantz_store::save_open_heads(storage, &heads);
     }
-    if let Some(head) = bevy_gantz::storage::load_focused_head(storage) {
-        bevy_gantz::storage::save_focused_head(storage, &moved.head(&head));
+    if let Some(head) = gantz_store::load_focused_head(storage) {
+        gantz_store::save_focused_head(storage, &moved.head(&head));
     }
     let mut gui_state = load_gui_state(storage);
     let state = &mut gui_state.0;

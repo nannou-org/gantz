@@ -9,7 +9,7 @@ use bevy::{
     prelude::*,
     window::{Window, WindowPlugin},
 };
-use bevy_gantz::storage::{Load, Save};
+use gantz_store::{Load, Save};
 #[cfg(not(target_arch = "wasm32"))]
 use serde::{Deserialize, Serialize};
 
@@ -57,7 +57,7 @@ pub fn plugin() -> WindowPlugin {
 /// persisted.
 pub fn apply_saved_size(storage: &impl Load, window: &mut Window) {
     #[cfg(not(target_arch = "wasm32"))]
-    if let Some(size) = bevy_gantz::storage::load::<WindowSize>(storage, KEY) {
+    if let Some(size) = gantz_store::load::<WindowSize>(storage, KEY) {
         window.resolution.set(size.width, size.height);
     }
     #[cfg(target_arch = "wasm32")]
@@ -74,7 +74,7 @@ pub fn save(storage: &mut impl Save, window: &Window) {
         let width = window.resolution.width();
         let height = window.resolution.height();
         if width >= 1.0 && height >= 1.0 {
-            bevy_gantz::storage::save(storage, KEY, &WindowSize { width, height });
+            gantz_store::save(storage, KEY, &WindowSize { width, height });
         }
     }
     #[cfg(target_arch = "wasm32")]

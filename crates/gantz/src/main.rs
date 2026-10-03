@@ -169,16 +169,22 @@ fn setup_window(storage: Res<Pkv>, mut windows: Query<&mut Window, With<PrimaryW
 }
 
 fn setup_resources(mut storage: ResMut<Pkv>, mut cmds: Commands) {
-    let (mut registry, unreadable) = bevy_gantz::storage::load_registry(&*storage);
-    let meta = writable_store_meta(&*storage, &unreadable);
+    let (registry, unreadable) = gantz_store::load_registry(&*storage);
+    let mut registry = Registry(registry);
+    let meta = gantz_store::writable_meta(&*storage, &unreadable);
     // Seed the persist tracker before `base::load` merges base graphs, so they
     // are written on first persist, and before `prune_unused`, so prunes are
     // detected on the first incremental save.
-    let mut persisted =
-        bevy_gantz::storage::PersistedRegistry::from_registry(&registry, unreadable);
+    let mut persisted = gantz_store::PersistedRegistry::from_registry(&registry, unreadable);
     match meta {
-        Ok(meta) => upgrade_store(&mut storage, meta, &mut registry, &mut persisted),
-        Err(reason) => {
+        Ok(meta) => upgrade_store(&mut storage, meta.format, &mut registry, &mut persisted),
+        Err(e) => {
+            let reason = match e {
+                gantz_store::Unwritable::Newer(_) => {
+                    format!("{e}. gantz opens it read-only. Update gantz to keep editing.")
+                }
+                _ => format!("{e}. gantz opens it read-only."),
+            };
             error!("{reason}");
             cmds.insert_resource(bevy_gantz::storage::StoreReadOnly(reason));
         }
@@ -190,68 +196,28 @@ fn setup_resources(mut storage: ResMut<Pkv>, mut cmds: Commands) {
     bevy_gantz_egui::refresh_cache(&registry, &mut cache, &node::codec());
     cmds.insert_resource(registry);
     cmds.insert_resource(cache);
-    cmds.insert_resource(persisted);
+    cmds.insert_resource(persist::Persisted(persisted));
     cmds.insert_resource(gui_state);
 }
 
 /// This build, such as `gantz 0.4.0`. It stamps the store, see
-/// [`bevy_gantz::storage::StoreMeta`].
+/// [`gantz_store::StoreMeta`].
 const BUILD: &str = concat!("gantz ", env!("CARGO_PKG_VERSION"));
 
-/// The store's stamp if this build may write the store, or why it must not.
-/// A store written by a newer gantz, or one whose indices cannot be read,
-/// would lose data if this build saved over it.
-fn writable_store_meta(
-    storage: &Pkv,
-    unreadable: &bevy_gantz::storage::Unreadable,
-) -> Result<bevy_gantz::storage::StoreMeta, String> {
-    use bevy_gantz::storage::STORE_FORMAT;
-    let meta = bevy_gantz::storage::load_store_meta(storage).map_err(|e| {
-        format!("The store's format stamp cannot be read ({e}). gantz opens it read-only.")
-    })?;
-    if meta.format > STORE_FORMAT {
-        return Err(format!(
-            "The store was written by {} in store format {}. This gantz supports up to \
-             format {STORE_FORMAT}, so it opens the store read-only. Update gantz to keep \
-             editing.",
-            meta.written_by, meta.format,
-        ));
-    }
-    if !unreadable.indices.is_empty() {
-        return Err(format!(
-            "The store's indices ({}) cannot be read. gantz opens it read-only.",
-            unreadable.indices.join(", "),
-        ));
-    }
-    Ok(meta)
-}
-
-/// Bring a writable store up to [`bevy_gantz::storage::STORE_FORMAT`], then
-/// stamp it.
-///
-/// A format 0 store may hold integers in either datum form. Its registry is
-/// re-addressed in canonical form and saved, and the saved heads and GUI
-/// state follow the moved commits. The stamp comes last, so a crash in
-/// between upgrades again on the next start.
+/// Bring a writable store in format `from` up to
+/// [`gantz_store::STORE_FORMAT`], then stamp it. The saved heads and GUI
+/// state follow the commits that the upgrade moves.
 fn upgrade_store(
     storage: &mut Pkv,
-    meta: bevy_gantz::storage::StoreMeta,
-    registry: &mut Registry,
-    persisted: &mut bevy_gantz::storage::PersistedRegistry,
+    from: u32,
+    registry: &mut gantz_ca::Registry,
+    persisted: &mut gantz_store::PersistedRegistry,
 ) {
-    if meta.format < 1 {
-        let moved = registry.canonicalize();
-        if !moved.is_empty() {
-            info!(
-                "moved {} stored graphs and {} commits to canonical addresses",
-                moved.graphs.len(),
-                moved.commits.len(),
-            );
-            bevy_gantz::storage::save_registry_incremental(storage, registry, persisted);
-            bevy_gantz_egui::storage::follow_moves(storage, &moved);
-        }
+    let moved = gantz_store::upgrade(storage, from, registry, persisted);
+    if !moved.is_empty() {
+        bevy_gantz_egui::storage::follow_moves(storage, &moved);
     }
-    bevy_gantz::storage::save_store_meta(storage, BUILD);
+    gantz_store::save_store_meta(storage, BUILD);
 }
 
 /// Load the user's collaborative identity, or generate and persist one.
@@ -276,7 +242,7 @@ fn setup_open(
     mut focused: ResMut<FocusedHead>,
 ) {
     let loaded = bevy_gantz_egui::storage::load_open(&*storage, &mut *registry, timestamp());
-    let focused_head = bevy_gantz::storage::load_focused_head(&*storage);
+    let focused_head = gantz_store::load_focused_head(&*storage);
 
     // `OpenHead`'s required components cover the compile outcome. `GraphView`'s
     // cover the rest of the per-head GUI state. `vm::sync` initializes the VMs
