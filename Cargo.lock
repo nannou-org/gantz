@@ -3920,6 +3920,7 @@ name = "gantz_cli"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "bevy_pkv",
  "clap",
  "directories",
  "gantz_base",
@@ -3930,6 +3931,7 @@ dependencies = [
  "gantz_egui",
  "gantz_format",
  "gantz_io",
+ "gantz_store",
  "gantz_ui",
  "serde",
  "steel-core",

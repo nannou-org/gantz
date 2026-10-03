@@ -6,6 +6,8 @@ mod cli;
 mod join;
 #[cfg(feature = "collab")]
 mod mirror;
+#[cfg(feature = "collab")]
+mod vault;
 
 /// The `.gantz` keyword sugar carrier of the test node set.
 struct NodeSet;
