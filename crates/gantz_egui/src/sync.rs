@@ -145,18 +145,6 @@ fn remap_ref(named_ref: &mut NamedRef, remap: &HashMap<Name, (Name, GraphAddr)>)
     }
 }
 
-/// The renamed counterpart of `descendant` when `old` is renamed to `new`.
-/// That is `new`'s segments followed by `descendant`'s segments past `old`'s.
-fn renamed(descendant: &Name, old: &Name, new: &Name) -> Name {
-    let segments: Vec<String> = new
-        .segments()
-        .iter()
-        .chain(&descendant.segments()[old.segments().len()..])
-        .cloned()
-        .collect();
-    Name::from(segments)
-}
-
 /// Give a freshly-forked graph independent nested children.
 ///
 /// The caller forks `old` to `new` by copying `old`'s graph. That copy still
@@ -174,12 +162,14 @@ pub fn fork_nested(
     old: &Name,
     new: &Name,
 ) -> Vec<Moved> {
-    let mut descendants: Vec<Name> = registry
+    // Each old descendant name with its new name.
+    let mut descendants: Vec<(Name, Name)> = registry
         .heads()
-        .filter(|(n, _)| n.starts_with(old) && *n != old)
-        .map(|(n, _)| n.clone())
+        .map(|(n, _)| n)
+        .filter(|n| *n != old)
+        .filter_map(|n| Some((n.clone(), n.replace_prefix(old, new)?)))
         .collect();
-    descendants.sort_by(|a, b| b.depth().cmp(&a.depth()).then_with(|| a.cmp(b)));
+    descendants.sort_by(|(a, _), (b, _)| b.depth().cmp(&a.depth()).then_with(|| a.cmp(b)));
 
     // Maps each old descendant name to its new name and new graph.
     let mut remap: HashMap<Name, (Name, GraphAddr)> = HashMap::new();
@@ -187,9 +177,8 @@ pub fn fork_nested(
 
     // Each descendant is copied under a fresh `new:*` name, with its references
     // to already-copied descendants repointed.
-    for d in &descendants {
-        let d_new = renamed(d, old, new);
-        let Some(commit) = registry.head(d) else {
+    for (d, d_new) in descendants {
+        let Some(commit) = registry.head(&d) else {
             continue;
         };
         let Some(mut g) = registry.commit_graph_ref(&commit).cloned() else {
@@ -202,7 +191,7 @@ pub fn fork_nested(
             .get(&new_commit)
             .expect("freshly committed")
             .graph;
-        remap.insert(d.clone(), (d_new.clone(), graph_ca));
+        remap.insert(d, (d_new.clone(), graph_ca));
         moves.push(Moved {
             name: d_new,
             old_commit: commit,

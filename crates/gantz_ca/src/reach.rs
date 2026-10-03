@@ -1,5 +1,5 @@
-//! The one reachability walk. Liveness for prune, closure for export and
-//! want-lists for sync all derive from here.
+//! The one reachability walk. Liveness for prune, closure for export,
+//! want-lists for sync and incremental transfer all derive from here.
 //!
 //! Edge rules:
 //! - A commit contributes its parents and its graph.
@@ -17,8 +17,8 @@
 //! directly.
 
 use crate::{
-    BlobLiveness, CommitAddr, ContentAddr, DataGraph, GraphAddr, Liveness, Registry, SectionId,
-    Value,
+    BlobLiveness, CommitAddr, ContentAddr, DataGraph, GraphAddr, Key, Liveness, Registry,
+    SectionId, Value,
 };
 use std::collections::{BTreeMap, HashSet, VecDeque};
 
@@ -94,49 +94,10 @@ pub fn closure(reg: &Registry, extra_commits: impl IntoIterator<Item = CommitAdd
 /// For minimal exports of a specific head set. [`closure`] is this plus the
 /// `Root`-liveness section seeds.
 pub fn closure_from(reg: &Registry, seeds: impl IntoIterator<Item = CommitAddr>) -> LiveSet {
-    let mut live = LiveSet::default();
-    let mut commit_queue: VecDeque<CommitAddr> = VecDeque::new();
-    let mut graph_queue: VecDeque<GraphAddr> = VecDeque::new();
-    commit_queue.extend(seeds);
-
-    while let Some(ca) = commit_queue.pop_front() {
-        let Some(commit) = reg.commits().get(&ca) else {
-            continue;
-        };
-        if !live.commits.insert(ca) {
-            continue;
-        }
-        commit_queue.extend(commit.parents());
-        graph_queue.push_back(commit.graph);
-        while let Some(ga) = graph_queue.pop_front() {
-            let Some(graph) = reg.graph(&ga) else {
-                continue;
-            };
-            if !live.graphs.insert(ga) {
-                continue;
-            }
-            let out = data_graph_out(graph);
-            graph_queue.extend(out.graphs);
-            for (section, addr) in out.blobs {
-                live.blobs.entry(section).or_default().insert(addr);
-            }
-        }
-    }
-
-    // Blobs referenced by live section entries via `Value::Blob`.
-    for section in reg.sections().values() {
-        for (key, value) in &section.entries {
-            if !entry_live(reg, section.liveness, key, &live) {
-                continue;
-            }
-            if let Value::Blob(blob_section, addr) = value {
-                live.blobs
-                    .entry(blob_section.clone())
-                    .or_default()
-                    .insert(*addr);
-            }
-        }
-    }
+    let mut live = walk(reg, seeds, &LiveSet::default());
+    section_blobs(reg, &mut live, |liveness, key, live| {
+        entry_live(reg, liveness, key, live)
+    });
 
     // Pinned blob stores are live wholesale.
     for (id, store) in reg.blobs() {
@@ -148,6 +109,32 @@ pub fn closure_from(reg: &Registry, seeds: impl IntoIterator<Item = CommitAddr>)
         }
     }
 
+    live
+}
+
+/// The content reachable from `tips` but not from `have`. For incremental
+/// transfer to a receiver that already holds the closure of every `have`
+/// commit.
+///
+/// The walk from `tips` stops at content reachable from the `have` commits
+/// the registry knows. Unknown `have` commits cut nothing. Blobs come from
+/// the walked graphs and from the section entries keyed to walked commits
+/// and graphs. Unlike [`closure_from`], pinned blob stores and `Pinned` or
+/// `Root` section entries are not included, as they belong to no commit.
+pub fn closure_diff(
+    reg: &Registry,
+    tips: impl IntoIterator<Item = CommitAddr>,
+    have: impl IntoIterator<Item = CommitAddr>,
+) -> LiveSet {
+    let cut = walk(reg, have, &LiveSet::default());
+    let mut live = walk(reg, tips, &cut);
+    section_blobs(reg, &mut live, |liveness, key, live| {
+        match (liveness, key) {
+            (Liveness::WithCommit, Key::Commit(ca)) => live.commits.contains(ca),
+            (Liveness::WithGraph, Key::Graph(ga)) => live.graphs.contains(ga),
+            _ => false,
+        }
+    });
     live
 }
 
@@ -170,11 +157,66 @@ pub fn prune(reg: &mut Registry, live: &LiveSet) {
     reg.retain_live(live);
 }
 
+/// Walk commits and graphs from `seeds` over the edge rules. Content in `cut`
+/// is neither collected nor walked through.
+fn walk(reg: &Registry, seeds: impl IntoIterator<Item = CommitAddr>, cut: &LiveSet) -> LiveSet {
+    let mut live = LiveSet::default();
+    let mut commit_queue: VecDeque<CommitAddr> = seeds.into_iter().collect();
+    let mut graph_queue: VecDeque<GraphAddr> = VecDeque::new();
+    while let Some(ca) = commit_queue.pop_front() {
+        let Some(commit) = reg.commits().get(&ca) else {
+            continue;
+        };
+        if cut.commits.contains(&ca) || !live.commits.insert(ca) {
+            continue;
+        }
+        commit_queue.extend(commit.parents());
+        graph_queue.push_back(commit.graph);
+        while let Some(ga) = graph_queue.pop_front() {
+            let Some(graph) = reg.graph(&ga) else {
+                continue;
+            };
+            if cut.graphs.contains(&ga) || !live.graphs.insert(ga) {
+                continue;
+            }
+            let out = data_graph_out(graph);
+            graph_queue.extend(out.graphs);
+            for (section, addr) in out.blobs {
+                if !cut.blob_live(&section, &addr) {
+                    live.blobs.entry(section).or_default().insert(addr);
+                }
+            }
+        }
+    }
+    live
+}
+
+/// Add the blobs that section entries reference via `Value::Blob` to `live`,
+/// for the entries `keep` selects.
+fn section_blobs(
+    reg: &Registry,
+    live: &mut LiveSet,
+    keep: impl Fn(Liveness, &Key, &LiveSet) -> bool,
+) {
+    for section in reg.sections().values() {
+        for (key, value) in &section.entries {
+            if !keep(section.liveness, key, live) {
+                continue;
+            }
+            if let Value::Blob(blob_section, addr) = value {
+                live.blobs
+                    .entry(blob_section.clone())
+                    .or_default()
+                    .insert(*addr);
+            }
+        }
+    }
+}
+
 /// Whether a section entry is live against the given registry and live set.
 /// Used by [`closure`]'s blob-reference pass. `Root` entries are treated as
 /// live, since their commit values were the walk's seeds.
-fn entry_live(reg: &Registry, liveness: Liveness, key: &crate::Key, live: &LiveSet) -> bool {
-    use crate::Key;
+fn entry_live(reg: &Registry, liveness: Liveness, key: &Key, live: &LiveSet) -> bool {
     match liveness {
         Liveness::Pinned | Liveness::Root => true,
         Liveness::WithName => match key {
@@ -418,6 +460,72 @@ mod tests {
         assert!(reg.graph(&dead).is_none());
         assert!(reg.blob("dsp.buffer", &buf).is_some());
         assert!(reg.blob("dsp.buffer", &orphan).is_none());
+    }
+
+    #[test]
+    fn closure_diff_stops_at_have() {
+        let mut reg = Registry::default();
+        let g1 = add_graph(&mut reg, vec![], vec![]);
+        let g2 = add_graph(&mut reg, vec![g1], vec![]);
+        let g3 = add_graph(&mut reg, vec![g2], vec![]);
+        let c1 = reg.commit_graph(Duration::from_secs(1), None, g1, || unreachable!());
+        let c2 = reg.commit_graph(Duration::from_secs(2), Some(c1), g2, || unreachable!());
+        let c3 = reg.commit_graph(Duration::from_secs(3), Some(c2), g3, || unreachable!());
+        let diff = closure_diff(&reg, [c3], [c1]);
+        assert_eq!(diff.commits, [c2, c3].into_iter().collect());
+        assert_eq!(diff.graphs, [g2, g3].into_iter().collect());
+        // Nothing new is reachable from a tip the receiver already has.
+        assert_eq!(closure_diff(&reg, [c2], [c3]), LiveSet::default());
+    }
+
+    #[test]
+    fn closure_diff_with_unknown_have_is_the_whole_walk() {
+        let mut reg = Registry::default();
+        let ga = add_graph(&mut reg, vec![], vec![]);
+        let c1 = reg.commit_graph(Duration::from_secs(1), None, ga, || unreachable!());
+        let c2 = reg.commit_graph(Duration::from_secs(2), Some(c1), ga, || unreachable!());
+        let unknown = CommitAddr::from(ContentAddr::from([7; 32]));
+        let diff = closure_diff(&reg, [c2], [unknown]);
+        assert_eq!(diff, closure_from(&reg, [c2]));
+    }
+
+    #[test]
+    fn closure_diff_leaves_out_content_the_receiver_holds() {
+        let mut reg = Registry::default();
+        let old_pcm = reg.add_blob("dsp.buffer", BlobLiveness::ContentReferenced, &b"old"[..]);
+        let new_pcm = reg.add_blob("dsp.buffer", BlobLiveness::ContentReferenced, &b"new"[..]);
+        let shared = add_graph(&mut reg, vec![], vec![("dsp.buffer".to_string(), old_pcm)]);
+        let fresh = add_graph(&mut reg, vec![], vec![("dsp.buffer".to_string(), new_pcm)]);
+        let v1 = add_graph(&mut reg, vec![shared], vec![]);
+        let v2 = add_graph(&mut reg, vec![shared, fresh], vec![]);
+        let c1 = reg.commit_graph(Duration::from_secs(1), None, v1, || unreachable!());
+        let c2 = reg.commit_graph(Duration::from_secs(2), Some(c1), v2, || unreachable!());
+        let diff = closure_diff(&reg, [c2], [c1]);
+        assert_eq!(diff.graphs, [v2, fresh].into_iter().collect());
+        assert!(diff.blob_live("dsp.buffer", &new_pcm));
+        assert!(!diff.blob_live("dsp.buffer", &old_pcm));
+    }
+
+    #[test]
+    fn closure_diff_takes_section_blobs_of_walked_commits_only() {
+        let mut reg = Registry::default();
+        let pinned = reg.add_blob("ui.assets", BlobLiveness::Pinned, &b"logo"[..]);
+        let thumb = reg.add_blob("ui.thumbs", BlobLiveness::SectionReferenced, &b"t"[..]);
+        let ga = add_graph(&mut reg, vec![], vec![]);
+        let c1 = reg.commit_graph(Duration::from_secs(1), None, ga, || unreachable!());
+        let c2 = reg.commit_graph(Duration::from_secs(2), Some(c1), ga, || unreachable!());
+        reg.set_section_value(
+            "test.thumbs",
+            MergePolicy::KeepExisting,
+            Liveness::WithCommit,
+            Key::Commit(c2),
+            Value::Blob("ui.thumbs".to_string(), thumb),
+        );
+        let diff = closure_diff(&reg, [c2], [c1]);
+        assert!(diff.blob_live("ui.thumbs", &thumb));
+        assert!(!diff.blob_live("ui.assets", &pinned));
+        assert!(closure_from(&reg, [c2]).blob_live("ui.assets", &pinned));
+        assert!(!closure_diff(&reg, [c1], []).blob_live("ui.thumbs", &thumb));
     }
 
     #[test]

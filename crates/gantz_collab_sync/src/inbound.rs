@@ -2,13 +2,13 @@
 //! fetch loop through `gantz_ca::sync::Staged` validation and converges each
 //! name. What the host must do in response comes back as [`Effect`]s.
 
-use crate::{PeerPointer, PendingTip, SessionState, Sessions};
+use crate::{PeerPointer, PendingTip, SessionState, Sessions, vault};
 use gantz_ca as ca;
 use gantz_collab::{
-    Command, ConnState, Event, GossipMsg, Handle, Object, ObjectRef, Objects, PeerId, SessionId,
-    Want, proto,
+    Command, ConnState, Event, GossipMsg, Handle, Object, ObjectRef, Objects, PeerId, SectionEntry,
+    SessionId, Want, proto,
 };
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 /// Branch names the host has open as heads, with their live camera when the
 /// host has one. A headless host passes an empty map.
@@ -67,6 +67,19 @@ pub enum Effect {
         graph: ca::GraphAddr,
         data: Vec<u8>,
     },
+    /// The vault moved a name the host has open. Move the open head to `to`
+    /// exactly, or detach it when `None` removed the name. The local head
+    /// holds nothing `to` lacks.
+    Reset {
+        name: ca::Name,
+        to: Option<ca::CommitAddr>,
+    },
+    /// A local graph moved aside to make way for the vault's graph of the
+    /// same name. Open heads on `from` follow to `to`.
+    Renamed {
+        from: ca::Name,
+        to: ca::Name,
+    },
 }
 
 /// The context threaded through the fetch and converge call graph.
@@ -79,7 +92,8 @@ struct Cx<'a> {
     dirty: &'a mut bool,
 }
 
-/// Drain the runtime's events. Fetch, validate, apply and converge.
+/// Drain the runtime's events. Fetch, validate, apply and converge. Then
+/// sync every name out of step with the vault, if linked.
 pub fn poll(
     sessions: &mut Sessions,
     registry: &mut ca::Registry,
@@ -89,6 +103,9 @@ pub fn poll(
     let mut effects = Vec::new();
     while let Ok(event) = handle.events.try_recv() {
         handle_event(sessions, registry, handle, open, event, &mut effects);
+    }
+    if let Some(link) = &mut sessions.vault {
+        vault::sync(link, registry, handle, open, &mut effects);
     }
     effects
 }
@@ -102,10 +119,15 @@ pub fn handle_event(
     event: Event,
     effects: &mut Vec<Effect>,
 ) {
+    if let Some(link) = sessions.vault.as_mut().filter(|l| vault::owns(l, &event)) {
+        vault::handle_event(link, registry, handle, open, event);
+        return;
+    }
     let Sessions {
         sessions,
         dirty,
         relays,
+        ..
     } = sessions;
     let mut cx = Cx {
         registry,
@@ -212,17 +234,52 @@ pub fn handle_event(
             }
             cx.effects.push(Effect::PeerDown { session, peer });
         }
-        Event::Error { session, message } => {
-            log::warn!("collab: {message}");
-            if let Some(state) = session.and_then(|s| sessions.get_mut(&s)) {
-                if state.conn == ConnState::Connecting {
-                    state.conn = ConnState::Degraded;
-                }
-                state.error = Some(message.clone());
+        Event::FetchFailed {
+            session,
+            want,
+            error,
+            ..
+        } => {
+            // Nothing will answer this want, so free its names for the next
+            // announcement.
+            if let Some(state) = sessions.get_mut(&session) {
+                state
+                    .pending
+                    .retain(|_, p| p.last_want.as_ref() != Some(&want.refs));
             }
-            cx.effects.push(Effect::Error { session, message });
+            error_event(sessions, &mut cx, Some(session), error);
         }
+        Event::Error { session, message } => error_event(sessions, &mut cx, session, message),
+        // The vault host handles these itself, and a vault link not held
+        // by these sessions has nothing to update.
+        Event::VaultTicketReady { .. }
+        | Event::DeviceSeen { .. }
+        | Event::PushRequest { .. }
+        | Event::LinkUp { .. }
+        | Event::LinkChanged { .. }
+        | Event::LinkDown { .. }
+        | Event::LinkIncompatible { .. }
+        | Event::LinkDenied { .. }
+        | Event::Pushed { .. }
+        | Event::Probed { .. } => (),
     }
+}
+
+/// Surface a runtime error on its session, if any.
+fn error_event(
+    sessions: &mut HashMap<SessionId, SessionState>,
+    cx: &mut Cx<'_>,
+    session: Option<SessionId>,
+    message: String,
+) {
+    log::warn!("collab: {message}");
+    if let Some(state) = session.and_then(|s| sessions.get_mut(&s)) {
+        if state.conn == ConnState::Connecting {
+            state.conn = ConnState::Degraded;
+        }
+        state.error = Some(message.clone());
+    }
+    cx.effects.push(Effect::Error { session, message });
 }
 
 /// Apply a join snapshot. Validate it with grandfathered staging, reconcile
@@ -372,15 +429,9 @@ fn apply_join_snapshot(
 /// When `local_camera` is given, adopted view entries have their camera
 /// replaced with it. Peers' layouts are welcome, but adopting a view must
 /// never move the local viewport to a peer's.
-fn apply_sections(
+pub(crate) fn apply_sections(
     registry: &mut ca::Registry,
-    sections: Vec<(
-        ca::SectionId,
-        ca::MergePolicy,
-        ca::Liveness,
-        ca::Key,
-        ca::Value,
-    )>,
+    sections: Vec<SectionEntry>,
     local_camera: Option<gantz_egui::Camera>,
 ) {
     use gantz_ca::SectionDecl;
@@ -438,7 +489,7 @@ fn start_fetch(
         staged: ca::sync::Staged::new(),
         last_want: None,
     };
-    let want = compute_want(cx.registry, &mut pending);
+    let want = compute_want(cx.registry, &pending.staged, pending.tip);
     if want.is_empty() {
         let resolutions = state.session.resolutions;
         resolve_tip(cx, state, session, &name, tip, resolutions);
@@ -468,43 +519,12 @@ fn feed_objects(
     objects: Objects,
 ) {
     let resolutions = state.session.resolutions;
-    // Decode graphs once and split by kind. Verification happens per staged
-    // insert. Section entries apply directly, because advisory metadata
-    // rides no closure.
-    let mut commits: Vec<(ca::CommitAddr, ca::Commit)> = Vec::new();
-    let mut graphs: Vec<(ca::GraphAddr, ca::DataGraph)> = Vec::new();
-    let mut blobs: Vec<(ca::SectionId, ca::BlobLiveness, ca::ContentAddr, ca::Bytes)> = Vec::new();
-    let mut sections = Vec::new();
-    for object in objects.objects {
-        match object {
-            Object::Commit(addr, wire) => commits.push((addr, wire.into())),
-            Object::Graph(addr, blob) => match proto::decode_graph(&blob) {
-                Ok(graph) => graphs.push((addr, graph)),
-                Err(e) => log::warn!("fetch: undecodable graph {addr}: {e}"),
-            },
-            Object::Blob {
-                section,
-                liveness,
-                addr,
-                bytes,
-            } => blobs.push((section, liveness, addr, ca::Bytes::from(bytes))),
-            Object::Section {
-                id,
-                policy,
-                liveness,
-                key,
-                value,
-            } => match proto::decode_value(&value) {
-                Ok(value) => sections.push((id, policy, liveness, key, value)),
-                Err(e) => log::warn!("fetch: undecodable section entry: {e}"),
-            },
-        }
-    }
+    let mut decoded = decode(objects);
     // Adopt the peer's layouts for incoming commits before any of them can
     // be navigated to or merged. Merged-in nodes seed their positions from
     // the other tip's view.
     let camera = local_camera(cx, state);
-    apply_sections(cx.registry, sections, camera);
+    apply_sections(cx.registry, std::mem::take(&mut decoded.sections), camera);
     let names: Vec<ca::Name> = state
         .pending
         .iter()
@@ -515,44 +535,15 @@ fn feed_objects(
         let Some(mut pending) = state.pending.remove(&name) else {
             continue;
         };
-        let mut poisoned = false;
-        for (addr, commit) in &commits {
-            if let Err(e) = pending.staged.insert_commit(*addr, commit.clone()) {
-                log::warn!("fetch: rejected commit for '{name}': {e}");
-                poisoned = true;
-                break;
+        let next = match advance(cx.registry, &mut pending.staged, pending.tip, &decoded) {
+            Ok(next) => next,
+            Err(e) => {
+                log::warn!("fetch: content for '{name}' {e}");
+                continue;
             }
-        }
-        if !poisoned {
-            for (addr, graph) in &graphs {
-                if let Err(e) = pending.staged.insert_graph(*addr, graph.clone()) {
-                    log::warn!("fetch: rejected graph for '{name}': {e}");
-                    poisoned = true;
-                    break;
-                }
-            }
-        }
-        if !poisoned {
-            for (section, liveness, addr, bytes) in &blobs {
-                let staged = &mut pending.staged;
-                if let Err(e) = staged.insert_blob(section.clone(), *liveness, *addr, bytes.clone())
-                {
-                    log::warn!("fetch: rejected blob for '{name}': {e}");
-                    poisoned = true;
-                    break;
-                }
-            }
-        }
-        if poisoned {
-            continue;
-        }
-        let next = compute_want(cx.registry, &mut pending);
+        };
         if next.is_empty() {
-            let tip = pending.tip;
-            match pending.staged.apply(cx.registry) {
-                Ok(_) => resolve_tip(cx, state, session, &name, tip, resolutions),
-                Err(e) => log::warn!("fetch: closure for '{name}' failed to apply: {e}"),
-            }
+            resolve_tip(cx, state, session, &name, pending.tip, resolutions);
             continue;
         }
         // No progress means the peer cannot supply the closure. Drop it and
@@ -572,21 +563,110 @@ fn feed_objects(
     }
 }
 
-/// Everything still needed for a pending tip. That is its commit and graph
+/// Fetched objects decoded and split by kind. Graph and blob verification
+/// happens when they are staged.
+#[derive(Default)]
+pub(crate) struct Decoded {
+    pub commits: Vec<(ca::CommitAddr, ca::Commit)>,
+    pub graphs: Vec<(ca::GraphAddr, ca::DataGraph)>,
+    pub blobs: Vec<(ca::SectionId, ca::BlobLiveness, ca::ContentAddr, ca::Bytes)>,
+    pub sections: Vec<SectionEntry>,
+    /// Why each skipped graph could not be decoded.
+    pub errors: Vec<String>,
+}
+
+/// Why fetched or pushed content cannot apply. See [`advance`].
+#[derive(Debug)]
+pub(crate) enum Rejected {
+    Verify(ca::sync::VerifyError),
+    Apply(ca::sync::ApplyError),
+}
+
+impl std::fmt::Display for Rejected {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Verify(e) => write!(f, "does not verify: {e}"),
+            Self::Apply(e) => write!(f, "does not apply: {e}"),
+        }
+    }
+}
+
+/// Decode fetched objects. Undecodable graphs and section entries are
+/// skipped with a warning. A skipped graph is wanted again.
+pub(crate) fn decode(objects: Objects) -> Decoded {
+    let mut decoded = Decoded::default();
+    for object in objects.objects {
+        match object {
+            Object::Commit(addr, wire) => decoded.commits.push((addr, wire.into())),
+            Object::Graph(addr, blob) => match proto::decode_graph(&blob) {
+                Ok(graph) => decoded.graphs.push((addr, graph)),
+                Err(e) => {
+                    let error = format!("undecodable graph {addr}: {e}");
+                    log::warn!("fetch: {error}");
+                    decoded.errors.push(error);
+                }
+            },
+            Object::Blob {
+                section,
+                liveness,
+                addr,
+                bytes,
+            } => decoded
+                .blobs
+                .push((section, liveness, addr, ca::Bytes::from(bytes))),
+            Object::Section {
+                id,
+                policy,
+                liveness,
+                key,
+                value,
+            } => match proto::decode_value(&value) {
+                Ok(value) => decoded.sections.push((id, policy, liveness, key, value)),
+                Err(e) => log::warn!("fetch: undecodable section entry: {e}"),
+            },
+        }
+    }
+    decoded
+}
+
+/// Stage decoded content strictly. Commits the registry already holds are
+/// skipped. Any object that fails verification rejects the whole set.
+pub(crate) fn stage(
+    registry: &ca::Registry,
+    staged: &mut ca::sync::Staged,
+    decoded: &Decoded,
+) -> Result<(), ca::sync::VerifyError> {
+    for (addr, commit) in &decoded.commits {
+        if !registry.commits().contains_key(addr) {
+            staged.insert_commit(*addr, commit.clone())?;
+        }
+    }
+    for (addr, graph) in &decoded.graphs {
+        staged.insert_graph(*addr, graph.clone())?;
+    }
+    for (section, liveness, addr, bytes) in &decoded.blobs {
+        staged.insert_blob(section.clone(), *liveness, *addr, bytes.clone())?;
+    }
+    Ok(())
+}
+
+/// Everything still needed for `tip`'s closure. That is its commit and graph
 /// closure via [`ca::sync::Staged::missing`], plus the staged graphs'
 /// outgoing references via [`ca::data_graph_out`] that neither the registry
 /// nor the staging area holds yet. Those references are nested graphs and
 /// content-referenced blobs.
-fn compute_want(registry: &ca::Registry, pending: &mut PendingTip) -> Want {
-    let missing = pending.staged.missing(registry, pending.tip);
+pub(crate) fn compute_want(
+    registry: &ca::Registry,
+    staged: &ca::sync::Staged,
+    tip: ca::CommitAddr,
+) -> Want {
+    let missing = staged.missing(registry, tip);
     let mut refs: Vec<ObjectRef> = missing.commits.into_iter().map(ObjectRef::Commit).collect();
     let mut graph_wants: Vec<ca::GraphAddr> = missing.graphs;
     let mut blob_wants: Vec<(ca::SectionId, ca::ContentAddr)> = Vec::new();
-    let staged_graphs: HashSet<ca::GraphAddr> =
-        pending.staged.graphs().map(|(ga, _)| *ga).collect();
-    let staged_blobs: HashSet<(ca::SectionId, ca::ContentAddr)> =
-        pending.staged.blobs().cloned().collect();
-    for (_, graph) in pending.staged.graphs() {
+    let staged_graphs: HashSet<ca::GraphAddr> = staged.graphs().map(|(ga, _)| *ga).collect();
+    let staged_blobs: HashSet<(ca::SectionId, ca::ContentAddr)> = staged.blobs().cloned().collect();
+    for (_, graph) in staged.graphs() {
         let out = ca::data_graph_out(graph);
         for ga in out.graphs {
             if registry.graph(&ga).is_none()
@@ -613,6 +693,25 @@ fn compute_want(registry: &ca::Registry, pending: &mut PendingTip) -> Want {
             .map(|(section, addr)| ObjectRef::Blob { section, addr }),
     );
     Want { refs }
+}
+
+/// Stage `decoded` toward `tip`'s closure, then apply the closure once it is
+/// complete. Returns what the closure still misses, which is empty once it
+/// is applied.
+pub(crate) fn advance(
+    registry: &mut ca::Registry,
+    staged: &mut ca::sync::Staged,
+    tip: ca::CommitAddr,
+    decoded: &Decoded,
+) -> Result<Want, Rejected> {
+    stage(registry, staged, decoded).map_err(Rejected::Verify)?;
+    let next = compute_want(registry, staged, tip);
+    if next.is_empty() {
+        std::mem::take(staged)
+            .apply(registry)
+            .map_err(Rejected::Apply)?;
+    }
+    Ok(next)
 }
 
 /// Converge a scoped name with a fully applied remote tip.
@@ -692,37 +791,51 @@ fn resolve_tip(
             moved(cx, Some(local), t);
         }
         (false, ca::SyncStep::Merge { first, second }) => {
-            match ca::merge_commits(cx.registry, first, second, resolutions) {
-                Ok(ca::MergeResolution::Diverged { outcome, .. }) => {
-                    state.conflicts += outcome.conflicts.len();
-                    let graph_ca = ca::graph_addr(&outcome.graph);
-                    let mut branch_head = ca::Head::Branch(name.clone());
-                    // Seed the minted merge commit's view from the parent
-                    // tips' stored views before it can be announced. A
-                    // viewless tip on the wire auto-layouts on every adopting
-                    // peer. An open head seeds from its live layout instead.
-                    let first_view = gantz_egui::section::view(cx.registry, &first);
-                    let second_view = gantz_egui::section::view(cx.registry, &second);
-                    let seeded = gantz_egui::ops::merged_view(
-                        &outcome.node_srcs,
-                        first_view.as_ref(),
-                        second_view.as_ref(),
-                    );
-                    let graph = outcome.graph;
-                    let minted = cx.registry.commit_merge_canonical(
-                        first,
-                        second,
-                        graph_ca,
-                        || graph,
-                        &mut branch_head,
-                    );
-                    gantz_egui::section::seed_view(cx.registry, minted, &seeded);
+            match merge_headless(cx.registry, name, first, second, resolutions) {
+                Ok(Some((minted, conflicts))) => {
+                    state.conflicts += conflicts;
                     *cx.dirty = true;
                     moved(cx, Some(local), minted);
                 }
-                Ok(_) => (),
+                Ok(None) => (),
                 Err(e) => log::warn!("session: headless merge of '{name}' failed: {e}"),
             }
         }
     }
+}
+
+/// Mint the canonical merge of two diverged tips as `name`'s head. Returns
+/// the merge commit and its conflict count, or `None` if the tips did not
+/// diverge.
+///
+/// The merge commit's view is seeded from the tips' stored views before it
+/// can be announced. A viewless tip on the wire auto-layouts on every
+/// adopting peer. An open head seeds from its live layout instead.
+pub(crate) fn merge_headless(
+    registry: &mut ca::Registry,
+    name: &ca::Name,
+    first: ca::CommitAddr,
+    second: ca::CommitAddr,
+    resolutions: ca::merge::Resolutions,
+) -> Result<Option<(ca::CommitAddr, usize)>, ca::MergeError> {
+    let ca::MergeResolution::Diverged { outcome, .. } =
+        ca::merge_commits(registry, first, second, resolutions)?
+    else {
+        return Ok(None);
+    };
+    let conflicts = outcome.conflicts.len();
+    let graph_ca = ca::graph_addr(&outcome.graph);
+    let mut branch_head = ca::Head::Branch(name.clone());
+    let first_view = gantz_egui::section::view(registry, &first);
+    let second_view = gantz_egui::section::view(registry, &second);
+    let seeded = gantz_egui::ops::merged_view(
+        &outcome.node_srcs,
+        first_view.as_ref(),
+        second_view.as_ref(),
+    );
+    let graph = outcome.graph;
+    let minted =
+        registry.commit_merge_canonical(first, second, graph_ca, || graph, &mut branch_head);
+    gantz_egui::section::seed_view(registry, minted, &seeded);
+    Ok(Some((minted, conflicts)))
 }

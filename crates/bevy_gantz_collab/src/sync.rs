@@ -80,6 +80,8 @@ pub(crate) fn poll_collab_events(
                 data,
                 received: web_time::Instant::now(),
             }),
+            // The app holds no vault link yet.
+            Effect::Reset { .. } | Effect::Renamed { .. } => {}
             Effect::Moved { .. }
             | Effect::Joined { .. }
             | Effect::PeerUp { .. }

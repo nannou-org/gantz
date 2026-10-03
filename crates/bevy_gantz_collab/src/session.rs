@@ -21,7 +21,13 @@ fn ensure_runtime<'a>(
 ) -> &'a Handle {
     runtime.0.get_or_insert_with(|| {
         let infra = gantz_collab_sync::infra(config.custom_relay.as_deref());
-        gantz_collab::spawn(identity.clone(), gantz_collab::RuntimeConfig { infra })
+        gantz_collab::spawn(
+            identity.clone(),
+            gantz_collab::RuntimeConfig {
+                infra,
+                ..Default::default()
+            },
+        )
     })
 }
 

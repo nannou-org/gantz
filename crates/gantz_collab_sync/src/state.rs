@@ -12,6 +12,8 @@ pub struct Sessions {
     pub dirty: bool,
     /// The endpoint's home relays and their connection state.
     pub relays: Vec<(String, bool)>,
+    /// The link to this device's vault, if any.
+    pub vault: Option<crate::vault::VaultLink>,
 }
 
 /// One session's local runtime state. It is not persisted.

@@ -3920,6 +3920,7 @@ name = "gantz_cli"
 version = "0.1.0"
 dependencies = [
  "async-channel",
+ "bevy_pkv",
  "clap",
  "directories",
  "gantz_base",
@@ -3930,6 +3931,7 @@ dependencies = [
  "gantz_egui",
  "gantz_format",
  "gantz_io",
+ "gantz_store",
  "gantz_ui",
  "serde",
  "steel-core",
@@ -3943,7 +3945,9 @@ version = "0.3.1"
 dependencies = [
  "async-channel",
  "gantz_ca",
+ "gantz_store",
  "getrandom 0.3.4",
+ "hex",
  "iroh",
  "iroh-gossip",
  "iroh-tickets",
@@ -3965,7 +3969,9 @@ dependencies = [
  "gantz_ca",
  "gantz_collab",
  "gantz_egui",
+ "iroh",
  "log",
+ "serde",
  "web-time",
 ]
 

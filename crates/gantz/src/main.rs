@@ -141,6 +141,7 @@ fn conf() -> gantz_cli::Conf {
         entrypoints: bevy_gantz_egui::entrypoints,
         org: "nannou-org",
         app: "gantz",
+        build: BUILD,
     }
 }
 
@@ -220,15 +221,20 @@ fn upgrade_store(
     gantz_store::save_store_meta(storage, BUILD);
 }
 
-/// Load the user's collaborative identity, or generate and persist one.
+/// Load the user's collaborative identity, or generate and persist one. An
+/// identity that cannot be read is kept, and this run uses a new one.
 #[cfg(feature = "collab")]
 fn setup_collab_identity(mut storage: ResMut<Pkv>, mut cmds: Commands) {
-    let identity = match bevy_gantz_collab::storage::load_identity(&*storage) {
-        Some(identity) => identity,
-        None => {
+    let identity = match gantz_collab::identity::load(&*storage) {
+        Ok(Some(identity)) => identity,
+        Ok(None) => {
             let identity = gantz_collab::Identity::generate();
-            bevy_gantz_collab::storage::save_identity(&mut *storage, &identity);
+            gantz_collab::identity::save(&mut *storage, &identity);
             identity
+        }
+        Err(e) => {
+            error!("{e}. Collab uses a new identity until the stored one can be read.");
+            gantz_collab::Identity::generate()
         }
     };
     cmds.insert_resource(bevy_gantz_collab::CollabIdentity(identity));

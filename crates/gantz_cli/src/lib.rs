@@ -54,9 +54,11 @@ mod join;
 mod mirror;
 #[cfg(test)]
 mod tests;
+#[cfg(feature = "collab")]
+mod vault;
 
-/// The CLI configuration: the node set to parse and compile with, and the
-/// names that locate the default data directories.
+/// The CLI configuration: the node set to parse and compile with, the names
+/// that locate the default data directories, and the build.
 pub struct Conf {
     /// The node set's codec. Its sugar reads and writes `.gantz` text.
     pub codec: gantz_egui::node::NodeCodec,
@@ -75,6 +77,9 @@ pub struct Conf {
     pub org: &'static str,
     /// The app name that locates the default data directories.
     pub app: &'static str,
+    /// This build: the app and its version, such as `gantz 0.4.0`. Peers see
+    /// it for display.
+    pub build: &'static str,
 }
 
 #[derive(Subcommand)]
@@ -108,6 +113,10 @@ pub enum Command {
     /// exits.
     #[cfg(feature = "collab")]
     Join(JoinArgs),
+    /// Run or manage a vault that syncs all your named graphs between your
+    /// devices.
+    #[cfg(feature = "collab")]
+    Vault(VaultArgs),
 }
 
 /// How names a file does not define are resolved.
@@ -159,6 +168,62 @@ pub struct JoinArgs {
     /// A self-hosted relay URL instead of the default infrastructure.
     #[arg(long, value_name = "URL")]
     pub relay: Option<String>,
+}
+
+#[cfg(feature = "collab")]
+#[derive(Args)]
+pub struct VaultArgs {
+    #[command(subcommand)]
+    pub command: VaultCommand,
+}
+
+#[cfg(feature = "collab")]
+#[derive(Subcommand)]
+pub enum VaultCommand {
+    /// Serve the vault until interrupted.
+    ///
+    /// Prints the ticket that links a device. A device pairs on its first
+    /// link, then links again on every start. The vault keeps every graph
+    /// with its whole history, and writes each change to disk before the
+    /// device hears it was accepted.
+    Serve(ServeArgs),
+    /// List the paired devices.
+    Devices(DirArgs),
+    /// Unpair a device and rotate the pairing secret, so the old ticket no
+    /// longer pairs. Takes effect when the vault next starts.
+    Revoke(RevokeArgs),
+}
+
+#[cfg(feature = "collab")]
+#[derive(Args)]
+pub struct DirArgs {
+    /// The vault directory, created if absent. Defaults to `vault` under the
+    /// app data directory.
+    #[arg(long, value_name = "DIR")]
+    pub dir: Option<PathBuf>,
+}
+
+#[cfg(feature = "collab")]
+#[derive(Args)]
+pub struct ServeArgs {
+    #[command(flatten)]
+    pub dir: DirArgs,
+    /// A self-hosted relay URL instead of the default infrastructure.
+    #[arg(long, value_name = "URL")]
+    pub relay: Option<String>,
+    /// The UDP port to bind. A fixed port keeps old tickets valid across
+    /// restarts.
+    #[arg(long, default_value_t = vault::DEFAULT_PORT)]
+    pub port: u16,
+}
+
+#[cfg(feature = "collab")]
+#[derive(Args)]
+pub struct RevokeArgs {
+    /// The device's id, as `gantz vault devices` prints it.
+    pub peer: gantz_collab::PeerId,
+    #[command(flatten)]
+    pub dir: DirArgs,
 }
 
 #[derive(Args)]
@@ -258,21 +323,12 @@ impl Ready {
 
 /// Run a subcommand and return the process exit code.
 pub fn run(command: Command, conf: &Conf) -> i32 {
-    // Library warnings, such as an unrecognised form a rewrite would drop,
-    // must reach the user. Libraries log through `log` and `tracing`, and the
-    // subscriber bridges both. `RUST_LOG` overrides the default. A host that
-    // installed its own subscriber keeps it.
-    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,gantz_cli=info"));
-    let _ = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_target(false)
-        .without_time()
-        .with_writer(std::io::stderr)
-        .try_init();
+    init_logs(&command);
     let (files, mut output) = match command {
         #[cfg(feature = "collab")]
         Command::Join(args) => return crate::join::run(args, conf),
+        #[cfg(feature = "collab")]
+        Command::Vault(args) => return crate::vault::run(args, conf),
         Command::Fmt(args) => {
             let output = with_sources(conf, &args.seed, &args.files, |s, t| {
                 fmt(conf, s, t, args.check)
@@ -318,6 +374,27 @@ pub fn run(command: Command, conf: &Conf) -> i32 {
         eprintln!("{line}");
     }
     if output.diagnostics.is_empty() { 0 } else { 1 }
+}
+
+/// Log to stderr.
+///
+/// Library warnings, such as an unrecognised form a rewrite would drop,
+/// must reach the user. Libraries log through `log` and `tracing`, and the
+/// subscriber bridges both. `RUST_LOG` overrides the default. A host that
+/// installed its own subscriber keeps it.
+fn init_logs(command: &Command) {
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,gantz_cli=info"));
+    let logs = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .with_writer(std::io::stderr);
+    // A vault serves for days, so its lines carry the time.
+    let _ = match command {
+        #[cfg(feature = "collab")]
+        Command::Vault(_) => logs.try_init(),
+        _ => logs.without_time().try_init(),
+    };
 }
 
 /// Read the base sources unless omitted, then the deps, then the target

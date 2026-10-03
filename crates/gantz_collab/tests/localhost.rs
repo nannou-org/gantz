@@ -241,3 +241,226 @@ fn restricted_sessions_deny_unlisted_peers() {
     });
     assert!(message.contains("denied"), "unexpected error: {message}");
 }
+
+/// A relay-free runtime config for `app`, so the vault test needs no
+/// infrastructure.
+fn local(app: &str) -> gantz_collab::RuntimeConfig {
+    gantz_collab::RuntimeConfig {
+        infra: gantz_collab::Infra::Custom {
+            relays: vec![],
+            pkarr: None,
+        },
+        port: None,
+        app: app.to_string(),
+    }
+}
+
+#[test]
+#[ignore = "binds real sockets"]
+fn vaults_pair_link_push_fetch_and_notify() {
+    use gantz_collab::{
+        MetaChange, NameState, PairingSecret, Push, PushReply, VaultEntry, VaultTicket,
+    };
+    let vault_id = SessionId::generate();
+    let pairing = PairingSecret::generate();
+    let mut graph = DataGraph::default();
+    graph.add_node(NodeData::new("test", Datum::Map(vec![])));
+    let graph_ca = gantz_ca::graph_addr(&graph);
+    let root = Commit::new(Duration::from_secs(1), None, graph_ca);
+    let root_ca = commit_addr(&root);
+    let jam: Name = "jam".parse().unwrap();
+
+    // The vault holds one name.
+    let vault = gantz_collab::spawn(Identity::generate(), local("gantz vault"));
+    let vault_peer = wait_for(&vault, |e| match e {
+        Event::Ready { peer } => Some(peer),
+        _ => None,
+    });
+    let mut served = SessionRegistry::default();
+    store::merge(
+        &mut served,
+        [(jam.clone(), root_ca)],
+        [(root_ca, root.clone())],
+        [(graph_ca, graph.clone())],
+        [],
+        [],
+    )
+    .unwrap();
+    vault
+        .cmds
+        .send_blocking(Command::HostVault(VaultEntry {
+            id: vault_id,
+            access: Default::default(),
+            pairing,
+            store: served,
+        }))
+        .unwrap();
+    let ticket = wait_for(&vault, |e| match e {
+        Event::VaultTicketReady { ticket, .. } => Some(ticket),
+        _ => None,
+    });
+    let ticket: VaultTicket = ticket.parse().unwrap();
+    assert_eq!(ticket.host_id(), vault_peer);
+
+    // A device with the ticket pairs, links and sees the vault's heads.
+    let device = gantz_collab::spawn(Identity::generate(), local("gantz device"));
+    let device_peer = wait_for(&device, |e| match e {
+        Event::Ready { peer } => Some(peer),
+        _ => None,
+    });
+    device
+        .cmds
+        .send_blocking(Command::Link(ticket.clone()))
+        .unwrap();
+    // The vault sees the device's version, and the device the vault's.
+    let (paired, device_app) = wait_for(&vault, |e| match e {
+        Event::DeviceSeen {
+            peer,
+            app,
+            paired: true,
+            ..
+        } => Some((peer, app)),
+        _ => None,
+    });
+    assert_eq!(paired, device_peer);
+    assert_eq!(device_app, "gantz device");
+    let (heads, info) = wait_for(&device, |e| match e {
+        Event::LinkUp { heads, info, .. } => Some((heads, info)),
+        _ => None,
+    });
+    assert_eq!(heads, vec![(jam.clone(), root_ca)]);
+    assert_eq!(info.app, "gantz vault");
+
+    // The device fetches the whole history in one request.
+    let want = Want {
+        refs: vec![ObjectRef::Closure {
+            tips: vec![root_ca],
+            have: vec![],
+        }],
+    };
+    device
+        .cmds
+        .send_blocking(Command::Fetch {
+            session: vault_id,
+            from: vault_peer,
+            want: want.clone(),
+        })
+        .unwrap();
+    let objects = wait_for(&device, |e| match e {
+        Event::Objects { objects, .. } => Some(objects),
+        _ => None,
+    });
+    assert!(
+        objects
+            .objects
+            .contains(&Object::Commit(root_ca, root.clone().into()))
+    );
+
+    // A push with a description reaches the application, which accepts it
+    // and notifies watchers.
+    let tip = Commit::new(Duration::from_secs(2), Some(root_ca), graph_ca);
+    let tip_ca = commit_addr(&tip);
+    let description = Value::Datum(Datum::Str("a jam".to_string()));
+    let entry = (
+        "gantz.description".to_string(),
+        MergePolicy::KeepExisting,
+        Liveness::WithName,
+        Key::Name(jam.clone()),
+        description.clone(),
+    );
+    let mut described = SessionRegistry::default();
+    let (id, policy, liveness, key, value) = entry.clone();
+    described.set_section_value(id, policy, liveness, key, value);
+    let entries = store::name_meta(&described, &jam);
+    let meta = store::meta_digest(&entries);
+    let push = Push {
+        name: jam.clone(),
+        tip: Some(tip_ca),
+        base: Some(root_ca),
+        objects: gantz_collab::Objects {
+            objects: vec![Object::Commit(tip_ca, tip.clone().into())],
+        },
+        meta: Some(MetaChange {
+            base: None,
+            entries,
+        }),
+    };
+    device
+        .cmds
+        .send_blocking(Command::Push {
+            vault: vault_id,
+            push,
+        })
+        .unwrap();
+    let (from, reply): (PeerId, PushReply) = wait_for(&vault, |e| match e {
+        Event::PushRequest { from, reply, .. } => Some((from, reply)),
+        _ => None,
+    });
+    assert_eq!(from, device_peer);
+    vault
+        .cmds
+        .send_blocking(Command::UpdateVault {
+            vault: vault_id,
+            name: jam.clone(),
+            head: Some(tip_ca),
+            meta: Some(vec![entry]),
+            commits: vec![(tip_ca, tip)],
+            graphs: vec![],
+            sections: vec![],
+            blobs: vec![],
+        })
+        .unwrap();
+    let state = NameState {
+        head: Some(tip_ca),
+        meta,
+    };
+    reply.send(state);
+    // The change notice and the push answer travel on different streams, so
+    // either may arrive first.
+    let (mut result, mut changed) = (None, None);
+    wait_for(&device, |e| {
+        match e {
+            Event::Pushed { result: r, .. } => result = Some(r),
+            Event::LinkChanged { name, state, .. } => changed = Some((name, state)),
+            _ => (),
+        }
+        (result.is_some() && changed.is_some()).then_some(())
+    });
+    assert_eq!(result, Some(Ok(state)));
+    assert_eq!(changed, Some((jam.clone(), state)));
+
+    // The device fetches the description by the name.
+    let want = Want {
+        refs: vec![ObjectRef::Meta(jam.clone())],
+    };
+    device
+        .cmds
+        .send_blocking(Command::Fetch {
+            session: vault_id,
+            from: vault_peer,
+            want,
+        })
+        .unwrap();
+    let objects = wait_for(&device, |e| match e {
+        Event::Objects { objects, .. } => Some(objects),
+        _ => None,
+    });
+    assert_eq!(store::meta_digest(&objects), meta);
+
+    // A device with the wrong secret is refused.
+    let stranger = gantz_collab::spawn(Identity::generate(), local("gantz stranger"));
+    wait_for(&stranger, |e| match e {
+        Event::Ready { .. } => Some(()),
+        _ => None,
+    });
+    let forged = VaultTicket {
+        pairing: PairingSecret::generate(),
+        ..ticket
+    };
+    stranger.cmds.send_blocking(Command::Link(forged)).unwrap();
+    let reason = wait_for(&stranger, |e| match e {
+        Event::LinkDenied { reason, .. } => Some(reason),
+        _ => None,
+    });
+    assert_eq!(reason, "access denied");
+}

@@ -56,6 +56,13 @@ impl Name {
     pub fn starts_with(&self, prefix: &Name) -> bool {
         self.0.len() >= prefix.0.len() && self.0[..prefix.0.len()] == prefix.0[..]
     }
+
+    /// This name with its leading `prefix` replaced by `with`. `None` when
+    /// `prefix` is neither this name nor an ancestor of it.
+    pub fn replace_prefix(&self, prefix: &Name, with: &Name) -> Option<Name> {
+        let rest = self.0.strip_prefix(&prefix.0[..])?;
+        Some(Self(with.0.iter().chain(rest).cloned().collect()))
+    }
 }
 
 impl CaHash for Name {
@@ -156,6 +163,18 @@ mod tests {
         let ab: Name = "ab".parse().unwrap();
         let a = Name::root("a");
         assert!(!ab.starts_with(&a));
+    }
+
+    #[test]
+    fn replace_prefix_keeps_the_rest() {
+        let name = |s: &str| s.parse::<Name>().unwrap();
+        let replaced = name("a:b:c").replace_prefix(&name("a:b"), &name("x"));
+        assert_eq!(replaced, Some(name("x:c")));
+        assert_eq!(
+            name("a").replace_prefix(&name("a"), &name("x:y")),
+            Some(name("x:y"))
+        );
+        assert_eq!(name("ab").replace_prefix(&name("a"), &name("x")), None);
     }
 
     #[test]

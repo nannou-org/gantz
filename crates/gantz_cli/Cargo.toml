@@ -9,6 +9,7 @@ license = "MIT OR Apache-2.0"
 repository.workspace = true
 
 [dependencies]
+bevy_pkv = { workspace = true, optional = true }
 clap.workspace = true
 directories = { workspace = true, optional = true }
 gantz_ca.workspace = true
@@ -18,6 +19,8 @@ gantz_core.workspace = true
 gantz_egui.workspace = true
 gantz_format.workspace = true
 gantz_io.workspace = true
+gantz_store = { workspace = true, features = ["pkv"], optional = true }
+serde = { workspace = true, optional = true }
 steel-core.workspace = true
 tracing.workspace = true
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
@@ -30,5 +33,13 @@ serde.workspace = true
 
 [features]
 default = ["collab"]
-# The `join` subcommand, which mirrors a collaborative session to a directory.
-collab = ["dep:directories", "dep:gantz_collab", "dep:gantz_collab_sync"]
+# The `join` subcommand, which mirrors a collaborative session to a directory,
+# and the `vault` subcommand, which syncs a user's devices.
+collab = [
+    "dep:bevy_pkv",
+    "dep:directories",
+    "dep:gantz_collab",
+    "dep:gantz_collab_sync",
+    "dep:gantz_store",
+    "dep:serde",
+]

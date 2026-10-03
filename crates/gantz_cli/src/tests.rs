@@ -6,6 +6,8 @@ mod cli;
 mod join;
 #[cfg(feature = "collab")]
 mod mirror;
+#[cfg(feature = "collab")]
+mod vault;
 
 /// The `.gantz` keyword sugar carrier of the test node set.
 struct NodeSet;
@@ -61,5 +63,6 @@ fn conf() -> Conf {
         entrypoints: |get_node, graph| gantz_core::compile::push_pull_entrypoints(get_node, graph),
         org: "nannou-org",
         app: "gantz",
+        build: concat!("gantz ", env!("CARGO_PKG_VERSION")),
     }
 }
