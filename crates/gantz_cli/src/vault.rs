@@ -82,7 +82,7 @@ impl Vault {
     /// serving it.
     pub fn open(path: &Path, app: &str, infra: Infra, port: Option<u16>) -> Result<Self, String> {
         let mut dir = Dir::create(path)?;
-        let identity = match gantz_collab::identity::load(&dir.store) {
+        let identity = match gantz_collab::identity::load(&dir.store)? {
             Some(identity) => identity,
             None => {
                 let identity = Identity::generate();

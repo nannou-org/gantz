@@ -58,7 +58,8 @@ pub fn save(storage: &mut impl Save, identity: &Identity) {
     gantz_store::save(storage, KEY, &identity.to_bytes());
 }
 
-/// Load the persisted identity, if any.
-pub fn load(storage: &impl Load) -> Option<Identity> {
-    gantz_store::load::<[u8; 32]>(storage, KEY).map(Identity::from_bytes)
+/// Load the persisted identity, if any. Fails if a stored identity cannot
+/// be read, since a new one would replace it and unpair the user's devices.
+pub fn load(storage: &impl Load) -> Result<Option<Identity>, String> {
+    Ok(gantz_store::load_strict::<[u8; 32]>(storage, KEY)?.map(Identity::from_bytes))
 }
