@@ -104,10 +104,9 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> Responses {
             ui.end_row();
 
             // The vault this device syncs all its named graphs with.
-            ui.label("vault");
-            match &config.vault {
+            wrapped_row(ui, "vault", control_w, |ui| match &config.vault {
                 Some(_) => {
-                    ui.horizontal(|ui| {
+                    ui.horizontal_wrapped(|ui| {
                         let state = vault.map(|v| v.state.clone()).unwrap_or_default();
                         let hover = vault
                             .map(|v| v.hover_text())
@@ -156,8 +155,7 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> Responses {
                     });
                     ui.data_mut(|d| d.insert_temp(ticket_id, ticket));
                 }
-            }
-            ui.end_row();
+            });
             if let Some(vault) = vault.filter(|_| config.vault.is_some()) {
                 wrapped_row(ui, "", control_w, |ui| {
                     ui.label(vault.state.guidance());
@@ -283,4 +281,53 @@ fn wrapped_row(ui: &mut egui::Ui, label: &str, width: f32, body: impl FnOnce(&mu
         body(ui);
     });
     ui.end_row();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The width the settings use in a narrow pane, linked to `vault` if any.
+    fn used_width(vault: Option<VaultDisplay>) -> f32 {
+        let ctx = egui::Context::default();
+        let mut config = CollabConfig {
+            vault: vault.as_ref().map(|_| "gantzvault".to_string()),
+            ..Default::default()
+        };
+        let mut used = 0.0;
+        // The grid sizes its columns in the first pass.
+        for _ in 0..2 {
+            let _ = ctx.run_ui(Default::default(), |ui| {
+                let settings = CollabSettings {
+                    config: &mut config,
+                    peer_id: Some("22846021"),
+                    relays: &[],
+                    vault: vault.as_ref(),
+                };
+                let scope = ui.scope(|ui| {
+                    ui.set_max_width(220.0);
+                    collab_config(settings, ui)
+                });
+                used = scope.response.rect.width();
+            });
+        }
+        used
+    }
+
+    // A refused device must reach "unlink" to paste a new ticket. So the
+    // vault row fits wherever the other rows fit.
+    #[test]
+    fn a_refused_vault_link_fits_the_pane() {
+        let refused = VaultDisplay {
+            vault: "8b51cfb9".to_string(),
+            state: VaultState::Denied("access denied".to_string()),
+            ..Default::default()
+        };
+        let unlinked = used_width(None);
+        let linked = used_width(Some(refused));
+        assert!(
+            linked <= unlinked,
+            "linked uses {linked}, unlinked {unlinked}"
+        );
+    }
 }
