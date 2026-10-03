@@ -37,6 +37,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 use tracing::{info, warn};
 
@@ -185,12 +187,32 @@ impl Vault {
         })
     }
 
-    /// Serve until the runtime stops.
+    /// Serve until the runtime stops or the process is interrupted.
+    ///
+    /// An interrupt stops the runtime, which closes every connection, so
+    /// devices see at once that the vault is offline. A second interrupt
+    /// exits without waiting for that.
     pub fn serve(mut self) -> Result<(), String> {
+        let interrupted = Arc::new(AtomicBool::new(false));
+        let on_interrupt = Arc::clone(&interrupted);
+        let cmds = self.handle.cmds.clone();
+        ctrlc::set_handler(move || {
+            if on_interrupt.swap(true, Ordering::Relaxed) {
+                std::process::exit(130);
+            }
+            info!("stopping. Interrupt again to exit at once");
+            cmds.close();
+        })
+        .map_err(|e| format!("cannot handle interrupts: {e}"))?;
         while let Ok(event) = self.handle.events.recv_blocking() {
             self.handle(event)?;
         }
-        Err("the collab runtime stopped".to_string())
+        if interrupted.load(Ordering::Relaxed) {
+            info!("stopped");
+            Ok(())
+        } else {
+            Err("the collab runtime stopped".to_string())
+        }
     }
 
     /// Handle the runtime events waiting now.

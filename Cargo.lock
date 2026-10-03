@@ -3925,6 +3925,7 @@ dependencies = [
  "async-channel",
  "bevy_pkv",
  "clap",
+ "ctrlc",
  "directories",
  "gantz_base",
  "gantz_ca",
