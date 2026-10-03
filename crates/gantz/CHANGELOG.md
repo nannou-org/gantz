@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/nannou-org/gantz/compare/gantz-v0.4.0...gantz-v0.5.0) - 2026-10-03
+
+### Added
+
+- *(gantz_collab)* [**breaking**] fail on an unreadable identity
+- *(gantz_collab)* [**breaking**] exchange app versions in the vault handshake
+- *(bevy_gantz)* stamp the store format
+- [**breaking**] give each integer datum one canonical form
+
+### Fixed
+
+- *(gantz)* move stores to canonical integer addresses
+
+### Other
+
+- [**breaking**] persist the collab identity through gantz_collab
+- [**breaking**] move the store layer into a bevy-free gantz_store crate
+
 ## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz-v0.3.1...gantz-v0.4.0) - 2026-09-26
 
 ### Added

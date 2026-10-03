@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_collab-v0.3.1...gantz_collab-v0.4.0) - 2026-10-03
+
+### Added
+
+- [**breaking**] sync name metadata through the vault
+- *(gantz_collab)* [**breaking**] fail on an unreadable identity
+- *(gantz_collab)* answer the version probe
+- *(gantz_collab)* [**breaking**] exchange app versions in the vault handshake
+- *(gantz_collab)* [**breaking**] add the vault protocol
+
+### Fixed
+
+- *(gantz_collab)* [**breaking**] bump the sync protocol for canonical integers
+
+### Other
+
+- *(gantz_collab)* describe the versioning policy
+- [**breaking**] persist the collab identity through gantz_collab
+- [**breaking**] move the store layer into a bevy-free gantz_store crate
+
 ## [0.3.1](https://github.com/nannou-org/gantz/compare/gantz_collab-v0.3.0...gantz_collab-v0.3.1) - 2026-09-28
 
 ### Other

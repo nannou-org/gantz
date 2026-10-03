@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.8.0...bevy_gantz_egui-v0.9.0) - 2026-10-03
+
+### Added
+
+- discard unrecognised node settings
+- *(gantz_egui)* add a replace action to the node context menu
+- show VM perf samples for the focused head only
+
+### Fixed
+
+- *(gantz)* move stores to canonical integer addresses
+- *(bevy_gantz_egui)* resync references after undo, redo and fast-forward
+
+### Other
+
+- [**breaking**] move the store layer into a bevy-free gantz_store crate
+
 ## [0.8.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.7.0...bevy_gantz_egui-v0.8.0) - 2026-09-28
 
 ### Added

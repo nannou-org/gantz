@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/nannou-org/gantz/compare/gantz_ui-v0.4.0...gantz_ui-v0.5.0) - 2026-10-03
+
+### Added
+
+- *(gantz_ui)* add a dialer prefix attr
+
 ## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_ui-v0.3.0...gantz_ui-v0.4.0) - 2026-09-28
 
 ### Added

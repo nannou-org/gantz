@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/nannou-org/gantz/compare/gantz_ca-v0.4.2...gantz_ca-v0.5.0) - 2026-10-03
+
+### Added
+
+- *(gantz_ca)* replace a name's prefix
+- *(gantz_ca)* find the content a receiver lacks
+- *(gantz_ca)* find stored node data a round trip loses
+- *(gantz_ca)* re-address a registry in canonical form
+- [**breaking**] give each integer datum one canonical form
+
+### Fixed
+
+- migrate VM state only between nodes of the same type
+
 ## [0.4.2](https://github.com/nannou-org/gantz/compare/gantz_ca-v0.4.1...gantz_ca-v0.4.2) - 2026-09-28
 
 ### Fixed
