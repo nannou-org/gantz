@@ -1,6 +1,6 @@
 [package]
 name = "gantz_rng"
-version = "0.1.0"
+version = "0.1.1"
 description = "Seeded, stateless random numbers for gantz, as a Rust core and a Steel module."
 authors.workspace = true
 edition.workspace = true

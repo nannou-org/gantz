@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_collab-v0.2.1...bevy_gantz_collab-v0.3.0) - 2026-10-03
+
+### Added
+
+- *(gantz_collab)* [**breaking**] exchange app versions in the vault handshake
+- *(gantz_collab_sync)* sync a device with a vault
+- *(gantz_collab)* [**breaking**] add the vault protocol
+
+### Other
+
+- [**breaking**] persist the collab identity through gantz_collab
+- [**breaking**] move the store layer into a bevy-free gantz_store crate
+
 ## [0.2.1](https://github.com/nannou-org/gantz/compare/bevy_gantz_collab-v0.2.0...bevy_gantz_collab-v0.2.1) - 2026-09-28
 
 ### Other

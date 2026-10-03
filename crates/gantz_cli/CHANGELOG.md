@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/nannou-org/gantz/compare/gantz_cli-v0.1.0...gantz_cli-v0.2.0) - 2026-10-03
+
+### Added
+
+- [**breaking**] sync name metadata through the vault
+- *(gantz_cli)* guard the vault directory against other versions
+- *(gantz_collab)* [**breaking**] fail on an unreadable identity
+- *(gantz_collab)* answer the version probe
+- *(gantz_collab)* [**breaking**] exchange app versions in the vault handshake
+- *(gantz_cli)* add the vault subcommand
+- *(gantz_collab_sync)* sync a device with a vault
+- *(gantz_collab)* [**breaking**] add the vault protocol
+
 ## [0.1.0](https://github.com/nannou-org/gantz/compare/gantz_cli-v0.0.1...gantz_cli-v0.1.0) - 2026-09-28
 
 ### Added

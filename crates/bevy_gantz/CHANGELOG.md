@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/nannou-org/gantz/compare/bevy_gantz-v0.6.0...bevy_gantz-v0.7.0) - 2026-10-03
+
+### Added
+
+- *(bevy_gantz)* stamp the store format
+
+### Fixed
+
+- migrate VM state only between nodes of the same type
+
+### Other
+
+- [**breaking**] move the store layer into a bevy-free gantz_store crate
+
 ## [0.6.0](https://github.com/nannou-org/gantz/compare/bevy_gantz-v0.5.2...bevy_gantz-v0.6.0) - 2026-09-28
 
 ### Added

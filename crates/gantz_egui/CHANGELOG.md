@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.8.0...gantz_egui-v0.9.0) - 2026-10-03
+
+### Added
+
+- *(gantz_ca)* replace a name's prefix
+- discard unrecognised node settings
+- *(gantz_egui)* lock nodes that hold newer data
+- *(gantz_egui)* refuse to write back nodes that would lose data
+- [**breaking**] give each integer datum one canonical form
+- *(gantz_egui)* add a replace action to the node context menu
+- *(gantz_egui)* add a bang input mode to number
+- *(gantz_ui)* add a dialer prefix attr
+- *(gantz_egui)* add an edge curvature style setting
+- *(gantz_egui)* add follow-selection toggles to the global settings
+- show VM perf samples for the focused head only
+- *(gantz_egui)* show plot capacity only in scope mode
+- *(gantz_egui)* use label toggles in the plot display row
+- *(gantz_egui)* explain mergeable graphs on the merge dropdown
+
+### Fixed
+
+- keep unknown node data through automatic edits
+- migrate VM state only between nodes of the same type
+- *(bevy_gantz_egui)* resync references after undo, redo and fast-forward
+- *(gantz_egui)* wrap the settings subtabs onto new rows
+
 ## [0.8.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.7.0...gantz_egui-v0.8.0) - 2026-09-28
 
 ### Added
