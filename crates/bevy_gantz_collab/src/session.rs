@@ -2,8 +2,8 @@
 //! keeps open heads and the dirty flag in step with session membership.
 
 use crate::{
-    CollabIdentity, CollabRuntime, CollabSessions, JoinSessionEvent, LeaveSessionEvent, SessionRef,
-    ShareSessionEvent,
+    AppVersion, CollabIdentity, CollabRuntime, CollabSessions, JoinSessionEvent, LeaveSessionEvent,
+    SessionRef, ShareSessionEvent,
 };
 use bevy_ecs::prelude::*;
 use bevy_gantz::head;
@@ -14,9 +14,10 @@ use gantz_collab::{Handle, Identity};
 
 /// The runtime handle, spawned on first use with the user's collab
 /// configuration. A later config change applies when the app restarts.
-fn ensure_runtime<'a>(
+pub(crate) fn ensure_runtime<'a>(
     runtime: &'a mut CollabRuntime,
     identity: &Identity,
+    app: &AppVersion,
     config: &gantz_egui::collab::CollabConfig,
 ) -> &'a Handle {
     runtime.0.get_or_insert_with(|| {
@@ -25,7 +26,8 @@ fn ensure_runtime<'a>(
             identity.clone(),
             gantz_collab::RuntimeConfig {
                 infra,
-                ..Default::default()
+                port: None,
+                app: app.0.clone(),
             },
         )
     })
@@ -37,6 +39,7 @@ pub fn on_share_session(
     trigger: On<ShareSessionEvent>,
     mut runtime: ResMut<CollabRuntime>,
     identity: Option<Res<CollabIdentity>>,
+    app: Res<AppVersion>,
     mut sessions: ResMut<CollabSessions>,
     registry: Res<Registry>,
     gui_state: Res<bevy_gantz_egui::GuiState>,
@@ -56,7 +59,7 @@ pub fn on_share_session(
         log::warn!("ShareSession: only named graphs can be shared");
         return;
     };
-    let handle = ensure_runtime(&mut runtime, &identity.0, &gui_state.0.collab);
+    let handle = ensure_runtime(&mut runtime, &identity.0, &app, &gui_state.0.collab);
     let id = gantz_collab_sync::share(
         &mut sessions.0,
         &registry.0,
@@ -69,7 +72,8 @@ pub fn on_share_session(
 }
 
 /// Observer for [`JoinSessionEvent`]. Parses the ticket and asks the runtime
-/// to join. The snapshot lands via `poll_collab_events`.
+/// to join. The snapshot lands via `poll_collab_events`. A vault ticket
+/// becomes the configured vault instead.
 ///
 /// The session's tab opens immediately. An unknown name shows the empty
 /// placeholder graph with the connecting overlay until the snapshot adopts
@@ -78,21 +82,29 @@ pub fn on_join_session(
     trigger: On<JoinSessionEvent>,
     mut runtime: ResMut<CollabRuntime>,
     identity: Option<Res<CollabIdentity>>,
+    app: Res<AppVersion>,
     mut sessions: ResMut<CollabSessions>,
     mut registry: ResMut<Registry>,
-    gui_state: Res<bevy_gantz_egui::GuiState>,
+    mut gui_state: ResMut<bevy_gantz_egui::GuiState>,
     mut cmds: Commands,
 ) {
+    let ticket = trigger.event().ticket.trim();
+    // A vault ticket from a newer gantz cannot be read, so the vault
+    // settings say why instead of the join.
+    if ticket.starts_with("gantzvault") {
+        gui_state.0.collab.vault = Some(ticket.to_string());
+        return;
+    }
     let Some(identity) = identity else {
         log::error!("JoinSession: no collab identity resource");
         return;
     };
-    let handle = ensure_runtime(&mut runtime, &identity.0, &gui_state.0.collab);
+    let handle = ensure_runtime(&mut runtime, &identity.0, &app, &gui_state.0.collab);
     match gantz_collab_sync::join(
         &mut sessions.0,
         &mut registry.0,
         handle,
-        &trigger.event().ticket,
+        ticket,
         bevy_gantz::reg::timestamp(),
     ) {
         Ok((_, branch)) => cmds.trigger(head::OpenEvent(ca::Head::Branch(branch))),

@@ -1,9 +1,9 @@
-//! The Collab settings subtab. Identity, username, action rate and relay
-//! configuration. Joining a session lives with the graphs it creates, in the
-//! Graphs pane's join button.
+//! The Collab settings subtab. Identity, the vault link, username, action
+//! rate and relay configuration. Joining a session lives with the graphs it
+//! creates, in the Graphs pane's join button.
 
-use crate::Responses;
-use crate::collab::{CollabConfig, SessionConn};
+use crate::collab::{CollabConfig, SessionConn, VaultDisplay, VaultState};
+use crate::{CheckVault, Responses};
 
 /// The inputs for [`collab_config`].
 pub struct CollabSettings<'a> {
@@ -14,6 +14,8 @@ pub struct CollabSettings<'a> {
     /// The endpoint's home relays and their connection state. Empty until the
     /// collab runtime starts.
     pub relays: &'a [(String, bool)],
+    /// The vault link's state, while linked.
+    pub vault: Option<&'a VaultDisplay>,
 }
 
 /// The Collab settings subtab. Identity, username, action rate and relay
@@ -31,6 +33,8 @@ pub struct CollabSettingsTab {
     pub peer_id: Option<String>,
     /// The endpoint's home relays and their connection state.
     pub relays: Vec<(String, bool)>,
+    /// The vault link's state, while linked.
+    pub vault: Option<VaultDisplay>,
 }
 
 impl crate::widget::SettingsTab for CollabSettingsTab {
@@ -39,18 +43,19 @@ impl crate::widget::SettingsTab for CollabSettingsTab {
     }
 
     fn ui(&mut self, ui: &mut egui::Ui) -> Responses {
-        let mut responses = Responses::default();
         let before = self.config.clone();
-        egui::ScrollArea::vertical()
+        let mut responses = egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 let settings = CollabSettings {
                     config: &mut self.config,
                     peer_id: self.peer_id.as_deref(),
                     relays: &self.relays,
+                    vault: self.vault.as_ref(),
                 };
                 collab_config(settings, ui)
-            });
+            })
+            .inner;
         if self.config != before {
             responses.push(None, self.config.clone());
         }
@@ -58,13 +63,17 @@ impl crate::widget::SettingsTab for CollabSettingsTab {
     }
 }
 
-/// Render the collab configuration. The user's identity, their shared
-/// username, the live-action send rate and the relay configuration and status.
-pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) {
+/// Render the collab configuration. The user's identity, the vault link,
+/// their shared username, the live-action send rate and the relay
+/// configuration and status. Returns the actions the user took, such as
+/// [`CheckVault`].
+pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> Responses {
+    let mut responses = Responses::default();
     let CollabSettings {
         config,
         peer_id,
         relays,
+        vault,
     } = settings;
     let control_w = (ui.available_width() - 64.0).max(64.0);
     egui::Grid::new("collab_config_grid")
@@ -93,6 +102,87 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) {
                 }
             }
             ui.end_row();
+
+            // The vault this device syncs all its named graphs with.
+            wrapped_row(ui, "vault", control_w, |ui| match &config.vault {
+                Some(_) => {
+                    ui.horizontal_wrapped(|ui| {
+                        let state = vault.map(|v| v.state.clone()).unwrap_or_default();
+                        let hover = vault
+                            .map(|v| v.hover_text())
+                            .unwrap_or_else(|| state.guidance().to_string());
+                        super::status_dot(ui, state.color()).on_hover_text(hover);
+                        let id = vault.map(|v| v.vault.as_str()).unwrap_or_default();
+                        ui.label(egui::RichText::new(id).weak());
+                        let settled = matches!(state, VaultState::Connecting | VaultState::Live);
+                        if !settled
+                            && ui
+                                .button("check again")
+                                .on_hover_text("link to the vault again now")
+                                .clicked()
+                        {
+                            responses.push(None, CheckVault);
+                        }
+                        if ui
+                            .button("unlink")
+                            .on_hover_text("stop syncing with the vault. Local graphs stay")
+                            .clicked()
+                        {
+                            config.vault = None;
+                        }
+                    });
+                }
+                None => {
+                    let ticket_id = ui.id().with("collab_vault_ticket");
+                    let mut ticket = ui
+                        .data(|d| d.get_temp::<String>(ticket_id))
+                        .unwrap_or_default();
+                    ui.horizontal(|ui| {
+                        ui.add(
+                            egui::TextEdit::singleline(&mut ticket)
+                                .hint_text("paste a vault ticket")
+                                .desired_width((control_w - 48.0).max(48.0)),
+                        )
+                        .on_hover_text(
+                            "sync all your named graphs with a vault. \
+                             `gantz vault serve` prints its ticket",
+                        );
+                        let ready = ticket.trim().starts_with("gantzvault");
+                        if ui.add_enabled(ready, egui::Button::new("link")).clicked() {
+                            config.vault = Some(ticket.trim().to_string());
+                            ticket.clear();
+                        }
+                    });
+                    ui.data_mut(|d| d.insert_temp(ticket_id, ticket));
+                }
+            });
+            if let Some(vault) = vault.filter(|_| config.vault.is_some()) {
+                wrapped_row(ui, "", control_w, |ui| {
+                    ui.label(vault.state.guidance());
+                    if let Some(reason) = vault.state.reason() {
+                        ui.label(egui::RichText::new(reason).weak());
+                    }
+                });
+                wrapped_row(ui, "versions", control_w, |ui| {
+                    ui.label(egui::RichText::new(vault.versions()).weak());
+                });
+                if !vault.failures.is_empty() {
+                    wrapped_row(ui, "not synced", control_w, |ui| {
+                        for (name, reason) in &vault.failures {
+                            ui.label(egui::RichText::new(format!("{name}: {reason}")).weak());
+                        }
+                    });
+                }
+                if !vault.newer.is_empty() {
+                    wrapped_row(ui, "locked", control_w, |ui| {
+                        ui.label(
+                            "A newer gantz synced settings that this gantz does not \
+                             recognise. Update gantz to edit these graphs.",
+                        );
+                        ui.label(egui::RichText::new(vault.newer.join(", ")).weak());
+                    });
+                }
+            }
 
             // The username shared with session peers.
             ui.label("username");
@@ -180,4 +270,64 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) {
                 ui.end_row();
             }
         });
+    responses
+}
+
+/// One grid row of `label` and `body`, with the body wrapped to `width`.
+fn wrapped_row(ui: &mut egui::Ui, label: &str, width: f32, body: impl FnOnce(&mut egui::Ui)) {
+    ui.label(label);
+    ui.vertical(|ui| {
+        ui.set_max_width(width);
+        body(ui);
+    });
+    ui.end_row();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The width the settings use in a narrow pane, linked to `vault` if any.
+    fn used_width(vault: Option<VaultDisplay>) -> f32 {
+        let ctx = egui::Context::default();
+        let mut config = CollabConfig {
+            vault: vault.as_ref().map(|_| "gantzvault".to_string()),
+            ..Default::default()
+        };
+        let mut used = 0.0;
+        // The grid sizes its columns in the first pass.
+        for _ in 0..2 {
+            let _ = ctx.run_ui(Default::default(), |ui| {
+                let settings = CollabSettings {
+                    config: &mut config,
+                    peer_id: Some("22846021"),
+                    relays: &[],
+                    vault: vault.as_ref(),
+                };
+                let scope = ui.scope(|ui| {
+                    ui.set_max_width(220.0);
+                    collab_config(settings, ui)
+                });
+                used = scope.response.rect.width();
+            });
+        }
+        used
+    }
+
+    // A refused device must reach "unlink" to paste a new ticket. So the
+    // vault row fits wherever the other rows fit.
+    #[test]
+    fn a_refused_vault_link_fits_the_pane() {
+        let refused = VaultDisplay {
+            vault: "8b51cfb9".to_string(),
+            state: VaultState::Denied("access denied".to_string()),
+            ..Default::default()
+        };
+        let unlinked = used_width(None);
+        let linked = used_width(Some(refused));
+        assert!(
+            linked <= unlinked,
+            "linked uses {linked}, unlinked {unlinked}"
+        );
+    }
 }

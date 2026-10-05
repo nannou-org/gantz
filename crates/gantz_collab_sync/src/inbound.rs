@@ -8,7 +8,7 @@ use gantz_collab::{
     Command, ConnState, Event, GossipMsg, Handle, Object, ObjectRef, Objects, PeerId, SectionEntry,
     SessionId, Want, proto,
 };
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Branch names the host has open as heads, with their live camera when the
 /// host has one. A headless host passes an empty map.
@@ -29,7 +29,10 @@ pub enum Effect {
         adopt_unrelated: bool,
     },
     /// Names moved headlessly. Referrers must resync and open heads refresh.
-    ResyncRefs,
+    /// References to the names in `skip` stay as they are.
+    ResyncRefs {
+        skip: BTreeSet<ca::Name>,
+    },
     /// A name moved headlessly, by adoption, fast-forward or a minted merge.
     Moved {
         session: SessionId,
@@ -254,6 +257,7 @@ pub fn handle_event(
         // by these sessions has nothing to update.
         Event::VaultTicketReady { .. }
         | Event::DeviceSeen { .. }
+        | Event::DeviceRefused { .. }
         | Event::PushRequest { .. }
         | Event::LinkUp { .. }
         | Event::LinkChanged { .. }
@@ -413,7 +417,9 @@ fn apply_join_snapshot(
     if !cx.open.contains_key(&branch) {
         cx.effects.push(Effect::Open(branch));
     }
-    cx.effects.push(Effect::ResyncRefs);
+    cx.effects.push(Effect::ResyncRefs {
+        skip: BTreeSet::new(),
+    });
     cx.effects.push(Effect::Joined {
         session,
         commits: applied.commits.len(),
@@ -735,7 +741,9 @@ fn resolve_tip(
             from,
             to,
         });
-        cx.effects.push(Effect::ResyncRefs);
+        cx.effects.push(Effect::ResyncRefs {
+            skip: BTreeSet::new(),
+        });
     };
     let Some(local) = cx.registry.head(name) else {
         // A name born on the remote side. Adopt it.

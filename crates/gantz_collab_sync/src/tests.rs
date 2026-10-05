@@ -336,7 +336,7 @@ fn tips_start_a_fetch_and_objects_fast_forward_the_head() {
     assert_eq!(registry.head(&name("jam")), Some(b));
     assert!(matches!(
         effects[..],
-        [Effect::Moved { from: Some(from), to, .. }, Effect::ResyncRefs] if from == a && to == b
+        [Effect::Moved { from: Some(from), to, .. }, Effect::ResyncRefs { .. }] if from == a && to == b
     ));
     assert!(sessions.sessions[&session].pending.is_empty());
     assert!(!sessions.dirty, "fast-forwards are not re-announced");
@@ -429,7 +429,7 @@ fn background_merge_marks_dirty_and_is_announced() {
     assert_eq!(merge.parents().collect::<Vec<_>>(), vec![b, c]);
     assert!(matches!(
         effects[..],
-        [Effect::Moved { from: Some(from), to, .. }, Effect::ResyncRefs] if from == b && to == merged
+        [Effect::Moved { from: Some(from), to, .. }, Effect::ResyncRefs { .. }] if from == b && to == merged
     ));
     assert!(
         sessions.dirty,

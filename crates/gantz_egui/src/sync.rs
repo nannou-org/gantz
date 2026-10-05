@@ -224,6 +224,19 @@ pub fn fork_nested(
 /// non-nesting reference shape. The loop cannot run forever, even for a
 /// degenerate mutually-referencing registry. It stops once no graph changes.
 pub fn resync(registry: &mut Registry, timestamp: Duration) -> Vec<Moved> {
+    resync_except(registry, timestamp, &BTreeSet::new())
+}
+
+/// [`resync`], leaving references to the names in `skip` as they are.
+///
+/// A vault skips the base names each build seeds itself. Two devices on
+/// different builds would otherwise keep retargeting the same graph's
+/// references to their own base graphs, back and forth.
+pub fn resync_except(
+    registry: &mut Registry,
+    timestamp: Duration,
+    skip: &BTreeSet<Name>,
+) -> Vec<Moved> {
     // Deepest names first, so a child is updated before the parent that refs
     // it.
     let mut order: Vec<Name> = registry.heads().map(|(n, _)| n.clone()).collect();
@@ -249,6 +262,9 @@ pub fn resync(registry: &mut Registry, timestamp: Duration) -> Vec<Moved> {
                 continue;
             };
             let resolve = |m: &Name| {
+                if skip.contains(m) {
+                    return None;
+                }
                 current
                     .get(m)
                     .map(|&(_, graph)| gantz_ca::ContentAddr::from(graph))
@@ -458,5 +474,19 @@ mod tests {
         assert!(has_unknown_field(&weight));
         assert_eq!(named_ref_of(&weight).unwrap().ref_().content_addr(), target);
         assert_eq!(weight.refs, [target]);
+    }
+
+    #[test]
+    fn resync_except_leaves_references_to_skipped_names() {
+        let mut registry = Registry::default();
+        let mut user = DataGraph::default();
+        user.add_node(ref_node("base", true));
+        add_named(&mut registry, "user", 1, user);
+        add_named(&mut registry, "base", 2, DataGraph::default());
+        let skip = names(["base"]);
+        assert!(resync_except(&mut registry, Duration::from_secs(10), &skip).is_empty());
+        let moved = resync(&mut registry, Duration::from_secs(11));
+        assert_eq!(moved.len(), 1);
+        assert_eq!(moved[0].name, "user".parse::<Name>().unwrap());
     }
 }

@@ -30,6 +30,11 @@ pub struct CollabConfig {
     /// Display-side only. This peer's own pointer broadcasts regardless.
     #[serde(default = "default_true")]
     pub show_pointers: bool,
+    /// The ticket of the vault this device syncs all its named graphs with.
+    /// `None` leaves the device unlinked. It carries the vault's pairing
+    /// secret.
+    #[serde(default)]
+    pub vault: Option<String>,
 }
 
 impl Default for CollabConfig {
@@ -39,6 +44,7 @@ impl Default for CollabConfig {
             custom_relay: None,
             action_rate_ms: default_action_rate_ms(),
             show_pointers: true,
+            vault: None,
         }
     }
 }
@@ -55,6 +61,16 @@ fn default_action_rate_ms() -> u64 {
     16
 }
 
+/// A line counting `n` graphs, with what is true of one graph or of many.
+/// `None` for no graphs.
+fn graphs(n: usize, one: &str, many: &str) -> Option<String> {
+    match n {
+        0 => None,
+        1 => Some(format!("1 graph {one}")),
+        n => Some(format!("{n} graphs {many}")),
+    }
+}
+
 /// Everything the widgets need to render collaboration state.
 #[derive(Clone, Debug, Default)]
 pub struct CollabUiState {
@@ -65,6 +81,48 @@ pub struct CollabUiState {
     /// The endpoint's home relays and their connection state. Empty until
     /// the runtime starts.
     pub relays: Vec<(String, bool)>,
+    /// The vault link, while this device is linked to a vault.
+    pub vault: Option<VaultDisplay>,
+}
+
+/// The vault link's displayable state.
+#[derive(Clone, Debug, Default)]
+pub struct VaultDisplay {
+    /// A short displayable form of the vault's identity.
+    pub vault: String,
+    pub state: VaultState,
+    /// The vault's app and protocols, such as `gantz 0.4.0, protocol 2`,
+    /// once the vault has answered.
+    pub vault_app: Option<String>,
+    /// This app and its protocols, in the same form as `vault_app`.
+    pub this_app: String,
+    /// Each name that failed to sync, and why.
+    pub failures: Vec<(String, String)>,
+    /// The names that the vault synced from a newer gantz, whose graphs hold
+    /// settings that this gantz locks.
+    pub newer: Vec<String>,
+}
+
+/// The vault link's state, for display.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub enum VaultState {
+    /// Waiting for the vault's first answer.
+    #[default]
+    Connecting,
+    /// Linked, and names sync.
+    Live,
+    /// The vault cannot be reached, for this reason. The link retries by
+    /// itself.
+    Offline(String),
+    /// The vault refused this device, for this reason.
+    Denied(String),
+    /// The vault only speaks older sync protocols.
+    VaultOutdated,
+    /// The vault only speaks newer sync protocols.
+    DeviceOutdated,
+    /// This device did not link, for this reason. For example, the ticket
+    /// cannot be read.
+    NotLinked(String),
 }
 
 /// One session's displayable state.
@@ -174,6 +232,84 @@ impl SessionDisplay {
     }
 }
 
+impl VaultDisplay {
+    /// A hover summary of the link state, its reason and the names that
+    /// failed to sync.
+    pub fn hover_text(&self) -> String {
+        let mut text = format!("vault {}: {}", self.vault, self.state.guidance());
+        if let Some(reason) = self.state.reason() {
+            text.push_str(&format!("\n{reason}"));
+        }
+        let failed = graphs(self.failures.len(), "cannot sync", "cannot sync");
+        let newer = graphs(
+            self.newer.len(),
+            "holds settings from a newer gantz",
+            "hold settings from a newer gantz",
+        );
+        for line in [failed, newer].into_iter().flatten() {
+            text.push_str(&format!("\n{line}"));
+        }
+        text
+    }
+
+    /// Both sides' app and protocols.
+    pub fn versions(&self) -> String {
+        let vault = self.vault_app.as_deref().unwrap_or("not heard yet");
+        format!("vault: {vault}\nthis app: {}", self.this_app)
+    }
+}
+
+impl VaultState {
+    /// The indicator glyph colour for this state. States that only the user
+    /// can fix share one colour.
+    pub fn color(&self) -> egui::Color32 {
+        match self {
+            Self::Connecting => SessionConn::Connecting.color(),
+            Self::Live => SessionConn::Live.color(),
+            Self::Offline(_) => SessionConn::Degraded.color(),
+            _ => egui::Color32::from_rgb(0xb0, 0x70, 0xe0),
+        }
+    }
+
+    /// Whether only the user can fix the link, with an update or a new
+    /// ticket.
+    pub fn needs_action(&self) -> bool {
+        matches!(
+            self,
+            Self::Denied(_) | Self::VaultOutdated | Self::DeviceOutdated | Self::NotLinked(_)
+        )
+    }
+
+    /// What the state means for the user, and what to do about it.
+    pub fn guidance(&self) -> &'static str {
+        match self {
+            Self::Connecting => "Connecting to the vault.",
+            Self::Live => "Syncing all named graphs with the vault.",
+            Self::Offline(_) => {
+                "The vault is offline. Edits stay on this device and sync when it is back."
+            }
+            Self::Denied(_) => {
+                "The vault refused this device. Paste a new vault ticket to pair it again."
+            }
+            Self::VaultOutdated => {
+                "The vault needs an update. Edits stay on this device and sync after it updates."
+            }
+            Self::DeviceOutdated => {
+                "Update gantz on this device to sync. Edits stay on this device until then."
+            }
+            Self::NotLinked(_) => "This device is not linked to the vault.",
+        }
+    }
+
+    /// The reason behind the state, if it has one.
+    pub fn reason(&self) -> Option<&str> {
+        match self {
+            Self::Offline(reason) | Self::Denied(reason) | Self::NotLinked(reason) => Some(reason),
+            _ => None,
+        }
+    }
+}
+
 impl SessionConn {
     /// The indicator glyph colour for this state.
     pub fn color(&self) -> egui::Color32 {
@@ -191,5 +327,43 @@ impl SessionConn {
             Self::Live => "live",
             Self::Degraded => "offline",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn vault_hover_tells_the_state_its_reason_and_the_failures() {
+        let vault = VaultDisplay {
+            vault: "2af6d9e8".to_string(),
+            state: VaultState::Offline("connect failed".to_string()),
+            vault_app: None,
+            this_app: "gantz 0.4.0, protocol 2".to_string(),
+            failures: vec![("jam".to_string(), "push failed".to_string())],
+            newer: vec![],
+        };
+        let hover = vault.hover_text();
+        assert!(hover.starts_with("vault 2af6d9e8: The vault is offline."));
+        assert!(hover.contains("\nconnect failed"));
+        assert!(hover.ends_with("\n1 graph cannot sync"));
+        let versions = vault.versions();
+        assert_eq!(
+            versions,
+            "vault: not heard yet\nthis app: gantz 0.4.0, protocol 2"
+        );
+    }
+
+    #[test]
+    fn only_updates_and_new_tickets_need_the_user() {
+        let offline = VaultState::Offline(String::new());
+        let denied = VaultState::Denied(String::new());
+        assert!(!offline.needs_action());
+        assert!(denied.needs_action());
+        assert!(VaultState::VaultOutdated.needs_action());
+        assert!(VaultState::DeviceOutdated.needs_action());
+        assert_ne!(offline.color(), denied.color());
+        assert_eq!(denied.color(), VaultState::VaultOutdated.color());
     }
 }

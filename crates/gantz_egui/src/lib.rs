@@ -637,6 +637,10 @@ pub struct JoinSession {
     pub ticket: String,
 }
 
+/// Link to the vault again now, instead of at the next retry. App-level.
+#[derive(Clone, Copy, Debug)]
+pub struct CheckVault;
+
 /// Redo a previously undone edit, moving the head forward.
 #[derive(Clone, Copy, Debug)]
 pub struct Redo;

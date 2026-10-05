@@ -391,7 +391,9 @@ pub(crate) fn sync(
         reconcile(link, &mut cx, name);
     }
     if cx.resync {
-        cx.effects.push(Effect::ResyncRefs);
+        // Every build seeds its own base graphs, so references to them stay.
+        let skip = link.local_only.clone();
+        cx.effects.push(Effect::ResyncRefs { skip });
     }
 }
 

@@ -1061,6 +1061,7 @@ dependencies = [
 name = "bevy_gantz_collab"
 version = "0.3.0"
 dependencies = [
+ "async-channel",
  "bevy_app",
  "bevy_ecs",
  "bevy_gantz",
@@ -1071,7 +1072,9 @@ dependencies = [
  "gantz_collab_sync",
  "gantz_core",
  "gantz_egui",
+ "gantz_format",
  "gantz_store",
+ "iroh",
  "ron 0.10.1",
  "serde",
  "steel-core",
@@ -3922,6 +3925,7 @@ dependencies = [
  "async-channel",
  "bevy_pkv",
  "clap",
+ "ctrlc",
  "directories",
  "gantz_base",
  "gantz_ca",

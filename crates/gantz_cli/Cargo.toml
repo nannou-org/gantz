@@ -11,6 +11,7 @@ repository.workspace = true
 [dependencies]
 bevy_pkv = { workspace = true, optional = true }
 clap.workspace = true
+ctrlc = { workspace = true, optional = true }
 directories = { workspace = true, optional = true }
 gantz_ca.workspace = true
 gantz_collab = { workspace = true, optional = true }
@@ -37,6 +38,7 @@ default = ["collab"]
 # and the `vault` subcommand, which syncs a user's devices.
 collab = [
     "dep:bevy_pkv",
+    "dep:ctrlc",
     "dep:directories",
     "dep:gantz_collab",
     "dep:gantz_collab_sync",

@@ -270,6 +270,14 @@ pub enum Event {
         proto: u32,
         paired: bool,
     },
+    /// An unknown device greeted a hosted vault without the current pairing
+    /// secret, and the vault refused it. Its ticket is old, or its pairing
+    /// was revoked.
+    DeviceRefused {
+        vault: VaultId,
+        peer: PeerId,
+        app: String,
+    },
     /// A paired device asks to move a name on a hosted vault. The
     /// application decides, persists, then answers through `reply`.
     PushRequest {
@@ -453,6 +461,12 @@ impl SyncServer {
                     .as_ref()
                     .is_some_and(|p| vault.entry.pairing.matches(p))
                 {
+                    let refused = Event::DeviceRefused {
+                        vault: vault.entry.id,
+                        peer: remote,
+                        app: app.clone(),
+                    };
+                    let _ = self.events.try_send(refused);
                     return denied("access denied");
                 }
                 vault.entry.access.insert(remote);
@@ -1471,6 +1485,25 @@ mod tests {
         };
         assert!(paired);
         assert_eq!(app, "gantz 0.0.1");
+    }
+
+    // An unknown device without the current secret is refused, and the
+    // vault hears of it.
+    #[test]
+    fn a_hello_without_the_secret_is_refused() {
+        let (server, mut vault, events) = server(PairingSecret::generate());
+        let peer = PeerId([2; 32]);
+        let old = hello_with(PROTO_VERSION, PairingSecret::generate());
+        let resp = server.respond_vault(&mut vault, peer, old);
+        assert!(matches!(resp, SyncResponse::Denied { .. }));
+        assert!(vault.entry.access.is_empty());
+        let Ok(Event::DeviceRefused {
+            peer: refused, app, ..
+        }) = events.try_recv()
+        else {
+            panic!("expected a device refused event");
+        };
+        assert_eq!((refused, app.as_str()), (peer, "gantz 0.0.1"));
     }
 
     // A device that finds its vault on a newer protocol reports both sides
