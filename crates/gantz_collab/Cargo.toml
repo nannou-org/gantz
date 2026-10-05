@@ -1,6 +1,6 @@
 [package]
 name = "gantz_collab"
-version = "0.3.1"
+version = "0.4.0"
 description = "Peer-to-peer collaborative session networking for gantz."
 authors.workspace = true
 edition.workspace = true

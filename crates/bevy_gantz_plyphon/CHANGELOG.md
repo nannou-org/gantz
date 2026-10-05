@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.4.0...bevy_gantz_plyphon-v0.5.0) - 2026-10-03
+
+### Added
+
+- [**breaking**] give each integer datum one canonical form
+
+### Fixed
+
+- keep unknown node data through automatic edits
+
 ## [0.4.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.3.0...bevy_gantz_plyphon-v0.4.0) - 2026-09-28
 
 ### Fixed
