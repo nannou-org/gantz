@@ -44,6 +44,7 @@ use gantz_egui::base::BASE_TIMESTAMP;
 use gantz_egui::export::ParseExportError;
 use std::borrow::Cow;
 use std::collections::HashMap;
+use std::io::IsTerminal;
 use std::ops::Range;
 use std::path::PathBuf;
 
@@ -197,8 +198,8 @@ pub enum VaultCommand {
 #[cfg(feature = "collab")]
 #[derive(Args)]
 pub struct DirArgs {
-    /// The vault directory, created if absent. Defaults to `vault` under the
-    /// app data directory.
+    /// The vault directory. Defaults to `vault` under the app data directory.
+    /// Only `serve` creates it.
     #[arg(long, value_name = "DIR")]
     pub dir: Option<PathBuf>,
 }
@@ -388,6 +389,7 @@ fn init_logs(command: &Command) {
     let logs = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)
+        .with_ansi(std::io::stderr().is_terminal())
         .with_writer(std::io::stderr);
     // A vault serves for days, so its lines carry the time.
     let _ = match command {

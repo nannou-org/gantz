@@ -58,6 +58,28 @@
         default = pkgs.gantz;
       });
 
+      nixosModules = {
+        gantz-vault =
+          { lib, pkgs, ... }:
+          {
+            imports = [ ./nixos/gantz-vault.nix ];
+            # A host without the overlay of this flake uses its own build.
+            services.gantz-vault.package = lib.mkIf (!(pkgs ? gantz)) (
+              lib.mkDefault inputs.self.packages.${pkgs.stdenv.hostPlatform.system}.gantz
+            );
+          };
+        default = inputs.self.nixosModules.gantz-vault;
+      };
+
+      checks = perSystemPkgs (
+        pkgs:
+        inputs.nixpkgs.lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+          gantz-vault = pkgs.testers.runNixOSTest (
+            import ./nixos/gantz-vault-test.nix { module = inputs.self.nixosModules.gantz-vault; }
+          );
+        }
+      );
+
       devShells = perSystemPkgs (pkgs: {
         gantz-dev = pkgs.callPackage ./shell.nix { };
         gantz-web = pkgs.callPackage ./shell-web.nix { };
