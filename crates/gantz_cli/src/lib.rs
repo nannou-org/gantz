@@ -198,8 +198,8 @@ pub enum VaultCommand {
 #[cfg(feature = "collab")]
 #[derive(Args)]
 pub struct DirArgs {
-    /// The vault directory, created if absent. Defaults to `vault` under the
-    /// app data directory.
+    /// The vault directory. Defaults to `vault` under the app data directory.
+    /// Only `serve` creates it.
     #[arg(long, value_name = "DIR")]
     pub dir: Option<PathBuf>,
 }
