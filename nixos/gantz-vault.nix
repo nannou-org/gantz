@@ -1,11 +1,12 @@
 # A gantz vault as a NixOS service. A vault syncs all the named graphs of a
 # user between their devices. See `gantz vault --help`.
 #
-# The vault makes its identity, pairing secret and link ticket on its first
-# start, in `dataDir`. Read `ticket` there to link a device. `devices` and
-# `revoke` refuse to run while the vault serves, so stop the service first.
-# Then run them as root through `gantz-vault`, for example
-# `gantz-vault devices`.
+# The vault makes its identity and pairing secret on its first start, in
+# `dataDir`. Run the vault commands as root through `gantz-vault`.
+# `gantz-vault ticket` asks the running vault for the ticket that links a
+# device. The journal records that a ticket was issued, but never the ticket.
+# `devices` and `revoke` refuse to run while the vault serves, so stop the
+# service before `gantz-vault devices`.
 {
   config,
   lib,
@@ -79,8 +80,8 @@ in
       default = "/var/lib/gantz-vault";
       description = ''
         The vault directory. It holds every synced graph with its whole
-        history, the identity and pairing secret of the vault, and `ticket`,
-        the latest link ticket. Only the service user can read it.
+        history, the identity and pairing secret of the vault, and the socket
+        that hands out the link ticket. Only the service user can enter it.
       '';
     };
 

@@ -183,11 +183,16 @@ pub struct VaultArgs {
 pub enum VaultCommand {
     /// Serve the vault until interrupted.
     ///
-    /// Prints the ticket that links a device. A device pairs on its first
-    /// link, then links again on every start. The vault keeps every graph
-    /// with its whole history, and writes each change to disk before the
-    /// device hears it was accepted.
+    /// `gantz vault ticket` prints the ticket that links a device. A device
+    /// pairs on its first link, then links again on every start. The vault
+    /// keeps every graph with its whole history, and writes each change to
+    /// disk before the device hears it was accepted.
     Serve(ServeArgs),
+    /// Print the ticket that links a device, from the running vault.
+    ///
+    /// Only the user that runs the vault can ask for it. The vault logs that
+    /// it issued a ticket, but never the ticket itself.
+    Ticket(DirArgs),
     /// List the paired devices.
     Devices(DirArgs),
     /// Unpair a device and rotate the pairing secret, so the old ticket no
