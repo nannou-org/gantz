@@ -3,8 +3,13 @@
 //!
 //! `serve` holds the registry in the vault directory, in the app's store
 //! format, and serves it over the collab runtime. A device pairs once with
-//! the printed ticket, then links on every start. See `gantz_collab::vault`
-//! and `gantz_collab_sync::vault`.
+//! the ticket that `gantz vault ticket` prints, then links on every start.
+//! See `gantz_collab::vault` and `gantz_collab_sync::vault`.
+//!
+//! The ticket pairs devices, so the vault never logs it and never writes it
+//! to disk. It hands the ticket only to a process that connects to its
+//! socket, and logs only that it did. The socket is in the vault directory,
+//! which only its owner can enter.
 //!
 //! The vault moves a name only when a push is made against its current
 //! head, and replaces a name's metadata, such as its description, only
@@ -15,8 +20,8 @@
 //! The directory holds:
 //!
 //! - `bevy_pkv.redb`: the registry, the vault's identity and its config.
-//! - `ticket`: the latest link ticket. It pairs devices, so only the owner
-//!   may read it.
+//! - `ticket.sock`: while `serve` runs, the socket that hands out the link
+//!   ticket. Unix only.
 //! - `lock`: held by whichever vault command runs, so `devices` and
 //!   `revoke` cannot race a running `serve`.
 //!
@@ -37,8 +42,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 use std::fs::File;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::thread::JoinHandle;
 use std::time::SystemTime;
 use tracing::{info, warn};
 
@@ -73,13 +79,24 @@ pub(crate) struct Dir {
 
 /// A running vault: its directory, runtime and registry.
 pub struct Vault {
+    /// Before `dir`, so the socket is removed before the lock is released.
+    tickets: TicketServer,
     dir: Dir,
     handle: Handle,
     pub(crate) config: Config,
     pub(crate) registry: ca::Registry,
     persisted: PersistedRegistry,
-    /// The latest link ticket.
-    pub(crate) ticket: Option<String>,
+}
+
+/// Hands the latest link ticket to each process that connects to
+/// `ticket.sock`, then closes the connection. Connecting is the whole
+/// request. Removes the socket when dropped.
+pub(crate) struct TicketServer {
+    path: PathBuf,
+    /// The latest link ticket, once the runtime has minted one.
+    ticket: Arc<Mutex<Option<String>>>,
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
 }
 
 /// A [`Save`] that keeps the first failure, since the storage helpers only
@@ -96,8 +113,11 @@ pub const DEFAULT_PORT: u16 = 7447;
 /// The store key holding the vault's [`Config`].
 pub(crate) const CONFIG_KEY: &str = "vault";
 
-/// The file holding the latest link ticket.
-const TICKET_FILE: &str = "ticket";
+/// The socket in the vault directory that hands out the link ticket.
+const TICKET_SOCKET: &str = "ticket.sock";
+
+/// The file where gantz 0.5 kept the link ticket.
+const OLD_TICKET_FILE: &str = "ticket";
 
 impl Vault {
     /// Open the vault in `path`, creating it on first use, and start
@@ -161,6 +181,8 @@ impl Vault {
             registry.heads().count(),
             config.devices.len(),
         );
+        remove_old_ticket(&dir.path)?;
+        let tickets = TicketServer::start(&dir.path)?;
         let runtime = RuntimeConfig {
             infra,
             port,
@@ -178,12 +200,12 @@ impl Vault {
             .try_send(Command::HostVault(entry))
             .map_err(|_| "the collab runtime is gone".to_string())?;
         Ok(Self {
+            tickets,
             dir,
             handle,
             config,
             registry,
             persisted,
-            ticket: None,
         })
     }
 
@@ -237,7 +259,7 @@ impl Vault {
     fn handle(&mut self, event: Event) -> Result<(), String> {
         match event {
             Event::Ready { peer } => info!("vault peer {peer}"),
-            Event::VaultTicketReady { ticket, .. } => self.set_ticket(ticket)?,
+            Event::VaultTicketReady { ticket, .. } => self.tickets.set(ticket),
             Event::DeviceSeen {
                 peer,
                 app,
@@ -323,17 +345,43 @@ impl Vault {
             gantz_store::save_registry_incremental(s, registry, persisted)
         })
     }
+}
 
-    /// Record the latest ticket, print it and write it for the owner.
-    fn set_ticket(&mut self, ticket: String) -> Result<(), String> {
-        if self.ticket.as_ref() == Some(&ticket) {
-            return Ok(());
+impl TicketServer {
+    /// Listen on `ticket.sock` in `dir`. The vault lock must be held, so a
+    /// socket left there by an earlier run is stale.
+    #[cfg(unix)]
+    pub(crate) fn start(dir: &Path) -> Result<Self, String> {
+        let path = dir.join(TICKET_SOCKET);
+        let at = |e: std::io::Error| format!("{}: {e}", path.display());
+        remove_if_present(&path).map_err(at)?;
+        let listener = std::os::unix::net::UnixListener::bind(&path).map_err(at)?;
+        restrict(&path, 0o600).map_err(at)?;
+        let ticket = Arc::new(Mutex::new(None));
+        let stop = Arc::new(AtomicBool::new(false));
+        let thread = {
+            let (ticket, stop) = (Arc::clone(&ticket), Arc::clone(&stop));
+            std::thread::spawn(move || serve_tickets(&listener, &ticket, &stop))
+        };
+        Ok(Self {
+            path,
+            ticket,
+            stop,
+            thread: Some(thread),
+        })
+    }
+
+    #[cfg(not(unix))]
+    pub(crate) fn start(_dir: &Path) -> Result<Self, String> {
+        Err("the vault hands out its ticket over a Unix socket, so it runs on Unix only".into())
+    }
+
+    /// Hand out `ticket` from now on. The first one means that devices can
+    /// link.
+    pub(crate) fn set(&self, ticket: String) {
+        if lock(&self.ticket).replace(ticket).is_none() {
+            info!("ready to link devices. `gantz vault ticket` prints the link ticket");
         }
-        let path = self.dir.path.join(TICKET_FILE);
-        write_private(&path, ticket.as_bytes()).map_err(|e| format!("{}: {e}", path.display()))?;
-        println!("Link a device with this vault ticket:\n{ticket}");
-        self.ticket = Some(ticket);
-        Ok(())
     }
 }
 
@@ -388,12 +436,27 @@ impl Save for Checked<'_> {
     }
 }
 
+impl Drop for TicketServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        // A connection wakes the listener so that it sees the stop. Without
+        // one, the thread would never end, so it is left running.
+        if wake(&self.path)
+            && let Some(thread) = self.thread.take()
+        {
+            let _ = thread.join();
+        }
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
 /// Run a vault subcommand. Returns the exit code.
 ///
 /// `conf` locates the default vault directory.
 pub fn run(args: VaultArgs, conf: &Conf) -> i32 {
     let result = match args.command {
         VaultCommand::Serve(args) => serve(args, conf),
+        VaultCommand::Ticket(args) => ticket(args, conf),
         VaultCommand::Devices(args) => devices(args, conf),
         VaultCommand::Revoke(args) => revoke(args, conf),
     };
@@ -410,6 +473,12 @@ fn serve(args: ServeArgs, conf: &Conf) -> Result<(), String> {
     let path = vault_dir(&args.dir, conf)?;
     let infra = gantz_collab_sync::infra(args.relay.as_deref());
     Vault::open(&path, conf.build, infra, Some(args.port))?.serve()
+}
+
+/// Print the link ticket of the running vault.
+fn ticket(args: DirArgs, conf: &Conf) -> Result<(), String> {
+    println!("{}", request_ticket(&vault_dir(&args, conf)?)?);
+    Ok(())
 }
 
 /// Print each paired device, what it last ran and when.
@@ -450,8 +519,8 @@ fn revoke(args: RevokeArgs, conf: &Conf) -> Result<(), String> {
         gantz_store::save(s, CONFIG_KEY, &config)
     })?;
     println!(
-        "Revoked {peer}. The old ticket no longer pairs. Restart the vault to apply this and \
-         print its new ticket."
+        "Revoked {peer}. The old ticket no longer pairs. Restart the vault to apply this, then \
+         run `gantz vault ticket` for its new ticket."
     );
     Ok(())
 }
@@ -514,25 +583,102 @@ fn unix_now() -> u64 {
         .as_secs()
 }
 
-/// Write a file only its owner may read.
+/// Ask the vault serving `dir` for its link ticket.
 #[cfg(unix)]
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    use std::io::Write;
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(path)?;
-    file.write_all(bytes)?;
-    // The mode applies only to a new file.
-    restrict(path, 0o600)
+pub(crate) fn request_ticket(dir: &Path) -> Result<String, String> {
+    use std::io::{ErrorKind, Read};
+    if !dir.is_dir() {
+        return Err(format!("no vault in {}", dir.display()));
+    }
+    let path = dir.join(TICKET_SOCKET);
+    let at = |e: std::io::Error| format!("{}: {e}", path.display());
+    let mut stream =
+        std::os::unix::net::UnixStream::connect(&path).map_err(|e| match e.kind() {
+            ErrorKind::NotFound | ErrorKind::ConnectionRefused => {
+                format!("the vault in {} is not running", dir.display())
+            }
+            ErrorKind::PermissionDenied => format!(
+                "{}: {e}. Only the user that runs the vault can ask it for its ticket",
+                path.display()
+            ),
+            _ => at(e),
+        })?;
+    let mut ticket = String::new();
+    stream.read_to_string(&mut ticket).map_err(at)?;
+    if ticket.is_empty() {
+        return Err("the vault has no ticket yet. Try again in a moment".to_string());
+    }
+    Ok(ticket)
 }
 
 #[cfg(not(unix))]
-fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
-    std::fs::write(path, bytes)
+pub(crate) fn request_ticket(_dir: &Path) -> Result<String, String> {
+    Err("the vault hands out its ticket over a Unix socket, so it runs on Unix only".into())
+}
+
+/// Hand the latest ticket to each process that connects, until `stop`.
+/// Logs only that it handed one out.
+#[cfg(unix)]
+fn serve_tickets(
+    listener: &std::os::unix::net::UnixListener,
+    ticket: &Mutex<Option<String>>,
+    stop: &AtomicBool,
+) {
+    use std::io::Write;
+    for stream in listener.incoming() {
+        if stop.load(Ordering::Relaxed) {
+            return;
+        }
+        // A request before the first ticket gets none, and the requester
+        // reports that.
+        let (Ok(mut stream), Some(ticket)) = (stream, lock(ticket).clone()) else {
+            continue;
+        };
+        match stream.write_all(ticket.as_bytes()) {
+            Ok(()) => info!("issued a link ticket"),
+            Err(e) => warn!("failed to issue a link ticket: {e}"),
+        }
+    }
+}
+
+/// Connect to the ticket socket at `path`, so that its listener wakes.
+/// Returns whether that worked.
+#[cfg(unix)]
+fn wake(path: &Path) -> bool {
+    std::os::unix::net::UnixStream::connect(path).is_ok()
+}
+
+#[cfg(not(unix))]
+fn wake(_path: &Path) -> bool {
+    false
+}
+
+/// Delete the ticket file that gantz 0.5 wrote, so that no ticket stays on
+/// disk.
+pub(crate) fn remove_old_ticket(dir: &Path) -> Result<(), String> {
+    let path = dir.join(OLD_TICKET_FILE);
+    let removed = remove_if_present(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    if removed {
+        info!(
+            "deleted {}. `gantz vault ticket` prints the ticket",
+            path.display()
+        );
+    }
+    Ok(())
+}
+
+/// Remove the file at `path`, if there is one. Returns whether there was.
+fn remove_if_present(path: &Path) -> std::io::Result<bool> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(true),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
+/// Lock `mutex`, even if a thread panicked while it held the lock.
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 /// Set a path's permission bits.

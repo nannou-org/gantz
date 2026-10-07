@@ -183,11 +183,16 @@ pub struct VaultArgs {
 pub enum VaultCommand {
     /// Serve the vault until interrupted.
     ///
-    /// Prints the ticket that links a device. A device pairs on its first
-    /// link, then links again on every start. The vault keeps every graph
-    /// with its whole history, and writes each change to disk before the
-    /// device hears it was accepted.
+    /// `gantz vault ticket` prints the ticket that links a device. A device
+    /// pairs on its first link, then links again on every start. The vault
+    /// keeps every graph with its whole history, and writes each change to
+    /// disk before the device hears it was accepted.
     Serve(ServeArgs),
+    /// Print the ticket that links a device, from the running vault.
+    ///
+    /// Only the user that runs the vault can ask for it. The vault logs that
+    /// it issued a ticket, but never the ticket itself.
+    Ticket(DirArgs),
     /// List the paired devices.
     Devices(DirArgs),
     /// Unpair a device and rotate the pairing secret, so the old ticket no
@@ -391,12 +396,40 @@ fn init_logs(command: &Command) {
         .with_target(false)
         .with_ansi(std::io::stderr().is_terminal())
         .with_writer(std::io::stderr);
-    // A vault serves for days, so its lines carry the time.
-    let _ = match command {
+    // A vault serves for days, so its lines carry the time, unless the
+    // journal stamps them already.
+    let timed = match command {
         #[cfg(feature = "collab")]
-        Command::Vault(_) => logs.try_init(),
-        _ => logs.without_time().try_init(),
+        Command::Vault(_) => !stderr_is_journal(),
+        _ => false,
     };
+    let _ = if timed {
+        logs.try_init()
+    } else {
+        logs.without_time().try_init()
+    };
+}
+
+/// Whether stderr is a stream to the systemd journal. systemd names that
+/// stream in `JOURNAL_STREAM` as `device:inode`.
+#[cfg(all(feature = "collab", unix))]
+fn stderr_is_journal() -> bool {
+    use std::os::fd::AsFd;
+    use std::os::unix::fs::MetadataExt;
+    let Ok(stream) = std::env::var("JOURNAL_STREAM") else {
+        return false;
+    };
+    let Ok(fd) = std::io::stderr().as_fd().try_clone_to_owned() else {
+        return false;
+    };
+    std::fs::File::from(fd)
+        .metadata()
+        .is_ok_and(|meta| stream == format!("{}:{}", meta.dev(), meta.ino()))
+}
+
+#[cfg(all(feature = "collab", not(unix)))]
+fn stderr_is_journal() -> bool {
+    false
 }
 
 /// Read the base sources unless omitted, then the deps, then the target

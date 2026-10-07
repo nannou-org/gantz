@@ -1,4 +1,4 @@
-use crate::vault::{CONFIG_KEY, Dir, Vault};
+use crate::vault::{CONFIG_KEY, Dir, TicketServer, Vault, remove_old_ticket, request_ticket};
 use bevy_pkv::PkvStore;
 use gantz_ca as ca;
 use gantz_collab::identity;
@@ -135,8 +135,8 @@ fn devices_sync_through_a_vault_that_survives_a_restart() {
         .port();
     let mut vault = Vault::open(&dir, "gantz vault", local(), Some(port)).unwrap();
     let (mut a, mut b) = (Device::new(), Device::new());
-    step_until(&mut vault, &mut [], |v, _| v.ticket.is_some());
-    let ticket = vault.ticket.clone().unwrap();
+    step_until(&mut vault, &mut [], |_, _| request_ticket(&dir).is_ok());
+    let ticket = request_ticket(&dir).unwrap();
     assert!(Dir::open(&dir).is_err(), "a running vault holds its lock");
 
     // A graph made before pairing reaches the vault, then the other device.
@@ -213,6 +213,44 @@ fn an_unreadable_config_is_refused_untouched() {
     assert_eq!(read_store(&dir, CONFIG_KEY).as_deref(), Some("(id:"));
     assert_eq!(read_store(&dir, identity::KEY), None);
     assert_eq!(read_store(&dir, "store-meta"), None);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+// Only the owner can connect, nothing is handed out before the first ticket,
+// and a request gets the latest one. A stale socket is replaced, and a
+// stopped server leaves no socket behind.
+#[cfg(unix)]
+#[test]
+fn the_ticket_socket_hands_its_owner_the_latest_ticket() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = temp_dir("ticket");
+    let socket = dir.join("ticket.sock");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(&socket, "stale").unwrap();
+    let tickets = TicketServer::start(&dir).unwrap();
+    let mode = std::fs::metadata(&socket).unwrap().permissions().mode();
+    assert_eq!(mode & 0o777, 0o600);
+    let error = request_ticket(&dir).unwrap_err();
+    assert!(error.contains("no ticket yet"), "{error}");
+    tickets.set("first".to_string());
+    tickets.set("second".to_string());
+    assert_eq!(request_ticket(&dir).unwrap(), "second");
+    drop(tickets);
+    assert!(!socket.exists());
+    let error = request_ticket(&dir).unwrap_err();
+    assert!(error.contains("not running"), "{error}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
+// A ticket file that gantz 0.5 wrote is deleted, so no ticket stays on disk.
+#[test]
+fn an_old_ticket_file_is_deleted() {
+    let dir = temp_dir("old-ticket");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("ticket"), "gantzvault").unwrap();
+    remove_old_ticket(&dir).unwrap();
+    assert!(!dir.join("ticket").exists());
+    remove_old_ticket(&dir).unwrap();
     std::fs::remove_dir_all(&dir).unwrap();
 }
 
