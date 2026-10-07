@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0](https://github.com/nannou-org/gantz/compare/gantz_collab-v0.4.0...gantz_collab-v0.5.0) - 2026-10-07
+
+### Added
+
+- [**breaking**] log the devices that a vault refuses
+
 ## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_collab-v0.3.1...gantz_collab-v0.4.0) - 2026-10-03
 
 ### Added

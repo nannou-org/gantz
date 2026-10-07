@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.9.0...gantz_egui-v0.10.0) - 2026-10-07
+
+### Added
+
+- flag graphs that a newer gantz synced here
+- *(bevy_gantz_collab)* [**breaking**] link the app to a vault
+- *(gantz_egui)* add the vault settings
+
+### Fixed
+
+- *(gantz_egui)* keep the vault buttons in reach in a narrow pane
+
 ## [0.9.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.8.0...gantz_egui-v0.9.0) - 2026-10-03
 
 ### Added
