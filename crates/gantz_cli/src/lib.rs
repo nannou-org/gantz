@@ -391,12 +391,40 @@ fn init_logs(command: &Command) {
         .with_target(false)
         .with_ansi(std::io::stderr().is_terminal())
         .with_writer(std::io::stderr);
-    // A vault serves for days, so its lines carry the time.
-    let _ = match command {
+    // A vault serves for days, so its lines carry the time, unless the
+    // journal stamps them already.
+    let timed = match command {
         #[cfg(feature = "collab")]
-        Command::Vault(_) => logs.try_init(),
-        _ => logs.without_time().try_init(),
+        Command::Vault(_) => !stderr_is_journal(),
+        _ => false,
     };
+    let _ = if timed {
+        logs.try_init()
+    } else {
+        logs.without_time().try_init()
+    };
+}
+
+/// Whether stderr is a stream to the systemd journal. systemd names that
+/// stream in `JOURNAL_STREAM` as `device:inode`.
+#[cfg(all(feature = "collab", unix))]
+fn stderr_is_journal() -> bool {
+    use std::os::fd::AsFd;
+    use std::os::unix::fs::MetadataExt;
+    let Ok(stream) = std::env::var("JOURNAL_STREAM") else {
+        return false;
+    };
+    let Ok(fd) = std::io::stderr().as_fd().try_clone_to_owned() else {
+        return false;
+    };
+    std::fs::File::from(fd)
+        .metadata()
+        .is_ok_and(|meta| stream == format!("{}:{}", meta.dev(), meta.ino()))
+}
+
+#[cfg(all(feature = "collab", not(unix)))]
+fn stderr_is_journal() -> bool {
+    false
 }
 
 /// Read the base sources unless omitted, then the deps, then the target

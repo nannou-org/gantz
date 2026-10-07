@@ -31,6 +31,10 @@
     machine.succeed("iptables -S nixos-fw | grep -q -- '-p udp .*--dport 7447'")
     machine.fail("journalctl -u gantz-vault | grep -q 'Failed to read the system.s DNS config'")
 
+    with subtest("the journal stamps the lines, so the vault does not"):
+        machine.succeed("journalctl -u gantz-vault -o cat | grep -q '^ *INFO gantz '")
+        machine.fail("journalctl -u gantz-vault -o cat | grep -qE '^[0-9]{4}-'")
+
     with subtest("the vault holds its directory while it serves"):
         out = machine.fail("gantz-vault devices 2>&1")
         assert "in use" in out, out
