@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.9.0...bevy_gantz_egui-v0.10.0) - 2026-10-07
+
+### Added
+
+- *(bevy_gantz_collab)* [**breaking**] link the app to a vault
+
 ## [0.9.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.8.0...bevy_gantz_egui-v0.9.0) - 2026-10-03
 
 ### Added

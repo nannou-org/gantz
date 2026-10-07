@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_collab-v0.3.0...bevy_gantz_collab-v0.4.0) - 2026-10-07
+
+### Added
+
+- flag graphs that a newer gantz synced here
+- *(bevy_gantz_collab)* [**breaking**] link the app to a vault
+- *(gantz_egui)* add the vault settings
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_collab-v0.2.1...bevy_gantz_collab-v0.3.0) - 2026-10-03
 
 ### Added
