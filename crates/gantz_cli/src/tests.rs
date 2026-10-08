@@ -4,6 +4,7 @@ use gantz_egui::base::BaseSource;
 mod cli;
 #[cfg(feature = "collab")]
 mod join;
+mod logs;
 #[cfg(feature = "collab")]
 mod mirror;
 #[cfg(feature = "collab")]
