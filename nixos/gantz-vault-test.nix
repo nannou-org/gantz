@@ -1,6 +1,6 @@
 # The vault service offline: it starts, reads the DNS config, hands its ticket
 # to its own user alone and never logs it, holds its directory while it
-# serves, stops cleanly and keeps its identity.
+# serves, stops cleanly, keeps its identity and logs what its filter allows.
 { module }:
 {
   name = "gantz-vault";
@@ -16,6 +16,14 @@
     users.users.alice.isNormalUser = true;
   };
 
+  nodes.quiet = {
+    imports = [ module ];
+    services.gantz-vault = {
+      enable = true;
+      logFilter = "warn";
+    };
+  };
+
   testScript = ''
     import re
 
@@ -23,6 +31,7 @@
         log = machine.succeed("journalctl -u gantz-vault")
         return re.findall(r"vault (\w+) in /var/lib/gantz-vault", log)
 
+    start_all()
     machine.wait_for_unit("gantz-vault.service")
     machine.wait_until_succeeds("ss -Huln sport = :7447 | grep -q .")
     machine.succeed("test \"$(stat -c '%U %a' /var/lib/gantz-vault)\" = 'gantz-vault 700'")
@@ -69,5 +78,12 @@
         assert first == second, (first, second)
         machine.wait_until_succeeds("test ! -e /var/lib/gantz-vault/ticket")
         machine.succeed("journalctl -u gantz-vault | grep -q 'deleted /var/lib/gantz-vault/ticket'")
+
+    with subtest("the log filter decides what the vault logs"):
+        quiet.wait_for_unit("gantz-vault.service")
+        quiet.wait_until_succeeds("gantz-vault ticket")
+        env = quiet.succeed("systemctl show -P Environment gantz-vault")
+        assert "RUST_LOG=warn" in env, env
+        quiet.fail("journalctl -u gantz-vault -o cat | grep -q INFO")
   '';
 }
