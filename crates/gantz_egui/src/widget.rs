@@ -1,4 +1,5 @@
 //! A collection of useful widgets for gantz.
+use std::collections::VecDeque;
 use time::{OffsetDateTime, UtcOffset, format_description};
 
 pub use checkbox_enabled::CheckboxEnabled;
@@ -155,23 +156,30 @@ pub(crate) fn message_galley(
     painter.layout_job(job)
 }
 
-/// Group consecutive slice elements that `eq` considers equal into runs.
-/// Returns `(index_of_first, count)` pairs in order.
-///
-/// The log and trace views use this to collapse repeated entries into a
-/// single row with an occurrence count.
-pub(crate) fn group_runs<T>(items: &[T], eq: impl Fn(&T, &T) -> bool) -> Vec<(usize, usize)> {
-    let mut runs: Vec<(usize, usize)> = Vec::new();
-    for (i, item) in items.iter().enumerate() {
-        if let Some((first, count)) = runs.last_mut() {
-            if eq(&items[*first], item) {
-                *count += 1;
-                continue;
-            }
-        }
-        runs.push((i, 1));
+/// A captured log or trace entry that can collapse consecutive duplicates
+/// into a single item.
+pub(crate) trait RunEntry: Sized {
+    /// Whether `other` continues this entry's run of duplicates.
+    fn continues(&self, other: &Self) -> bool;
+
+    /// Merge `other`, which continues this entry's run.
+    fn merge(&mut self, other: Self);
+}
+
+/// Push `entry` onto the back of `entries`, merging it into the consecutive
+/// run of duplicates at the back. The oldest entries are evicted while the
+/// queue exceeds `max_entries`.
+pub(crate) fn push_entry<T: RunEntry>(entries: &mut VecDeque<T>, max_entries: usize, entry: T) {
+    if let Some(last) = entries.back_mut()
+        && last.continues(&entry)
+    {
+        last.merge(entry);
+        return;
     }
-    runs
+    entries.push_back(entry);
+    while entries.len() > max_entries {
+        entries.pop_front();
+    }
 }
 
 /// Simple shorthand for viewing steel code without highlights.
@@ -195,26 +203,76 @@ pub fn section<R>(
 
 #[cfg(test)]
 mod tests {
-    use super::group_runs;
+    use super::{RunEntry, push_entry};
+    use std::collections::VecDeque;
+
+    #[derive(Clone, Debug, PartialEq)]
+    struct Entry {
+        message: &'static str,
+        count: usize,
+    }
+
+    impl RunEntry for Entry {
+        fn continues(&self, other: &Self) -> bool {
+            self.message == other.message
+        }
+
+        fn merge(&mut self, other: Self) {
+            self.count += other.count;
+        }
+    }
+
+    fn entry(message: &'static str) -> Entry {
+        Entry { message, count: 1 }
+    }
 
     #[test]
-    fn group_runs_collapses_only_consecutive_equal_items() {
-        let cases: [(&str, &[char], Vec<(usize, usize)>); 3] = [
-            // The trailing `a` items form a separate run from the leading ones.
-            (
-                "mixed runs",
-                &['a', 'a', 'a', 'b', 'a', 'a'],
-                vec![(0, 3), (3, 1), (4, 2)],
-            ),
-            ("empty", &[], vec![]),
-            (
-                "all distinct",
-                &['a', 'b', 'c'],
-                vec![(0, 1), (1, 1), (2, 1)],
-            ),
-        ];
-        for (case, items, expected) in cases {
-            assert_eq!(group_runs(items, |x, y| x == y), expected, "{case}");
+    fn push_entry_merges_only_consecutive_duplicates() {
+        let mut entries = VecDeque::new();
+        push_entry(&mut entries, 1000, entry("a"));
+        push_entry(&mut entries, 1000, entry("a"));
+        push_entry(&mut entries, 1000, entry("b"));
+        push_entry(&mut entries, 1000, entry("a"));
+        let entries: Vec<_> = entries.into_iter().collect();
+        assert_eq!(
+            entries,
+            vec![
+                Entry {
+                    message: "a",
+                    count: 2,
+                },
+                Entry {
+                    message: "b",
+                    count: 1,
+                },
+                Entry {
+                    message: "a",
+                    count: 1,
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn push_entry_merges_duplicates_without_evicting() {
+        let mut entries = VecDeque::new();
+        push_entry(&mut entries, 2, entry("first"));
+        for _ in 0..100 {
+            push_entry(&mut entries, 2, entry("repeated"));
         }
+        let entries: Vec<_> = entries.into_iter().collect();
+        assert_eq!(
+            entries,
+            vec![
+                Entry {
+                    message: "first",
+                    count: 1,
+                },
+                Entry {
+                    message: "repeated",
+                    count: 100,
+                },
+            ]
+        );
     }
 }
