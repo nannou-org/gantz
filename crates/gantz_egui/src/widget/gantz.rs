@@ -1839,10 +1839,11 @@ where
                 }
             }
 
-            // Floating hamburger over the bottom-left corner of the graph
-            // scene that opens and closes the sidebar.
-            let space = ui.style().interaction.interact_radius * 3.0;
-            let anchor = rect.left_bottom() + egui::vec2(space, -space);
+            // Floating hamburger over the top-left corner of the graph
+            // scene, just below the graph tabs, that opens and closes the
+            // sidebar.
+            let margin = scene_overlay_margin(ui.style());
+            let anchor = rect.left_top() + egui::vec2(margin, margin + GRAPH_TAB_BAR_HEIGHT);
             sidebar_toggle(ui.ctx(), anchor, &mut state.view_toggles.sidebar_open);
         }
         Pane::Graphs => {
@@ -2323,6 +2324,10 @@ where
 
     fn gap_width(&self, _style: &egui::Style) -> f32 {
         self.state.style.separator.width
+    }
+
+    fn tab_bar_height(&self, _style: &egui::Style) -> f32 {
+        GRAPH_TAB_BAR_HEIGHT
     }
 
     fn tab_outline_stroke(
@@ -4007,19 +4012,28 @@ fn pane_ui<R>(ui: &mut egui::Ui, pane: impl FnOnce(&mut egui::Ui) -> R) -> egui:
     egui::CentralPanel::default().show_inside(ui, |ui| pane(ui))
 }
 
-/// The size of the floating sidebar toggle glyph. It also offsets the
-/// nested-graph breadcrumb to its right, since they share the scene's
-/// bottom-left corner.
+/// The margin between the scene's edges and its floating overlays, e.g. the
+/// sidebar toggle and the nested-graph breadcrumb.
+fn scene_overlay_margin(style: &egui::Style) -> f32 {
+    style.interaction.interact_radius * 2.0
+}
+
+/// The height of the tab strip above the graph scene. It pins the
+/// `egui_tiles` default so the floating sidebar toggle can clear the graph
+/// tabs when anchored to the scene's top-left corner.
+const GRAPH_TAB_BAR_HEIGHT: f32 = 24.0;
+
+/// The size of the floating sidebar toggle glyph.
 const SIDEBAR_TOGGLE_ICON_SIZE: f32 = 18.0;
 
 /// A floating hamburger button that toggles the sidebar.
 ///
-/// Anchored to the given bottom-left position over the graph scene, so it
-/// tracks the scene's corner rather than the whole window.
+/// Anchored to the given top-left position over the graph scene, so it tracks
+/// the scene's corner rather than the whole window.
 fn sidebar_toggle(ctx: &egui::Context, anchor_pos: egui::Pos2, open: &mut bool) {
     let id = egui::Id::new("gantz-sidebar-toggle");
     egui::Area::new(id)
-        .pivot(egui::Align2::LEFT_BOTTOM)
+        .pivot(egui::Align2::LEFT_TOP)
         .fixed_pos(anchor_pos)
         .order(egui::Order::Foreground)
         .show(ctx, |ui| {
@@ -4186,13 +4200,12 @@ fn name_breadcrumb(
     }
     let segs: Vec<&str> = name.segments().iter().map(|s| s.as_str()).collect();
     let sep_str = gantz_ca::name::SEP.to_string();
-    let space = ui.style().interaction.interact_radius * 3.0;
-    // Sit to the right of the floating sidebar toggle, which occupies the very
-    // bottom-left corner of the scene, so the levels stay on the bottom row.
-    let toggle_w = SIDEBAR_TOGGLE_ICON_SIZE + ui.style().spacing.item_spacing.x;
+    // Own the scene's bottom-left corner. The sidebar toggle moved to the
+    // scene's top-left, so nothing else occupies this corner.
+    let margin = scene_overlay_margin(ui.style());
     egui::Window::new("breadcrumb_window")
         .pivot(egui::Align2::LEFT_BOTTOM)
-        .fixed_pos(scene_rect.left_bottom() + egui::vec2(space + toggle_w, -space))
+        .fixed_pos(scene_rect.left_bottom() + egui::vec2(margin, -margin))
         .title_bar(false)
         .resizable(false)
         .collapsible(false)
