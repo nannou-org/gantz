@@ -316,6 +316,11 @@ struct Target<'a> {
     graph: &'a gantz_core::node::graph::Graph<gantz_egui::node::DynNode>,
 }
 
+/// The log filter unless `RUST_LOG` sets one. Warnings from every crate show.
+/// iroh's network reports are the exception. They run every few seconds and
+/// warn about routine NAT behaviour each time, so only their errors show.
+const DEFAULT_LOG_FILTER: &str = "warn,gantz_cli=info,iroh::net_report=error";
+
 impl Ready {
     fn env(&self) -> gantz_egui::Env<'_> {
         headless::env(
@@ -386,11 +391,11 @@ pub fn run(command: Command, conf: &Conf) -> i32 {
 ///
 /// Library warnings, such as an unrecognised form a rewrite would drop,
 /// must reach the user. Libraries log through `log` and `tracing`, and the
-/// subscriber bridges both. `RUST_LOG` overrides the default. A host that
-/// installed its own subscriber keeps it.
+/// subscriber bridges both. `RUST_LOG` overrides [`DEFAULT_LOG_FILTER`]. A
+/// host that installed its own subscriber keeps it.
 fn init_logs(command: &Command) {
     let filter = tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn,gantz_cli=info"));
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new(DEFAULT_LOG_FILTER));
     let logs = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_target(false)

@@ -113,6 +113,18 @@ in
       '';
     };
 
+    logFilter = mkOption {
+      type = types.nullOr types.str;
+      default = null;
+      example = "info,iroh::net_report=warn";
+      description = ''
+        What the vault logs, in the `RUST_LOG` form: a level such as `debug`,
+        or levels per module. `null` uses the default of gantz, which logs
+        the events of the vault and the warnings of the libraries that it
+        uses.
+      '';
+    };
+
     user = mkOption {
       type = types.str;
       default = "gantz-vault";
@@ -155,6 +167,7 @@ in
       description = "gantz vault";
       wantedBy = [ "multi-user.target" ];
       after = [ "network.target" ];
+      environment.RUST_LOG = mkIf (cfg.logFilter != null) cfg.logFilter;
       serviceConfig = hardening // {
         ExecStart = utils.escapeSystemdExecArgs (
           [
