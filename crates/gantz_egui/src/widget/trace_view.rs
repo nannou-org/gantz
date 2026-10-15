@@ -34,6 +34,8 @@ pub struct TraceEntry {
     pub message: String,
     pub target: String,
     pub timestamp: SystemTime,
+    /// The number of consecutive occurrences of this entry.
+    pub count: usize,
 }
 
 #[derive(Clone)]
@@ -100,11 +102,18 @@ impl TraceCapture {
 
     fn add_entry(&self, entry: TraceEntry) {
         let mut entries = self.entries.lock().unwrap();
-        entries.push_back(entry);
+        crate::widget::push_entry(&mut entries, self.max_entries, entry);
+    }
+}
 
-        while entries.len() > self.max_entries {
-            entries.pop_front();
-        }
+impl crate::widget::RunEntry for TraceEntry {
+    fn continues(&self, other: &Self) -> bool {
+        self.level == other.level && self.message == other.message && self.target == other.target
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.count += other.count;
+        self.timestamp = other.timestamp;
     }
 }
 
@@ -181,13 +190,8 @@ impl TraceView {
             });
         }
 
+        // Show the newest entries first.
         entries.reverse();
-
-        // Collapse runs of consecutive entries that differ only by their
-        // timestamp into a single row, carrying an occurrence count.
-        let runs = crate::widget::group_runs(&entries, |a, b| {
-            a.level == b.level && a.message == b.message && a.target == b.target
-        });
 
         // The Time, Level and Target columns are optional. Message is always
         // the trailing remainder column.
@@ -236,10 +240,9 @@ impl TraceView {
                 // its height and is rendered as-is.
                 let msg_w = body.widths().last().copied().unwrap_or(0.0);
                 let font = egui::TextStyle::Body.resolve(body.ui_mut().style());
-                let rows: Vec<_> = runs
+                let rows: Vec<_> = entries
                     .iter()
-                    .map(|&(idx, count)| {
-                        let entry = &entries[idx];
+                    .map(|entry| {
                         let color =
                             text_color.lerp_to_gamma(egui::Color32::WHITE, entry.freshness());
                         let painter = body.ui_mut().painter();
@@ -248,7 +251,7 @@ impl TraceView {
                             &font,
                             msg_w,
                             color,
-                            count,
+                            entry.count,
                             &entry.message,
                         );
                         (color, galley)
@@ -256,10 +259,10 @@ impl TraceView {
                     .collect();
                 let heights = rows.iter().map(|(_, galley)| galley.size().y.max(row_h));
                 body.heterogeneous_rows(heights, |mut row| {
-                    let (idx, count) = runs[row.index()];
                     let (text_color, galley) = &rows[row.index()];
                     let text_color = *text_color;
-                    let entry = &entries[idx];
+                    let entry = &entries[row.index()];
+                    let count = entry.count;
 
                     if show_time {
                         row.col(|ui| {
@@ -343,6 +346,7 @@ where
             message: visitor.message,
             target: metadata.target().to_string(),
             timestamp: SystemTime::now(),
+            count: 1,
         };
 
         self.capture.add_entry(entry);
@@ -366,5 +370,55 @@ impl tracing::field::Visit for MessageVisitor {
             }
             self.message.push_str(value);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(message: &str) -> TraceEntry {
+        TraceEntry {
+            level: Level::INFO,
+            message: message.to_string(),
+            target: "test".to_string(),
+            timestamp: SystemTime::now(),
+            count: 1,
+        }
+    }
+
+    #[test]
+    fn merges_consecutive_duplicates_into_one_entry() {
+        let capture = TraceCapture::new(1000);
+        capture.add_entry(entry("a"));
+        capture.add_entry(entry("a"));
+        capture.add_entry(entry("b"));
+        capture.add_entry(entry("a"));
+        let entries: Vec<_> = capture
+            .get_entries()
+            .iter()
+            .map(|e| (e.message.clone(), e.count))
+            .collect();
+        assert_eq!(
+            entries,
+            [
+                ("a".to_string(), 2),
+                ("b".to_string(), 1),
+                ("a".to_string(), 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn duplicates_do_not_consume_the_message_window() {
+        let capture = TraceCapture::new(2);
+        capture.add_entry(entry("first"));
+        for _ in 0..100 {
+            capture.add_entry(entry("repeated"));
+        }
+        let entries = capture.get_entries();
+        let messages: Vec<_> = entries.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(messages, ["first", "repeated"]);
+        assert_eq!(entries[1].count, 100);
     }
 }

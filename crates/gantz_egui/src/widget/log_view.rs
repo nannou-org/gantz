@@ -44,6 +44,8 @@ pub struct LogEntry {
     pub message: String,
     pub target: String,
     pub timestamp: SystemTime,
+    /// The number of consecutive occurrences of this entry.
+    pub count: usize,
 }
 
 impl LogEntry {
@@ -60,6 +62,17 @@ impl LogEntry {
             return (1.0 - duration.as_secs_f32()).powf(3.0);
         }
         0.0
+    }
+}
+
+impl crate::widget::RunEntry for LogEntry {
+    fn continues(&self, other: &Self) -> bool {
+        self.level == other.level && self.message == other.message && self.target == other.target
+    }
+
+    fn merge(&mut self, other: Self) {
+        self.count += other.count;
+        self.timestamp = other.timestamp;
     }
 }
 
@@ -105,14 +118,11 @@ impl log::Log for Logger {
             message: record.args().to_string(),
             target: record.target().to_string(),
             timestamp: SystemTime::now(),
+            count: 1,
         };
 
         let mut entries = self.entries.lock().unwrap();
-        entries.push_back(entry);
-
-        while entries.len() > self.max_entries {
-            entries.pop_front();
-        }
+        crate::widget::push_entry(&mut entries, self.max_entries, entry);
     }
 
     fn flush(&self) {}
@@ -210,13 +220,8 @@ impl<'a> LogView<'a> {
             });
         }
 
+        // Show the newest entries first.
         entries.reverse();
-
-        // Collapse runs of consecutive entries that differ only by their
-        // timestamp into a single row, carrying an occurrence count.
-        let runs = crate::widget::group_runs(&entries, |a, b| {
-            a.level == b.level && a.message == b.message && a.target == b.target
-        });
 
         // The Time, Level and Target columns are optional. Message is always
         // the trailing remainder column.
@@ -265,10 +270,9 @@ impl<'a> LogView<'a> {
                 // its height and is rendered as-is.
                 let msg_w = body.widths().last().copied().unwrap_or(0.0);
                 let font = egui::TextStyle::Body.resolve(body.ui_mut().style());
-                let rows: Vec<_> = runs
+                let rows: Vec<_> = entries
                     .iter()
-                    .map(|&(idx, count)| {
-                        let entry = &entries[idx];
+                    .map(|entry| {
                         let color =
                             text_color.lerp_to_gamma(egui::Color32::WHITE, entry.freshness());
                         let painter = body.ui_mut().painter();
@@ -277,7 +281,7 @@ impl<'a> LogView<'a> {
                             &font,
                             msg_w,
                             color,
-                            count,
+                            entry.count,
                             &entry.message,
                         );
                         (color, galley)
@@ -285,10 +289,10 @@ impl<'a> LogView<'a> {
                     .collect();
                 let heights = rows.iter().map(|(_, galley)| galley.size().y.max(row_h));
                 body.heterogeneous_rows(heights, |mut row| {
-                    let (idx, count) = runs[row.index()];
                     let (text_color, galley) = &rows[row.index()];
                     let text_color = *text_color;
-                    let entry = &entries[idx];
+                    let entry = &entries[row.index()];
+                    let count = entry.count;
 
                     if show_time {
                         row.col(|ui| {
@@ -357,5 +361,56 @@ impl<'a> LogView<'a> {
         ui.memory_mut(|mem| mem.data.insert_temp(state_id, state));
 
         response
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn log_message(logger: &Logger, message: &str) {
+        log::Log::log(
+            logger,
+            &log::Record::builder()
+                .args(format_args!("{message}"))
+                .level(Level::Info)
+                .target("test")
+                .build(),
+        );
+    }
+
+    #[test]
+    fn merges_consecutive_duplicates_into_one_entry() {
+        let logger = Logger::new(1000);
+        log_message(&logger, "a");
+        log_message(&logger, "a");
+        log_message(&logger, "b");
+        log_message(&logger, "a");
+        let entries: Vec<_> = logger
+            .get_entries()
+            .iter()
+            .map(|e| (e.message.clone(), e.count))
+            .collect();
+        assert_eq!(
+            entries,
+            [
+                ("a".to_string(), 2),
+                ("b".to_string(), 1),
+                ("a".to_string(), 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn duplicates_do_not_consume_the_message_window() {
+        let logger = Logger::new(2);
+        log_message(&logger, "first");
+        for _ in 0..100 {
+            log_message(&logger, "repeated");
+        }
+        let entries = logger.get_entries();
+        let messages: Vec<_> = entries.iter().map(|e| e.message.as_str()).collect();
+        assert_eq!(messages, ["first", "repeated"]);
+        assert_eq!(entries[1].count, 100);
     }
 }
