@@ -5,6 +5,8 @@ on:
     branches:
       - master
   pull_request:
+  merge_group:
+    types: [checks_requested]
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -59,6 +61,17 @@ jobs:
           key: ${{ matrix.cache }}
           save-if: ${{ github.ref == 'refs/heads/master' }}
       - run: nix ${{ matrix.command }}
+
+  # The one check that the master ruleset and the merge queue require. A
+  # required check must match its name exactly, and the matrix job names are
+  # long and truncated.
+  ci:
+    needs: nix
+    if: always()
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - run: test "${{ needs.nix.result }}" = success
 
   upload-pr-preview-artifact:
     needs: nix
