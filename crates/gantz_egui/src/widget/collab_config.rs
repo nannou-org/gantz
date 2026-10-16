@@ -221,33 +221,29 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> Responses {
             // browser peers. Empty means iroh's default n0 public relays.
             ui.label("relay");
             let relay_id = ui.id().with("collab_relay");
-            let mut relay = ui
-                .data(|d| d.get_temp::<String>(relay_id))
-                .unwrap_or_else(|| config.custom_relay.clone().unwrap_or_default());
+            let current = config.custom_relay.clone().unwrap_or_default();
             ui.horizontal(|ui| {
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut relay)
+                let edit = super::buffered_edit(ui, relay_id, &current, |relay| {
+                    egui::TextEdit::singleline(relay)
                         .hint_text("n0 public relays (default)")
-                        .desired_width((control_w - 48.0).max(48.0)),
-                );
-                resp.on_hover_text(
+                        .desired_width((control_w - 48.0).max(48.0))
+                });
+                edit.response.on_hover_text(
                     "a custom relay server URL (e.g. a self-hosted iroh-relay). \
                      Replaces n0's public infrastructure entirely: peers \
                      connect via invite tickets and the relay, with no \
                      third-party address lookup. Applies when the app \
                      restarts",
                 );
-                if ui
+                let reset = ui
                     .button("reset")
                     .on_hover_text("use the default (n0 public) relays")
-                    .clicked()
-                {
-                    relay.clear();
+                    .clicked();
+                if let Some(relay) = reset.then(String::new).or(edit.committed) {
+                    let trimmed = relay.trim();
+                    config.custom_relay = (!trimmed.is_empty()).then(|| trimmed.to_string());
                 }
-                let trimmed = relay.trim();
-                config.custom_relay = (!trimmed.is_empty()).then(|| trimmed.to_string());
             });
-            ui.data_mut(|d| d.insert_temp(relay_id, relay));
             ui.end_row();
 
             // Live relay status once the collab runtime is up. It shows who

@@ -2,6 +2,7 @@
 use std::collections::VecDeque;
 use time::{OffsetDateTime, UtcOffset, format_description};
 
+pub use buffered_edit::{BufferedEditResponse, buffered_edit};
 pub use checkbox_enabled::CheckboxEnabled;
 pub use collab_config::{CollabSettings, CollabSettingsTab, collab_config};
 pub use edge_style::{EdgeStyle, EdgeStyleCtx, EdgeStyling};
@@ -33,6 +34,7 @@ pub use steel_view::SteelView;
 pub use style_config::{StyleConfigResponse, style_config};
 pub use tab::{Tab, TabResponse};
 
+pub mod buffered_edit;
 pub mod checkbox_enabled;
 pub mod collab_config;
 pub mod edge_style;
