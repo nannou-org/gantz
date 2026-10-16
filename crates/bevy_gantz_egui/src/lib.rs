@@ -8,7 +8,6 @@
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
-use bevy_gantz::CompileConfig;
 use bevy_gantz::Registry;
 use bevy_gantz::head;
 use gantz_ca as ca;
@@ -46,7 +45,7 @@ pub use edit::{
 };
 use graphs::{on_new_graph, on_remove_name, on_set_demo, on_set_description};
 pub(crate) use gui::handle_gantz_response;
-pub use gui::update;
+pub use gui::{GantzInputs, update};
 pub use history::{on_redo, on_undo};
 use hooks::on_eval_entry_complete;
 pub use hooks::{

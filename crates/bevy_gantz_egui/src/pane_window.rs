@@ -17,11 +17,10 @@
 //! Native only. On web the widget draws popped-out panes as in-canvas
 //! `egui::Window`s instead.
 
+use crate::gui::{GantzInputs, show_gantz};
 use crate::{
-    BaseImmutable, BaseNames, BuiltinNodes, CompileConfig, EdgeStyles, ExtPanes, GraphCache,
-    GuiState, HeadAccess, HostNativePaneWindows, NodeCodecRes, OpenHeadViews, PerfGui, PerfVm,
-    RefExtUis, Registry, ResponseDispatchers, SettingsTabs, TraceCapture, WindowedPanesRequested,
-    env, handle_gantz_response, head,
+    GuiState, HeadAccess, HostNativePaneWindows, OpenHeadViews, ResponseDispatchers,
+    WindowedPanesRequested, handle_gantz_response, head,
 };
 use bevy_app::prelude::*;
 use bevy_camera::{Camera2d, RenderTarget};
@@ -139,55 +138,17 @@ fn reconcile_windowed_panes(
 
 /// Render every pop-out pane into its window's single-pass egui context.
 ///
-/// Reuses the same head access, registry construction, widget inputs, and
-/// response handling as [`crate::update`], so a windowed pane behaves like a
-/// docked one.
-#[allow(clippy::too_many_arguments)]
+/// Uses the same widget inputs and response handling as [`crate::update`],
+/// so a windowed pane behaves like a docked one.
 fn render_windowed_panes(
     mut popouts: Query<(&mut EguiContext, &PopoutView), Without<EguiMultipassSchedule>>,
-    trace_capture: Res<TraceCapture>,
-    mut perf_vms: Query<&mut PerfVm>,
-    mut perf_gui: ResMut<PerfGui>,
-    mut registry: ResMut<Registry>,
-    mut cache: ResMut<GraphCache>,
-    builtins: Res<BuiltinNodes>,
-    codec: Res<NodeCodecRes>,
     mut gui_state: ResMut<GuiState>,
     mut vms: NonSendMut<head::HeadVms>,
     tab_order: Res<head::HeadTabOrder>,
     mut focused: ResMut<head::FocusedHead>,
     mut heads_query: Query<OpenHeadViews, With<head::OpenHead>>,
-    (
-        base_names,
-        base_immutable,
-        compile_config,
-        change_validation,
-        mut settings_tabs,
-        mut ext_panes,
-        ref_ext_uis,
-        edge_styles,
-        dispatchers,
-        export_paths,
-        base_sources,
-        base_name_sources,
-        collab_ui,
-        clipboard,
-    ): (
-        Res<BaseNames>,
-        Res<BaseImmutable>,
-        Res<CompileConfig>,
-        Res<bevy_gantz::ValidateCommitted>,
-        ResMut<SettingsTabs>,
-        ResMut<ExtPanes>,
-        Res<RefExtUis>,
-        Res<EdgeStyles>,
-        Res<ResponseDispatchers>,
-        Option<Res<crate::base::ExportPaths>>,
-        Res<crate::base::BaseSources>,
-        Res<crate::base::BaseNameSources>,
-        Option<Res<crate::CollabUi>>,
-        Option<ResMut<bevy_egui::EguiClipboard>>,
-    ),
+    mut inputs: GantzInputs,
+    dispatchers: Res<ResponseDispatchers>,
     mut cmds: Commands,
 ) {
     // Collect each window's context and pane up front. The context is a cheap
@@ -216,92 +177,35 @@ fn render_windowed_panes(
         })
         .collect();
 
-    let level = bevy_log::tracing_subscriber::filter::LevelFilter::current();
-
-    // The base source names, for the graph config pane's source dropdown.
-    let source_names: Vec<&str> = base_sources.0.iter().map(|s| s.name).collect();
-
-    // Clipboard reader for widget paste affordances, as in `update`.
-    let clipboard = clipboard.map(std::cell::RefCell::new);
-    let read_clipboard = || {
-        clipboard
-            .as_ref()
-            .and_then(|c| c.borrow_mut().get_text())
-            .filter(|t| !t.is_empty())
-    };
-
     for (ctx, mut pane) in targets {
+        // A background `Ui` spanning the window, as `update` builds for the
+        // primary context.
+        let panel_id = egui::Id::new((ctx.viewport_id(), "gantz-windowed-pane-panel"));
+        let mut panel_ui = egui::Ui::new(
+            ctx.clone(),
+            panel_id,
+            egui::UiBuilder::new()
+                .layer_id(egui::LayerId::background())
+                .max_rect(ctx.content_rect()),
+        );
+        panel_ui.set_clip_rect(ctx.content_rect());
+
         // Render the pane into a `CentralPanel` filling the window, using the
-        // regular pane frame. Scoped so the registry and query borrows release
-        // before `handle_gantz_response`. The settings-tab view list is
-        // rebuilt per window. Each iteration's borrow of the boxes ends with
-        // it, as in `update`, where it is built inside the panel closure.
+        // regular pane frame. Scoped so the query borrows release before
+        // `handle_gantz_response`.
         let mut response = {
-            let node_reg = env(&registry, &cache, &builtins, &codec);
             let mut access = HeadAccess::new(&tab_order, &mut heads_query, &mut vms);
-            let mut perf_vm = (**focused).and_then(|e| perf_vms.get_mut(e).ok());
-            let mut tabs: Vec<&mut dyn gantz_egui::widget::SettingsTab> = settings_tabs
-                .0
-                .iter_mut()
-                .map(|t| &mut **t as &mut dyn gantz_egui::widget::SettingsTab)
-                .collect();
-            let mut panes: Vec<&mut dyn gantz_egui::widget::ExtPane> = ext_panes
-                .0
-                .iter_mut()
-                .map(|p| &mut **p as &mut dyn gantz_egui::widget::ExtPane)
-                .collect();
-            let exts: Vec<&dyn gantz_egui::node::RefExtUi> = ref_ext_uis
-                .0
-                .iter()
-                .map(|e| &**e as &dyn gantz_egui::node::RefExtUi)
-                .collect();
-            let stylers: Vec<&dyn gantz_egui::widget::EdgeStyle> = edge_styles
-                .0
-                .iter()
-                .map(|s| &**s as &dyn gantz_egui::widget::EdgeStyle)
-                .collect();
-            let mut widget = gantz_egui::widget::Gantz::new(&node_reg, &base_names.0)
-                .base_immutable(base_immutable.0)
-                .compile_config(compile_config.0)
-                .validate_change_tracking(change_validation.0)
-                .trace_capture(trace_capture.0.clone(), level)
-                .perf_captures(perf_vm.as_deref_mut().map(|p| &mut p.0), &mut perf_gui.0)
-                .settings_tabs(&mut tabs)
-                .ext_panes(&mut panes)
-                .ref_ext_uis(&exts)
-                .edge_styles(&stylers);
-            // Base-source authoring context, as in `update`.
-            if let Some(paths) = &export_paths {
-                widget = widget.base_sources(gantz_egui::widget::BaseSourcesCtx {
-                    sources: &source_names,
-                    name_sources: &base_name_sources.0,
-                    default_source: paths.default_source,
-                });
-            }
-            if let Some(collab_ui) = collab_ui.as_ref() {
-                widget = widget.collab(&collab_ui.0);
-            }
-            widget = widget.clipboard(&read_clipboard);
-
-            // A background `Ui` spanning the window, as `update` builds for the
-            // primary context.
-            let panel_id = egui::Id::new((ctx.viewport_id(), "gantz-windowed-pane-panel"));
-            let mut panel_ui = egui::Ui::new(
-                ctx.clone(),
-                panel_id,
-                egui::UiBuilder::new()
-                    .layer_id(egui::LayerId::background())
-                    .max_rect(ctx.content_rect()),
-            );
-            panel_ui.set_clip_rect(ctx.content_rect());
-
             egui::CentralPanel::default()
                 .show_inside(&mut panel_ui, |ui| {
-                    widget.render_windowed_pane(
-                        &mut gui_state.0,
+                    let state = &mut gui_state.0;
+                    let pane = Some(&mut pane);
+                    show_gantz(
+                        &mut inputs,
+                        **focused,
+                        state,
                         focused_ix,
                         &mut access,
-                        &mut pane,
+                        pane,
                         ui,
                     )
                 })
@@ -313,9 +217,9 @@ fn render_windowed_panes(
             &tab_order,
             &mut focused,
             &mut heads_query,
-            &mut registry,
-            &mut cache,
-            &codec,
+            &mut inputs.registry,
+            &mut inputs.cache,
+            &inputs.codec,
             &head_to_entity,
             &dispatchers,
             &mut cmds,
