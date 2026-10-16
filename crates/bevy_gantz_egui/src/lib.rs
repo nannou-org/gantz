@@ -270,12 +270,9 @@ impl Plugin for GantzEguiPlugin {
                         .in_set(bevy_gantz::EntrypointSet),
                     persist_camera_and_seed.in_set(ViewPersistSet),
                     // On layout settle, fork a layout-only commit. Runs after
-                    // `VmSet` so a graph edit commits first with its baseline
-                    // seeded, and after the camera and seed pass so the head's
-                    // baseline exists.
+                    // the camera and seed pass so the head's baseline exists.
                     settle_layout
                         .in_set(ViewPersistSet)
-                        .after(bevy_gantz::VmSet)
                         .after(persist_camera_and_seed)
                         .run_if(on_message::<bevy_gantz::debounced_input::DebouncedInputEvent>),
                     poll_import_task,
@@ -304,19 +301,13 @@ fn clear_ui_providers(
     audio_heads.0.clear();
 }
 
-/// Per-head GUI state component.
-///
-/// Wraps `gantz_egui::widget::gantz::OpenHeadState` for each open head entity.
-#[derive(Component, Default)]
-pub struct HeadGuiState(pub gantz_egui::widget::gantz::OpenHeadState);
-
-/// Views for a single head's graphs, keyed by subgraph path.
+/// The live view of a head's graph, its camera and node layout.
 ///
 /// Requires the rest of the per-head GUI state so every spawn path gets all
 /// of it. App-side session restore bypasses the [`on_head_opened`] observer.
 /// The `OpenHeadViews` query silently skips entities missing any of them.
 #[derive(Component, Default, Clone)]
-#[require(HeadGuiState, HeadNodeInstances, PerfVm)]
+#[require(HeadNodeInstances, PerfVm)]
 pub struct GraphView(pub gantz_egui::SceneView);
 
 /// Per-head cache of reified node instances for the working graph.
@@ -443,19 +434,6 @@ pub struct EdgeStyles(pub Vec<Box<dyn gantz_egui::widget::EdgeStyle + Send + Syn
 /// toggle. Same contract as [`SettingsTabs`].
 #[derive(Default, Resource)]
 pub struct AudioHeads(pub HashSet<ca::Head>);
-
-impl Deref for HeadGuiState {
-    type Target = gantz_egui::widget::gantz::OpenHeadState;
-    fn deref(&self) -> &Self::Target {
-        &self.0
-    }
-}
-
-impl DerefMut for HeadGuiState {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.0
-    }
-}
 
 impl Deref for GuiState {
     type Target = gantz_egui::widget::GantzState;

@@ -173,8 +173,9 @@ pub struct BranchedHeadEvent {
     pub new_head: ca::Head,
 }
 
-/// Emitted when `vm::sync` detects a graph change and commits a head's working
-/// graph to the registry. Apps can observe this to update UI state.
+/// Emitted when a head's working graph is committed to the registry, by
+/// [`crate::vm::commit_working_graph`] or by a merge. Apps can observe this to
+/// update UI state.
 #[derive(Event)]
 pub struct CommittedEvent {
     pub entity: Entity,
@@ -372,7 +373,7 @@ pub fn on_open(
 
     // `OpenHead`'s required components cover the compile outcome. `vm::sync`
     // initializes the VM on the next `Update`. The `GantzEguiPlugin` observer
-    // adds `HeadGuiState` and `GraphViews`.
+    // adds the per-head GUI components.
     let entity = cmds
         .spawn((OpenHead, HeadRef(new_head.clone()), WorkingGraph(graph)))
         .id();

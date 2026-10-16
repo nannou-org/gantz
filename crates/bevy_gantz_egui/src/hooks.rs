@@ -1,8 +1,8 @@
 //! Observers that keep the GUI state in step with head events.
 
 use crate::{
-    GraphCache, GraphView, GuiState, HeadGuiState, HeadNodeInstances, NodeCodecRes, PerfVm,
-    ResyncRefsEvent, refresh_cache,
+    GraphCache, GraphView, GuiState, HeadNodeInstances, NodeCodecRes, PerfVm, ResyncRefsEvent,
+    refresh_cache,
 };
 use bevy_ecs::prelude::*;
 use bevy_egui::EguiContexts;
@@ -42,7 +42,6 @@ pub fn on_head_opened(
         .unwrap_or_default();
 
     cmds.entity(event.entity)
-        .insert(HeadGuiState::default())
         .insert(GraphView(head_view))
         .insert(HeadNodeInstances::default());
 }
@@ -109,7 +108,6 @@ pub fn on_head_changed(
     }
 
     cmds.entity(event.entity)
-        .insert(HeadGuiState::default())
         .insert(GraphView(head_view))
         .insert(HeadNodeInstances::default());
 }
