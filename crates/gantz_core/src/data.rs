@@ -21,8 +21,11 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 /// An append-only cache of reified registry graphs, keyed by graph address.
 ///
 /// Content addressing makes entries immutable. An address names exactly one
-/// graph forever, so the cache never invalidates. [`ReifiedGraphs::retain_live`]
-/// may drop entries to bound memory after a prune.
+/// graph forever, so the cache never invalidates. For the same reason a graph
+/// that fails to reify into the cache's node set fails for good, so
+/// [`ReifiedGraphs::ensure_all_with`] records it and does not retry it.
+/// [`ReifiedGraphs::retain_live`] may drop entries to bound memory after a
+/// prune.
 ///
 /// Intended use is two-phase. First [`ReifiedGraphs::ensure`] everything a
 /// pass can reach, which requires `&mut self`. Then serve the whole pass
@@ -31,6 +34,8 @@ use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 #[derive(Debug)]
 pub struct ReifiedGraphs<N> {
     graphs: HashMap<GraphAddr, Graph<N>>,
+    /// Graphs that failed to reify. See [`ReifiedGraphs::ensure_all_with`].
+    failed: HashSet<GraphAddr>,
 }
 
 /// Failure to erase a node. Its serde did not produce a `type`-tagged map, so
@@ -96,6 +101,7 @@ impl<N> ReifiedGraphs<N> {
     pub fn new() -> Self {
         Self {
             graphs: HashMap::new(),
+            failed: HashSet::new(),
         }
     }
 
@@ -112,6 +118,7 @@ impl<N> ReifiedGraphs<N> {
     /// Drop entries outside the given live set to bound memory after a prune.
     pub fn retain_live(&mut self, live: &gantz_ca::LiveSet) {
         self.graphs.retain(|addr, _| live.graphs.contains(addr));
+        self.failed.retain(|addr| live.graphs.contains(addr));
     }
 }
 
@@ -152,10 +159,10 @@ impl<N> ReifiedGraphs<N> {
     /// Reify every graph in the registry's column, best effort, decoding each
     /// node weight through `reify_node`.
     ///
-    /// Graphs that fail to reify are skipped and reported. An unknown tag
-    /// from a domain not compiled in is one example. They remain cache
+    /// Graphs that fail to reify are skipped and reported once. An unknown
+    /// tag from a domain not compiled in is one example. They remain cache
     /// misses, and lookups degrade over them the same way as over any
-    /// missing node.
+    /// missing node. Later calls do not retry them.
     pub fn ensure_all_with(
         &mut self,
         reg: &Registry,
@@ -163,17 +170,20 @@ impl<N> ReifiedGraphs<N> {
     ) -> Vec<EnsureError> {
         let mut errs = vec![];
         for (addr, dg) in reg.graphs() {
-            if self.graphs.contains_key(addr) {
+            if self.graphs.contains_key(addr) || self.failed.contains(addr) {
                 continue;
             }
             match reify_with(dg, &reify_node) {
                 Ok(g) => {
                     self.graphs.insert(*addr, g);
                 }
-                Err(source) => errs.push(EnsureError {
-                    graph: *addr,
-                    source,
-                }),
+                Err(source) => {
+                    self.failed.insert(*addr);
+                    errs.push(EnsureError {
+                        graph: *addr,
+                        source,
+                    });
+                }
             }
         }
         errs
@@ -722,5 +732,35 @@ mod tests {
         };
         assert_eq!(lost, ["style.glow"]);
         assert_eq!(node_data, before);
+    }
+
+    /// A graph that fails to reify is reported once, then not retried.
+    #[test]
+    fn ensure_all_with_reports_a_failed_graph_once() {
+        let mut reg = Registry::default();
+        for nd in [
+            erase_node(&num(1)).unwrap(),
+            NodeData::new("Bad", Datum::Map(vec![])),
+        ] {
+            let mut dg = DataGraph::default();
+            dg.add_node(nd);
+            let addr = gantz_ca::graph_addr(&dg);
+            reg.commit_graph(std::time::Duration::ZERO, None, addr, || dg);
+        }
+        let bad_attempts = std::cell::Cell::new(0);
+        let reify = |nd: &NodeData| match nd.tag.as_str() {
+            "Bad" => {
+                bad_attempts.set(bad_attempts.get() + 1);
+                let source = serde::de::Error::custom("unknown node type");
+                let tag = nd.tag.clone();
+                Err(ReifyNodeError { tag, source })
+            }
+            _ => Ok(nd.tag.clone()),
+        };
+        let mut reified = ReifiedGraphs::new();
+        assert_eq!(reified.ensure_all_with(&reg, reify).len(), 1);
+        assert_eq!(reified.ensure_all_with(&reg, reify).len(), 0);
+        assert_eq!(bad_attempts.get(), 1);
+        assert_eq!(reified.graphs.len(), 1);
     }
 }
