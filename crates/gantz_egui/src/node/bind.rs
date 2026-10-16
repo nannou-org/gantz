@@ -107,10 +107,7 @@ impl NodeUi for Bind {
                         .unwrap_or_else(|| format!("{ix} (?)")),
                     path => path_text(path),
                 };
-                // Every node in the inspector pane shares one child ui id, so
-                // the popup id must carry the node path or all bind combos
-                // open and close each other.
-                egui::ComboBox::from_id_salt(("bind-target", ctx.path()))
+                egui::ComboBox::from_id_salt("bind-target")
                     .selected_text(selected)
                     .show_ui(ui, |ui| {
                         for (ix, name) in &targets {

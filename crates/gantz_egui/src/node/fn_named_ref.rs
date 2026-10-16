@@ -86,10 +86,9 @@ impl NodeUi for FnNamedRef {
             });
             row.col(|ui| {
                 let registry = ctx.env();
-                let salt = format!("λ-node-select-{:?}", ctx.path());
                 let names = registry.fn_node_names();
                 let current = self.0.name().to_string();
-                egui::ComboBox::from_id_salt(salt)
+                egui::ComboBox::from_id_salt("node-select")
                     .selected_text(&current)
                     .show_ui(ui, |ui| {
                         for name in names.iter() {
