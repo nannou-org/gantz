@@ -503,7 +503,7 @@ fn merge_select(
                 // Conflicts offer an explicit opt-in that applies the selected
                 // resolutions. Blockers do not.
                 let preview = preview.expect("`!clean` requires a preview");
-                let warn = crate::node::named_ref::outdated_color();
+                let warn = crate::node::outdated_color();
                 ui.horizontal(|ui| {
                     let text = egui::RichText::new(format!("{} !", candidate.name)).color(warn);
                     ui.add_enabled(false, egui::Button::selectable(false, text))
@@ -515,7 +515,7 @@ fn merge_select(
                             }
                             for blocker in &preview.blockers {
                                 ui.colored_label(
-                                    crate::node::named_ref::missing_color(),
+                                    crate::node::missing_color(),
                                     format!("\u{2715} {blocker}"),
                                 );
                             }

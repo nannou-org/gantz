@@ -37,7 +37,7 @@ pub fn on_head_opened(
 
     let head_view = registry
         .head_commit_ca(&event.head)
-        .and_then(|ca| gantz_egui::section::view(&registry, &ca))
+        .and_then(|ca| gantz_edit::section::view(&registry, &ca))
         .unwrap_or_default();
 
     cmds.entity(event.entity)
@@ -66,7 +66,7 @@ pub fn on_head_changed(
     // so the commit has a view before any same-frame session announce.
     let stored = event
         .new_commit
-        .and_then(|ca| gantz_egui::section::view(&registry, &ca));
+        .and_then(|ca| gantz_edit::section::view(&registry, &ca));
     let mut head_view = match stored {
         Some(view) => view,
         None => {
@@ -79,14 +79,14 @@ pub fn on_head_changed(
                         .map(|g| g.node_count())
                         .unwrap_or(0);
                     bevy_gantz::vm::navigation_matching(&registry, old, new)
-                        .map(|m| gantz_egui::ops::carry_layout(&live.0, &m, node_count))
+                        .map(|m| gantz_edit::view::carry_layout(&live.0, &m, node_count))
                         .unwrap_or_default()
                 }
                 _ => Default::default(),
             };
             if let Some(new) = event.new_commit {
                 if !carried.layout.is_empty() {
-                    gantz_egui::section::set_view(&mut registry.0, new, &carried);
+                    gantz_edit::section::set_view(&mut registry.0, new, &carried);
                 }
             }
             carried
@@ -153,8 +153,8 @@ pub fn on_branched_head_fork_nested(
     let ts = bevy_gantz::reg::timestamp();
     // Give the fork independent nested children. When the fork renamed a
     // nested graph to a root name, repoint the parent's references to it.
-    let mut moves = gantz_egui::sync::fork_nested(&mut registry, ts, old, new);
-    moves.extend(gantz_egui::sync::promote_nested(
+    let mut moves = gantz_edit::resync::fork_nested(&mut registry, ts, old, new);
+    moves.extend(gantz_edit::resync::promote_nested(
         &mut registry,
         ts,
         old,
@@ -169,7 +169,7 @@ pub fn on_branched_head_fork_nested(
 /// clear its compile memo so `vm::sync` recompiles it. No re-commit is needed,
 /// since the registry already holds this graph.
 pub(crate) fn refresh_moved_heads(
-    moves: &[gantz_egui::sync::Moved],
+    moves: &[gantz_edit::resync::Moved],
     registry: &mut Registry,
     heads: &mut Query<head::OpenHeadData, With<head::OpenHead>>,
 ) {
@@ -177,9 +177,9 @@ pub(crate) fn refresh_moved_heads(
         return;
     }
     for m in moves {
-        if gantz_egui::section::view(registry, &m.new_commit).is_none() {
-            if let Some(gv) = gantz_egui::section::view(registry, &m.old_commit) {
-                gantz_egui::section::set_view(&mut registry.0, m.new_commit, &gv);
+        if gantz_edit::section::view(registry, &m.new_commit).is_none() {
+            if let Some(gv) = gantz_edit::section::view(registry, &m.old_commit) {
+                gantz_edit::section::set_view(&mut registry.0, m.new_commit, &gv);
             }
         }
     }

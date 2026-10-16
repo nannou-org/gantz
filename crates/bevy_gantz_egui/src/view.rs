@@ -31,18 +31,18 @@ pub fn persist_camera_and_seed(
         let Some(commit_addr) = registry.head_commit_ca(&**head_ref) else {
             continue;
         };
-        match gantz_egui::section::view(&registry, &commit_addr) {
+        match gantz_edit::section::view(&registry, &commit_addr) {
             // Layout frozen as the undo baseline. Only the camera tracks live.
             Some(mut view) => {
                 if view.camera != head_view.camera {
                     view.camera = head_view.camera;
-                    gantz_egui::section::set_view(&mut registry.0, commit_addr, &view);
+                    gantz_edit::section::set_view(&mut registry.0, commit_addr, &view);
                 }
             }
             // Seed the baseline once the scene has laid the graph out. Guarding
             // on a non-empty layout avoids capturing an empty pre-layout frame.
             None if !head_view.layout.is_empty() => {
-                gantz_egui::section::set_view(&mut registry.0, commit_addr, head_view);
+                gantz_edit::section::set_view(&mut registry.0, commit_addr, head_view);
             }
             None => {}
         }
@@ -69,7 +69,7 @@ pub fn settle_layout(
 ) {
     for (entity, mut head_ref, head_view) in heads.iter_mut() {
         let old_head = (**head_ref).clone();
-        let Some(new_commit) = gantz_egui::ops::commit_layout(
+        let Some(new_commit) = gantz_edit::view::commit_layout(
             &mut registry,
             bevy_gantz::reg::timestamp(),
             &mut head_ref,
@@ -79,7 +79,7 @@ pub fn settle_layout(
         };
         // Freeze the new commit's layout baseline this frame, before any
         // debounce-gated save/export reads the registry's view section.
-        gantz_egui::section::set_view(&mut registry.0, new_commit, head_view);
+        gantz_edit::section::set_view(&mut registry.0, new_commit, head_view);
         // Clear redo, since a new commit invalidates it, and migrate GUI state.
         let new_head = (**head_ref).clone();
         gui_state.migrate_head(&old_head, &new_head, true);

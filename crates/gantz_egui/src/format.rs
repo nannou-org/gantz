@@ -1,7 +1,7 @@
 //! The GUI layer of the `.gantz` format.
 //!
 //! [`gantz_format`] owns the layout-agnostic registry format. This module
-//! renders the GUI's registry sections from [`crate::section`] as friendly
+//! renders the registry sections from [`gantz_edit::section`] as friendly
 //! forms. The forms are `(descriptions ...)`, `(layout ...)` and
 //! `(demo ...)`. It uses the format's [`sexpr`] toolkit and the resolution
 //! context returned by [`gantz_format::from_str`] and
@@ -24,9 +24,9 @@ pub type NodeLabels = HashMap<Name, HashMap<String, usize>>;
 /// passed as `claimed` to [`gantz_format::to_string`], which then skips their
 /// generic `(section ...)` output.
 const CLAIMED: &[&str] = &[
-    crate::section::DESCRIPTIONS_ID,
-    crate::section::VIEWS_ID,
-    crate::section::DEMOS_ID,
+    gantz_edit::section::DESCRIPTIONS_ID,
+    gantz_edit::section::VIEWS_ID,
+    gantz_edit::section::DEMOS_ID,
 ];
 
 /// The [`gantz_format::Normalize`] implementation backed by a [`NodeCodec`].
@@ -117,7 +117,7 @@ pub fn to_string(registry: &Registry, codec: &NodeCodec) -> Result<String, Forma
     sections.extend(descriptions_text(registry));
 
     // `(layout ...)` per commit that has a stored view, keyed by graph id.
-    for (commit_ca, view) in crate::section::views(registry) {
+    for (commit_ca, view) in gantz_edit::section::views(registry) {
         let Some(commit) = registry.commits().get(&commit_ca) else {
             continue;
         };
@@ -127,7 +127,7 @@ pub fn to_string(registry: &Registry, codec: &NodeCodec) -> Result<String, Forma
     }
 
     // `(demo <name> ...)` per named graph that has a demo, in name order.
-    for (name, demo) in crate::section::demos(registry) {
+    for (name, demo) in gantz_edit::section::demos(registry) {
         sections.push(format!("(demo {} {})", name, sexpr::quote(&demo)));
     }
 
@@ -152,7 +152,7 @@ pub fn to_string_named(registry: &Registry, codec: &NodeCodec) -> Result<String,
     // `(layout ...)` per named graph that has a view, in name order.
     for (_name, commit_ca) in registry.heads() {
         let (Some(view), Some(commit)) = (
-            crate::section::view(registry, &commit_ca),
+            gantz_edit::section::view(registry, &commit_ca),
             registry.commits().get(&commit_ca),
         ) else {
             continue;
@@ -163,7 +163,7 @@ pub fn to_string_named(registry: &Registry, codec: &NodeCodec) -> Result<String,
     }
 
     // `(demo <name> ...)` per named graph that has a demo, in name order.
-    for (name, demo) in crate::section::demos(registry) {
+    for (name, demo) in gantz_edit::section::demos(registry) {
         sections.push(format!("(demo {} {})", name, sexpr::quote(&demo)));
     }
 
@@ -192,7 +192,7 @@ fn apply_descriptions(form: &Form, loaded: &mut Loaded) {
         // Only retain descriptions for names this document actually defines.
         if loaded.names.contains_key(&name) {
             let name: Name = name.parse().expect("infallible");
-            crate::section::set_description(&mut loaded.registry, name, text);
+            gantz_edit::section::set_description(&mut loaded.registry, name, text);
         }
     }
 }
@@ -200,7 +200,7 @@ fn apply_descriptions(form: &Form, loaded: &mut Loaded) {
 /// The `(descriptions ...)` form for the registry's description section, in
 /// name order. `None` when there are no descriptions.
 fn descriptions_text(registry: &Registry) -> Option<String> {
-    let mut entries = crate::section::descriptions(registry).peekable();
+    let mut entries = gantz_edit::section::descriptions(registry).peekable();
     entries.peek()?;
     let mut s = "(descriptions".to_string();
     for (name, text) in entries {
@@ -273,7 +273,7 @@ fn apply_layout(form: &Form, loaded: &mut Loaded) {
     }
 
     let view = gantz_edit::SceneView { camera, layout };
-    crate::section::set_view(&mut loaded.registry, head, &view);
+    gantz_edit::section::set_view(&mut loaded.registry, head, &view);
 }
 
 /// `bare_id` writes the graph id as a bare symbol for the inline-name format,
@@ -333,7 +333,7 @@ fn apply_demo(form: &Form, loaded: &mut Loaded) {
     // Only retain demos for names this document's registry actually defines.
     if loaded.names.contains_key(&name) {
         let name: Name = name.parse().expect("infallible");
-        crate::section::set_demo(&mut loaded.registry, name, demo);
+        gantz_edit::section::set_demo(&mut loaded.registry, name, demo);
     }
 }
 
@@ -368,8 +368,8 @@ mod tests {
         root_g.add_node(named_ref("leaf", leaf_ga));
         let (root_ca, _) = commit_named(&mut reg, Duration::from_secs(2), &root_g, &name("root"));
 
-        crate::section::set_description(&mut reg, name("root"), "the root".to_string());
-        crate::section::set_demo(&mut reg, name("root"), "demo-root".to_string());
+        gantz_edit::section::set_description(&mut reg, name("root"), "the root".to_string());
+        gantz_edit::section::set_demo(&mut reg, name("root"), "demo-root".to_string());
         let view = gantz_edit::SceneView {
             camera: gantz_edit::Camera {
                 center: egui::pos2(3.0, 4.0),
@@ -379,7 +379,7 @@ mod tests {
                 .into_iter()
                 .collect(),
         };
-        crate::section::set_view(&mut reg, root_ca, &view);
+        gantz_edit::section::set_view(&mut reg, root_ca, &view);
 
         (reg, root_ca)
     }
@@ -388,14 +388,14 @@ mod tests {
         assert!(parsed.head(&name("leaf")).is_some());
         let root_ca = parsed.head(&name("root")).expect("root head survives");
         assert_eq!(
-            crate::section::description(parsed, &name("root")).as_deref(),
+            gantz_edit::section::description(parsed, &name("root")).as_deref(),
             Some("the root"),
         );
         assert_eq!(
-            crate::section::demo(parsed, &name("root")).as_deref(),
+            gantz_edit::section::demo(parsed, &name("root")).as_deref(),
             Some("demo-root"),
         );
-        let view = crate::section::view(parsed, &root_ca).expect("view survives");
+        let view = gantz_edit::section::view(parsed, &root_ca).expect("view survives");
         assert_eq!(
             view.layout.get(&gantz_edit::NodeId(0)).copied(),
             Some(egui::pos2(10.0, 20.0)),

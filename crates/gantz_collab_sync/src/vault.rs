@@ -547,7 +547,7 @@ fn aside(
     // metadata for the name wins.
     cx.registry.set_head(aside.clone(), local);
     move_meta(cx.registry, name, &aside);
-    gantz_egui::sync::fork_nested(cx.registry, now(), name, &aside);
+    gantz_edit::resync::fork_nested(cx.registry, now(), name, &aside);
     for (from, to) in moving {
         move_meta(cx.registry, &from, &to);
         cx.registry.remove_head(&from);

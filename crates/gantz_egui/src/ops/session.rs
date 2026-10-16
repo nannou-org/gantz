@@ -143,7 +143,7 @@ fn copy_view(
     dst: CommitAddr,
     live_camera: Option<gantz_edit::Camera>,
 ) {
-    let Some(mut view) = crate::section::view(registry, &src) else {
+    let Some(mut view) = gantz_edit::section::view(registry, &src) else {
         return;
     };
     if view.layout.is_empty() {
@@ -152,7 +152,7 @@ fn copy_view(
     if let Some(camera) = live_camera {
         view.camera = camera;
     }
-    crate::section::set_view(registry, dst, &view);
+    gantz_edit::section::set_view(registry, dst, &view);
 }
 
 #[cfg(test)]
@@ -213,11 +213,11 @@ mod tests {
             v.layout.insert(NodeId::from_index(0), egui::pos2(x, 0.0));
             v
         };
-        crate::section::set_view(&mut reg, e1, &view(1.0));
-        crate::section::set_view(&mut reg, l, &view(2.0));
-        crate::section::set_view(&mut reg, e2, &view(3.0));
+        gantz_edit::section::set_view(&mut reg, e1, &view(1.0));
+        gantz_edit::section::set_view(&mut reg, l, &view(2.0));
+        gantz_edit::section::set_view(&mut reg, e2, &view(3.0));
         let stored =
-            |reg: &gantz_ca::Registry, ca: CommitAddr| crate::section::view(reg, &ca).unwrap();
+            |reg: &gantz_ca::Registry, ca: CommitAddr| gantz_edit::section::view(reg, &ca).unwrap();
         let mut redo = HashMap::new();
         let mut cursors = HashMap::new();
         let cam = gantz_edit::Camera {

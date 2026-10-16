@@ -110,7 +110,7 @@ pub fn on_sync_remote_tip(trigger: On<ForHead<SyncRemoteTip>>, mut edits: HeadEd
 #[derive(Debug, Default, Event)]
 pub struct ResyncRefsEvent {
     /// Names whose referrers keep their references as they are. See
-    /// [`gantz_egui::sync::resync_except`].
+    /// [`gantz_edit::resync::resync_except`].
     pub skip: BTreeSet<ca::Name>,
 }
 
@@ -142,7 +142,8 @@ pub fn on_resync_refs(
     mut heads: Query<head::OpenHeadData, With<head::OpenHead>>,
 ) {
     let skip = &trigger.event().skip;
-    let moves = gantz_egui::sync::resync_except(&mut registry, bevy_gantz::reg::timestamp(), skip);
+    let moves =
+        gantz_edit::resync::resync_except(&mut registry, bevy_gantz::reg::timestamp(), skip);
     refresh_cache(&registry, &mut cache, &codec.0);
     refresh_moved_heads(&moves, &mut registry, &mut heads);
 }

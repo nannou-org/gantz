@@ -1,19 +1,14 @@
 //! `Fn<NamedRef>` type alias and NodeUi implementation.
 
-use super::{NamedRef, missing_color, outdated_color};
+use super::{missing_color, outdated_color};
 use crate::{
     Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind,
     widget::node_inspector,
 };
+use gantz_edit::NamedRef;
 
 /// A function node wrapping a named reference.
 pub type FnNamedRef = gantz_core::node::Fn<NamedRef>;
-
-// Declared on the wrapped type. The orphan rule forbids implementing
-// `NodeTag` for the foreign `Fn<NamedRef>` here directly.
-impl gantz_core::node::FnNodeTag for NamedRef {
-    const FN_TAG: &'static str = "FnNamedRef";
-}
 
 impl NodeUi for FnNamedRef {
     fn name(&self, _registry: &Env<'_>) -> std::borrow::Cow<'_, str> {
@@ -34,7 +29,7 @@ impl NodeUi for FnNamedRef {
         // Auto-sync when enabled and outdated. A missing target is skipped.
         // This is a silent mutation that changes the node's CA.
         let mut changed = false;
-        if self.0.sync && is_outdated {
+        if self.0.sync() && is_outdated {
             if let Some(ca) = current_ca {
                 let synced = self.0.ref_().retarget(ca);
                 self.0.set_ref(synced);

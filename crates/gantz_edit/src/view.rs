@@ -103,6 +103,128 @@ pub fn remap(
     })
 }
 
+/// The fallback position for the `i`th node a view migration could not map.
+/// Cascades down-right from the camera `center` so unplaced nodes stay
+/// visible without overlapping.
+pub fn cascade_pos(center: Pos2, i: usize) -> Pos2 {
+    center + emath::vec2(20.0, 20.0) * i as f32
+}
+
+/// Build a view for a navigation target commit that has no stored view.
+/// Carries the live view's node positions forward through the navigation
+/// node-identity `matching` from old index to new index. Keeps the live
+/// camera.
+///
+/// Nodes of the new graph absent from the matching are placed in a cascade
+/// from the camera centre. Nodes merged in from a peer are one example. An
+/// empty live layout, or a matching that carries no positions at all, yields
+/// an empty result. The scene's one-shot auto-layout is the right treatment
+/// for a genuinely layoutless graph such as a join placeholder, not a cascade
+/// of every node.
+pub fn carry_layout(
+    live: &SceneView,
+    matching: &gantz_ca::Matching,
+    new_node_count: usize,
+) -> SceneView {
+    let pairs = matching.iter().map(|(&old, &new)| (old, new));
+    let mut view = SceneView {
+        camera: live.camera,
+        layout: remap(&live.layout, pairs).collect(),
+    };
+    cascade_unplaced(&mut view, new_node_count);
+    view
+}
+
+/// Build a view for a headlessly minted merge commit from the two parent
+/// tips' stored views. Each merged node takes its position from the first
+/// tip's view where it survives there. Otherwise it falls back to the second
+/// tip's view, then to a cascade from the camera centre. This is the same
+/// fallback as `apply_merge_migration`. The first tip is ours and the second
+/// is theirs. The camera comes from whichever side has a view, preferring
+/// the first.
+///
+/// When neither side has a view, or no position carries over at all, the
+/// result is empty. Callers must not store empty-layout views, as an
+/// adopting peer would destructively auto-layout them.
+pub fn merged_view(
+    node_srcs: &[gantz_ca::merge::NodeSrc],
+    first_view: Option<&SceneView>,
+    second_view: Option<&SceneView>,
+) -> SceneView {
+    let camera = first_view
+        .or(second_view)
+        .map(|v| v.camera)
+        .unwrap_or_default();
+    let mut view = SceneView {
+        camera,
+        layout: Default::default(),
+    };
+    // Theirs first, so that ours replaces it where both sides hold the node.
+    let srcs = node_srcs.iter().enumerate();
+    if let Some(v) = second_view {
+        let pairs = srcs.clone().filter_map(|(m, src)| Some((src.theirs?, m)));
+        view.layout.extend(remap(&v.layout, pairs));
+    }
+    if let Some(v) = first_view {
+        let pairs = srcs.filter_map(|(m, src)| Some((src.ours?, m)));
+        view.layout.extend(remap(&v.layout, pairs));
+    }
+    cascade_unplaced(&mut view, node_srcs.len());
+    view
+}
+
+/// Place each of the first `node_count` nodes that `view` has no position for
+/// in a cascade from the camera centre. A view with no positions at all stays
+/// empty.
+fn cascade_unplaced(view: &mut SceneView, node_count: usize) {
+    if view.layout.is_empty() {
+        return;
+    }
+    let unplaced: Vec<NodeId> = (0..node_count)
+        .map(NodeId::from_index)
+        .filter(|id| !view.layout.contains_key(id))
+        .collect();
+    for (i, id) in unplaced.into_iter().enumerate() {
+        view.layout.insert(id, cascade_pos(view.camera.center, i));
+    }
+}
+
+/// Commit the current layout as a new commit on the head's existing graph
+/// when node positions have changed since the head commit's frozen baseline
+/// view. Advances `head` to the new commit.
+///
+/// The graph content is unchanged, so the new commit reuses the head's
+/// [`gantz_ca::GraphAddr`]. The registry dedups the graph and never calls the
+/// `graph` closure passed to [`gantz_ca::Registry::commit_graph_to_head`].
+/// The VM does not need to recompile. Only the `layout` node positions are
+/// compared. The `camera` is excluded, so camera pan and zoom never produce a
+/// layout commit.
+///
+/// Returns the new commit address when a layout commit was created. Returns
+/// `None` when there is no baseline view yet or no node-position change. A
+/// missing baseline means the head commit's view section entry has not been
+/// seeded. Seeding the new commit's view, clearing the redo stack and
+/// migrating GUI state stay with the caller.
+pub fn commit_layout(
+    registry: &mut gantz_ca::Registry,
+    timestamp: gantz_ca::Timestamp,
+    head: &mut gantz_ca::Head,
+    live: &SceneView,
+) -> Option<gantz_ca::CommitAddr> {
+    let head_commit_ca = registry.head_commit_ca(head)?;
+    let baseline = crate::section::view(registry, &head_commit_ca)?;
+    if baseline.layout == live.layout {
+        return None;
+    }
+    let graph_addr = registry.commits().get(&head_commit_ca)?.graph;
+    Some(registry.commit_graph_to_head(
+        timestamp,
+        graph_addr,
+        || unreachable!("layout commit reuses an existing graph"),
+        head,
+    ))
+}
+
 /// Serialise a [`Layout`] with deterministically sorted keys.
 fn serialize_sorted_layout<S: serde::Serializer>(layout: &Layout, s: S) -> Result<S::Ok, S::Error> {
     let sorted: BTreeMap<_, _> = layout.iter().collect();
@@ -181,5 +303,120 @@ mod tests {
             out,
             [(NodeId(0), pos2(2.0, 2.0)), (NodeId(5), pos2(1.0, 1.0))]
         );
+    }
+
+    // carry_layout maps live positions through the navigation matching, keeps
+    // the camera, and cascades unmapped new nodes from the camera centre.
+    #[test]
+    fn carry_layout_remaps_and_places_new_nodes() {
+        let mut live = SceneView::default();
+        live.camera.center = pos2(100.0, 50.0);
+        live.layout.insert(NodeId::from_index(0), pos2(1.0, 1.0));
+        live.layout.insert(NodeId::from_index(1), pos2(2.0, 2.0));
+        live.layout.insert(NodeId::from_index(2), pos2(3.0, 3.0));
+
+        // A swap-style remap. Live node 0 moves to 1 and live node 2 moves to
+        // 0. Live node 1 was removed. The new graph has an extra node at index
+        // 2 with no provenance.
+        let matching: gantz_ca::Matching = [(0, 1), (2, 0)].into_iter().collect();
+        let view = carry_layout(&live, &matching, 3);
+
+        assert_eq!(view.camera, live.camera);
+        assert_eq!(view.layout.len(), 3);
+        assert_eq!(
+            view.layout.get(&NodeId::from_index(1)).copied(),
+            Some(pos2(1.0, 1.0))
+        );
+        assert_eq!(
+            view.layout.get(&NodeId::from_index(0)).copied(),
+            Some(pos2(3.0, 3.0))
+        );
+        // The unmapped new node cascades from the camera centre.
+        assert_eq!(
+            view.layout.get(&NodeId::from_index(2)).copied(),
+            Some(pos2(100.0, 50.0))
+        );
+    }
+
+    // When nothing carries over, the result stays empty rather than cascading
+    // every node from the camera centre. The scene's one-shot auto-layout is
+    // the right treatment for a genuinely layoutless graph.
+    #[test]
+    fn carry_layout_without_carried_positions_yields_empty() {
+        let mut live = SceneView::default();
+        live.layout.insert(NodeId::from_index(5), pos2(1.0, 1.0));
+        let cases = [
+            (
+                "empty live layout",
+                SceneView::default(),
+                [(0, 0)].into_iter().collect(),
+                4,
+            ),
+            (
+                "matching carries no positions",
+                live,
+                gantz_ca::Matching::new(),
+                3,
+            ),
+        ];
+        for (case, live, matching, new_node_count) in cases {
+            let view = carry_layout(&live, &matching, new_node_count);
+            assert!(view.layout.is_empty(), "{case}");
+        }
+    }
+
+    // merged_view sources each merged node's position from the first tip's
+    // view where it survives there, falling back to the second tip's, then
+    // cascading from the camera centre. The camera prefers the first side.
+    #[test]
+    fn merged_view_sources_ours_then_theirs_then_cascade() {
+        let src = |ours: Option<usize>, theirs: Option<usize>| gantz_ca::merge::NodeSrc {
+            base: None,
+            ours,
+            theirs,
+        };
+        let mut first = SceneView::default();
+        first.camera.center = pos2(10.0, 10.0);
+        first.layout.insert(NodeId::from_index(0), pos2(1.0, 0.0));
+        let mut second = SceneView::default();
+        second.layout.insert(NodeId::from_index(0), pos2(2.0, 0.0));
+        second.layout.insert(NodeId::from_index(1), pos2(3.0, 0.0));
+
+        // Merged node 0 exists on both sides, so ours wins. Node 1 is
+        // theirs-only. Node 2 has no stored position anywhere.
+        let srcs = [
+            src(Some(0), Some(0)),
+            src(None, Some(1)),
+            src(Some(9), None),
+        ];
+        let view = merged_view(&srcs, Some(&first), Some(&second));
+
+        assert_eq!(view.camera, first.camera);
+        assert_eq!(
+            view.layout.get(&NodeId::from_index(0)).copied(),
+            Some(pos2(1.0, 0.0))
+        );
+        assert_eq!(
+            view.layout.get(&NodeId::from_index(1)).copied(),
+            Some(pos2(3.0, 0.0))
+        );
+        // The positionless node cascades from the camera centre.
+        assert_eq!(
+            view.layout.get(&NodeId::from_index(2)).copied(),
+            Some(pos2(10.0, 10.0))
+        );
+    }
+
+    // Without a stored view on either side, merged_view yields an empty
+    // layout. Callers must not store empty-layout views.
+    #[test]
+    fn merged_view_no_views_yields_empty() {
+        let srcs = [gantz_ca::merge::NodeSrc {
+            base: None,
+            ours: Some(0),
+            theirs: None,
+        }];
+        let view = merged_view(&srcs, None, None);
+        assert!(view.layout.is_empty());
     }
 }

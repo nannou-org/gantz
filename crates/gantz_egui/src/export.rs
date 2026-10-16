@@ -417,7 +417,7 @@ pub fn copied_to_string(
         camera: gantz_edit::Camera::default(),
         layout: copied.positions.clone(),
     };
-    crate::section::set_view(&mut registry, commit_ca, &view);
+    gantz_edit::section::set_view(&mut registry, commit_ca, &view);
 
     crate::format::to_string(&registry, codec)
 }
@@ -437,7 +437,7 @@ pub fn copied_from_str(text: &str, codec: &NodeCodec) -> Result<Copied, ParseCop
         .commit_graph_ref(&clip_ca)
         .ok_or(ParseCopiedError::NotClipboard)?
         .clone();
-    let positions = crate::section::view(&registry, &clip_ca)
+    let positions = gantz_edit::section::view(&registry, &clip_ca)
         .map(|view| view.layout)
         .unwrap_or_default();
 
@@ -498,30 +498,30 @@ mod tests {
         existing_view
             .layout
             .insert(gantz_edit::NodeId(0), Default::default());
-        crate::section::set_view(&mut registry, ca, &existing_view);
-        crate::section::set_description(&mut registry, name("alpha"), "local".to_string());
-        crate::section::set_demo(&mut registry, name("alpha"), "demo-a".to_string());
+        gantz_edit::section::set_view(&mut registry, ca, &existing_view);
+        gantz_edit::section::set_description(&mut registry, name("alpha"), "local".to_string());
+        gantz_edit::section::set_demo(&mut registry, name("alpha"), "demo-a".to_string());
 
         let mut incoming = test_registry();
-        crate::section::set_view(&mut incoming, ca, &gantz_edit::SceneView::default());
-        crate::section::set_description(&mut incoming, name("alpha"), "imported".to_string());
-        crate::section::set_demo(&mut incoming, name("alpha"), "demo-b".to_string());
-        crate::section::set_description(&mut incoming, name("beta"), "new".to_string());
+        gantz_edit::section::set_view(&mut incoming, ca, &gantz_edit::SceneView::default());
+        gantz_edit::section::set_description(&mut incoming, name("alpha"), "imported".to_string());
+        gantz_edit::section::set_demo(&mut incoming, name("alpha"), "demo-b".to_string());
+        gantz_edit::section::set_description(&mut incoming, name("beta"), "new".to_string());
         registry.merge(incoming);
 
         // The existing view with one layout entry is preserved, not replaced.
-        let view = crate::section::view(&registry, &ca).unwrap();
+        let view = gantz_edit::section::view(&registry, &ca).unwrap();
         assert_eq!(view.layout.len(), 1);
         assert_eq!(
-            crate::section::description(&registry, &name("alpha")).as_deref(),
+            gantz_edit::section::description(&registry, &name("alpha")).as_deref(),
             Some("local"),
         );
         assert_eq!(
-            crate::section::demo(&registry, &name("alpha")).as_deref(),
+            gantz_edit::section::demo(&registry, &name("alpha")).as_deref(),
             Some("demo-a"),
         );
         assert_eq!(
-            crate::section::description(&registry, &name("beta")).as_deref(),
+            gantz_edit::section::description(&registry, &name("beta")).as_deref(),
             Some("new"),
         );
     }
@@ -537,7 +537,7 @@ mod tests {
         let mut leaf_g = TestGraph::default();
         leaf_g.add_node(expr("(+ 1 1)"));
         let (_, leaf_ga) = commit_named(&mut reg, Duration::from_secs(1), &leaf_g, &name("leaf"));
-        crate::section::set_description(&mut reg, name("leaf"), "a leaf".to_string());
+        gantz_edit::section::set_description(&mut reg, name("leaf"), "a leaf".to_string());
 
         // The working graph in data form. A ref to `leaf` plus a plain expr
         // node.
@@ -575,7 +575,7 @@ mod tests {
         assert!(back.registry.graph(&leaf_ga).is_some());
         assert!(back.registry.head(&name("leaf")).is_some());
         assert_eq!(
-            crate::section::description(&back.registry, &name("leaf")).as_deref(),
+            gantz_edit::section::description(&back.registry, &name("leaf")).as_deref(),
             Some("a leaf"),
         );
         assert!(
@@ -618,11 +618,11 @@ mod tests {
         root_g.add_node(named_ref("leaf", leaf_ga));
         let (root_ca, root_ga) =
             commit_named(&mut reg, Duration::from_secs(2), &root_g, &name("root"));
-        crate::section::set_description(&mut reg, name("root"), "the root".to_string());
+        gantz_edit::section::set_description(&mut reg, name("root"), "the root".to_string());
         let mut view = gantz_edit::SceneView::default();
         view.layout
             .insert(gantz_edit::NodeId(0), egui::pos2(5.0, 6.0));
-        crate::section::set_view(&mut reg, root_ca, &view);
+        gantz_edit::section::set_view(&mut reg, root_ca, &view);
 
         let heads = [
             gantz_ca::Head::Branch(name("root")),
@@ -638,10 +638,10 @@ mod tests {
         assert!(fresh.graph(&root_ga).is_some());
         assert_eq!(fresh.head(&name("root")), Some(root_ca));
         assert_eq!(
-            crate::section::description(&fresh, &name("root")).as_deref(),
+            gantz_edit::section::description(&fresh, &name("root")).as_deref(),
             Some("the root"),
         );
-        let view = crate::section::view(&fresh, &root_ca).expect("view survives");
+        let view = gantz_edit::section::view(&fresh, &root_ca).expect("view survives");
         assert_eq!(
             view.layout.get(&gantz_edit::NodeId(0)).copied(),
             Some(egui::pos2(5.0, 6.0)),

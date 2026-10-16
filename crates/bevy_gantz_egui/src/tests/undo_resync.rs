@@ -4,7 +4,8 @@ use bevy_ecs::prelude::*;
 use bevy_gantz::{Registry, head, timestamp};
 use gantz_ca::{DataGraph, GraphAddr, Head, Name};
 use gantz_core::data::erase_node_typed;
-use gantz_egui::node::{Inspect, NamedRef};
+use gantz_edit::NamedRef;
+use gantz_egui::node::Inspect;
 
 /// The graph address that the sole `NamedRef` in `name`'s head graph points
 /// at.
@@ -14,7 +15,7 @@ fn ref_target(app: &bevy_app::App, name: &Name) -> GraphAddr {
         .head_commit(&Head::Branch(name.clone()))
         .expect("head commit");
     let graph = registry.graph(&commit.graph).expect("head graph");
-    let (_, target, _) = gantz_egui::sync::named_refs(graph)
+    let (_, target, _) = gantz_edit::resync::named_refs(graph)
         .next()
         .expect("a named ref");
     target

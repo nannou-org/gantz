@@ -1,35 +1,15 @@
 //! Detecting reference cycles among named graphs.
 //!
-//! Adding a [`NamedRef`] to the graph it lives in would form a reference
-//! cycle. The reference can be direct, or transitive through the referenced
-//! graph's own named references. With `sync` enabled such a cycle recommits
-//! endlessly, since a parent chases its own moving commit. Creation is
-//! refused up-front. This is the live-editor counterpart of `gantz_format`'s
-//! load-time `CycleInRefs` check.
+//! Adding a [`NamedRef`](crate::NamedRef) to the graph it lives in would form
+//! a reference cycle. The reference can be direct, or transitive through the
+//! referenced graph's own named references. With `sync` enabled such a cycle
+//! recommits endlessly, since a parent chases its own moving commit.
+//! Creation is refused up-front. This is the live-editor counterpart of
+//! `gantz_format`'s load-time `CycleInRefs` check.
 
-use crate::node::NamedRef;
-use gantz_ca::{Name, NodeData, Registry};
-use gantz_nodetag::NodeTag;
+use crate::named_ref::named_ref_of;
+use gantz_ca::{Name, Registry};
 use std::collections::HashSet;
-
-/// The [`NamedRef`] stored in `weight`, if it is one.
-///
-/// Tag-gated. Only a weight whose tag is exactly `NamedRef`'s matches. `Fn`
-/// and `FnNamedRef` reference a graph without standing in for it, so they
-/// never match. A tag-matched weight that fails to decode is logged and
-/// treated as no reference.
-pub(crate) fn named_ref_of(weight: &NodeData) -> Option<NamedRef> {
-    if weight.tag != <NamedRef as NodeTag>::TAG {
-        return None;
-    }
-    match gantz_core::data::reify_node_concrete::<NamedRef>(weight) {
-        Ok(named_ref) => Some(named_ref),
-        Err(e) => {
-            log::error!("failed to decode a stored `NamedRef`: {e}");
-            None
-        }
-    }
-}
 
 /// Whether inserting a reference to the graph named `target` into the graph
 /// named `editing` would create a reference cycle.
@@ -67,35 +47,27 @@ pub fn would_cycle(registry: &Registry, target: &Name, editing: &Name) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test_node::{TestGraph, named_ref};
+    use crate::NamedRef;
+    use gantz_ca::{ContentAddr, DataGraph};
 
     fn name(s: &str) -> Name {
         s.parse().unwrap()
     }
 
     /// Commit a graph of `NamedRef`s under `graph_name`, one per referenced
-    /// name.
+    /// name. The walk is by name, so each ref points at a placeholder address.
     fn commit_named_refs(registry: &mut Registry, graph_name: &str, refs: &[&str]) {
-        let mut graph = TestGraph::default();
+        let mut graph = DataGraph::default();
         for &r in refs {
-            // The referenced content address is irrelevant to the name-based
-            // walk. Point each ref at the target name's head graph if known,
-            // else at a placeholder derived from an empty graph.
-            let ga: gantz_ca::GraphAddr = registry
-                .named_commit(&name(r))
-                .map(|c| c.graph)
-                .unwrap_or_else(|| {
-                    gantz_core::data::erase_with_addr(&TestGraph::default())
-                        .unwrap()
-                        .1
-                });
-            graph.add_node(named_ref(r, ga));
+            let ref_ = gantz_core::node::Ref::new(ContentAddr::from([0; 32]));
+            let named_ref = NamedRef::new(name(r), ref_);
+            graph.add_node(gantz_core::data::erase_node_typed(&named_ref).unwrap());
         }
-        let (data_graph, graph_ca) = gantz_core::data::erase_with_addr(&graph).unwrap();
+        let graph_ca = gantz_ca::graph_addr(&graph);
         registry.commit_graph_to_name(
             std::time::Duration::ZERO,
             graph_ca,
-            || data_graph,
+            || graph,
             &name(graph_name),
         );
     }

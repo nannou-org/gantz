@@ -38,7 +38,7 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             gantz_io::MainBang,
             gantz_egui::node::Number,
             gantz_egui::node::FnNamedRef,
-            gantz_egui::node::NamedRef,
+            gantz_edit::NamedRef,
             gantz_egui::node::Bind,
             gantz_egui::node::Comment,
             bevy_gantz_egui::node::LoadBang,

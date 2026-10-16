@@ -57,7 +57,7 @@ pub struct Applied {
     /// Names whose layout alone changed, with their new commit.
     pub layout_only: Vec<(ca::Name, ca::CommitAddr)>,
     /// Referrers that followed.
-    pub moved: Vec<gantz_egui::sync::Moved>,
+    pub moved: Vec<gantz_edit::resync::Moved>,
 }
 
 /// A file's modification time and length.
@@ -254,23 +254,23 @@ pub fn apply_text(
         let Some(graph) = parsed.commit_graph_ref(&parsed_ca) else {
             continue;
         };
-        let view = gantz_egui::section::view(&parsed, &parsed_ca);
+        let view = gantz_edit::section::view(&parsed, &parsed_ca);
         let ga = registry.add_graph(graph.clone());
         let mut head = ca::Head::Branch(name.clone());
         let new = if gantz_egui::reg::head_graph_addr(registry, name) == Some(ga) {
             let current = registry.head(name).expect("the name has a head");
             let layout = view
                 .as_ref()
-                .and_then(|v| gantz_egui::ops::commit_layout(registry, ts, &mut head, v));
+                .and_then(|v| gantz_edit::view::commit_layout(registry, ts, &mut head, v));
             match (layout, &view) {
                 (Some(new), Some(v)) => {
-                    gantz_egui::section::set_view(registry, new, v);
+                    gantz_edit::section::set_view(registry, new, v);
                     applied.layout_only.push((name.clone(), new));
                     new
                 }
                 // No baseline view yet. Seed one so the next edit compares.
-                (None, Some(v)) if gantz_egui::section::view(registry, &current).is_none() => {
-                    gantz_egui::section::seed_view(registry, current, v);
+                (None, Some(v)) if gantz_edit::section::view(registry, &current).is_none() => {
+                    gantz_edit::section::seed_view(registry, current, v);
                     current
                 }
                 _ => current,
@@ -283,7 +283,7 @@ pub fn apply_text(
                 name,
             );
             if let Some(v) = &view {
-                gantz_egui::section::seed_view(registry, new, v);
+                gantz_edit::section::seed_view(registry, new, v);
             }
             applied.committed.push((name.clone(), new));
             new
@@ -319,7 +319,7 @@ fn seed(registry: &ca::Registry, file: &FileState) -> BTreeMap<String, ca::Graph
 /// The non-sync named references across `graphs`, by target name.
 fn pins<'a>(graphs: impl Iterator<Item = &'a ca::DataGraph>) -> BTreeMap<String, ca::GraphAddr> {
     graphs
-        .flat_map(gantz_egui::sync::named_refs)
+        .flat_map(gantz_edit::resync::named_refs)
         .filter(|(_, _, sync)| !sync)
         .map(|(name, ga, _)| (name.to_string(), ga))
         .collect()

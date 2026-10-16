@@ -17,6 +17,7 @@ gantz_ca.workspace = true
 gantz_collab = { workspace = true, optional = true }
 gantz_collab_sync = { workspace = true, optional = true }
 gantz_core.workspace = true
+gantz_edit.workspace = true
 gantz_egui.workspace = true
 gantz_format.workspace = true
 gantz_io.workspace = true

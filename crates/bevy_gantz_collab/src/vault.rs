@@ -373,9 +373,9 @@ mod tests {
 
     #[test]
     fn graphs_synced_with_newer_data_are_named_until_their_head_moves() {
-        let codec = gantz_egui::ui_node_codec! { NodeSet { gantz_egui::node::NamedRef } };
+        let codec = gantz_egui::ui_node_codec! { NodeSet { gantz_edit::NamedRef } };
         let target = gantz_core::node::Ref::new(ca::ContentAddr::from([7; 32]));
-        let named_ref = gantz_egui::node::NamedRef::new(name("riff"), target);
+        let named_ref = gantz_edit::NamedRef::new(name("riff"), target);
         let known = gantz_core::data::erase_node_typed(&named_ref).unwrap();
         // The same node as a newer gantz stores it, with a field this build
         // lacks.

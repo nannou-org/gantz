@@ -42,7 +42,7 @@ fn conf() -> Conf {
                 gantz_io::MainBang,
                 gantz_egui::node::Number,
                 gantz_egui::node::FnNamedRef,
-                gantz_egui::node::NamedRef,
+                gantz_edit::NamedRef,
                 gantz_egui::node::Bind,
                 gantz_egui::node::Comment,
                 gantz_egui::node::Gui,

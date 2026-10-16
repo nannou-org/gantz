@@ -3,12 +3,12 @@
 //! share the VM-state, layout and selection migration through a merge
 //! outcome.
 
-use super::cascade_pos;
 use crate::widget::graph_scene::NodeIndex;
 use gantz_ca::CommitAddr;
 use gantz_ca::DataGraph;
 use gantz_core::node;
 use gantz_edit::NodeId;
+use gantz_edit::view::cascade_pos;
 use steel::steel_vm::engine::Engine;
 
 /// Migrate a head's index-keyed VM state, layout and selection through a
@@ -173,7 +173,7 @@ pub fn merge_head(
     // merged indices. The head's working graph plays the ours side. By the
     // committed-working-graph invariant it is ours' tip graph. Layout for
     // merged-in nodes seeds from the source branch's persisted view.
-    let theirs_view = crate::section::view(registry, &theirs_tip);
+    let theirs_view = gantz_edit::section::view(registry, &theirs_tip);
     let ours_map = apply_merge_migration(
         &outcome.node_srcs,
         gantz_ca::merge::Side::Ours,
@@ -305,7 +305,7 @@ pub fn sync_remote_tip(
     } else {
         (gantz_ca::merge::Side::Theirs, first)
     };
-    let other_view = crate::section::view(registry, &other_tip);
+    let other_view = gantz_edit::section::view(registry, &other_tip);
     let mapping = apply_merge_migration(
         &outcome.node_srcs,
         local_side,

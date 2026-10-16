@@ -12,7 +12,6 @@ use steel::{
 pub mod action;
 pub mod base;
 pub mod collab;
-pub mod cycle;
 pub mod export;
 pub mod format;
 mod impls;
@@ -22,10 +21,8 @@ pub mod node;
 pub mod ops;
 pub mod reg;
 pub mod response;
-pub mod section;
 pub mod style;
 pub mod sugar;
-pub mod sync;
 #[cfg(test)]
 mod test_node;
 pub mod ui_tree;
@@ -316,7 +313,7 @@ pub trait NodeUi: gantz_core::Node + Send + Sync {
     /// The head this node navigates to when entered, if any.
     ///
     /// Returned for nodes that reference a named graph, such as
-    /// [`NamedRef`](crate::node::NamedRef). Double-clicking enters it in place,
+    /// [`NamedRef`](gantz_edit::NamedRef). Double-clicking enters it in place,
     /// and the scene offers an "open in new tab" context-menu action.
     fn nav_head(&self, _env: &Env<'_>) -> Option<gantz_ca::Head> {
         None
@@ -505,8 +502,8 @@ pub struct DropUnknownData {
 ///
 /// Commits a fresh empty graph to the registry under the name `<parent>:<n>`,
 /// where `<parent>` is the emitting head's name. Inserts a synced
-/// [`node::NamedRef`] to it. Behaves like creating any other node, but is
-/// registry-aware.
+/// [`gantz_edit::NamedRef`] to it. Behaves like creating any other node, but
+/// is registry-aware.
 #[derive(Clone, Copy, Debug)]
 pub struct CreateNestedGraph {
     /// Where to place the new node, in graph coordinates. When `None`, the node

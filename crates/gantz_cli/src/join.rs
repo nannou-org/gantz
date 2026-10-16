@@ -211,7 +211,7 @@ impl Peer {
         let Some(branch) = &self.branch else {
             return Ok(());
         };
-        let scope = gantz_egui::sync::session_scope(&self.registry, branch);
+        let scope = gantz_edit::resync::session_scope(&self.registry, branch);
         for path in self.mirror.write_all(&self.registry, &scope)? {
             info!("wrote {}", path.display());
         }

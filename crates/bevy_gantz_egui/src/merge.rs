@@ -8,9 +8,9 @@ use bevy_gantz::head;
 use bevy_log as log;
 use gantz_ca as ca;
 
-/// Seed `commit`'s stored view. See [`gantz_egui::section::seed_view`].
+/// Seed `commit`'s stored view. See [`gantz_edit::section::seed_view`].
 pub fn seed_view(registry: &mut Registry, commit: ca::CommitAddr, view: gantz_edit::SceneView) {
-    gantz_egui::section::seed_view(&mut registry.0, commit, &view);
+    gantz_edit::section::seed_view(&mut registry.0, commit, &view);
 }
 
 /// Finish a locally-minted merge commit. The op has already committed with

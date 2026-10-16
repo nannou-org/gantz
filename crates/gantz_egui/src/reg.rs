@@ -55,7 +55,7 @@ impl Env<'_> {
 
     /// Create a node of the given type name, in its stored data form.
     ///
-    /// Checks registry names first and creates a [`crate::node::NamedRef`]
+    /// Checks registry names first and creates a [`gantz_edit::NamedRef`]
     /// pinning the name's head graph. Then falls back to the builtin's stored
     /// data.
     pub fn create_node(&self, node_type: &str) -> Option<ca::NodeData> {
@@ -63,7 +63,7 @@ impl Env<'_> {
         head_graph_addr(self.registry, &name)
             .and_then(|graph_addr| {
                 let ref_ = gantz_core::node::Ref::new(graph_addr.into());
-                let named = crate::node::NamedRef::new(name.clone(), ref_);
+                let named = gantz_edit::NamedRef::new(name.clone(), ref_);
                 match gantz_core::data::erase_node_typed(&named) {
                     Ok(node_data) => Some(node_data),
                     Err(e) => {
@@ -77,7 +77,7 @@ impl Env<'_> {
 
     /// Returns the current content address for the given name, if it exists.
     ///
-    /// Required by [`crate::node::NamedRef`] to check whether a referenced
+    /// Required by [`gantz_edit::NamedRef`] to check whether a referenced
     /// graph still exists and to display up-to-date status.
     pub fn name_ca(&self, name: &str) -> Option<ca::ContentAddr> {
         let parsed: ca::Name = name.parse().expect("infallible");
@@ -145,25 +145,25 @@ impl Env<'_> {
 
     /// Whether referencing the graph named `target` from the graph named
     /// `editing` would create a reference cycle. See
-    /// [`crate::cycle::would_cycle`].
+    /// [`gantz_edit::cycle::would_cycle`].
     ///
     /// Used by the node palette to hide node types that would form a cycle.
     pub fn would_ref_cycle(&self, target: &str, editing: &str) -> bool {
         let target: ca::Name = target.parse().expect("infallible");
         let editing: ca::Name = editing.parse().expect("infallible");
-        crate::cycle::would_cycle(self.registry, &target, &editing)
+        gantz_edit::cycle::would_cycle(self.registry, &target, &editing)
     }
 
     /// Get the demo graph name associated with the graph of the given name.
     pub fn demo_graph(&self, name: &str) -> Option<String> {
         let parsed: ca::Name = name.parse().expect("infallible");
-        crate::section::demo(self.registry, &parsed)
+        gantz_edit::section::demo(self.registry, &parsed)
     }
 
     /// The [`crate::SocketDoc`] for the given socket of the graph referenced
     /// by `ca`.
     ///
-    /// Lets a referencing node such as [`crate::node::NamedRef`] surface the
+    /// Lets a referencing node such as [`gantz_edit::NamedRef`] surface the
     /// referenced graph's inlet and outlet docs. The referenced graph is
     /// resolved and the relevant `Inlet` or `Outlet` marker's own doc is read.
     /// Docs live on the nodes rather than in side-metadata.
@@ -312,7 +312,7 @@ impl Env<'_> {
         }
         let parsed: ca::Name = name.parse().expect("infallible");
         if self.registry.head(&parsed).is_some() {
-            return crate::section::description(self.registry, &parsed).map(Cow::Owned);
+            return gantz_edit::section::description(self.registry, &parsed).map(Cow::Owned);
         }
         self.builtins
             .content_addr(name)

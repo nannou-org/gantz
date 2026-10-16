@@ -1071,6 +1071,7 @@ dependencies = [
  "gantz_collab",
  "gantz_collab_sync",
  "gantz_core",
+ "gantz_edit",
  "gantz_egui",
  "gantz_format",
  "gantz_store",
@@ -3933,6 +3934,7 @@ dependencies = [
  "gantz_collab",
  "gantz_collab_sync",
  "gantz_core",
+ "gantz_edit",
  "gantz_egui",
  "gantz_format",
  "gantz_io",
@@ -4003,6 +4005,9 @@ version = "0.1.0"
 dependencies = [
  "emath",
  "gantz_ca",
+ "gantz_core",
+ "gantz_nodetag",
+ "log",
  "serde",
 ]
 
@@ -4114,6 +4119,7 @@ dependencies = [
  "egui_plot",
  "gantz_ca",
  "gantz_core",
+ "gantz_edit",
  "gantz_egui",
  "gantz_format",
  "gantz_nodetag",

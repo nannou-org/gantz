@@ -79,7 +79,7 @@ pub fn share(
         role: Role::Host,
     };
     let id = session.id;
-    let scope = gantz_egui::sync::session_scope(registry, branch);
+    let scope = gantz_edit::resync::session_scope(registry, branch);
     let mut state = SessionState::new(session.clone());
     let _ = handle.cmds.try_send(Command::Register(SessionEntry {
         session,
@@ -159,12 +159,12 @@ pub fn leave(sessions: &mut Sessions, handle: &Handle, id: SessionId) {
 pub fn resync_headless(
     registry: &mut ca::Registry,
     now: ca::Timestamp,
-) -> Vec<gantz_egui::sync::Moved> {
-    let moves = gantz_egui::sync::resync(registry, now);
+) -> Vec<gantz_edit::resync::Moved> {
+    let moves = gantz_edit::resync::resync(registry, now);
     for m in &moves {
-        if gantz_egui::section::view(registry, &m.new_commit).is_none() {
-            if let Some(view) = gantz_egui::section::view(registry, &m.old_commit) {
-                gantz_egui::section::set_view(registry, m.new_commit, &view);
+        if gantz_edit::section::view(registry, &m.new_commit).is_none() {
+            if let Some(view) = gantz_edit::section::view(registry, &m.old_commit) {
+                gantz_edit::section::set_view(registry, m.new_commit, &view);
             }
         }
     }

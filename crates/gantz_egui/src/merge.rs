@@ -6,9 +6,9 @@
 //! given merge would do. Both are pure reads, so the config pane can call
 //! them while rendering. The mutating op is [`crate::ops::merge_head`].
 
-use crate::cycle::named_ref_of;
 use gantz_ca as ca;
 use gantz_ca::DataGraph;
+use gantz_edit::named_ref::named_ref_of;
 
 /// A named graph that can be merged into the current head.
 #[derive(Clone, Debug)]
@@ -194,9 +194,9 @@ pub fn conflict_strings(conflicts: &[ca::Conflict]) -> Vec<String> {
 /// Hard blockers preventing a merge of `merged` into `ours` entirely,
 /// regardless of conflict resolution.
 ///
-/// There is one class. A merged-in [`crate::node::NamedRef`] that would form
+/// There is one class. A merged-in [`gantz_edit::NamedRef`] that would form
 /// a reference cycle back to the edited graph. This mirrors the guard in
-/// [`crate::ops::paste`]. See [`crate::cycle`] for why a cycle is refused.
+/// [`crate::ops::paste`]. See [`gantz_edit::cycle`] for why a cycle is refused.
 pub fn merge_blockers(reg: &ca::Registry, ours: &ca::Head, merged: &DataGraph) -> Vec<String> {
     let ca::Head::Branch(editing) = ours else {
         // A detached commit head has no name, so it cannot be a cycle target.
@@ -205,7 +205,7 @@ pub fn merge_blockers(reg: &ca::Registry, ours: &ca::Head, merged: &DataGraph) -
     merged
         .node_weights()
         .filter_map(named_ref_of)
-        .filter(|nr| crate::cycle::would_cycle(reg, nr.name(), editing))
+        .filter(|nr| gantz_edit::cycle::would_cycle(reg, nr.name(), editing))
         .map(|nr| format!("'{}' would create a reference cycle", nr.name()))
         .collect()
 }

@@ -607,11 +607,11 @@ fn a_refused_push_is_recorded_until_the_name_syncs() {
 /// Set `n`'s description on device `d`. An empty text clears it.
 fn describe(net: &mut Net, d: usize, n: &str, text: &str) {
     let registry = &mut net.devices[d].registry;
-    gantz_egui::section::set_description(registry, name(n), text.to_string());
+    gantz_edit::section::set_description(registry, name(n), text.to_string());
 }
 
 fn description(net: &Net, d: usize, n: &ca::Name) -> Option<String> {
-    gantz_egui::section::description(&net.devices[d].registry, n)
+    gantz_edit::section::description(&net.devices[d].registry, n)
 }
 
 #[test]
@@ -684,7 +684,7 @@ fn serve_push_refuses_stale_and_foreign_metadata() {
     let jam = name("jam");
     vault.set_head(jam.clone(), root);
     let mut device = vault.clone();
-    gantz_egui::section::set_description(&mut device, jam.clone(), "a jam".to_string());
+    gantz_edit::section::set_description(&mut device, jam.clone(), "a jam".to_string());
     let meta_push = |base, entries| Push {
         name: jam.clone(),
         tip: Some(root),
@@ -771,7 +771,7 @@ fn metadata_a_device_cannot_store_exactly_is_held() {
     // Device 1 already holds the description section with other semantics.
     let other = ca::Value::Datum(ca::Datum::Str("other".to_string()));
     net.devices[1].registry.set_section_value(
-        gantz_egui::section::DESCRIPTIONS_ID,
+        gantz_edit::section::DESCRIPTIONS_ID,
         ca::MergePolicy::Replace,
         ca::Liveness::Pinned,
         ca::Key::Name(name("other")),

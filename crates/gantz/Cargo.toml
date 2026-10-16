@@ -22,6 +22,7 @@ gantz_base.workspace = true
 gantz_ca.workspace = true
 gantz_collab = { workspace = true, optional = true }
 gantz_core.workspace = true
+gantz_edit.workspace = true
 gantz_egui.workspace = true
 gantz_format.workspace = true
 gantz_io.workspace = true
@@ -39,9 +40,6 @@ web-time.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 clap.workspace = true
 gantz_cli.workspace = true
-
-[dev-dependencies]
-gantz_edit.workspace = true
 
 [features]
 # cpal's AudioWorklet backend on the web - audio on a dedicated Web Audio thread, off the

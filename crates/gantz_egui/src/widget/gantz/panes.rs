@@ -151,7 +151,7 @@ where
             // The graph's current description. Only named graphs have one.
             let current_description = match &head {
                 gantz_ca::Head::Branch(name) => {
-                    crate::section::description(gantz.env.registry, name)
+                    gantz_edit::section::description(gantz.env.registry, name)
                 }
                 _ => None,
             };

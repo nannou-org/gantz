@@ -7,8 +7,8 @@
 //! [`crate::widget::Gantz::ref_ext_uis`]. The [`NamedRef`] inspector appends
 //! each provider's rows after its own.
 
-use crate::node::NamedRef;
 use crate::{InspectorRowsResponse, NodeCtx};
+use gantz_edit::NamedRef;
 
 /// An inspector extension for [`NamedRef`] nodes, provided by a domain.
 ///
