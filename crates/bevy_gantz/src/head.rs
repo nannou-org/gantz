@@ -205,6 +205,20 @@ pub struct FocusedHead(pub Option<Entity>);
 #[derive(Resource, Default)]
 pub struct HeadTabOrder(pub Vec<Entity>);
 
+/// An open head's change to another commit. See [`retarget`].
+struct Retarget {
+    entity: Entity,
+    old_head: ca::Head,
+    old_commit: Option<ca::CommitAddr>,
+    new_head: ca::Head,
+    new_commit: Option<ca::CommitAddr>,
+    /// The new commit's graph, the head's new working copy.
+    graph: ca::DataGraph,
+    /// Whether the tab loaded another head, so its load is pending. See
+    /// [`PendingLoad`].
+    load: bool,
+}
+
 /// The id of the shared graph-description section. The GUI layer's typed
 /// declaration `gantz_egui::section::Descriptions` mirrors it.
 pub const DESCRIPTIONS_ID: &str = "gantz.description";
@@ -388,55 +402,24 @@ pub fn on_replace(
         return;
     }
 
-    let Some(focused_entity) = **focused else {
+    let Some((entity, old_head)) = (**focused).and_then(|e| heads.get(e).ok()) else {
         return;
     };
-    let old_head = heads.get(focused_entity).ok().map(|(_, h)| (**h).clone());
-
     let Some(graph) = head_working_graph(&registry, new_head) else {
         log::error!("cannot replace head: graph data missing from the registry");
         return;
     };
-
-    // A same-graph commit is a layout-only change. Keep the VM, its node state
-    // and the compile memo, so `vm::sync` skips recompilation. Otherwise
-    // migrate the node state through the commits' node-identity mapping and
-    // reset the memo so `vm::sync` recompiles. Either way the tab has loaded
-    // a head, so its load is pending. The `GantzEguiPlugin` observer updates
-    // `HeadGuiState` and `GraphViews`.
-    let old_ca = old_head.as_ref().and_then(|h| registry.head_commit_ca(h));
-    let old_graph = old_head
-        .as_ref()
-        .and_then(|h| registry.head_commit(h).map(|c| c.graph));
-    let new_ca = registry.head_commit_ca(new_head);
-    let new_graph = registry.head_commit(new_head).map(|c| c.graph);
-    let same_graph = matches!((old_graph, new_graph), (Some(a), Some(b)) if a == b);
-    if same_graph {
-        cmds.entity(focused_entity).insert((
-            HeadRef(new_head.clone()),
-            WorkingGraph(graph),
-            PendingLoad,
-        ));
-    } else {
-        crate::vm::migrate_vm_state(&registry, &mut vms, focused_entity, old_ca, new_ca);
-        cmds.entity(focused_entity).insert((
-            HeadRef(new_head.clone()),
-            WorkingGraph(graph),
-            PendingLoad,
-            crate::vm::CompiledInputs::default(),
-        ));
-    }
-
-    if let Some(old) = old_head {
-        cmds.trigger(ChangedEvent {
-            entity: focused_entity,
-            old_head: old,
-            new_head: new_head.clone(),
-            old_commit: old_ca,
-            new_commit: new_ca,
-            same_graph,
-        });
-    }
+    // The tab loads another head, so its load is pending.
+    let change = Retarget {
+        entity,
+        old_head: (**old_head).clone(),
+        old_commit: registry.head_commit_ca(old_head),
+        new_head: new_head.clone(),
+        new_commit: registry.head_commit_ca(new_head),
+        graph,
+        load: true,
+    };
+    retarget(&mut cmds, &registry, &mut vms, change);
 }
 
 /// Observer for [`CloseEvent`]. The last open head never closes.
@@ -550,10 +533,8 @@ pub fn on_move_head(
         log::error!("MoveHead: graph data missing for target commit");
         return;
     };
-    // The current commit is needed below to detect a same-graph move and to
-    // migrate node state.
-    let old_ca = registry.head_commit_ca(&old_head);
-    let old_graph = registry.head_commit(&old_head).map(|c| c.graph);
+    // Read the current commit before a branch head moves off it.
+    let old_commit = registry.head_commit_ca(&old_head);
     let new_head = match &old_head {
         ca::Head::Branch(name) => {
             registry.set_head(name.clone(), target);
@@ -568,28 +549,55 @@ pub fn on_move_head(
             new_head
         }
     };
-    // A same-graph target is a layout-only change. Keep the VM, its node state
-    // and the compile memo, so `vm::sync` skips recompilation. Otherwise
-    // migrate the node state through the commits' node-identity mapping and
-    // reset the memo so `vm::sync` recompiles.
-    let same_graph = old_graph == Some(registry.commits()[&target].graph);
-    if same_graph {
-        cmds.entity(entity)
-            .insert((HeadRef(new_head.clone()), WorkingGraph(graph)));
-    } else {
-        crate::vm::migrate_vm_state(&registry, &mut vms, entity, old_ca, Some(target));
-        cmds.entity(entity).insert((
-            HeadRef(new_head.clone()),
-            WorkingGraph(graph),
-            crate::vm::CompiledInputs::default(),
-        ));
+    let change = Retarget {
+        entity,
+        old_head,
+        old_commit,
+        new_head,
+        new_commit: Some(target),
+        graph,
+        load: false,
+    };
+    retarget(&mut cmds, &registry, &mut vms, change);
+}
+
+/// Point an open head at another commit and announce it with a
+/// [`ChangedEvent`]. Shared by [`on_replace`] and [`on_move_head`].
+///
+/// A same-graph change is layout-only. It keeps the VM, its node state and
+/// the compile memo, so `vm::sync` skips recompilation. Otherwise the node
+/// state migrates through the commits' node-identity mapping and the memo
+/// resets, so `vm::sync` recompiles.
+fn retarget(cmds: &mut Commands, registry: &Registry, vms: &mut HeadVms, change: Retarget) {
+    let Retarget {
+        entity,
+        old_head,
+        old_commit,
+        new_head,
+        new_commit,
+        graph,
+        load,
+    } = change;
+    let graph_of = |c: Option<ca::CommitAddr>| registry.commits().get(&c?).map(|c| c.graph);
+    let same_graph = matches!(
+        (graph_of(old_commit), graph_of(new_commit)),
+        (Some(a), Some(b)) if a == b
+    );
+    let mut head = cmds.entity(entity);
+    head.insert((HeadRef(new_head.clone()), WorkingGraph(graph)));
+    if load {
+        head.insert(PendingLoad);
+    }
+    if !same_graph {
+        crate::vm::migrate_vm_state(registry, vms, entity, old_commit, new_commit);
+        head.insert(crate::vm::CompiledInputs::default());
     }
     cmds.trigger(ChangedEvent {
         entity,
         old_head,
         new_head,
-        old_commit: old_ca,
-        new_commit: Some(target),
+        old_commit,
+        new_commit,
         same_graph,
     });
 }
