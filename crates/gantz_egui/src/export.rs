@@ -23,6 +23,16 @@ pub enum ParseExportError {
     Format(crate::format::FormatError),
 }
 
+impl ParseExportError {
+    /// Whether the text references a graph name that is not loaded yet.
+    pub fn is_missing_dependency(&self) -> bool {
+        matches!(
+            self,
+            Self::Format(e) if matches!(e.kind, gantz_format::ErrorKind::MissingDependency(_))
+        )
+    }
+}
+
 impl std::fmt::Display for ParseExportError {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {

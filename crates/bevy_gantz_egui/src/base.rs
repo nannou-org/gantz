@@ -64,10 +64,9 @@ pub struct ExportPaths {
 /// the registry. Populates [`BaseNames`] and [`BaseNameSources`].
 ///
 /// A source may reference names another source defines, so loading runs to a
-/// fixpoint. Each round parses every pending source seeded with the names
-/// loaded so far. Sources whose references do not resolve yet are deferred.
-/// Push order does not matter. A source whose references never resolve, or
-/// that fails to parse, is logged and dropped.
+/// fixpoint. See [`gantz_egui::base::load_to_fixpoint`]. Push order does not
+/// matter. A source whose references never resolve, or that fails to parse, is
+/// logged and dropped.
 pub fn load(
     sources: Res<BaseSources>,
     mut registry: ResMut<Registry>,
@@ -76,82 +75,46 @@ pub fn load(
     mut base_names: ResMut<BaseNames>,
     mut name_sources: ResMut<BaseNameSources>,
 ) {
-    let mut pending: Vec<&BaseSource> = sources.0.iter().collect();
-    loop {
-        let mut deferred: Vec<&BaseSource> = Vec::new();
-        for source in pending.iter().copied() {
-            let seed = seed_graph_addrs(&base_names.0, &registry);
-            let parsed: gantz_ca::Registry = match gantz_egui::export::parse_export_seeded_at(
-                source.bytes,
-                BASE_TIMESTAMP,
-                &seed,
-                &codec.0,
-            ) {
-                Ok(e) => e,
-                // An unresolved reference may resolve once another
-                // source loads. Retry next round.
-                Err(gantz_egui::export::ParseExportError::Format(e))
-                    if matches!(e.kind, gantz_format::ErrorKind::MissingDependency(_)) =>
-                {
-                    deferred.push(source);
-                    continue;
-                }
-                Err(e) => {
-                    log::error!("base source `{}`: {e}", source.name);
-                    continue;
-                }
-            };
-            for (name, ca) in parsed.heads() {
-                let display = name.to_string();
-                if let Some(prev) = name_sources.0.get(&display) {
-                    log::warn!(
-                        "base source `{}` redefines `{name}` from source `{prev}` \
-                         (last source wins)",
-                        source.name,
-                    );
-                }
-                name_sources.0.insert(display, source.name);
-                base_names.0.insert(name.clone(), ca);
+    let failed = gantz_egui::base::load_to_fixpoint(sources.0.len(), |ix| {
+        let source = &sources.0[ix];
+        let seed = seed_graph_addrs(&base_names.0, &registry);
+        let parsed = gantz_egui::export::parse_export_seeded_at(
+            source.bytes,
+            BASE_TIMESTAMP,
+            &seed,
+            &codec.0,
+        )?;
+        for (name, ca) in parsed.heads() {
+            let display = name.to_string();
+            if let Some(prev) = name_sources.0.get(&display) {
+                log::warn!(
+                    "base source `{}` redefines `{name}` from source `{prev}` \
+                     (last source wins)",
+                    source.name,
+                );
             }
-            // The base's GUI metadata must win over the user's persisted
-            // entries. The demo and view sections merge KeepExisting, so
-            // reinsert the parsed entries after the merge.
-            let demos: Vec<_> = gantz_egui::section::demos(&parsed).collect();
-            let views: Vec<_> = gantz_egui::section::views(&parsed).collect();
-            // The merge's `heads_replaced` is not logged. Base names replacing
-            // a user's persisted edits on launch is the intended reset, not a
-            // collision. Source-vs-source collisions are warned above.
-            registry.merge(parsed);
-            for (name, demo) in demos {
-                gantz_egui::section::set_demo(&mut registry.0, name, demo);
-            }
-            for (ca, view) in views {
-                gantz_egui::section::set_view(&mut registry.0, ca, &view);
-            }
+            name_sources.0.insert(display, source.name);
+            base_names.0.insert(name.clone(), ca);
         }
-        // Done, or stuck. No deferred source can make progress once a full
-        // round loads nothing new.
-        if deferred.is_empty() {
-            break;
+        // The base's GUI metadata must win over the user's persisted
+        // entries. The demo and view sections merge KeepExisting, so
+        // reinsert the parsed entries after the merge.
+        let demos: Vec<_> = gantz_egui::section::demos(&parsed).collect();
+        let views: Vec<_> = gantz_egui::section::views(&parsed).collect();
+        // The merge's `heads_replaced` is not logged. Base names replacing
+        // a user's persisted edits on launch is the intended reset, not a
+        // collision. Source-vs-source collisions are warned above.
+        registry.merge(parsed);
+        for (name, demo) in demos {
+            gantz_egui::section::set_demo(&mut registry.0, name, demo);
         }
-        if deferred.len() == pending.len() {
-            let seed = seed_graph_addrs(&base_names.0, &registry);
-            for source in deferred {
-                if let Err(err) = gantz_egui::export::parse_export_seeded_at(
-                    source.bytes,
-                    BASE_TIMESTAMP,
-                    &seed,
-                    &codec.0,
-                ) {
-                    log::error!(
-                        "base source `{}` has unresolvable references: {err}",
-                        source.name,
-                    );
-                }
-            }
-            break;
+        for (ca, view) in views {
+            gantz_egui::section::set_view(&mut registry.0, ca, &view);
         }
-        pending = deferred;
+        Ok(())
+    });
+    for (ix, e) in failed {
+        log::error!("base source `{}`: {e}", sources.0[ix].name);
     }
     // The merged base graphs must be reified before any typed reads.
     refresh_cache(&registry, &mut cache, &codec.0);
