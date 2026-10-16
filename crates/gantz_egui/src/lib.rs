@@ -589,6 +589,70 @@ pub struct OpenHead(pub gantz_ca::Head);
 #[derive(Clone, Debug)]
 pub struct ReplaceHead(pub gantz_ca::Head);
 
+/// Close the tab of an open head. App-level.
+#[derive(Clone, Debug)]
+pub struct CloseHead(pub gantz_ca::Head);
+
+/// Create an empty graph and open it in a new tab. App-level.
+#[derive(Clone, Copy, Debug)]
+pub struct NewGraph;
+
+/// Name a head's graph as a new branch, from a tab or the graph config name
+/// editor. App-level.
+#[derive(Clone, Debug)]
+pub struct BranchHead {
+    /// The head whose graph the branch starts from.
+    pub original: gantz_ca::Head,
+    /// The new branch name.
+    pub new_name: String,
+}
+
+/// Remove a graph name. Open heads on it stay open as unnamed graphs.
+/// App-level.
+#[derive(Clone, Debug)]
+pub struct RemoveName(pub gantz_ca::Name);
+
+/// Import a `.gantz` file that the user picks. App-level. A dropped file
+/// arrives as a [`widget::gantz::FileDrop`] instead.
+#[derive(Clone, Copy, Debug)]
+pub struct Import;
+
+/// Set the description of a named graph. An empty description clears it.
+/// App-level.
+#[derive(Clone, Debug)]
+pub struct SetDescription {
+    pub name: gantz_ca::Name,
+    pub description: String,
+}
+
+/// Set the demo graph of a named graph, or clear it with `None`. App-level.
+#[derive(Clone, Debug)]
+pub struct SetDemo {
+    pub name: gantz_ca::Name,
+    pub demo: Option<String>,
+}
+
+/// Move a named graph to another base source. See
+/// [`Gantz::base_sources`](widget::Gantz::base_sources). App-level.
+#[derive(Clone, Debug)]
+pub struct SetBaseSource {
+    pub name: gantz_ca::Name,
+    pub source: String,
+}
+
+/// Reset a base graph to its original form. App-level.
+#[derive(Clone, Debug)]
+pub struct ResetBaseGraph(pub gantz_ca::Name);
+
+/// Reset every `demo-*` base graph to its original form. App-level.
+#[derive(Clone, Copy, Debug)]
+pub struct ResetAllDemos;
+
+/// Turn the per-node change-tracking validation on or off. App-level. See
+/// [`GraphScene::validate_change_tracking`](widget::GraphScene::validate_change_tracking).
+#[derive(Clone, Copy, Debug)]
+pub struct ValidateChangeTracking(pub bool);
+
 /// Paste clipboard contents at the given position.
 ///
 /// `text` is `Some` when the integration layer provides clipboard text

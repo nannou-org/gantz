@@ -67,35 +67,6 @@ pub struct GraphSelectResponse {
     pub join_ticket: Option<String>,
 }
 
-impl GraphSelectResponse {
-    /// Combine two responses, preferring `Some` values from `other`.
-    pub fn union(self, other: Self) -> Self {
-        Self {
-            new_graph: self.new_graph || other.new_graph,
-            import: self.import || other.import,
-            export_all: self.export_all || other.export_all,
-            replaced: other.replaced.or(self.replaced),
-            opened: other.opened.or(self.opened),
-            closed: other.closed.or(self.closed),
-            name_removed: other.name_removed.or(self.name_removed),
-            join_ticket: other.join_ticket.or(self.join_ticket),
-        }
-    }
-}
-
-impl std::ops::BitOr for GraphSelectResponse {
-    type Output = Self;
-    fn bitor(self, rhs: Self) -> Self::Output {
-        self.union(rhs)
-    }
-}
-
-impl std::ops::BitOrAssign for GraphSelectResponse {
-    fn bitor_assign(&mut self, rhs: Self) {
-        *self = std::mem::take(self).union(rhs);
-    }
-}
-
 impl<'a> GraphSelect<'a> {
     pub fn new(
         registry: &'a crate::Env<'a>,

@@ -676,39 +676,15 @@ where
 
 /// Response from the top-level gantz widget.
 ///
-/// Whole-widget outcomes such as focus, tab management, file drops and config
-/// are plain fields. Operations emitted from deeper within the widget tree
-/// arrive as dynamic payloads in [`responses`][Self::responses] for the
-/// application to drain and handle.
+/// The plain fields report the state of this frame. Every action the
+/// application must take, from tab management to a config change, arrives as
+/// a dynamic payload in [`responses`][Self::responses] for the application to
+/// drain and handle. A compile config change arrives as the new
+/// [`gantz_core::compile::Config`].
 #[derive(Debug)]
 pub struct GantzResponse {
     /// The focused head index. User interaction may have changed it.
     pub focused_head: usize,
-    pub graph_select: Option<widget::graph_select::GraphSelectResponse>,
-    /// Heads that were closed via the tab close button.
-    pub closed_heads: Vec<gantz_ca::Head>,
-    /// A new branch created from a tab double-click, as the original head and
-    /// the new branch name.
-    pub new_branch: Option<(gantz_ca::Head, String)>,
-    /// Files dropped onto gantz panes.
-    pub file_drops: Vec<FileDrop>,
-    /// The demo graph association changed, as the head and the new demo name
-    /// or `None`.
-    pub demo_changed: Option<(gantz_ca::Head, Option<String>)>,
-    /// A named graph's description was edited, as the head and the new
-    /// description. An empty string clears the description.
-    pub description_changed: Option<(gantz_ca::Head, String)>,
-    /// A base graph should be reset to its original state.
-    pub reset_base_graph: Option<gantz_ca::Head>,
-    /// All `demo-*` base graphs should be reset to their original state.
-    pub reset_all_demos: bool,
-    /// The global compile config was changed via the Graph Config pane.
-    pub compile_config: Option<gantz_core::compile::Config>,
-    /// The change-tracking validation toggle was changed. Holds the new value.
-    pub validate_change_tracking: Option<bool>,
-    /// The graph's base source association was changed via the graph config
-    /// pane. See [`Gantz::base_sources`].
-    pub base_source_changed: Option<(gantz_ca::Head, String)>,
     /// Heads whose graph had a CA-affecting edit this frame from a node UI,
     /// an inspector edit or a structural scene edit. Lets the application
     /// commit and recompile only the changed heads instead of re-hashing
@@ -809,66 +785,11 @@ impl GantzResponse {
     fn new(focused_head: usize) -> Self {
         GantzResponse {
             focused_head,
-            graph_select: None,
-            closed_heads: Vec::new(),
-            new_branch: None,
-            file_drops: Vec::new(),
-            demo_changed: None,
-            description_changed: None,
-            reset_base_graph: None,
-            reset_all_demos: false,
-            compile_config: None,
-            validate_change_tracking: None,
-            base_source_changed: None,
             changed_heads: Vec::new(),
             responses: Responses::default(),
             windowed_panes: Vec::new(),
             node_view_reindexes: Vec::new(),
         }
-    }
-
-    /// Indicates the new graph button was clicked.
-    pub fn new_graph(&self) -> bool {
-        self.graph_select
-            .as_ref()
-            .map(|g| g.new_graph)
-            .unwrap_or(false)
-    }
-
-    /// Replace the focused head with this one.
-    pub fn graph_replaced(&self) -> Option<&gantz_ca::Head> {
-        self.graph_select.as_ref().and_then(|g| g.replaced.as_ref())
-    }
-
-    /// Open this head as a new tab, or focus it if already open.
-    pub fn graph_opened(&self) -> Option<&gantz_ca::Head> {
-        self.graph_select.as_ref().and_then(|g| g.opened.as_ref())
-    }
-
-    /// Close this head.
-    pub fn graph_closed(&self) -> Option<&gantz_ca::Head> {
-        self.graph_select.as_ref().and_then(|g| g.closed.as_ref())
-    }
-
-    /// The given graph name was removed.
-    pub fn graph_name_removed(&self) -> Option<gantz_ca::Name> {
-        self.graph_select
-            .as_ref()
-            .and_then(|g| g.name_removed.clone())
-    }
-
-    /// A new branch created from a tab double-click, as the original head and
-    /// the new branch name.
-    pub fn new_branch(&self) -> Option<&(gantz_ca::Head, String)> {
-        self.new_branch.as_ref()
-    }
-
-    /// Indicates the import button was clicked.
-    pub fn import(&self) -> bool {
-        self.graph_select
-            .as_ref()
-            .map(|g| g.import)
-            .unwrap_or(false)
     }
 }
 
@@ -928,15 +849,15 @@ impl<'a> Gantz<'a> {
 
     /// Provide the current compile config so the Graph Config pane shows
     /// the compile toggles. The config is global. It applies to all open
-    /// heads, and a change is reported via [`GantzResponse::compile_config`].
+    /// heads, and a change is emitted as the new config payload.
     pub fn compile_config(mut self, config: gantz_core::compile::Config) -> Self {
         self.compile_config = Some(config);
         self
     }
 
     /// Provide the current change-tracking validation state so the Settings >
-    /// Global pane shows its toggle. A change is reported via
-    /// [`GantzResponse::validate_change_tracking`].
+    /// Global pane shows its toggle. A change is emitted as a
+    /// [`ValidateChangeTracking`](crate::ValidateChangeTracking) payload.
     ///
     /// When not provided, validation defaults on in debug builds and off in
     /// release. The node instance cache would otherwise mask a missed
@@ -981,7 +902,7 @@ impl<'a> Gantz<'a> {
 
     /// Provide base-source authoring context so the graph config pane shows
     /// a "source" dropdown selecting which base file a graph belongs to. A
-    /// change is reported via [`GantzResponse::base_source_changed`].
+    /// change is emitted as a [`SetBaseSource`](crate::SetBaseSource) payload.
     pub fn base_sources(mut self, ctx: BaseSourcesCtx<'a>) -> Self {
         self.base_sources = Some(ctx);
         self
@@ -1118,7 +1039,9 @@ impl<'a> Gantz<'a> {
         // Detect .gantz file drops globally rather than per pane, since the
         // pointer position may be unavailable during OS file drags on some
         // platforms.
-        response.file_drops = collect_gantz_file_drops(ui.ctx());
+        for drop in collect_gantz_file_drops(ui.ctx()) {
+            response.responses.push(None, drop);
+        }
 
         // Apply payloads that only affect the widget's own state, so
         // applications never see them. These are node palette toggling,
@@ -1633,8 +1556,9 @@ where
                     }
                     config.show(ui)
                 });
-                if res.inner.new_branch.is_some() {
-                    gantz_response.new_branch = res.inner.new_branch;
+                if let Some((original, new_name)) = res.inner.new_branch {
+                    let branch = crate::BranchHead { original, new_name };
+                    gantz_response.responses.push(None, branch);
                 }
                 if let Some(merge) = res.inner.merge {
                     gantz_response.responses.push(Some(head.clone()), merge);
@@ -1649,17 +1573,24 @@ where
                         .responses
                         .push(Some(head.clone()), crate::StopSharing);
                 }
-                if let Some(demo_val) = res.inner.demo_changed {
-                    gantz_response.demo_changed = Some((head.clone(), demo_val));
-                }
-                if let Some(description) = res.inner.description_changed {
-                    gantz_response.description_changed = Some((head.clone(), description));
-                }
-                if res.inner.reset_base_graph {
-                    gantz_response.reset_base_graph = Some(head.clone());
-                }
-                if let Some(source) = res.inner.base_source_changed {
-                    gantz_response.base_source_changed = Some((head.clone(), source));
+                // Demos, descriptions and base sources belong to named graphs.
+                if let gantz_ca::Head::Branch(name) = &head {
+                    let responses = &mut gantz_response.responses;
+                    if let Some(demo) = res.inner.demo_changed {
+                        let name = name.clone();
+                        responses.push(None, crate::SetDemo { name, demo });
+                    }
+                    if let Some(description) = res.inner.description_changed {
+                        let name = name.clone();
+                        responses.push(None, crate::SetDescription { name, description });
+                    }
+                    if res.inner.reset_base_graph {
+                        responses.push(None, crate::ResetBaseGraph(name.clone()));
+                    }
+                    if let Some(source) = res.inner.base_source_changed {
+                        let name = name.clone();
+                        responses.push(None, crate::SetBaseSource { name, source });
+                    }
                 }
                 if res.inner.export {
                     gantz_response.responses.push(Some(head), ExportHead);
@@ -1701,8 +1632,6 @@ where
                 access: *access,
                 state,
                 focused_head,
-                closed_heads: &mut gantz_response.closed_heads,
-                new_branch: &mut gantz_response.new_branch,
                 responses: &mut gantz_response.responses,
                 changed_heads: &mut gantz_response.changed_heads,
                 reindexes: &mut gantz_response.node_view_reindexes,
@@ -1742,10 +1671,7 @@ where
                             .push(Some(fh.clone()), CopyNodes(nodes));
                     }
                     if keymap.consume(ui, Action::NewGraph) {
-                        let gs = gantz_response
-                            .graph_select
-                            .get_or_insert_with(Default::default);
-                        gs.new_graph = true;
+                        gantz_response.responses.push(None, crate::NewGraph);
                     }
                     // Paste, undo, redo are gated by immutable.
                     if !focused_immutable {
@@ -1855,7 +1781,7 @@ where
             paint_gantz_file_hover_overlay(ui);
 
             let heads = access.heads();
-            let mut res = graph_select(
+            let res = graph_select(
                 gantz.env,
                 heads,
                 *focused_head,
@@ -1864,19 +1790,7 @@ where
                 gantz.clipboard,
                 ui,
             );
-
-            if res.inner.export_all {
-                gantz_response.responses.push(None, ExportAllNamed);
-            }
-            if let Some(ticket) = res.inner.join_ticket.take() {
-                gantz_response
-                    .responses
-                    .push(None, crate::JoinSession { ticket });
-            }
-            match &mut gantz_response.graph_select {
-                Some(gs) => *gs |= res.inner,
-                None => gantz_response.graph_select = Some(res.inner),
-            }
+            push_graph_select(&mut gantz_response.responses, res.inner);
         }
         Pane::GuiPerf => {
             if let Some(ref mut capture) = gantz.perf_gui {
@@ -1886,10 +1800,7 @@ where
         Pane::History => {
             let heads = access.heads();
             let res = history_view(gantz.env, heads, *focused_head, ui);
-            match &mut gantz_response.graph_select {
-                Some(gs) => *gs |= res.inner,
-                None => gantz_response.graph_select = Some(res.inner),
-            }
+            push_graph_select(&mut gantz_response.responses, res.inner);
         }
         Pane::Logs => match &gantz.log_source {
             None => (),
@@ -2236,13 +2147,14 @@ where
                 )
             });
             if let Some(cfg) = res.inner.compile_config {
-                gantz_response.compile_config = Some(cfg);
+                gantz_response.responses.push(None, cfg);
             }
             if let Some(v) = res.inner.validate_change_tracking {
-                gantz_response.validate_change_tracking = Some(v);
+                let validate = crate::ValidateChangeTracking(v);
+                gantz_response.responses.push(None, validate);
             }
             if res.inner.reset_all_demos {
-                gantz_response.reset_all_demos = true;
+                gantz_response.responses.push(None, crate::ResetAllDemos);
             }
             if res.inner.reset_layout {
                 gantz_response.responses.push(None, ResetTilesLayout);
@@ -2271,12 +2183,7 @@ where
     access: &'a mut Access,
     state: &'a mut GantzState,
     focused_head: &'a mut usize,
-    /// Heads closed via the tab close button.
-    closed_heads: &'a mut Vec<gantz_ca::Head>,
-    /// A new branch created from a tab double-click, as the original head and
-    /// the new branch name.
-    new_branch: &'a mut Option<(gantz_ca::Head, String)>,
-    /// Dynamic payloads emitted from within the graph scenes.
+    /// Dynamic payloads emitted from the graph scenes and their tabs.
     responses: &'a mut Responses,
     /// Heads whose graph had a CA-affecting edit this frame.
     changed_heads: &'a mut Vec<gantz_ca::Head>,
@@ -2362,7 +2269,7 @@ where
         tile_id: egui_tiles::TileId,
     ) -> bool {
         if let Some(GraphPane(head)) = tiles.get_pane(&tile_id).cloned() {
-            self.closed_heads.push(head);
+            self.responses.push(None, crate::CloseHead(head));
         }
         // Return true to allow egui_tiles to remove the tile.
         true
@@ -2413,8 +2320,9 @@ where
             let editing_ended =
                 name_res.response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Escape));
             if editing_ended {
-                if let Some(new_branch) = name_res.new_branch {
-                    *self.new_branch = Some(new_branch);
+                if let Some((original, new_name)) = name_res.new_branch {
+                    let branch = crate::BranchHead { original, new_name };
+                    self.responses.push(None, branch);
                 }
                 edit_state.editing_tile_id = None;
                 edit_state.edit_text.clear();
@@ -4099,6 +4007,44 @@ fn history_view(
     })
 }
 
+/// Push the actions of a Graphs or History pane response as payloads.
+fn push_graph_select(responses: &mut Responses, res: widget::graph_select::GraphSelectResponse) {
+    let widget::graph_select::GraphSelectResponse {
+        new_graph,
+        import,
+        export_all,
+        replaced,
+        opened,
+        closed,
+        name_removed,
+        join_ticket,
+    } = res;
+    if new_graph {
+        responses.push(None, crate::NewGraph);
+    }
+    if import {
+        responses.push(None, crate::Import);
+    }
+    if export_all {
+        responses.push(None, ExportAllNamed);
+    }
+    if let Some(head) = replaced {
+        responses.push(None, crate::ReplaceHead(head));
+    }
+    if let Some(head) = opened {
+        responses.push(None, crate::OpenHead(head));
+    }
+    if let Some(head) = closed {
+        responses.push(None, crate::CloseHead(head));
+    }
+    if let Some(name) = name_removed {
+        responses.push(None, crate::RemoveName(name));
+    }
+    if let Some(ticket) = join_ticket {
+        responses.push(None, crate::JoinSession { ticket });
+    }
+}
+
 fn perf_view(title: &str, capture: &mut widget::PerfCapture, ui: &mut egui::Ui) {
     // Use Frame::NONE to fill the entire pane with no padding.
     egui::CentralPanel::default()
@@ -4522,6 +4468,34 @@ fn steel_view(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every action of a Graphs or History pane response becomes a payload.
+    #[test]
+    fn graph_select_actions_become_payloads() {
+        let name: gantz_ca::Name = "jam".parse().unwrap();
+        let head = gantz_ca::Head::Branch(name.clone());
+        let res = widget::graph_select::GraphSelectResponse {
+            new_graph: true,
+            import: true,
+            export_all: true,
+            replaced: Some(head.clone()),
+            opened: Some(head.clone()),
+            closed: Some(head.clone()),
+            name_removed: Some(name),
+            join_ticket: Some("ticket".to_string()),
+        };
+        let mut responses = Responses::default();
+        push_graph_select(&mut responses, res);
+        assert_eq!(responses.take::<crate::NewGraph>().len(), 1);
+        assert_eq!(responses.take::<crate::Import>().len(), 1);
+        assert_eq!(responses.take::<ExportAllNamed>().len(), 1);
+        assert_eq!(responses.take::<crate::ReplaceHead>().len(), 1);
+        assert_eq!(responses.take::<crate::OpenHead>().len(), 1);
+        assert_eq!(responses.take::<crate::CloseHead>().len(), 1);
+        assert_eq!(responses.take::<crate::RemoveName>().len(), 1);
+        assert_eq!(responses.take::<crate::JoinSession>().len(), 1);
+        assert!(responses.is_empty());
+    }
 
     /// The text of every shape painted in `shape`, nested shapes included.
     fn shape_texts(shape: &egui::Shape, texts: &mut Vec<String>) {
