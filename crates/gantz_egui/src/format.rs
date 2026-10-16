@@ -227,8 +227,8 @@ fn apply_layout(form: &Form, loaded: &mut Loaded) {
         return;
     };
 
-    let mut layout = egui_graph::Layout::default();
-    let mut camera = crate::Camera::default();
+    let mut layout = gantz_edit::Layout::default();
+    let mut camera = gantz_edit::Camera::default();
     for entry in &args[2..] {
         let Some(eargs) = sexpr::list_args(entry) else {
             continue;
@@ -242,7 +242,7 @@ fn apply_layout(form: &Form, loaded: &mut Loaded) {
                 .filter_map(|n| sexpr::as_f32(n, src))
                 .collect();
             if f.len() == 3 {
-                camera = crate::Camera {
+                camera = gantz_edit::Camera {
                     center: egui::pos2(f[0], f[1]),
                     zoom: f[2],
                 };
@@ -257,7 +257,7 @@ fn apply_layout(form: &Form, loaded: &mut Loaded) {
                 .collect();
             if f.len() == 4 {
                 let rect = egui::Rect::from_min_max(egui::pos2(f[0], f[1]), egui::pos2(f[2], f[3]));
-                camera = crate::Camera {
+                camera = gantz_edit::Camera {
                     center: rect.center(),
                     zoom: 1.0,
                 };
@@ -267,12 +267,12 @@ fn apply_layout(form: &Form, loaded: &mut Loaded) {
             eargs.get(2).and_then(|n| sexpr::as_f32(n, src)),
         ) {
             if let Some(&ix) = index.get(&head_sym) {
-                layout.insert(egui_graph::NodeId(ix as u64), egui::pos2(x, y));
+                layout.insert(gantz_edit::NodeId::from_index(ix), egui::pos2(x, y));
             }
         }
     }
 
-    let view = crate::SceneView { camera, layout };
+    let view = gantz_edit::SceneView { camera, layout };
     crate::section::set_view(&mut loaded.registry, head, &view);
 }
 
@@ -281,7 +281,7 @@ fn apply_layout(form: &Form, loaded: &mut Loaded) {
 /// for the address-based format, `(graph "<hex>" ...)`. The id must round-trip
 /// to the same `Addr` kind as the graph, or the layout fails to resolve on
 /// load.
-fn layout_text(labels: &GraphLabels, view: &crate::SceneView, bare_id: bool) -> String {
+fn layout_text(labels: &GraphLabels, view: &gantz_edit::SceneView, bare_id: bool) -> String {
     let mut positions: Vec<(String, f32, f32)> = view
         .layout
         .iter()
@@ -370,12 +370,12 @@ mod tests {
 
         crate::section::set_description(&mut reg, name("root"), "the root".to_string());
         crate::section::set_demo(&mut reg, name("root"), "demo-root".to_string());
-        let view = crate::SceneView {
-            camera: crate::Camera {
+        let view = gantz_edit::SceneView {
+            camera: gantz_edit::Camera {
                 center: egui::pos2(3.0, 4.0),
                 zoom: 2.0,
             },
-            layout: [(egui_graph::NodeId(0), egui::pos2(10.0, 20.0))]
+            layout: [(gantz_edit::NodeId(0), egui::pos2(10.0, 20.0))]
                 .into_iter()
                 .collect(),
         };
@@ -397,7 +397,7 @@ mod tests {
         );
         let view = crate::section::view(parsed, &root_ca).expect("view survives");
         assert_eq!(
-            view.layout.get(&egui_graph::NodeId(0)).copied(),
+            view.layout.get(&gantz_edit::NodeId(0)).copied(),
             Some(egui::pos2(10.0, 20.0)),
         );
         assert_eq!(view.camera.center, egui::pos2(3.0, 4.0));

@@ -18,7 +18,6 @@ bevy_gantz_collab = { workspace = true, optional = true }
 bevy_gantz_egui.workspace = true
 bevy_gantz_plyphon.workspace = true
 bevy_pkv.workspace = true
-egui_graph.workspace = true
 gantz_base.workspace = true
 gantz_ca.workspace = true
 gantz_collab = { workspace = true, optional = true }
@@ -40,6 +39,9 @@ web-time.workspace = true
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 clap.workspace = true
 gantz_cli.workspace = true
+
+[dev-dependencies]
+gantz_edit.workspace = true
 
 [features]
 # cpal's AudioWorklet backend on the web - audio on a dedicated Web Audio thread, off the

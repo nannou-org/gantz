@@ -62,6 +62,7 @@ egui_extras = { version = "0.34", default-features = false, features = ["syntect
 egui_graph = "0.16.4"
 egui_plot = "0.35"
 egui_tiles = "0.15"
+emath = { version = "0.34", features = ["serde"] }
 gantz_base = { version = "0.3.1", path = "crates/gantz_base" }
 gantz_ca = { version = "0.5.0", path = "crates/gantz_ca" }
 gantz_ca_derive = { version = "0.2.2", path = "crates/gantz_ca_derive" }
@@ -69,6 +70,7 @@ gantz_cli = { version = "0.2.0", path = "crates/gantz_cli", default-features = f
 gantz_collab = { version = "0.4.0", path = "crates/gantz_collab" }
 gantz_collab_sync = { version = "0.2.0", path = "crates/gantz_collab_sync" }
 gantz_core = { version = "0.8.0", path = "crates/gantz_core" }
+gantz_edit = { version = "0.1.0", path = "crates/gantz_edit" }
 gantz_egui = { version = "0.9.0", path = "crates/gantz_egui" }
 gantz_format = { version = "0.6.0", path = "crates/gantz_format" }
 gantz_io = { version = "0.1.2", path = "crates/gantz_io" }

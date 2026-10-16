@@ -47,7 +47,7 @@ struct Open {
     head: Head,
     /// The working graph in its stored data form.
     graph: DataGraph,
-    view: gantz_egui::SceneView,
+    view: gantz_edit::SceneView,
     vm: Engine,
     nodes: gantz_egui::node::NodeInstances,
     module: Option<gantz_core::vm::Compiled>,

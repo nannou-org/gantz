@@ -54,7 +54,6 @@ pub use response::{
 };
 pub use style::StyleConfig;
 pub use sugar::EguiSugar;
-pub use view::{Camera, SceneView};
 
 /// On-hover documentation for a single node inlet or outlet.
 ///
@@ -196,7 +195,7 @@ pub struct HeadDataMut<'a> {
     /// View state for this head's graph, the node layout plus camera. Nested
     /// graphs are separate named heads with their own view, so one view per
     /// head suffices.
-    pub view: &'a mut crate::SceneView,
+    pub view: &'a mut gantz_edit::SceneView,
     pub vm: &'a mut Engine,
     /// The head's cache of reified node instances, so steady-state passes
     /// pay an equality check per node rather than a reify. See
@@ -411,7 +410,7 @@ pub enum PastePos {
 
 /// Resolve a [`PastePos`] to a concrete offset vector for use with
 /// [`export::paste`].
-pub fn resolve_paste_offset(pos: &PastePos, copied_positions: &egui_graph::Layout) -> egui::Vec2 {
+pub fn resolve_paste_offset(pos: &PastePos, copied_positions: &gantz_edit::Layout) -> egui::Vec2 {
     match pos {
         PastePos::Offset(v) => *v,
         PastePos::GraphPos(target) => {

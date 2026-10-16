@@ -15,6 +15,7 @@ use crate::{
 };
 use gantz_ca::{CommitAddr, DataGraph, GraphAddr, Name, NodeData};
 use gantz_core::node::{self, GetNode};
+use gantz_edit::NodeId;
 use petgraph::visit::EdgeRef;
 pub use session::{RevertCursor, redo, session_redo, session_undo, undo};
 use std::collections::{BTreeSet, HashMap, HashSet};
@@ -23,11 +24,6 @@ pub use sync::{MergeHeadOutcome, SyncTipOutcome, merge_head, sync_remote_tip};
 
 mod session;
 mod sync;
-
-/// The egui-graph layout id for the node at graph index `ix`.
-fn node_id(ix: usize) -> egui_graph::NodeId {
-    egui_graph::NodeId::from_u64(ix as u64)
-}
 
 /// The fallback position for the `i`th node a view migration could not map.
 /// Cascades down-right from the camera `center` so unplaced nodes stay
@@ -38,11 +34,14 @@ fn cascade_pos(center: egui::Pos2, i: usize) -> egui::Pos2 {
 
 /// The centroid of the given nodes' positions in `view`, or `None` when none
 /// of them has a layout entry.
-fn selection_centroid(view: &crate::SceneView, nodes: &HashSet<NodeIndex>) -> Option<egui::Pos2> {
+fn selection_centroid(
+    view: &gantz_edit::SceneView,
+    nodes: &HashSet<NodeIndex>,
+) -> Option<egui::Pos2> {
     let mut sum = egui::Vec2::ZERO;
     let mut count = 0usize;
     for &n in nodes {
-        if let Some(&pos) = view.layout.get(&node_id(n.index())) {
+        if let Some(&pos) = view.layout.get(&NodeId::from_index(n.index())) {
             sum += pos.to_vec2();
             count += 1;
         }
@@ -149,7 +148,7 @@ fn newest_commit_for_graph(
 pub fn copy_nodes(
     registry: &gantz_ca::Registry,
     graph: &DataGraph,
-    head_view: &crate::SceneView,
+    head_view: &gantz_edit::SceneView,
     selection: &HashSet<NodeIndex>,
     codec: &NodeCodec,
 ) -> Option<String> {
@@ -182,7 +181,7 @@ pub fn create_node(
     get_node: GetNode,
     new_node: impl FnOnce(&str) -> Option<NodeData>,
     graph: &mut DataGraph,
-    view: &mut crate::SceneView,
+    view: &mut gantz_edit::SceneView,
     head_state: &mut OpenHeadState,
     vm: &mut Engine,
     cmd: CreateNode,
@@ -212,8 +211,7 @@ pub fn create_node(
     // Position the new node under the pointer, falling back to the center of the
     // current view.
     let pos = pos.unwrap_or_else(|| view.camera.center);
-    let egui_id = node_id(node_ix.index());
-    view.layout.insert(egui_id, pos);
+    view.layout.insert(NodeId::from_index(node_ix.index()), pos);
 
     // Make the new node the sole selection.
     let sel = &mut head_state.scene.interaction.selection;
@@ -336,7 +334,7 @@ pub fn create_nested_graph(
     registry: &mut gantz_ca::Registry,
     timestamp: std::time::Duration,
     graph: &mut DataGraph,
-    view: &mut crate::SceneView,
+    view: &mut gantz_edit::SceneView,
     head_state: &mut OpenHeadState,
     pos: Option<egui::Pos2>,
     parent: &Name,
@@ -363,8 +361,7 @@ pub fn create_nested_graph(
     // Position the new node under the pointer, falling back to the center of the
     // current view.
     let pos = pos.unwrap_or_else(|| view.camera.center);
-    let egui_id = node_id(node_ix.index());
-    view.layout.insert(egui_id, pos);
+    view.layout.insert(NodeId::from_index(node_ix.index()), pos);
 
     // Make the new node the sole selection.
     let sel = &mut head_state.scene.interaction.selection;
@@ -392,7 +389,7 @@ pub fn nest_nodes(
     timestamp: std::time::Duration,
     graph: &mut DataGraph,
     vm: &mut Engine,
-    view: &mut crate::SceneView,
+    view: &mut gantz_edit::SceneView,
     head_state: &mut OpenHeadState,
     instances: &mut crate::node::NodeInstances,
     nodes: &HashSet<NodeIndex>,
@@ -525,7 +522,7 @@ pub fn nest_nodes(
     }
 
     // Position the new node and make it the sole selection.
-    view.layout.insert(node_id(new_ix.index()), pos);
+    view.layout.insert(NodeId::from_index(new_ix.index()), pos);
     let sel = &mut head_state.scene.interaction.selection;
     sel.nodes.clear();
     sel.edges.clear();
@@ -594,7 +591,7 @@ impl Reindex {
 pub fn remove_nodes(
     graph: &mut DataGraph,
     vm: &mut Engine,
-    layout: &mut egui_graph::Layout,
+    layout: &mut gantz_edit::Layout,
     selection: &mut crate::widget::graph_scene::Selection,
     instances: &mut crate::node::NodeInstances,
     nodes: impl IntoIterator<Item = NodeIndex>,
@@ -610,15 +607,15 @@ pub fn remove_nodes(
         let last = graph.node_count() - 1;
         // Drop the removed node's index-keyed data.
         let _ = node::state::remove_value(vm, &[t.index()]);
-        layout.remove(&node_id(t.index()));
+        layout.remove(&NodeId::from_index(t.index()));
         selection.nodes.remove(&t);
         graph.remove_node(t);
         // Migrate the node that swapped into `t`, the former `last`, if any.
         let moved_from = (t.index() != last).then_some(last);
         if let Some(last) = moved_from {
             let _ = node::state::move_value(vm, &[last], &[t.index()]);
-            if let Some(pos) = layout.remove(&node_id(last)) {
-                layout.insert(node_id(t.index()), pos);
+            if let Some(pos) = layout.remove(&NodeId::from_index(last)) {
+                layout.insert(NodeId::from_index(t.index()), pos);
             }
             if selection.nodes.remove(&NodeIndex::new(last)) {
                 selection.nodes.insert(t);
@@ -684,7 +681,7 @@ pub fn cut_nodes(
     registry: &gantz_ca::Registry,
     graph: &mut DataGraph,
     vm: &mut Engine,
-    head_view: &mut crate::SceneView,
+    head_view: &mut gantz_edit::SceneView,
     selection: &mut crate::widget::graph_scene::Selection,
     instances: &mut crate::node::NodeInstances,
     nodes: &HashSet<NodeIndex>,
@@ -712,7 +709,7 @@ pub fn inspect_edge(
     get_node: GetNode,
     new_inspect: impl FnOnce() -> Option<NodeData>,
     graph: &mut DataGraph,
-    view: &mut crate::SceneView,
+    view: &mut gantz_edit::SceneView,
     vm: &mut Engine,
     cmd: InspectEdge,
 ) {
@@ -757,7 +754,7 @@ pub fn inspect_edge(
         gantz_core::Edge::new(node::Output(0), edge_weight.input),
     );
 
-    let node_id = node_id(inspect_id.index());
+    let node_id = NodeId::from_index(inspect_id.index());
     view.layout.insert(node_id, pos);
 }
 
@@ -772,7 +769,7 @@ pub fn paste(
     registry: &mut gantz_ca::Registry,
     editing: Option<&str>,
     graph: &mut DataGraph,
-    head_view: &mut crate::SceneView,
+    head_view: &mut gantz_edit::SceneView,
     head_state: &mut OpenHeadState,
     text: &str,
     pos: &PastePos,
@@ -825,7 +822,7 @@ pub fn duplicate_nodes(
     registry: &mut gantz_ca::Registry,
     editing: Option<&str>,
     graph: &mut DataGraph,
-    head_view: &mut crate::SceneView,
+    head_view: &mut gantz_edit::SceneView,
     head_state: &mut OpenHeadState,
     nodes: &HashSet<NodeIndex>,
     codec: &NodeCodec,
@@ -857,29 +854,16 @@ pub fn duplicate_nodes(
 /// for a genuinely layoutless graph such as a join placeholder, not a cascade
 /// of every node.
 pub fn carry_layout(
-    live: &crate::SceneView,
+    live: &gantz_edit::SceneView,
     matching: &gantz_ca::Matching,
     new_node_count: usize,
-) -> crate::SceneView {
-    let mut view = crate::SceneView {
+) -> gantz_edit::SceneView {
+    let pairs = matching.iter().map(|(&old, &new)| (old, new));
+    let mut view = gantz_edit::SceneView {
         camera: live.camera,
-        layout: Default::default(),
+        layout: gantz_edit::view::remap(&live.layout, pairs).collect(),
     };
-    for (&old_ix, &new_ix) in matching {
-        if let Some(pos) = live.layout.get(&node_id(old_ix)) {
-            view.layout.insert(node_id(new_ix), *pos);
-        }
-    }
-    if view.layout.is_empty() {
-        return view;
-    }
-    let unmapped: Vec<usize> = (0..new_node_count)
-        .filter(|&ix| !view.layout.contains_key(&node_id(ix)))
-        .collect();
-    for (i, ix) in unmapped.into_iter().enumerate() {
-        let pos = cascade_pos(view.camera.center, i);
-        view.layout.insert(node_id(ix), pos);
-    }
+    cascade_unplaced(&mut view, new_node_count);
     view
 }
 
@@ -896,41 +880,47 @@ pub fn carry_layout(
 /// adopting peer would destructively auto-layout them.
 pub fn merged_view(
     node_srcs: &[gantz_ca::merge::NodeSrc],
-    first_view: Option<&crate::SceneView>,
-    second_view: Option<&crate::SceneView>,
-) -> crate::SceneView {
+    first_view: Option<&gantz_edit::SceneView>,
+    second_view: Option<&gantz_edit::SceneView>,
+) -> gantz_edit::SceneView {
     let camera = first_view
         .or(second_view)
         .map(|v| v.camera)
         .unwrap_or_default();
-    let mut view = crate::SceneView {
+    let mut view = gantz_edit::SceneView {
         camera,
         layout: Default::default(),
     };
-    let mut missing = Vec::new();
-    for (m, src) in node_srcs.iter().enumerate() {
-        let pos = src
-            .ours
-            .and_then(|o| first_view.and_then(|v| v.layout.get(&node_id(o)).copied()))
-            .or_else(|| {
-                src.theirs
-                    .and_then(|t| second_view.and_then(|v| v.layout.get(&node_id(t)).copied()))
-            });
-        match pos {
-            Some(pos) => {
-                view.layout.insert(node_id(m), pos);
-            }
-            None => missing.push(m),
-        }
+    // Theirs first, so that ours replaces it where both sides hold the node.
+    let srcs = node_srcs.iter().enumerate();
+    if let Some(v) = second_view {
+        let pairs = srcs.clone().filter_map(|(m, src)| Some((src.theirs?, m)));
+        view.layout
+            .extend(gantz_edit::view::remap(&v.layout, pairs));
     }
-    if view.layout.is_empty() {
-        return view;
+    if let Some(v) = first_view {
+        let pairs = srcs.filter_map(|(m, src)| Some((src.ours?, m)));
+        view.layout
+            .extend(gantz_edit::view::remap(&v.layout, pairs));
     }
-    for (i, m) in missing.into_iter().enumerate() {
-        let pos = cascade_pos(view.camera.center, i);
-        view.layout.insert(node_id(m), pos);
-    }
+    cascade_unplaced(&mut view, node_srcs.len());
     view
+}
+
+/// Place each of the first `node_count` nodes that `view` has no position for
+/// in a cascade from the camera centre. A view with no positions at all stays
+/// empty.
+fn cascade_unplaced(view: &mut gantz_edit::SceneView, node_count: usize) {
+    if view.layout.is_empty() {
+        return;
+    }
+    let unplaced: Vec<NodeId> = (0..node_count)
+        .map(NodeId::from_index)
+        .filter(|id| !view.layout.contains_key(id))
+        .collect();
+    for (i, id) in unplaced.into_iter().enumerate() {
+        view.layout.insert(id, cascade_pos(view.camera.center, i));
+    }
 }
 
 /// Commit the current layout as a new commit on the head's existing graph
@@ -953,7 +943,7 @@ pub fn commit_layout(
     registry: &mut gantz_ca::Registry,
     timestamp: gantz_ca::Timestamp,
     head: &mut gantz_ca::Head,
-    live: &crate::SceneView,
+    live: &gantz_edit::SceneView,
 ) -> Option<CommitAddr> {
     let head_commit_ca = registry.head_commit_ca(head)?;
     let baseline = crate::section::view(registry, &head_commit_ca)?;
@@ -1047,9 +1037,9 @@ mod tests {
         for w in 10u32..15 {
             graph.add_node(nd(w));
         }
-        let mut layout = egui_graph::Layout::default();
+        let mut layout = gantz_edit::Layout::default();
         for i in 0..5 {
-            layout.insert(node_id(i), egui::pos2(i as f32, 0.0));
+            layout.insert(NodeId::from_index(i), egui::pos2(i as f32, 0.0));
         }
         let mut selection = Selection::default();
         selection.nodes.insert(NodeIx::new(4)); // select the last, which gets swapped
@@ -1096,8 +1086,11 @@ mod tests {
 
         // Layout followed the swap. The deleted and old-last slots are gone.
         assert_eq!(layout.len(), 4);
-        assert_eq!(layout.get(&node_id(1)).copied(), Some(egui::pos2(4.0, 0.0)));
-        assert!(!layout.contains_key(&node_id(4)));
+        assert_eq!(
+            layout.get(&NodeId::from_index(1)).copied(),
+            Some(egui::pos2(4.0, 0.0))
+        );
+        assert!(!layout.contains_key(&NodeId::from_index(4)));
 
         // Selection followed the swap from node 4 to node 1.
         assert_eq!(
@@ -1126,7 +1119,7 @@ mod tests {
         graph.add_node(bind(4)); // 2, targets the node that swaps into 1
         graph.add_node(bind(1)); // 3, targets the removed node
         graph.add_node(nd(14)); // 4, swaps into 1
-        let mut layout = egui_graph::Layout::default();
+        let mut layout = gantz_edit::Layout::default();
         let mut selection = Selection::default();
         let mut vm = Engine::new_base();
         let mut instances = crate::node::NodeInstances::default();
@@ -1249,11 +1242,14 @@ mod tests {
     // the camera, and cascades unmapped new nodes from the camera centre.
     #[test]
     fn carry_layout_remaps_and_places_new_nodes() {
-        let mut live = crate::SceneView::default();
+        let mut live = gantz_edit::SceneView::default();
         live.camera.center = egui::pos2(100.0, 50.0);
-        live.layout.insert(node_id(0), egui::pos2(1.0, 1.0));
-        live.layout.insert(node_id(1), egui::pos2(2.0, 2.0));
-        live.layout.insert(node_id(2), egui::pos2(3.0, 3.0));
+        live.layout
+            .insert(NodeId::from_index(0), egui::pos2(1.0, 1.0));
+        live.layout
+            .insert(NodeId::from_index(1), egui::pos2(2.0, 2.0));
+        live.layout
+            .insert(NodeId::from_index(2), egui::pos2(3.0, 3.0));
 
         // A swap-style remap. Live node 0 moves to 1 and live node 2 moves to
         // 0. Live node 1 was removed. The new graph has an extra node at index
@@ -1264,16 +1260,16 @@ mod tests {
         assert_eq!(view.camera, live.camera);
         assert_eq!(view.layout.len(), 3);
         assert_eq!(
-            view.layout.get(&node_id(1)).copied(),
+            view.layout.get(&NodeId::from_index(1)).copied(),
             Some(egui::pos2(1.0, 1.0))
         );
         assert_eq!(
-            view.layout.get(&node_id(0)).copied(),
+            view.layout.get(&NodeId::from_index(0)).copied(),
             Some(egui::pos2(3.0, 3.0))
         );
         // The unmapped new node cascades from the camera centre.
         assert_eq!(
-            view.layout.get(&node_id(2)).copied(),
+            view.layout.get(&NodeId::from_index(2)).copied(),
             Some(egui::pos2(100.0, 50.0))
         );
     }
@@ -1283,12 +1279,13 @@ mod tests {
     // the right treatment for a genuinely layoutless graph.
     #[test]
     fn carry_layout_without_carried_positions_yields_empty() {
-        let mut live = crate::SceneView::default();
-        live.layout.insert(node_id(5), egui::pos2(1.0, 1.0));
+        let mut live = gantz_edit::SceneView::default();
+        live.layout
+            .insert(NodeId::from_index(5), egui::pos2(1.0, 1.0));
         let cases = [
             (
                 "empty live layout",
-                crate::SceneView::default(),
+                gantz_edit::SceneView::default(),
                 [(0, 0)].into_iter().collect(),
                 4,
             ),
@@ -1315,12 +1312,18 @@ mod tests {
             ours,
             theirs,
         };
-        let mut first = crate::SceneView::default();
+        let mut first = gantz_edit::SceneView::default();
         first.camera.center = egui::pos2(10.0, 10.0);
-        first.layout.insert(node_id(0), egui::pos2(1.0, 0.0));
-        let mut second = crate::SceneView::default();
-        second.layout.insert(node_id(0), egui::pos2(2.0, 0.0));
-        second.layout.insert(node_id(1), egui::pos2(3.0, 0.0));
+        first
+            .layout
+            .insert(NodeId::from_index(0), egui::pos2(1.0, 0.0));
+        let mut second = gantz_edit::SceneView::default();
+        second
+            .layout
+            .insert(NodeId::from_index(0), egui::pos2(2.0, 0.0));
+        second
+            .layout
+            .insert(NodeId::from_index(1), egui::pos2(3.0, 0.0));
 
         // Merged node 0 exists on both sides, so ours wins. Node 1 is
         // theirs-only. Node 2 has no stored position anywhere.
@@ -1333,16 +1336,16 @@ mod tests {
 
         assert_eq!(view.camera, first.camera);
         assert_eq!(
-            view.layout.get(&node_id(0)).copied(),
+            view.layout.get(&NodeId::from_index(0)).copied(),
             Some(egui::pos2(1.0, 0.0))
         );
         assert_eq!(
-            view.layout.get(&node_id(1)).copied(),
+            view.layout.get(&NodeId::from_index(1)).copied(),
             Some(egui::pos2(3.0, 0.0))
         );
         // The positionless node cascades from the camera centre.
         assert_eq!(
-            view.layout.get(&node_id(2)).copied(),
+            view.layout.get(&NodeId::from_index(2)).copied(),
             Some(egui::pos2(10.0, 10.0))
         );
     }
@@ -1385,7 +1388,7 @@ mod tests {
         let mut registry = gantz_ca::Registry::default();
         let mut graph = nest_graph();
         let mut vm = Engine::new_base();
-        let mut view = crate::SceneView::default();
+        let mut view = gantz_edit::SceneView::default();
         view.camera.center = egui::pos2(100.0, 50.0);
         let mut head_state = OpenHeadState::default();
         let selection: HashSet<_> = [NodeIx::new(1), NodeIx::new(3)].into_iter().collect();
@@ -1457,7 +1460,7 @@ mod tests {
         let b = graph.add_node(nd(1));
         graph.add_edge(a, b, edge(0, 0));
         let mut vm = Engine::new_base();
-        let mut view = crate::SceneView::default();
+        let mut view = gantz_edit::SceneView::default();
         let mut head_state = OpenHeadState::default();
         let selection: HashSet<_> = [a, b].into_iter().collect();
         head_state.scene.interaction.selection.nodes = selection.clone();
@@ -1493,7 +1496,7 @@ mod tests {
         let mut registry = gantz_ca::Registry::default();
         let mut graph = test_graph(&[10, 11]);
         let mut vm = Engine::new_base();
-        let mut view = crate::SceneView::default();
+        let mut view = gantz_edit::SceneView::default();
         let mut head_state = OpenHeadState::default();
         let mut instances = crate::node::NodeInstances::default();
         let parent: Name = "alpha".parse().unwrap();

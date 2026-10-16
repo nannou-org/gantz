@@ -46,7 +46,7 @@ pub(crate) struct Edit<'a, 'w, 's> {
     pub entity: Entity,
     pub head: &'a mut ca::Head,
     pub graph: &'a mut ca::DataGraph,
-    pub view: &'a mut gantz_egui::SceneView,
+    pub view: &'a mut gantz_edit::SceneView,
     pub instances: &'a mut gantz_egui::node::NodeInstances,
     pub state: &'a mut gantz_egui::widget::gantz::OpenHeadState,
     /// `None` until the head first compiles, and after a failed init.

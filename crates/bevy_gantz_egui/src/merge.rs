@@ -9,7 +9,7 @@ use bevy_log as log;
 use gantz_ca as ca;
 
 /// Seed `commit`'s stored view. See [`gantz_egui::section::seed_view`].
-pub fn seed_view(registry: &mut Registry, commit: ca::CommitAddr, view: gantz_egui::SceneView) {
+pub fn seed_view(registry: &mut Registry, commit: ca::CommitAddr, view: gantz_edit::SceneView) {
     gantz_egui::section::seed_view(&mut registry.0, commit, &view);
 }
 

@@ -5,11 +5,11 @@
 //! the registry through merge, prune, export and the `.gantz` text format.
 //! See [`crate::format`] for the friendly text forms.
 
-use crate::SceneView;
 use gantz_ca::{
     CommitAddr, Liveness, MergePolicy, Name, Registry, SectionDecl, section_get, section_insert,
     section_iter, section_remove,
 };
+use gantz_edit::SceneView;
 
 /// Human-readable descriptions for named graphs.
 pub struct Descriptions;

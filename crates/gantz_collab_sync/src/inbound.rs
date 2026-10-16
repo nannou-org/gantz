@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Branch names the host has open as heads, with their live camera when the
 /// host has one. A headless host passes an empty map.
-pub type OpenHeads = BTreeMap<ca::Name, Option<gantz_egui::Camera>>;
+pub type OpenHeads = BTreeMap<ca::Name, Option<gantz_edit::Camera>>;
 
 /// What the host must do after a [`poll`], replayed in order.
 #[derive(Debug)]
@@ -438,7 +438,7 @@ fn apply_join_snapshot(
 pub(crate) fn apply_sections(
     registry: &mut ca::Registry,
     sections: Vec<SectionEntry>,
-    local_camera: Option<gantz_egui::Camera>,
+    local_camera: Option<gantz_edit::Camera>,
 ) {
     use gantz_ca::SectionDecl;
     for (id, policy, liveness, key, mut value) in sections {
@@ -465,7 +465,7 @@ pub(crate) fn apply_sections(
 }
 
 /// The live camera of the session's open branch head, if any.
-fn local_camera(cx: &Cx<'_>, state: &SessionState) -> Option<gantz_egui::Camera> {
+fn local_camera(cx: &Cx<'_>, state: &SessionState) -> Option<gantz_edit::Camera> {
     cx.open.get(&state.branch_name()).copied().flatten()
 }
 
