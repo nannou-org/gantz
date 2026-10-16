@@ -4017,8 +4017,6 @@ dependencies = [
  "humantime",
  "log",
  "petgraph",
- "pollster",
- "rfd",
  "ron 0.10.1",
  "serde",
  "steel-core",
