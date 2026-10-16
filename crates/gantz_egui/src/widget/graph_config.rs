@@ -145,15 +145,6 @@ impl<'a> GraphConfig<'a> {
             .memory_mut(|m| m.data.get_temp::<String>(edit_id))
             .unwrap_or_else(|| head_name(self.head));
 
-        // Per-head temp state for the description editor of named graphs. The
-        // edit commits on focus loss.
-        let desc_id = egui::Id::new("graph_config_desc_edit").with(self.head);
-        let mut desc = is_named.then(|| {
-            let current = self.current_description.unwrap_or("");
-            ui.memory_mut(|m| m.data.get_temp::<String>(desc_id))
-                .unwrap_or_else(|| current.to_string())
-        });
-
         // Outputs collected from within the grid.
         let mut new_branch = None;
         let mut description_changed = None;
@@ -183,21 +174,23 @@ impl<'a> GraphConfig<'a> {
                     .new_branch;
                 ui.end_row();
 
-                if let Some(desc) = desc.as_mut() {
+                if is_named {
                     ui.label("desc.");
+                    let id = egui::Id::new("graph_config_desc_edit").with(self.head);
                     let current = self.current_description.unwrap_or("");
                     // The grid row auto-fits its height to the wrapped text,
                     // growing from a single row.
-                    let resp = ui.add_enabled(
-                        !self.immutable,
-                        egui::TextEdit::multiline(desc)
-                            .hint_text("Description")
-                            .desired_rows(1)
-                            .desired_width(control_w),
-                    );
-                    if resp.lost_focus() && desc.as_str() != current {
-                        description_changed = Some(desc.clone());
-                    }
+                    description_changed = ui
+                        .add_enabled_ui(!self.immutable, |ui| {
+                            super::buffered_edit(ui, id, current, |desc| {
+                                egui::TextEdit::multiline(desc)
+                                    .hint_text("Description")
+                                    .desired_rows(1)
+                                    .desired_width(control_w)
+                            })
+                        })
+                        .inner
+                        .committed;
                     ui.end_row();
                 }
 
@@ -415,9 +408,6 @@ impl<'a> GraphConfig<'a> {
             });
 
         ui.memory_mut(|m| m.data.insert_temp(edit_id, name));
-        if let Some(desc) = desc {
-            ui.memory_mut(|m| m.data.insert_temp(desc_id, desc));
-        }
 
         GraphConfigResponse {
             new_branch,

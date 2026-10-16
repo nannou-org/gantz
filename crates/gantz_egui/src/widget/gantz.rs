@@ -4203,7 +4203,10 @@ fn name_breadcrumb(
     // Own the scene's bottom-left corner. The sidebar toggle moved to the
     // scene's top-left, so nothing else occupies this corner.
     let margin = scene_overlay_margin(ui.style());
+    // Each graph pane draws its own breadcrumb, so the window id comes from the
+    // pane rather than its title.
     egui::Window::new("breadcrumb_window")
+        .id(ui.id().with("breadcrumb_window"))
         .pivot(egui::Align2::LEFT_BOTTOM)
         .fixed_pos(scene_rect.left_bottom() + egui::vec2(margin, -margin))
         .title_bar(false)
@@ -4389,64 +4392,71 @@ fn node_inspector<'a>(
                     if is_selected {
                         frame.stroke.color = ui.visuals().selection.stroke.color;
                     }
-                    let frame_resp = frame.show(ui, |ui| {
-                        let Some(weight) = graph.node_weight(id) else {
-                            return;
-                        };
-                        let ix = id.index();
-                        // Take the node's cached instance. See
-                        // `graph_scene::nodes`. Erase back below only when
-                        // changed, updating the witness. An unknown tag shows
-                        // a weak placeholder row.
-                        let Ok(mut entry) = instances.take(codec, ix, weight) else {
-                            ui.weak(format!("{} (unknown node type)", weight.tag));
-                            return;
-                        };
-                        // A locked node shows why above its disabled rows. See
-                        // `InstanceEntry::lost`.
-                        let locked = !entry.lost.is_empty();
-                        if locked {
-                            let text = widget::locked_text(&entry.lost);
-                            let text = format!("{} {text}", widget::LOCK_GLYPH);
-                            ui.colored_label(ui.visuals().warn_fg_color, text);
-                            if !immutable && widget::discard_button(ui) {
-                                let drop = crate::DropUnknownData { node: id };
-                                responses.push(DynResponse::new(drop));
-                            }
-                        }
-                        let path = [ix];
-                        let ctx = NodeCtx::new(
-                            registry,
-                            graph,
-                            &path[..],
-                            &inlets,
-                            &outlets,
-                            ref_ext_uis,
-                            vm,
-                            &mut writes,
-                        )
-                        .read_only(locked);
-                        let node = &mut entry.inst.node;
-                        let resp =
-                            widget::NodeInspector::new(node, ctx, immutable || locked).show(ui);
-                        if resp.changed {
-                            changed |= instances.write_back(ix, entry, &mut graph[id]);
-                        } else {
-                            instances.put(ix, entry);
-                        }
-                        responses.extend(resp.payloads);
-                        if resp.label_response.clicked() {
-                            let sel = &mut head_state.scene.interaction.selection.nodes;
-                            if ui.input(|i| i.modifiers.command) {
-                                if !sel.remove(&id) {
-                                    sel.insert(id);
+                    // Each node gets its own id scope, so its table, grids and
+                    // popups keep their state apart from the other nodes.
+                    let frame_resp = ui
+                        .push_id(id, |ui| {
+                            frame.show(ui, |ui| {
+                                let Some(weight) = graph.node_weight(id) else {
+                                    return;
+                                };
+                                let ix = id.index();
+                                // Take the node's cached instance. See
+                                // `graph_scene::nodes`. Erase back below only when
+                                // changed, updating the witness. An unknown tag shows
+                                // a weak placeholder row.
+                                let Ok(mut entry) = instances.take(codec, ix, weight) else {
+                                    ui.weak(format!("{} (unknown node type)", weight.tag));
+                                    return;
+                                };
+                                // A locked node shows why above its disabled rows. See
+                                // `InstanceEntry::lost`.
+                                let locked = !entry.lost.is_empty();
+                                if locked {
+                                    let text = widget::locked_text(&entry.lost);
+                                    let text = format!("{} {text}", widget::LOCK_GLYPH);
+                                    ui.colored_label(ui.visuals().warn_fg_color, text);
+                                    if !immutable && widget::discard_button(ui) {
+                                        let drop = crate::DropUnknownData { node: id };
+                                        responses.push(DynResponse::new(drop));
+                                    }
                                 }
-                            } else {
-                                sel.clear();
-                                sel.insert(id);
-                            }
-                        }
-                    });
+                                let path = [ix];
+                                let ctx = NodeCtx::new(
+                                    registry,
+                                    graph,
+                                    &path[..],
+                                    &inlets,
+                                    &outlets,
+                                    ref_ext_uis,
+                                    vm,
+                                    &mut writes,
+                                )
+                                .read_only(locked);
+                                let node = &mut entry.inst.node;
+                                let resp =
+                                    widget::NodeInspector::new(node, ctx, immutable || locked)
+                                        .show(ui);
+                                if resp.changed {
+                                    changed |= instances.write_back(ix, entry, &mut graph[id]);
+                                } else {
+                                    instances.put(ix, entry);
+                                }
+                                responses.extend(resp.payloads);
+                                if resp.label_response.clicked() {
+                                    let sel = &mut head_state.scene.interaction.selection.nodes;
+                                    if ui.input(|i| i.modifiers.command) {
+                                        if !sel.remove(&id) {
+                                            sel.insert(id);
+                                        }
+                                    } else {
+                                        sel.clear();
+                                        sel.insert(id);
+                                    }
+                                }
+                            })
+                        })
+                        .inner;
                     responses.extend(crate::action::state_written(&mut writes));
                     if is_selected && selected_rect.is_none() {
                         selected_rect = Some(frame_resp.response.rect);
@@ -4512,6 +4522,74 @@ fn steel_view(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The text of every shape painted in `shape`, nested shapes included.
+    fn shape_texts(shape: &egui::Shape, texts: &mut Vec<String>) {
+        match shape {
+            egui::Shape::Text(text) => texts.push(text.galley.text().to_string()),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| shape_texts(s, texts)),
+            _ => (),
+        }
+    }
+
+    /// Each inspected node draws its table in its own id scope. egui paints a
+    /// "use of ... ID" warning over widgets whose ids clash, such as the
+    /// column resize handles of two tables with one id.
+    #[test]
+    fn inspected_nodes_have_their_own_ids() {
+        let registry = gantz_ca::Registry::default();
+        let graphs = gantz_core::data::ReifiedGraphs::new();
+        let builtins = gantz_core::Builtins::default();
+        let ui_builtins = crate::node::UiBuiltins::default();
+        let codec = crate::test_node::codec();
+        let env = Env {
+            registry: &registry,
+            builtins: &builtins,
+            codec: &codec,
+            graphs: &graphs,
+            instances: &ui_builtins,
+        };
+        let expr = |src| {
+            let node = gantz_core::node::Expr::new(src).unwrap();
+            gantz_core::data::erase_node_typed(&node).unwrap()
+        };
+        let mut graph = gantz_ca::DataGraph::default();
+        graph.add_node(expr("(+ 1 2)"));
+        graph.add_node(expr("(+ 3 4)"));
+        let mut instances = crate::node::NodeInstances::default();
+        let mut vm = Engine::new_base();
+        let mut head_state = OpenHeadState::default();
+        let head = gantz_ca::Head::Branch("test".parse().unwrap());
+
+        let ctx = egui::Context::default();
+        assert!(ctx.options(|o| o.warn_on_id_clash));
+        let mut texts = Vec::new();
+        // Tables size their columns over the first passes.
+        for _ in 0..3 {
+            let output = ctx.run_ui(Default::default(), |ui| {
+                node_inspector(
+                    &env,
+                    &codec,
+                    &mut graph,
+                    &mut instances,
+                    &mut vm,
+                    &mut head_state,
+                    &head,
+                    false,
+                    false,
+                    &[],
+                    ui,
+                );
+            });
+            texts.clear();
+            for clipped in &output.shapes {
+                shape_texts(&clipped.shape, &mut texts);
+            }
+        }
+        assert!(texts.iter().any(|t| t == "path"), "the tables drew");
+        let clashes: Vec<_> = texts.iter().filter(|t| t.contains(" ID ")).collect();
+        assert!(clashes.is_empty(), "{clashes:?}");
+    }
 
     /// The fixed sidebar width must be imposed on the sidebar, not the main
     /// area. The anchors must identify the sidebar as the column that does

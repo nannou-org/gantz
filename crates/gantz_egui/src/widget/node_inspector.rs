@@ -178,7 +178,7 @@ pub fn table(
     // The state row is a collapsed single line by default. A persistent
     // per-node flag controls whether it is expanded, which drives the row
     // height.
-    let state_id = egui::Id::new(("inspector_state_expanded", &path));
+    let state_id = ui.id().with("state_expanded");
     let state_texts = match &state_value {
         Some(Ok(Some(state))) => Some((format!("{state:?}"), format!("{state:#?}"))),
         _ => None,

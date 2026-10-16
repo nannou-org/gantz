@@ -254,10 +254,6 @@ pub trait NodeUi: gantz_core::Node + Send + Sync {
     /// shown. Adding to the given `body` by providing an implementation of this
     /// method will append extra rows. Mark the returned response
     /// [`changed`](InspectorRowsResponse::mark_changed) on CA-affecting edits.
-    ///
-    /// The inspector pane draws every node's rows inside a child ui with the
-    /// same id. A widget that keeps popup state, such as a `ComboBox`, must
-    /// salt its id with [`NodeCtx::path`] or its state is shared across nodes.
     fn inspector_rows(
         &mut self,
         _ctx: &mut NodeCtx,
