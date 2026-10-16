@@ -818,10 +818,6 @@ impl widget::node_palette::Command for NodeTyCmd<'_> {
     fn info_ui(&self, ui: &mut egui::Ui) {
         crate::node_info_ui(&self.env.command_info(self.name), ui);
     }
-
-    fn formatted_kb_shortcut(&self, ctx: &egui::Context) -> Option<String> {
-        self.env.command_formatted_kb_shortcut(ctx, self.name)
-    }
 }
 
 impl Clone for NodeTyCmd<'_> {

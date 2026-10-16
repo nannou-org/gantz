@@ -189,11 +189,6 @@ pub(crate) fn push_entry<T: RunEntry>(entries: &mut VecDeque<T>, max_entries: us
     }
 }
 
-/// Simple shorthand for viewing steel code without highlights.
-pub fn steel_view(ui: &mut egui::Ui, code: &str) {
-    SteelView::new(code).show(ui);
-}
-
 /// A titled, full-width group. Settings tabs use it to separate sections.
 pub fn section<R>(
     ui: &mut egui::Ui,
