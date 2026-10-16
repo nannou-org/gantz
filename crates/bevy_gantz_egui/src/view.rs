@@ -2,7 +2,6 @@
 
 use crate::{GraphView, GuiState};
 use bevy_ecs::prelude::*;
-use bevy_egui::EguiContexts;
 use bevy_gantz::Registry;
 use bevy_gantz::head;
 use gantz_ca as ca;
@@ -65,7 +64,6 @@ pub fn persist_camera_and_seed(
 pub fn settle_layout(
     mut registry: ResMut<Registry>,
     mut gui_state: ResMut<GuiState>,
-    mut ctxs: EguiContexts,
     mut heads: Query<(Entity, &mut head::HeadRef, &GraphView), With<head::OpenHead>>,
     mut cmds: Commands,
 ) {
@@ -85,9 +83,6 @@ pub fn settle_layout(
         // Clear redo, since a new commit invalidates it, and migrate GUI state.
         let new_head = (**head_ref).clone();
         gui_state.migrate_head(&old_head, &new_head, true);
-        if let Ok(ctx) = ctxs.ctx_mut() {
-            gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
-        }
         // Not a `CommittedEvent`, so no resync cascade. Layers that mirror
         // commits elsewhere, such as collab sessions syncing node positions,
         // still need to hear about it.

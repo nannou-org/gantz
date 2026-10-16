@@ -1,5 +1,6 @@
 //! The widget's persistent state and configuration, and its egui memory persistence.
 
+use super::graph_tabs;
 use crate::{
     Keymap,
     widget::{self, GraphSceneState, graph_scene},
@@ -74,6 +75,10 @@ pub struct GantzState {
     /// [`pane_key`]: super::pane_key
     #[serde(default)]
     pub windowed_geometry: HashMap<String, PaneWindowGeometry>,
+    /// The graph scene's tab tree, one pane per open head. Its tiles
+    /// serialize in the hash order of `egui_tiles`.
+    #[serde(default = "graph_tabs::create_empty_graph_tree")]
+    pub(super) graph_tabs: egui_tiles::Tree<graph_tabs::GraphPane>,
 }
 
 /// The persisted geometry of a pane's pop-out window, in logical pixels.
@@ -499,21 +504,24 @@ impl GantzState {
             sidebar_width: default_sidebar_width(),
             tray_height: default_tray_height(),
             windowed_geometry: HashMap::new(),
+            graph_tabs: graph_tabs::create_empty_graph_tree(),
         }
     }
 
     /// Migrate GUI state when a head's identity changes.
     ///
-    /// Moves the `open_heads` entry from the old to the new key. When
-    /// `clear_redo` is true, removes redo stacks for both keys, since a new
-    /// edit commit invalidates them. Otherwise migrates the redo stack to the
-    /// new key.
+    /// Moves the `open_heads` entry and the graph tab from the old to the new
+    /// head. When `clear_redo` is true, removes redo stacks for both keys,
+    /// since a new edit commit invalidates them. Otherwise migrates the redo
+    /// stack to the new key. Hosts call this for every change of a head's
+    /// identity, and nothing else needs to migrate.
     pub fn migrate_head(&mut self, old: &gantz_ca::Head, new: &gantz_ca::Head, clear_redo: bool) {
         if let Some(state) = self.open_heads.remove(old) {
             self.open_heads.insert(new.clone(), state);
         }
         migrate_or_clear(&mut self.redo_stacks, old, new, clear_redo);
         migrate_or_clear(&mut self.undo_cursors, old, new, clear_redo);
+        graph_tabs::migrate_graph_pane(&mut self.graph_tabs, old, new);
     }
 }
 
@@ -537,5 +545,51 @@ fn migrate_or_clear<V>(
 impl Default for GantzState {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tab_heads(state: &GantzState) -> Vec<gantz_ca::Head> {
+        let tree = &state.graph_tabs;
+        let Some(egui_tiles::Tile::Container(root)) = tree.root().and_then(|r| tree.tiles.get(r))
+        else {
+            panic!("a root container");
+        };
+        root.children()
+            .map(|&id| match tree.tiles.get(id) {
+                Some(egui_tiles::Tile::Pane(graph_tabs::GraphPane(head))) => head.clone(),
+                _ => panic!("a graph pane"),
+            })
+            .collect()
+    }
+
+    // A head's tab follows it to its new identity and keeps its place.
+    #[test]
+    fn migrate_head_keeps_the_graph_tab_in_place() {
+        let head = |name: &str| gantz_ca::Head::Branch(name.parse().unwrap());
+        let (a, b, c) = (head("a"), head("b"), head("c"));
+        let mut state = GantzState::new();
+        graph_tabs::sync_graph_panes(&mut state.graph_tabs, &[a.clone(), b.clone()]);
+        state.migrate_head(&a, &c, false);
+        assert_eq!(tab_heads(&state), [c.clone(), b.clone()]);
+        // The sync after the migration keeps the order, since no pane is new.
+        graph_tabs::sync_graph_panes(&mut state.graph_tabs, &[c.clone(), b.clone()]);
+        assert_eq!(tab_heads(&state), [c.clone(), b.clone()]);
+        // The tabs persist with the state.
+        let state: GantzState = ron::from_str(&ron::to_string(&state).unwrap()).unwrap();
+        assert_eq!(tab_heads(&state), [c, b]);
+    }
+
+    // State persisted before the graph tabs joined it still loads.
+    #[test]
+    fn state_without_graph_tabs_loads() {
+        let ron = ron::to_string(&GantzState::new()).unwrap();
+        let start = ron.find(",graph_tabs:").expect("the field");
+        let ron = format!("{})", &ron[..start]);
+        let state: GantzState = ron::from_str(&ron).unwrap();
+        assert!(state.graph_tabs.root().is_none());
     }
 }

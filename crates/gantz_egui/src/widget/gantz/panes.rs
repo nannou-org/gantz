@@ -1,9 +1,7 @@
 //! Rendering of each pane, and the helpers the panes share.
 
-use super::graph_tabs::{
-    GRAPH_TREE_ID, GraphPane, GraphTreeBehaviour, create_empty_graph_tree, sync_graph_panes,
-};
-use super::state::{OpenHeadState, SceneConfig, ViewToggles, load_tree, store_tree};
+use super::graph_tabs::{GraphPane, GraphTreeBehaviour, create_empty_graph_tree, sync_graph_panes};
+use super::state::{OpenHeadState, SceneConfig, ViewToggles};
 use super::tiles::{NodeViewPane, Pane, ext_pane_entries};
 use super::{FileDrop, FileDropTarget, LogSource, NESTED_GRAPH_TYPE, NodeTyCmd, PaneCtx};
 use crate::{
@@ -248,9 +246,10 @@ where
     // Extension-pane toggle entries for the graph-area context menu.
     let ext_panes = ext_pane_entries(cx.gantz);
 
-    let graph_tree_id = egui::Id::new(GRAPH_TREE_ID);
-    let mut graph_tree: egui_tiles::Tree<GraphPane> =
-        load_tree(ui.ctx(), graph_tree_id).unwrap_or_else(create_empty_graph_tree);
+    // The tabs render through `cx`, so the tree comes out of the state for
+    // the pass.
+    let empty = create_empty_graph_tree();
+    let mut graph_tree = std::mem::replace(&mut cx.state.graph_tabs, empty);
 
     sync_graph_panes(&mut graph_tree, cx.access.heads());
 
@@ -268,8 +267,7 @@ where
         ext_panes: &ext_panes,
     };
     graph_tree.ui(&mut graph_behaviour, ui);
-
-    store_tree(ui.ctx(), graph_tree_id, &graph_tree);
+    cx.state.graph_tabs = graph_tree;
 
     let PaneCtx {
         gantz,

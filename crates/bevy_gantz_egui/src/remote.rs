@@ -7,7 +7,6 @@ use crate::hooks::refresh_moved_heads;
 use crate::merge::finish_merge_commit;
 use crate::{ForHead, GraphCache, GuiState, NodeCodecRes, refresh_cache};
 use bevy_ecs::prelude::*;
-use bevy_egui::EguiContexts;
 use bevy_gantz::Registry;
 use bevy_gantz::head;
 use bevy_log as log;
@@ -184,7 +183,6 @@ pub fn on_rename_head(
     trigger: On<RenameHeadEvent>,
     mut gui_state: ResMut<GuiState>,
     mut heads: Query<&mut head::HeadRef, With<head::OpenHead>>,
-    mut ctxs: EguiContexts,
 ) {
     let RenameHeadEvent { from, to } = trigger.event();
     let old_head = ca::Head::Branch(from.clone());
@@ -195,8 +193,5 @@ pub fn on_rename_head(
         }
         **head_ref = new_head.clone();
         gui_state.migrate_head(&old_head, &new_head, false);
-        if let Ok(ctx) = ctxs.ctx_mut() {
-            gantz_egui::widget::update_graph_pane_head(ctx, &old_head, &new_head);
-        }
     }
 }

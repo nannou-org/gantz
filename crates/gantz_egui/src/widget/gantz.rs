@@ -13,7 +13,6 @@ mod state;
 mod tiles;
 mod windowing;
 
-pub use graph_tabs::update_graph_pane_head;
 use panes::{collect_gantz_file_drops, gui_role_badge, render_pane, set_gui_role};
 pub use state::{
     AlignConfig, EdgeConfig, FollowSelectionConfig, GantzState, GridConfig, LayoutConfig,

@@ -1,7 +1,6 @@
 //! The graph scene's tabs, one per open head.
 
 use super::panes::{GRAPH_TAB_BAR_HEIGHT, graph_scene, head_immutable, name_breadcrumb};
-use super::state::{load_tree, store_tree};
 use super::{PaneCtx, separator_stroke};
 use crate::{
     HeadAccess,
@@ -13,37 +12,18 @@ use crate::{
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub(super) struct GraphPane(pub(super) gantz_ca::Head);
 
-/// The egui ID used to store the inner graph tree.
-pub(super) const GRAPH_TREE_ID: &str = "gantz-graph-tiles-tree";
-
-/// Update the head stored in a graph pane when a commit CA changes.
-///
-/// This should be called after `commit_graph_to_head` modifies a head's commit CA.
-/// It updates the persisted graph tree to reflect the new head value.
-pub fn update_graph_pane_head(
-    ctx: &egui::Context,
-    old_head: &gantz_ca::Head,
-    new_head: &gantz_ca::Head,
+/// Point the graph pane of `old` at `new`, so the tab keeps its place.
+pub(super) fn migrate_graph_pane(
+    tree: &mut egui_tiles::Tree<GraphPane>,
+    old: &gantz_ca::Head,
+    new: &gantz_ca::Head,
 ) {
-    if old_head == new_head {
-        return;
-    }
-    let graph_tree_id = egui::Id::new(GRAPH_TREE_ID);
-    let Some(mut tree) = load_tree::<GraphPane>(ctx, graph_tree_id) else {
-        return;
-    };
-    let mut changed = false;
-    for (_, tile) in tree.tiles.iter_mut() {
-        if let egui_tiles::Tile::Pane(GraphPane(head)) = tile {
-            if head == old_head {
-                *head = new_head.clone();
-                changed = true;
-                break;
-            }
-        }
-    }
-    if changed {
-        store_tree(ctx, graph_tree_id, &tree);
+    let pane = tree.tiles.iter_mut().find_map(|(_, tile)| match tile {
+        egui_tiles::Tile::Pane(GraphPane(head)) if head == old => Some(head),
+        _ => None,
+    });
+    if let Some(head) = pane {
+        *head = new.clone();
     }
 }
 
