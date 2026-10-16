@@ -1,15 +1,12 @@
 //! The graph scene's tabs, one per open head.
 
 use super::panes::{GRAPH_TAB_BAR_HEIGHT, graph_scene, head_immutable, name_breadcrumb};
-use super::separator_stroke;
-use super::state::{GantzState, load_tree, store_tree};
+use super::state::{load_tree, store_tree};
+use super::{PaneCtx, separator_stroke};
 use crate::{
-    Env, HeadAccess,
-    node::NodeCodec,
-    response::Responses,
+    HeadAccess,
     widget::{self},
 };
-use std::collections::HashSet;
 
 /// A pane within the inner graph tree. Contains the head that this pane
 /// displays.
@@ -61,42 +58,19 @@ struct TabEditState {
     request_focus: bool,
 }
 
-/// The context passed to the inner graph `egui_tiles::Tree` widget.
-pub(super) struct GraphTreeBehaviour<'a, Access>
+/// The context passed to the inner graph `egui_tiles::Tree` widget. It renders
+/// each graph tab through the shared pane context.
+pub(super) struct GraphTreeBehaviour<'a, 'c, 's, Access>
 where
     Access: HeadAccess,
 {
-    pub(super) env: &'a Env<'a>,
-    pub(super) codec: &'a NodeCodec,
-    pub(super) access: &'a mut Access,
-    pub(super) state: &'a mut GantzState,
-    pub(super) focused_head: &'a mut usize,
-    /// Dynamic payloads emitted from the graph scenes and their tabs.
-    pub(super) responses: &'a mut Responses,
-    /// Heads whose graph had a CA-affecting edit this frame.
-    pub(super) changed_heads: &'a mut Vec<gantz_ca::Head>,
-    /// Per-head node index remappings from this frame's deletions, applied to
-    /// the top-level tree's node views after layout. See
-    /// `migrate_node_view_paths`.
-    pub(super) reindexes: &'a mut Vec<(gantz_ca::Head, crate::ops::Reindex)>,
-    pub(super) base_names: &'a crate::reg::Names,
-    pub(super) base_immutable: bool,
-    /// Whether the per-node change-tracking validator is enabled. See
-    /// [`GraphScene::validate_change_tracking`].
-    pub(super) validate_change_tracking: bool,
+    pub(super) cx: &'a mut PaneCtx<'c, 's, Access>,
     /// Extension-pane toggle entries for the scene's "Panes" context submenu.
     /// See [`ext_pane_entries`].
     pub(super) ext_panes: &'a [widget::ExtPaneEntry],
-    /// Domain edge stylers for the graph scenes. See [`widget::EdgeStyle`].
-    pub(super) edge_styles: &'a [&'a dyn widget::EdgeStyle],
-    /// Collaborative-session display state, when a collab layer is wired. It
-    /// drives the per-tab session dot and the connecting and error overlay.
-    pub(super) collab: Option<&'a crate::collab::CollabUiState>,
-    /// See [`Gantz::audio_heads`].
-    pub(super) audio_heads: Option<&'a HashSet<gantz_ca::Head>>,
 }
 
-impl<'a, Access> egui_tiles::Behavior<GraphPane> for GraphTreeBehaviour<'a, Access>
+impl<Access> egui_tiles::Behavior<GraphPane> for GraphTreeBehaviour<'_, '_, '_, Access>
 where
     Access: HeadAccess,
 {
@@ -114,11 +88,11 @@ where
         style: &egui::Style,
         resize_state: egui_tiles::ResizeState,
     ) -> egui::Stroke {
-        separator_stroke(self.state.style.separator, style, resize_state)
+        separator_stroke(self.cx.state.style.separator, style, resize_state)
     }
 
     fn gap_width(&self, _style: &egui::Style) -> f32 {
-        self.state.style.separator.width
+        self.cx.state.style.separator.width
     }
 
     fn tab_bar_height(&self, _style: &egui::Style) -> f32 {
@@ -148,7 +122,7 @@ where
         _tile_id: egui_tiles::TileId,
     ) -> bool {
         // Allow closing tabs if there is more than one head open.
-        self.access.heads().len() > 1
+        self.cx.access.heads().len() > 1
     }
 
     fn on_tab_close(
@@ -157,7 +131,10 @@ where
         tile_id: egui_tiles::TileId,
     ) -> bool {
         if let Some(GraphPane(head)) = tiles.get_pane(&tile_id).cloned() {
-            self.responses.push(None, crate::CloseHead(head));
+            self.cx
+                .response
+                .responses
+                .push(None, crate::CloseHead(head));
         }
         // Return true to allow egui_tiles to remove the tile.
         true
@@ -180,7 +157,7 @@ where
 
         let response = if is_editing {
             let head = tiles.get_pane(&tile_id).map(|GraphPane(h)| h.clone());
-            let names = crate::reg::names(self.env.registry);
+            let names = crate::reg::names(self.cx.gantz.env.registry);
 
             let name_res = head.as_ref().map(|h| {
                 ui.scope(|ui| {
@@ -210,7 +187,7 @@ where
             if editing_ended {
                 if let Some((original, new_name)) = name_res.new_branch {
                     let branch = crate::BranchHead { original, new_name };
-                    self.responses.push(None, branch);
+                    self.cx.response.responses.push(None, branch);
                 }
                 edit_state.editing_tile_id = None;
                 edit_state.edit_text.clear();
@@ -223,16 +200,21 @@ where
             let mut session = None;
             let mut audio = None;
             if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
-                let heads = self.access.heads();
-                if crate::head_is_focused(heads, *self.focused_head, head) {
+                let heads = self.cx.access.heads();
+                if crate::head_is_focused(heads, self.cx.focused_head, head) {
                     title.push_str(" ⚫");
                 }
                 // The head's collab session, when shared.
-                if let (Some(collab), gantz_ca::Head::Branch(name)) = (self.collab, head) {
+                if let (Some(collab), gantz_ca::Head::Branch(name)) = (self.cx.gantz.collab, head) {
                     session = collab.sessions.get(name);
                 }
-                if self.audio_heads.is_some_and(|heads| heads.contains(head)) {
-                    audio = Some(self.state.open_heads.get(head).is_some_and(|s| s.muted));
+                if self
+                    .cx
+                    .gantz
+                    .audio_heads
+                    .is_some_and(|heads| heads.contains(head))
+                {
+                    audio = Some(self.cx.state.open_heads.get(head).is_some_and(|s| s.muted));
                 }
             }
             let mut tab = widget::Tab::new(title, id)
@@ -249,7 +231,7 @@ where
 
             if res.audio.as_ref().is_some_and(|r| r.clicked()) {
                 if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
-                    let head_state = self.state.open_heads.entry(head.clone()).or_default();
+                    let head_state = self.cx.state.open_heads.entry(head.clone()).or_default();
                     head_state.muted = !head_state.muted;
                 }
             }
@@ -270,8 +252,8 @@ where
             // Update focused_head when this tab is clicked.
             if res.tab.clicked() {
                 if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
-                    if let Some(ix) = self.access.heads().iter().position(|h| h == head) {
-                        *self.focused_head = ix;
+                    if let Some(ix) = self.cx.access.heads().iter().position(|h| h == head) {
+                        self.cx.focused_head = ix;
                     }
                 }
             }
@@ -301,26 +283,36 @@ where
 
         // Find the index of this head, for updating `focused_head`.
         let ix = self
+            .cx
             .access
             .heads()
             .iter()
             .position(|h| h == pane_head)
             .expect("pane head not found in heads");
 
-        let immutable = head_immutable(pane_head, self.base_immutable, self.base_names);
-        let diagnostics = self.access.diagnostics(pane_head).to_vec();
+        let immutable = head_immutable(
+            pane_head,
+            self.cx.gantz.base_immutable,
+            self.cx.gantz.base_names,
+        );
+        let diagnostics = self.cx.access.diagnostics(pane_head).to_vec();
 
         // Global layout params combined with this head's flow.
-        let layout_config = self.state.layout_config;
+        let layout_config = self.cx.state.layout_config;
         // Global grid, snap and align options, applied to every head.
-        let scene_config = self.state.scene_config;
-        let head_state = self.state.open_heads.entry(pane_head.clone()).or_default();
+        let scene_config = self.cx.state.scene_config;
+        let head_state = self
+            .cx
+            .state
+            .open_heads
+            .entry(pane_head.clone())
+            .or_default();
         let layout_params = layout_config.to_params(head_state.layout_flow);
         // Disjoint borrow of a sibling field of `open_heads` for the graph
         // scene's "Panes" context submenu.
-        let view_toggles = &mut self.state.view_toggles;
+        let view_toggles = &mut self.cx.state.view_toggles;
         // Disjoint borrow for the scene-level Select-all shortcut.
-        let keymap = &self.state.keymap;
+        let keymap = &self.cx.state.keymap;
 
         // The rect positions the floating breadcrumb window.
         let rect = ui.available_rect_before_wrap();
@@ -328,23 +320,23 @@ where
         // Get mutable access to this head's data and render the graph scene.
         // The camera rides out for overlays that map graph-space positions to
         // the pane, such as peer pointers.
-        let (graph_response, camera) = match self.access.with_head_mut(pane_head, |data| {
+        let (graph_response, camera) = match self.cx.access.with_head_mut(pane_head, |data| {
             let camera = data.view.camera;
             let res = graph_scene(
-                self.env,
-                self.codec,
+                self.cx.gantz.env,
+                self.cx.gantz.codec,
                 data.graph,
                 data.instances,
                 pane_head,
                 head_state,
                 view_toggles,
                 self.ext_panes,
-                self.edge_styles,
+                self.cx.gantz.edge_styles,
                 data.view,
                 layout_params,
                 scene_config,
                 immutable,
-                self.validate_change_tracking,
+                self.cx.gantz.validates_change_tracking(),
                 keymap,
                 &diagnostics,
                 data.vm,
@@ -359,32 +351,38 @@ where
         if let Some(response) = graph_response {
             // Focus this head when clicking on the graph or any of its nodes.
             if response.scene.clicked() || response.any_node_interacted() {
-                *self.focused_head = ix;
+                self.cx.focused_head = ix;
             }
             // Record a CA-affecting edit so the app can commit just this head.
             if response.changed {
-                self.changed_heads.push(pane_head.clone());
+                self.cx.response.changed_heads.push(pane_head.clone());
             }
             // Collect this frame's deletions. `Gantz::show` migrates the
             // top-level tree's node-view paths past them after layout, since
             // the live top-level tree is not reachable here mid-traversal.
             if !response.reindex.is_empty() {
-                self.reindexes.push((pane_head.clone(), response.reindex));
+                self.cx
+                    .response
+                    .node_view_reindexes
+                    .push((pane_head.clone(), response.reindex));
             }
             // Tag the scene's emissions with this head.
-            self.responses.extend(Some(&*pane_head), response.responses);
+            self.cx
+                .response
+                .responses
+                .extend(Some(&*pane_head), response.responses);
         }
 
         // Floating name breadcrumb for nested graphs.
         let crumbs = name_breadcrumb(rect, pane_head, ui);
-        self.responses.extend(Some(&*pane_head), crumbs);
+        self.cx.response.responses.extend(Some(&*pane_head), crumbs);
 
         // A collab-session overlay. While a join is still connecting or has
         // failed, the pane's graph is only a placeholder, so dim the scene and
         // say what is happening. Peers' live pointers paint beneath it.
-        if let (Some(collab), gantz_ca::Head::Branch(name)) = (self.collab, &*pane_head) {
+        if let (Some(collab), gantz_ca::Head::Branch(name)) = (self.cx.gantz.collab, &*pane_head) {
             if let Some(display) = collab.sessions.get(name) {
-                if self.state.collab.show_pointers && !display.pointers.is_empty() {
+                if self.cx.state.collab.show_pointers && !display.pointers.is_empty() {
                     if let Some(camera) = camera {
                         paint_peer_pointers(rect, camera, &display.pointers, ui);
                         // Cursors move between this peer's frames.

@@ -154,7 +154,6 @@ where
     state: &'a mut GantzState,
     access: &'a mut Access,
     focused_head: usize,
-    base_names: &'a crate::reg::Names,
     response: &'a mut GantzResponse,
 }
 
@@ -163,12 +162,7 @@ struct TreeBehaviour<'a, 's, Access>
 where
     Access: HeadAccess,
 {
-    gantz: &'a mut Gantz<'s>,
-    state: &'a mut GantzState,
-    access: &'a mut Access,
-    focused_head: usize,
-    base_names: &'a crate::reg::Names,
-    gantz_response: &'a mut GantzResponse,
+    cx: PaneCtx<'a, 's, Access>,
     /// Panes detached into windows. The tab context menu pushes to this when a
     /// pane is popped out.
     windowed: &'a mut Vec<Pane>,
@@ -308,6 +302,13 @@ impl<'a> Gantz<'a> {
     pub fn validate_change_tracking(mut self, enabled: bool) -> Self {
         self.validate_change_tracking = Some(enabled);
         self
+    }
+
+    /// Whether the per-node change-tracking validator is on. See
+    /// [`Gantz::validate_change_tracking`] for the default.
+    fn validates_change_tracking(&self) -> bool {
+        self.validate_change_tracking
+            .unwrap_or(cfg!(debug_assertions))
     }
 
     /// Provide extension settings subtabs. See
@@ -461,19 +462,19 @@ impl<'a> Gantz<'a> {
 
         let mut response = GantzResponse::new(focused_head);
 
-        let base_names = self.base_names;
         let mut behaviour = TreeBehaviour {
-            gantz: &mut self,
-            state: &mut *state,
-            access: &mut *access,
-            focused_head,
-            base_names,
-            gantz_response: &mut response,
+            cx: PaneCtx {
+                gantz: &mut self,
+                state: &mut *state,
+                access: &mut *access,
+                focused_head,
+                response: &mut response,
+            },
             windowed: &mut windowed,
         };
         tree.ui(&mut behaviour, ui);
 
-        response.focused_head = behaviour.focused_head;
+        response.focused_head = behaviour.cx.focused_head;
 
         // Capture the sidebar width and tray height from the laid-out tree,
         // which reflects any manual divider drag, to re-impose next frame.
@@ -568,7 +569,6 @@ impl<'a> Gantz<'a> {
                                 state: &mut *state,
                                 access: &mut *access,
                                 focused_head,
-                                base_names,
                                 response: &mut response,
                             };
                             render_pane(&mut cx, ui, pane);
@@ -630,13 +630,11 @@ impl<'a> Gantz<'a> {
     {
         crate::style::apply(ui.ctx(), &state.style);
         let mut response = GantzResponse::new(focused_head);
-        let base_names = self.base_names;
         let mut cx = PaneCtx {
             gantz: &mut self,
             state,
             access,
             focused_head,
-            base_names,
             response: &mut response,
         };
         render_pane(&mut cx, ui, pane);
@@ -649,7 +647,7 @@ where
     Access: HeadAccess,
 {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
-        pane_title(self.gantz, self.access, self.focused_head, pane).into()
+        pane_title(self.cx.gantz, self.cx.access, self.cx.focused_head, pane).into()
     }
 
     fn on_tab_button(
@@ -670,12 +668,12 @@ where
         };
         button_response.context_menu(|ui| {
             if pane_is_hideable(&pane) && ui.button("hide").clicked() {
-                set_pane_visible(&mut self.state.view_toggles, &pane, false);
+                set_pane_visible(&mut self.cx.state.view_toggles, &pane, false);
                 ui.close();
             }
             if pane_is_poppable(&pane) && ui.button("pop out to window").clicked() {
                 detach_pane(
-                    &mut self.state.view_toggles,
+                    &mut self.cx.state.view_toggles,
                     self.windowed,
                     tiles,
                     tile_id,
@@ -712,7 +710,7 @@ where
             // than letting egui_tiles remove the tile from the tree.
             Some(pane) => {
                 let pane = pane.clone();
-                set_pane_visible(&mut self.state.view_toggles, &pane, false);
+                set_pane_visible(&mut self.cx.state.view_toggles, &pane, false);
                 false
             }
             None => false,
@@ -737,7 +735,7 @@ where
         // tab, so their bodies stay free of controls.
         let badge = match tiles.get_pane(&tile_id) {
             Some(Pane::GuiPreview | Pane::GuiTree) => {
-                gui_role_badge(self.access, self.focused_head, ui.ctx())
+                gui_role_badge(self.cx.access, self.cx.focused_head, ui.ctx())
             }
             _ => None,
         };
@@ -775,11 +773,11 @@ where
         style: &egui::Style,
         resize_state: egui_tiles::ResizeState,
     ) -> egui::Stroke {
-        separator_stroke(self.state.style.separator, style, resize_state)
+        separator_stroke(self.cx.state.style.separator, style, resize_state)
     }
 
     fn gap_width(&self, _style: &egui::Style) -> f32 {
-        self.state.style.separator.width
+        self.cx.state.style.separator.width
     }
 
     fn tab_outline_stroke(
@@ -803,18 +801,8 @@ where
         _tile_id: egui_tiles::TileId,
         pane: &mut Pane,
     ) -> egui_tiles::UiResponse {
-        let mut cx = PaneCtx {
-            gantz: &mut *self.gantz,
-            state: &mut *self.state,
-            access: &mut *self.access,
-            focused_head: self.focused_head,
-            base_names: self.base_names,
-            response: &mut *self.gantz_response,
-        };
-        render_pane(&mut cx, ui, pane);
-        // Propagate a focus change made while rendering. The graph scene
-        // changes focus on graph-tab clicks.
-        self.focused_head = cx.focused_head;
+        // A graph-tab click while rendering changes `cx.focused_head`.
+        render_pane(&mut self.cx, ui, pane);
         egui_tiles::UiResponse::None
     }
 }
