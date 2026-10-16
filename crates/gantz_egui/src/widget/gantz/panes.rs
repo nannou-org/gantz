@@ -516,6 +516,7 @@ where
     if let Some(fh) = access.heads().get(*focused_head).cloned() {
         let immutable = head_immutable(&fh, gantz.base_immutable, base_names);
         let follow_selection = state.follow_selection.inspector;
+        let validate = gantz.validates_change_tracking();
         let head_state = state.open_heads.entry(fh.clone()).or_default();
         let ref_ext_uis = gantz.ref_ext_uis;
         let codec = gantz.codec;
@@ -530,6 +531,7 @@ where
                 &fh,
                 immutable,
                 follow_selection,
+                validate,
                 ref_ext_uis,
                 ui,
             )
@@ -596,6 +598,8 @@ fn render_node_view<Access>(
                 return;
             }
             let env = gantz.env;
+            let ref_ext_uis = gantz.ref_ext_uis;
+            let validate = gantz.validates_change_tracking();
             // VM-state writes recorded by the node's `NodeCtx`.
             let mut writes = Vec::new();
             // Scope child widget ids by head and path so views never
@@ -609,19 +613,14 @@ fn render_node_view<Access>(
                         let (inlets, outlets) = crate::inlet_outlet_ids(env, data.graph);
                         let n_id = graph_scene::NodeIndex::new(n_ix);
                         let weight = data.graph.node_weight(n_id)?;
-                        // Take the one node's cached instance. See
-                        // `graph_scene::nodes`. Panes render
-                        // sequentially, so each take and put pair
-                        // completes within its site. Erase back only
-                        // when changed, updating the witness.
+                        // Panes render sequentially, so each take and
+                        // restore pair completes within its site.
                         let mut entry = data.instances.take(codec, n_ix, weight).ok()?;
                         // A locked node's view is read-only. See
                         // `InstanceEntry::lost`.
                         let locked = !entry.lost.is_empty();
                         if locked {
-                            let text = widget::locked_text(&entry.lost);
-                            let text = format!("{} {text}", widget::LOCK_GLYPH);
-                            ui.colored_label(ui.visuals().warn_fg_color, text);
+                            widget::locked_label(ui, &entry.lost);
                         }
                         let ctx = NodeCtx::new(
                             env,
@@ -629,20 +628,17 @@ fn render_node_view<Access>(
                             &path,
                             &inlets,
                             &outlets,
-                            &[],
+                            ref_ext_uis,
                             data.vm,
                             &mut writes,
                         )
                         .read_only(locked);
                         let node = &mut entry.inst.node;
                         let r = ui.add_enabled_ui(!locked, |ui| node.view_ui(ctx, ui)).inner;
-                        let changed = if r.changed {
-                            let weight = &mut data.graph[n_id];
-                            data.instances.write_back(n_ix, entry, weight)
-                        } else {
-                            data.instances.put(n_ix, entry);
-                            false
-                        };
+                        let weight = &mut data.graph[n_id];
+                        let changed = data
+                            .instances
+                            .restore(n_ix, entry, weight, r.changed, validate);
                         Some((changed, r.payloads))
                     })
                 })
@@ -1566,7 +1562,8 @@ pub(super) fn head_immutable(
 /// the payloads emitted by node UIs within the inspector.
 ///
 /// `follow_selection` scrolls to the first selected node when the selection
-/// changes.
+/// changes. `validate` turns on change-tracking validation. See
+/// [`crate::node::NodeInstances::restore`].
 #[allow(clippy::too_many_arguments)]
 pub(super) fn node_inspector<'a>(
     registry: &'a Env<'a>,
@@ -1578,6 +1575,7 @@ pub(super) fn node_inspector<'a>(
     head: &gantz_ca::Head,
     immutable: bool,
     follow_selection: bool,
+    validate: bool,
     ref_ext_uis: &'a [&'a dyn crate::node::RefExtUi],
     ui: &mut egui::Ui,
 ) -> egui::InnerResponse<(bool, Vec<DynResponse>)> {
@@ -1610,10 +1608,7 @@ pub(super) fn node_inspector<'a>(
                                     return;
                                 };
                                 let ix = id.index();
-                                // Take the node's cached instance. See
-                                // `graph_scene::nodes`. Erase back below only when
-                                // changed, updating the witness. An unknown tag shows
-                                // a weak placeholder row.
+                                // An unknown tag shows a weak placeholder row.
                                 let Ok(mut entry) = instances.take(codec, ix, weight) else {
                                     ui.weak(format!("{} (unknown node type)", weight.tag));
                                     return;
@@ -1622,9 +1617,7 @@ pub(super) fn node_inspector<'a>(
                                 // `InstanceEntry::lost`.
                                 let locked = !entry.lost.is_empty();
                                 if locked {
-                                    let text = widget::locked_text(&entry.lost);
-                                    let text = format!("{} {text}", widget::LOCK_GLYPH);
-                                    ui.colored_label(ui.visuals().warn_fg_color, text);
+                                    widget::locked_label(ui, &entry.lost);
                                     if !immutable && widget::discard_button(ui) {
                                         let drop = crate::DropUnknownData { node: id };
                                         responses.push(DynResponse::new(drop));
@@ -1646,11 +1639,9 @@ pub(super) fn node_inspector<'a>(
                                 let resp =
                                     widget::NodeInspector::new(node, ctx, immutable || locked)
                                         .show(ui);
-                                if resp.changed {
-                                    changed |= instances.write_back(ix, entry, &mut graph[id]);
-                                } else {
-                                    instances.put(ix, entry);
-                                }
+                                let weight = &mut graph[id];
+                                changed |=
+                                    instances.restore(ix, entry, weight, resp.changed, validate);
                                 responses.extend(resp.payloads);
                                 if resp.label_response.clicked() {
                                     let sel = &mut head_state.scene.interaction.selection.nodes;
@@ -1814,6 +1805,7 @@ mod tests {
                     &head,
                     false,
                     false,
+                    true,
                     &[],
                     ui,
                 );

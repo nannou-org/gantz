@@ -106,6 +106,12 @@ pub(crate) fn discard_button(ui: &mut egui::Ui) -> bool {
         .clicked()
 }
 
+/// The warning line that tells why a node is locked. See [`locked_text`].
+pub(crate) fn locked_label(ui: &mut egui::Ui, lost: &[String]) {
+    let text = format!("{LOCK_GLYPH} {}", locked_text(lost));
+    ui.colored_label(ui.visuals().warn_fg_color, text);
+}
+
 /// Why a node is locked, given the data it holds that this build drops. See
 /// [`crate::node::InstanceEntry::lost`].
 pub(crate) fn locked_text(lost: &[String]) -> String {

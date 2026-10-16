@@ -134,6 +134,47 @@ impl NodeInstances {
         self.entries.insert(n_ix, entry);
     }
 
+    /// Return an entry to the cache after a UI pass over its node. Returns
+    /// whether `weight` changed.
+    ///
+    /// A pass that marked a CA-affecting change writes the entry back. See
+    /// [`NodeInstances::write_back`]. Any other entry is put back as it is.
+    /// With `validate`, an unmarked entry whose node no longer erases to its
+    /// baseline is dropped with a warning instead. Its edit is then lost
+    /// exactly as it would be without the cache. See the `changed` contract
+    /// on [`crate::NodeUi`].
+    pub fn restore(
+        &mut self,
+        n_ix: usize,
+        entry: InstanceEntry,
+        weight: &mut NodeData,
+        changed: bool,
+        validate: bool,
+    ) -> bool {
+        if changed {
+            return self.write_back(n_ix, entry, weight);
+        }
+        if validate && entry.lost.is_empty() {
+            match entry.inst.erase() {
+                Ok(node_data) if node_data.content_addr() != entry.baseline => {
+                    log::warn!(
+                        "node {n_ix} ({}): CA-affecting state changed without a \
+                         `changed` response. The edit was dropped. See `NodeUi`.",
+                        entry.src.tag,
+                    );
+                    return false;
+                }
+                Ok(_) => (),
+                Err(e) => {
+                    log::warn!("node {n_ix}: change-tracking validation failed to erase: {e}");
+                    return false;
+                }
+            }
+        }
+        self.put(n_ix, entry);
+        false
+    }
+
     /// A read-only lookup that hits only on a valid cached entry. `None` on
     /// a miss or a stale witness. For probes that must not pay a reify. The
     /// caller decides whether to fall back to a transient one.
@@ -364,5 +405,52 @@ mod tests {
         assert_eq!(weight, new);
         let entry = cache.take(&codec, 0, &new).unwrap();
         assert_eq!(entry.baseline, new.content_addr());
+    }
+
+    // A restore of an unmarked pass keeps the entry and leaves the weight.
+    #[test]
+    fn restore_keeps_an_unchanged_entry() {
+        let codec = codec();
+        let data = expr_data("(+ $l $r)");
+        let mut cache = NodeInstances::default();
+        let entry = cache.take(&codec, 0, &data).unwrap();
+        let mut weight = data.clone();
+        assert!(!cache.restore(0, entry, &mut weight, false, true));
+        assert_eq!(weight, data);
+        assert!(cache.peek(0, &data).is_some());
+    }
+
+    // A restore of a marked pass writes the edit back.
+    #[test]
+    fn restore_writes_back_a_marked_edit() {
+        let codec = codec();
+        let old = expr_data("(+ $l $r)");
+        let new = expr_data("(* $l $r)");
+        let mut cache = NodeInstances::default();
+        let mut entry = cache.take(&codec, 0, &old).unwrap();
+        entry.inst = codec.reify_ui(&new).unwrap();
+        let mut weight = old;
+        assert!(cache.restore(0, entry, &mut weight, true, true));
+        assert_eq!(weight, new);
+        assert!(cache.peek(0, &new).is_some());
+    }
+
+    // An unmarked edit persists in the cached instance unless validation is
+    // on. Validation drops the entry, so the next take reifies the stored
+    // weight.
+    #[test]
+    fn restore_validation_drops_an_unmarked_edit() {
+        let codec = codec();
+        let old = expr_data("(+ $l $r)");
+        let new = expr_data("(* $l $r)");
+        let mut cache = NodeInstances::default();
+        for validate in [false, true] {
+            let mut entry = cache.take(&codec, 0, &old).unwrap();
+            entry.inst = codec.reify_ui(&new).unwrap();
+            let mut weight = old.clone();
+            assert!(!cache.restore(0, entry, &mut weight, false, validate));
+            assert_eq!(weight, old);
+            assert_eq!(cache.peek(0, &old).is_some(), !validate);
+        }
     }
 }
