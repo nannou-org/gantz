@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/nannou-org/gantz/compare/gantz_plyphon-v0.5.0...gantz_plyphon-v0.6.0) - 2026-10-17
+
+### Other
+
+- *(gantz_core)* [**breaking**] replace the inlet, outlet and delay bools with a role
+- [**breaking**] remove the serde-tag node codec
+- [**breaking**] move sections, ref resync and NamedRef into gantz_edit
+
 ## [0.5.0](https://github.com/nannou-org/gantz/compare/gantz_plyphon-v0.4.1...gantz_plyphon-v0.5.0) - 2026-10-03
 
 ### Added

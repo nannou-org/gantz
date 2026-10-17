@@ -1,6 +1,6 @@
 [package]
 name = "gantz_store"
-version = "0.1.0"
+version = "0.1.1"
 description = "Storage of the gantz registry over key-value stores."
 authors.workspace = true
 edition.workspace = true

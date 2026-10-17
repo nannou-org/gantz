@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/nannou-org/gantz/compare/gantz-v0.5.0...gantz-v0.6.0) - 2026-10-17
+
+### Added
+
+- *(bevy_gantz_collab)* [**breaking**] link the app to a vault
+
+### Other
+
+- [**breaking**] move sections, ref resync and NamedRef into gantz_edit
+- [**breaking**] add the gantz_edit crate with the view model
+
 ## [0.5.0](https://github.com/nannou-org/gantz/compare/gantz-v0.4.0...gantz-v0.5.0) - 2026-10-03
 
 ### Added

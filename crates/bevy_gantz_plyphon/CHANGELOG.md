@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.5.0...bevy_gantz_plyphon-v0.6.0) - 2026-10-17
+
+### Other
+
+- *(gantz_core)* [**breaking**] replace the inlet, outlet and delay bools with a role
+
 ## [0.5.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.4.0...bevy_gantz_plyphon-v0.5.0) - 2026-10-03
 
 ### Added

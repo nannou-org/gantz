@@ -1,6 +1,6 @@
 [package]
 name = "gantz_cli"
-version = "0.2.0"
+version = "0.3.0"
 description = "The gantz command line, as a library that apps built on gantz embed."
 authors.workspace = true
 edition.workspace = true
