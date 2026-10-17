@@ -42,7 +42,20 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           env: pr-${{ steps.pr-info.outputs.number }}
           ref: ${{ steps.pr-info.outputs.head_sha }}
-      - uses: peaceiris/actions-gh-pages@v4
+      # The previews of a stack deploy at once and race for gh-pages. A
+      # rejected push retries once, on the new tip.
+      - id: publish
+        continue-on-error: true
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./preview-build
+          destination_dir: pr-preview/pr-${{ steps.pr-info.outputs.number }}
+          keep_files: true
+      - if: steps.publish.outcome == 'failure'
+        run: sleep $((RANDOM % 20 + 5))
+      - if: steps.publish.outcome == 'failure'
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./preview-build
