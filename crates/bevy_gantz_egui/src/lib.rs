@@ -121,10 +121,23 @@ impl Plugin for GantzEguiPlugin {
             .register_response_with::<gantz_egui::StateWritten>(dispatch_state_written)
             .register_response_with::<gantz_egui::OpenHead>(dispatch_open_head)
             .register_response_with::<gantz_egui::ReplaceHead>(dispatch_replace_head)
+            .register_response_with::<gantz_egui::CloseHead>(dispatch_close_head)
+            .register_response_with::<gantz_egui::BranchHead>(dispatch_branch_head)
+            .register_response_with::<gantz_egui::widget::gantz::FileDrop>(dispatch_file_drop)
+            .register_response_with::<gantz_egui::ResetBaseGraph>(dispatch_reset_base_graph)
             .register_response_with::<gantz_egui::ExportHead>(dispatch_export_head)
             .register_response_with::<gantz_egui::ExportAllNamed>(dispatch_export_all_named)
             .register_response_with::<gantz_egui::ExportStyle>(dispatch_export_style)
-            .register_response_with::<gantz_egui::ImportStyle>(dispatch_import_style);
+            .register_response_with::<gantz_egui::ImportStyle>(dispatch_import_style)
+            .register_app_response::<gantz_egui::NewGraph>()
+            .register_app_response::<gantz_egui::RemoveName>()
+            .register_app_response::<gantz_egui::Import>()
+            .register_app_response::<gantz_egui::SetDemo>()
+            .register_app_response::<gantz_egui::SetDescription>()
+            .register_app_response::<gantz_egui::SetBaseSource>()
+            .register_app_response::<gantz_egui::ResetAllDemos>()
+            .register_app_response::<gantz_core::compile::Config>()
+            .register_app_response::<gantz_egui::ValidateChangeTracking>();
 
         app.insert_resource(BaseImmutable(self.base_immutable))
             .init_resource::<GraphCache>()
@@ -177,6 +190,15 @@ impl Plugin for GantzEguiPlugin {
             .add_observer(on_import_style)
             .add_observer(on_import_file)
             .add_observer(on_reset_base_graph)
+            .add_observer(on_new_graph)
+            .add_observer(on_remove_name)
+            .add_observer(on_import)
+            .add_observer(on_set_demo)
+            .add_observer(on_set_description)
+            .add_observer(on_set_base_source)
+            .add_observer(on_reset_all_demos)
+            .add_observer(on_compile_config)
+            .add_observer(on_validate_change_tracking)
             // Systems. `drive_update_bangs` evaluates head VMs, so it must not
             // observe the gap between a head pointing at a new graph and
             // `vm::sync` reinitializing its VM.
@@ -412,6 +434,14 @@ pub struct ForHead<T: Send + Sync + 'static> {
     pub data: T,
 }
 
+/// A GUI response payload with no target head, such as a settings change.
+///
+/// The app-level counterpart of [`ForHead`]. Register the payload type with
+/// [`RegisterResponseExt::register_app_response`] and observe
+/// `On<ForApp<T>>`.
+#[derive(Event)]
+pub struct ForApp<T: Send + Sync + 'static>(pub T);
+
 /// Event emitted when the user requests exporting a head.
 #[derive(Event)]
 pub struct ExportHeadEvent {
@@ -471,14 +501,22 @@ pub trait RegisterResponseExt {
     /// emitting head's entity. Pair with an observer for `On<ForHead<T>>`.
     fn register_head_response<T: ResponseData>(&mut self) -> &mut Self;
 
+    /// Dispatch payloads of type `T` as [`ForApp<T>`] events. Pair with an
+    /// observer for `On<ForApp<T>>`.
+    fn register_app_response<T: ResponseData>(&mut self) -> &mut Self;
+
     /// Dispatch payloads of type `T` with a custom fn. For example, to map onto
-    /// an existing event type or to handle payloads with no associated head.
+    /// an existing event type.
     fn register_response_with<T: ResponseData>(&mut self, f: DispatchFn) -> &mut Self;
 }
 
 impl RegisterResponseExt for App {
     fn register_head_response<T: ResponseData>(&mut self) -> &mut Self {
         self.register_response_with::<T>(dispatch_for_head::<T>)
+    }
+
+    fn register_app_response<T: ResponseData>(&mut self) -> &mut Self {
+        self.register_response_with::<T>(dispatch_for_app::<T>)
     }
 
     fn register_response_with<T: ResponseData>(&mut self, f: DispatchFn) -> &mut Self {
@@ -2215,13 +2253,12 @@ pub fn update(
     tab_order: Res<head::HeadTabOrder>,
     mut focused: ResMut<head::FocusedHead>,
     mut heads_query: Query<OpenHeadViews, With<head::OpenHead>>,
-    import_task: Option<Res<ImportTask>>,
     (
         codec,
         base_names,
         base_immutable,
-        mut compile_config,
-        mut change_validation,
+        compile_config,
+        change_validation,
         mut settings_tabs,
         mut ext_panes,
         ref_ext_uis,
@@ -2230,15 +2267,15 @@ pub fn update(
         host_native,
         export_paths,
         base_sources,
-        mut base_name_sources,
+        base_name_sources,
         collab_ui,
         clipboard,
     ): (
         Res<NodeCodecRes>,
         Res<BaseNames>,
         Res<BaseImmutable>,
-        ResMut<CompileConfig>,
-        ResMut<bevy_gantz::ValidateCommitted>,
+        Res<CompileConfig>,
+        Res<bevy_gantz::ValidateCommitted>,
         ResMut<SettingsTabs>,
         ResMut<ExtPanes>,
         Res<RefExtUis>,
@@ -2247,7 +2284,7 @@ pub fn update(
         Option<Res<HostNativePaneWindows>>,
         Option<Res<base::ExportPaths>>,
         Res<base::BaseSources>,
-        ResMut<base::BaseNameSources>,
+        Res<base::BaseNameSources>,
         Option<Res<CollabUi>>,
         Option<ResMut<bevy_egui::EguiClipboard>>,
     ),
@@ -2382,12 +2419,6 @@ pub fn update(
         &mut registry,
         &mut cache,
         &codec,
-        &base_names,
-        &mut compile_config,
-        &mut change_validation,
-        &base_sources,
-        &mut base_name_sources,
-        import_task.as_deref(),
         &head_to_entity,
         &dispatchers,
         &mut cmds,
@@ -2402,9 +2433,8 @@ pub fn update(
 ///
 /// Shared by the primary [`update`] pass and each native pop-out window's render
 /// pass, [`pane_window::render_windowed_panes`], so a pane behaves identically
-/// whether docked or windowed. Handles focus, graph open, close, replace and
-/// new, branch, file drops, demo and description edits, resets, compile config,
-/// change tracking, import, in-place head commits, and dynamic payload dispatch.
+/// whether docked or windowed. Applies the focus, commits the heads the GUI
+/// edited in place, and dispatches the payloads.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn handle_gantz_response(
     response: &mut gantz_egui::widget::gantz::GantzResponse,
@@ -2414,136 +2444,12 @@ pub(crate) fn handle_gantz_response(
     registry: &mut Registry,
     cache: &mut GraphCache,
     codec: &NodeCodecRes,
-    base_names: &BaseNames,
-    compile_config: &mut CompileConfig,
-    change_validation: &mut bevy_gantz::ValidateCommitted,
-    base_sources: &base::BaseSources,
-    base_name_sources: &mut base::BaseNameSources,
-    import_task: Option<&ImportTask>,
     head_to_entity: &HashMap<ca::Head, Entity>,
     dispatchers: &ResponseDispatchers,
     cmds: &mut Commands,
 ) {
     if let Some(&entity) = tab_order.get(response.focused_head) {
         **focused = Some(entity);
-    }
-
-    if let Some(name) = response.graph_name_removed() {
-        let open = heads_query.iter_mut().map(|data| data.core.head_ref);
-        remove_name(registry, open, &name);
-    }
-
-    // A single click replaces the focused head with the selected one.
-    if let Some(new_head) = response.graph_replaced() {
-        cmds.trigger(head::ReplaceEvent(new_head.clone()));
-    }
-
-    // Open the head as a new tab, or focus it if already open.
-    if let Some(new_head) = response.graph_opened() {
-        cmds.trigger(head::OpenEvent(new_head.clone()));
-    }
-
-    if let Some(h) = response.graph_closed() {
-        cmds.trigger(head::CloseEvent(h.clone()));
-    }
-
-    if response.new_graph() {
-        let new_head = registry.init_head(bevy_gantz::timestamp());
-        cmds.trigger(head::OpenEvent(new_head));
-    }
-
-    // Handle closed heads from tab close buttons.
-    for closed_head in &response.closed_heads {
-        cmds.trigger(head::CloseEvent(closed_head.clone()));
-    }
-
-    // Handle new branch created from tab double-click.
-    if let Some((original_head, new_name)) = response.new_branch() {
-        cmds.trigger(head::BranchHeadEvent {
-            original: original_head.clone(),
-            new_name: new_name.clone(),
-        });
-    }
-
-    // Handle egui-level file drops.
-    for drop in &response.file_drops {
-        let open_head = drop.target == gantz_egui::widget::gantz::FileDropTarget::GraphScene;
-        cmds.trigger(ImportFileEvent {
-            bytes: drop.bytes.clone(),
-            open_head,
-        });
-    }
-
-    // Handle a demo graph association change. Keyed by the head's branch name
-    // so the association survives later edits, which mint a new commit.
-    if let Some((ca::Head::Branch(graph_name), demo_val)) = &response.demo_changed {
-        match demo_val {
-            Some(demo) => {
-                gantz_egui::section::set_demo(&mut registry.0, graph_name.clone(), demo.clone());
-            }
-            None => {
-                gantz_egui::section::remove_demo(&mut registry.0, graph_name);
-            }
-        }
-    }
-
-    // Handle a graph description edit, keyed by the graph's name.
-    if let Some((ca::Head::Branch(name), description)) = &response.description_changed {
-        gantz_egui::section::set_description(&mut registry.0, name.clone(), description.clone());
-    }
-
-    // Re-attribute a graph to a different base source. Durable wherever the
-    // per-source write-back runs, as in `update-base`. That rewrites every
-    // configured file on the next save, which moves the graph between files.
-    if let Some((ca::Head::Branch(name), source)) = &response.base_source_changed {
-        match base_sources.0.iter().find(|s| s.name == source.as_str()) {
-            Some(s) => {
-                base_name_sources.0.insert(name.to_string(), s.name);
-            }
-            None => log::warn!("base source `{source}` is not registered"),
-        }
-    }
-
-    // Handle a demo reset. Re-merge the base version of the demo graph.
-    if let Some(head) = &response.reset_base_graph {
-        if let ca::Head::Branch(name) = head {
-            cmds.trigger(ResetBaseGraphEvent(name.clone()));
-        }
-    }
-
-    // Handle reset all demos. Re-merge every `demo-*` base graph.
-    if response.reset_all_demos {
-        for name in base_names.0.keys() {
-            if name.to_string().starts_with("demo-") {
-                cmds.trigger(ResetBaseGraphEvent(name.clone()));
-            }
-        }
-    }
-
-    // Handle a compile config change. The recompile happens next frame in
-    // `vm::sync`, which compares each head's compile inputs by value.
-    if let Some(cfg) = response.compile_config {
-        if compile_config.0 != cfg {
-            compile_config.0 = cfg;
-        }
-    }
-
-    // Toggle change-tracking validation, a debugging aid.
-    if let Some(enabled) = response.validate_change_tracking {
-        change_validation.0 = enabled;
-    }
-
-    // Handle the import button. Open a file dialog if none is in flight.
-    if response.import() && import_task.is_none() {
-        let ext = gantz_egui::export::FILE_EXTENSION;
-        let dialog = rfd::AsyncFileDialog::new()
-            .set_title("Import")
-            .add_filter("Gantz Export", &[ext]);
-        let task = bevy_tasks::AsyncComputeTaskPool::get().spawn(async move {
-            let handle = dialog.pick_file().await?;
-            Some(handle.read().await)
-        });
-        cmds.insert_resource(ImportTask(task));
     }
 
     // Commit each head whose graph the GUI edited in place this pass, so
@@ -2671,6 +2577,153 @@ fn dispatch_export_style(_: Option<Entity>, payload: DynResponse, cmds: &mut Com
 fn dispatch_import_style(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
     let gantz_egui::ImportStyle = downcast_payload(payload);
     cmds.trigger(ImportStyleEvent);
+}
+
+/// Dispatch a [`gantz_egui::CloseHead`] payload as a [`head::CloseEvent`].
+fn dispatch_close_head(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
+    let gantz_egui::CloseHead(target) = downcast_payload(payload);
+    cmds.trigger(head::CloseEvent(target));
+}
+
+/// Dispatch a [`gantz_egui::BranchHead`] payload as a
+/// [`head::BranchHeadEvent`].
+fn dispatch_branch_head(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
+    let gantz_egui::BranchHead { original, new_name } = downcast_payload(payload);
+    cmds.trigger(head::BranchHeadEvent { original, new_name });
+}
+
+/// Dispatch a dropped `.gantz` file as an [`ImportFileEvent`]. A drop onto
+/// the graph scene also opens the imported root graph.
+fn dispatch_file_drop(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
+    use gantz_egui::widget::gantz::{FileDrop, FileDropTarget};
+    let FileDrop { bytes, target } = downcast_payload(payload);
+    let open_head = target == FileDropTarget::GraphScene;
+    cmds.trigger(ImportFileEvent { bytes, open_head });
+}
+
+/// Dispatch a [`gantz_egui::ResetBaseGraph`] payload as a
+/// [`ResetBaseGraphEvent`].
+fn dispatch_reset_base_graph(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
+    let gantz_egui::ResetBaseGraph(name) = downcast_payload(payload);
+    cmds.trigger(ResetBaseGraphEvent(name));
+}
+
+/// Dispatch an app-level payload as a [`ForApp`] event.
+fn dispatch_for_app<T: ResponseData>(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
+    cmds.trigger(ForApp(downcast_payload::<T>(payload)));
+}
+
+/// Create an empty graph and open it in a new tab.
+fn on_new_graph(
+    _trigger: On<ForApp<gantz_egui::NewGraph>>,
+    mut registry: ResMut<Registry>,
+    mut cmds: Commands,
+) {
+    let new_head = registry.init_head(bevy_gantz::timestamp());
+    cmds.trigger(head::OpenEvent(new_head));
+}
+
+/// Remove a graph name. See [`remove_name`].
+fn on_remove_name(
+    trigger: On<ForApp<gantz_egui::RemoveName>>,
+    mut registry: ResMut<Registry>,
+    mut heads: Query<&mut head::HeadRef, With<head::OpenHead>>,
+) {
+    let gantz_egui::RemoveName(name) = &trigger.event().0;
+    remove_name(&mut registry, heads.iter_mut(), name);
+}
+
+/// Open a file dialog to import a `.gantz` file, unless one is in flight.
+/// [`poll_import_task`] imports the picked file.
+fn on_import(
+    _trigger: On<ForApp<gantz_egui::Import>>,
+    import_task: Option<Res<ImportTask>>,
+    mut cmds: Commands,
+) {
+    if import_task.is_some() {
+        return;
+    }
+    let ext = gantz_egui::export::FILE_EXTENSION;
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_title("Import")
+        .add_filter("Gantz Export", &[ext]);
+    let task = bevy_tasks::AsyncComputeTaskPool::get().spawn(async move {
+        let handle = dialog.pick_file().await?;
+        Some(handle.read().await)
+    });
+    cmds.insert_resource(ImportTask(task));
+}
+
+/// Set or clear the demo graph of a named graph. The association is keyed by
+/// the graph's name, so it survives later edits, which mint new commits.
+fn on_set_demo(trigger: On<ForApp<gantz_egui::SetDemo>>, mut registry: ResMut<Registry>) {
+    let gantz_egui::SetDemo { name, demo } = &trigger.event().0;
+    match demo {
+        Some(demo) => gantz_egui::section::set_demo(&mut registry.0, name.clone(), demo.clone()),
+        None => {
+            gantz_egui::section::remove_demo(&mut registry.0, name);
+        }
+    }
+}
+
+/// Set the description of a named graph.
+fn on_set_description(
+    trigger: On<ForApp<gantz_egui::SetDescription>>,
+    mut registry: ResMut<Registry>,
+) {
+    let gantz_egui::SetDescription { name, description } = &trigger.event().0;
+    gantz_egui::section::set_description(&mut registry.0, name.clone(), description.clone());
+}
+
+/// Move a named graph to another base source. This is durable wherever the
+/// per-source write-back runs, as in `update-base`. That rewrites every
+/// configured file on the next save, which moves the graph between files.
+fn on_set_base_source(
+    trigger: On<ForApp<gantz_egui::SetBaseSource>>,
+    base_sources: Res<base::BaseSources>,
+    mut base_name_sources: ResMut<base::BaseNameSources>,
+) {
+    let gantz_egui::SetBaseSource { name, source } = &trigger.event().0;
+    match base_sources.0.iter().find(|s| s.name == source.as_str()) {
+        Some(s) => {
+            base_name_sources.0.insert(name.to_string(), s.name);
+        }
+        None => log::warn!("base source `{source}` is not registered"),
+    }
+}
+
+/// Reset every `demo-*` base graph by re-merging it from its base source.
+fn on_reset_all_demos(
+    _trigger: On<ForApp<gantz_egui::ResetAllDemos>>,
+    base_names: Res<BaseNames>,
+    mut cmds: Commands,
+) {
+    for name in base_names.0.keys() {
+        if name.to_string().starts_with("demo-") {
+            cmds.trigger(ResetBaseGraphEvent(name.clone()));
+        }
+    }
+}
+
+/// Apply a compile config change. The recompile happens next frame in
+/// `vm::sync`, which compares each head's compile inputs by value.
+fn on_compile_config(
+    trigger: On<ForApp<gantz_core::compile::Config>>,
+    mut compile_config: ResMut<CompileConfig>,
+) {
+    let cfg = trigger.event().0;
+    if compile_config.0 != cfg {
+        compile_config.0 = cfg;
+    }
+}
+
+/// Turn the change-tracking validation, a debugging aid, on or off.
+fn on_validate_change_tracking(
+    trigger: On<ForApp<gantz_egui::ValidateChangeTracking>>,
+    mut validate: ResMut<bevy_gantz::ValidateCommitted>,
+) {
+    let gantz_egui::ValidateChangeTracking(enabled) = trigger.event().0;
+    validate.0 = enabled;
 }
 
 /// Remove `name`, first detaching the open heads on it onto its current
