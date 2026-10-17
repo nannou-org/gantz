@@ -1,75 +1,58 @@
 //! A minimal node set for the format and export round-trip paths in unit
 //! tests. It has `Expr` and `Bang` leaves plus `NamedRef` for graph
-//! references.
+//! references. Tests build graphs in their stored data form.
 
-use dyn_clone::DynClone;
-use gantz_core::node::graph::Graph;
+use gantz_ca::{DataGraph, NodeData};
 use gantz_edit::NamedRef;
-use std::any::Any;
 
-pub trait TestNode: Any + DynClone + gantz_core::Node {}
+/// The node set's sugar carrier. See [`codec`].
+pub struct TestNodes;
 
-pub type TestGraph = Graph<Box<dyn TestNode>>;
+pub type TestGraph = DataGraph;
 
-dyn_clone::clone_trait_object!(TestNode);
-
-impl TestNode for gantz_core::node::Expr {}
-impl TestNode for crate::node::Bang {}
-impl TestNode for NamedRef {}
-impl TestNode for Box<dyn TestNode> {}
-
-gantz_format::impl_node_set_serde! {
-    dyn TestNode {
-        gantz_core::node::Expr,
-        crate::node::Bang,
-        gantz_edit::NamedRef,
-    }
-}
-
-impl gantz_format::NodeSugar for Box<dyn TestNode> {
+impl gantz_format::NodeSugar for TestNodes {
     fn sugar() -> gantz_format::Sugars<'static> {
         gantz_format::Sugars(vec![&gantz_format::CoreSugar])
     }
 }
 
-/// The value-level codec for the test node set. It must list the same
-/// manifest as the `impl_node_set_serde!` invocation above.
+/// The value-level codec for the test node set.
 pub fn codec() -> crate::node::NodeCodec {
     crate::ui_node_codec! {
-        Box<dyn TestNode> {
+        TestNodes {
             gantz_core::node::Expr,
             crate::node::Bang,
-            gantz_edit::NamedRef,
+            NamedRef,
         }
     }
 }
 
-pub fn expr(src: &str) -> Box<dyn TestNode> {
-    Box::new(gantz_core::node::Expr::new(src).unwrap())
+pub fn expr(src: &str) -> NodeData {
+    let expr = gantz_core::node::Expr::new(src).unwrap();
+    gantz_core::data::erase_node_typed(&expr).unwrap()
 }
 
-pub fn named_ref(name: &str, graph_ca: gantz_ca::GraphAddr) -> Box<dyn TestNode> {
+pub fn named_ref(name: &str, graph_ca: gantz_ca::GraphAddr) -> NodeData {
     let ref_ = gantz_core::node::Ref::new(graph_ca.into());
-    Box::new(NamedRef::new(name.parse().unwrap(), ref_))
+    gantz_core::data::erase_node_typed(&NamedRef::new(name.parse().unwrap(), ref_)).unwrap()
 }
 
-/// Erase `graph` and commit it under `name`. Returns the new commit and the
-/// erased graph's address. The address is the registry's identity for the
-/// graph.
+/// Commit `graph` under `name`. Returns the new commit and the graph's
+/// address.
 pub fn commit_named(
     reg: &mut gantz_ca::Registry,
     timestamp: std::time::Duration,
     graph: &TestGraph,
     name: &gantz_ca::Name,
 ) -> (gantz_ca::CommitAddr, gantz_ca::GraphAddr) {
-    let (dg, ga) = gantz_core::data::erase_with_addr(graph).unwrap();
-    let ca = reg.commit_graph_to_name(timestamp, ga, || dg, name);
+    let ga = gantz_ca::graph_addr(graph);
+    let ca = reg.commit_graph_to_name(timestamp, ga, || graph.clone(), name);
     (ca, ga)
 }
 
 /// `node_data` as a newer gantz might store it, with a `future` field that
 /// this build does not recognise.
-pub fn with_unknown_field(mut node_data: gantz_ca::NodeData) -> gantz_ca::NodeData {
+pub fn with_unknown_field(mut node_data: NodeData) -> NodeData {
     let gantz_ca::Datum::Map(fields) = &mut node_data.data else {
         panic!("node data is a map");
     };
@@ -79,6 +62,6 @@ pub fn with_unknown_field(mut node_data: gantz_ca::NodeData) -> gantz_ca::NodeDa
 }
 
 /// Whether `node_data` still holds the field that [`with_unknown_field`] adds.
-pub fn has_unknown_field(node_data: &gantz_ca::NodeData) -> bool {
+pub fn has_unknown_field(node_data: &NodeData) -> bool {
     node_data.data.get("future").is_some()
 }

@@ -4,8 +4,8 @@
 //! renders the registry sections from [`gantz_edit::section`] as friendly
 //! forms. The forms are `(descriptions ...)`, `(layout ...)` and
 //! `(demo ...)`. It uses the format's [`sexpr`] toolkit and the resolution
-//! context returned by [`gantz_format::from_str`] and
-//! [`gantz_format::to_string`]. On parse it applies those forms back into the
+//! context returned by [`gantz_format::from_str_normalized`] and
+//! [`gantz_format::to_string_with`]. On parse it applies those forms back into the
 //! registry's sections.
 
 use crate::node::NodeCodec;
@@ -21,8 +21,8 @@ pub use gantz_format::FormatError;
 pub type NodeLabels = HashMap<Name, HashMap<String, usize>>;
 
 /// The section ids this module renders itself as friendly forms. They are
-/// passed as `claimed` to [`gantz_format::to_string`], which then skips their
-/// generic `(section ...)` output.
+/// passed as `claimed` to [`gantz_format::to_string_with`], which then skips
+/// their generic `(section ...)` output.
 const CLAIMED: &[&str] = &[
     gantz_edit::section::DESCRIPTIONS_ID,
     gantz_edit::section::VIEWS_ID,
@@ -60,7 +60,7 @@ pub fn from_str(text: &str, now: Timestamp, codec: &NodeCodec) -> Result<Registr
 
 /// [`from_str`], resolving names the document does not define through `seed`.
 /// The seed maps externally-known names to head graphs. See
-/// [`gantz_format::from_str_seeded`].
+/// [`gantz_format::from_str_normalized`].
 pub fn from_str_seeded(
     text: &str,
     now: Timestamp,
@@ -137,8 +137,8 @@ pub fn to_string(registry: &Registry, codec: &NodeCodec) -> Result<String, Forma
 }
 
 /// Serialize a registry in the inline-name format. See
-/// [`gantz_format::to_string_named`]. Graphs are named inline, there are no
-/// commits or names tables, and references are by name. The `(layout ...)`
+/// [`gantz_format::to_string_named_with`]. Graphs are named inline, there are
+/// no commits or names tables, and references are by name. The `(layout ...)`
 /// and `(demo ...)` forms are emitted in graph-name order so the output is
 /// stable across address changes. This suits a hand-editable, git-friendly
 /// base file.

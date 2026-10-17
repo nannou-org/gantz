@@ -321,10 +321,9 @@ impl Sugar for Sugars<'_> {
 
 /// The composite keyword sugar for a node-type universe.
 ///
-/// Implemented once on an application's top-level `Box<dyn Node>` to select
-/// which [`Sugar`]s its node set uses. The convenience entry points
-/// [`crate::from_str`] and [`crate::to_string`] read it via `N::sugar()`. Use
-/// the `_with` variants to pass a sugar explicitly instead.
+/// Implemented once on a carrier type for an application's node set, to
+/// select which [`Sugar`]s the node set uses. The node set's codec reads it
+/// and passes the composite to the `_with` and `_normalized` entry points.
 pub trait NodeSugar {
     /// The composed sugar for this node set.
     fn sugar() -> Sugars<'static>;

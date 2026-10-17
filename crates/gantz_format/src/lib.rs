@@ -9,28 +9,27 @@
 //! `(names ...)`. Unrecognised top-level forms are preserved, not errored. See
 //! [`Form`]. Richer layers can extend the format with their own forms, for
 //! example a GUI `(layout ...)` form. They use the [`sexpr`] toolkit and the
-//! resolution context returned by [`from_str`] and [`to_string`].
+//! resolution context returned by [`from_str_normalized`] and
+//! [`to_string_with`].
 //!
-//! Node keywords such as `expr` and `inlet` are pluggable [`Sugar`].
-//! [`from_str`] and [`to_string`] read the node set's composite via
-//! [`NodeSugar`], so each crate owns the sugar for its own nodes. [`CoreSugar`]
-//! covers `gantz_core`'s nodes. The `_with` variants accept any `&dyn Sugar`
-//! and still fall back to the generic `(node ...)` form. Compose sugars with
-//! [`Sugars`].
+//! Node keywords such as `expr` and `inlet` are pluggable [`Sugar`]. Each
+//! crate owns the sugar for its own nodes, and a node set composes them into
+//! one [`NodeSugar`]. [`CoreSugar`] covers `gantz_core`'s nodes. Compose
+//! sugars with [`Sugars`]. A node that no sugar recognises round-trips
+//! through the generic `(node ...)` form.
 //!
-//! Reading needs a node-set type that is `Serialize + DeserializeOwned +
-//! gantz_core::Node`. The registry stores graphs in their erased data form,
-//! [`gantz_ca::DataGraph`], and parsed text travels through the node-set
-//! codec. See [`gantz_core::data`]. Writing needs no node type at all. The
-//! stored [`gantz_ca::NodeData`] is already the tagged form the writer
-//! consumes, so [`to_string_with`] and [`to_string_named_with`] serialize any
-//! registry without the node set compiled in.
+//! Reading takes a [`Normalize`] fn, which turns each parsed node into its
+//! canonical stored [`gantz_ca::NodeData`]. A node set's codec supplies it.
+//! The registry stores graphs in their erased data form,
+//! [`gantz_ca::DataGraph`]. See [`gantz_core::data`]. Writing needs no node
+//! type at all. The stored [`gantz_ca::NodeData`] is already the tagged form
+//! the writer consumes, so [`to_string_with`] and [`to_string_named_with`]
+//! serialize any registry without the node set compiled in.
 
 mod datum;
 mod error;
 mod lower;
 mod model;
-mod node_set;
 mod parse;
 mod raise;
 mod sugar;
@@ -44,73 +43,27 @@ pub use error::{ErrorKind, FormatError, Span, line_col};
 pub use gantz_core::datum::{Datum, DatumError, from_datum, node_datum, to_datum};
 pub use lower::{Loaded, Normalize};
 pub use model::{Addr, Document, Form};
-#[doc(hidden)]
-pub use node_set::{NodeFields, TaggedNode};
 pub use raise::{Dumped, GraphLabels};
 pub use sugar::{CoreSugar, NodeSugar, Sugar, SugarArgs, Sugars};
 
-/// Re-exported for [`impl_node_set_serde!`] expansions as `$crate::NodeTag`.
-/// Depend on `gantz_nodetag` directly to implement or derive it.
-#[doc(hidden)]
-pub use gantz_nodetag::NodeTag;
-
 use gantz_ca::{Registry, Timestamp};
-use gantz_core::Node;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 
 /// Parse a `.gantz` document into its [`Loaded`] registry, resolution context
-/// and preserved extra forms. Uses the node set's composite [`NodeSugar`].
+/// and preserved extra forms.
 ///
-/// `now` provides the timestamp for any graph the `(commits ...)` table does not
-/// describe. Hand-authored graphs often have no commit entry.
-pub fn from_str<N>(text: &str, now: Timestamp) -> Result<Loaded, FormatError>
-where
-    N: Serialize + DeserializeOwned + Node + NodeSugar,
-{
-    from_str_with::<N>(text, now, &N::sugar())
-}
-
-/// Parse a `.gantz` document using a custom keyword [`Sugar`]. Compose it with
-/// [`CoreSugar`] via [`Sugars`] to keep `gantz_core`'s built-ins.
-pub fn from_str_with<N>(
-    text: &str,
-    now: Timestamp,
-    sugar: &dyn Sugar,
-) -> Result<Loaded, FormatError>
-where
-    N: Serialize + DeserializeOwned + Node,
-{
-    let doc = parse::parse(text, sugar)?;
-    lower::lower::<N>(doc, now)
-}
-
-/// As [`from_str`], but names the document does not define resolve through
-/// `seed`. The seed maps a known name to a head graph address.
+/// `sugar` reads the node keywords. `normalize` turns each parsed node into
+/// its canonical stored form. See [`Normalize`]. `now` provides the timestamp
+/// for any graph the `(commits ...)` table does not describe. Hand-authored
+/// graphs often have no commit entry.
 ///
-/// This lets a document reference graphs defined elsewhere. For example, a
-/// domain's base source can reference another source's graphs. The document's
-/// own names shadow the seed. A seeded reference embeds the seeded graph
-/// address in the built node, so the referring graph's content address depends
-/// on it. Callers that want reproducible addresses must seed reproducible ones.
-pub fn from_str_seeded<N>(
-    text: &str,
-    now: Timestamp,
-    seed: &std::collections::BTreeMap<String, gantz_ca::GraphAddr>,
-) -> Result<Loaded, FormatError>
-where
-    N: Serialize + DeserializeOwned + Node + NodeSugar,
-{
-    let doc = parse::parse(text, &N::sugar())?;
-    lower::lower_seeded::<N>(doc, now, seed)
-}
-
-/// Parse a `.gantz` document with an explicit keyword [`Sugar`] and node
-/// [`Normalize`] seam in place of a node-set type parameter.
-///
-/// The node-set-free counterpart of [`from_str_seeded`]. Use it when the node
-/// set is a value-level codec rather than a serde-dispatching type. Pass an
-/// empty `seed` for the plain [`from_str`] behaviour.
+/// Names the document does not define resolve through `seed`, which maps a
+/// known name to a head graph address. This lets a document reference graphs
+/// defined elsewhere. For example, a domain's base source can reference
+/// another source's graphs. The document's own names shadow the seed. A
+/// seeded reference embeds the seeded graph address in the built node, so the
+/// referring graph's content address depends on it. Callers that want
+/// reproducible addresses must seed reproducible ones. Pass an empty `seed`
+/// to resolve only the document's own names.
 pub fn from_str_normalized(
     text: &str,
     now: Timestamp,
@@ -119,24 +72,16 @@ pub fn from_str_normalized(
     normalize: &Normalize,
 ) -> Result<Loaded, FormatError> {
     let doc = parse::parse(text, sugar)?;
-    lower::lower_normalized(doc, now, seed, normalize)
+    lower::lower(doc, now, seed, normalize)
 }
 
-/// Serialize a registry to `.gantz` text with the node set's keywords. Returns
-/// the text along with the per-graph label context an extender needs to emit
-/// its own forms.
+/// Serialize a registry to `.gantz` text using the given keyword [`Sugar`].
+/// Returns the text along with the per-graph label context an extender needs
+/// to emit its own forms.
 ///
 /// Metadata sections are written as generic `(section ...)` forms, except
 /// the ids in `claimed`. The caller renders those itself with friendly forms
 /// such as `(descriptions ...)`.
-pub fn to_string<N>(registry: &Registry, claimed: &[&str]) -> Result<Dumped, FormatError>
-where
-    N: NodeSugar,
-{
-    to_string_with(registry, &N::sugar(), claimed)
-}
-
-/// Serialize a registry to `.gantz` text using a custom keyword [`Sugar`].
 pub fn to_string_with(
     registry: &Registry,
     sugar: &dyn Sugar,
@@ -148,15 +93,7 @@ pub fn to_string_with(
 /// Serialize a registry in the inline-name format. Each named graph is emitted
 /// under its registry name, with no `(commits ...)` or `(names ...)` tables.
 /// References resolve by name. Intended for hand-editable, churn-free files
-/// such as the baked-in base. See [`to_string`] for `claimed`.
-pub fn to_string_named<N>(registry: &Registry, claimed: &[&str]) -> Result<Dumped, FormatError>
-where
-    N: NodeSugar,
-{
-    to_string_named_with(registry, &N::sugar(), claimed)
-}
-
-/// As [`to_string_named`], with a custom keyword [`Sugar`].
+/// such as the baked-in base. See [`to_string_with`] for `claimed`.
 pub fn to_string_named_with(
     registry: &Registry,
     sugar: &dyn Sugar,
@@ -166,20 +103,48 @@ pub fn to_string_named_with(
 }
 
 #[cfg(test)]
+mod test_util {
+    use crate::{Datum, FormatError};
+    use gantz_ca::NodeData;
+    use gantz_nodetag::NodeTag;
+
+    /// A [`crate::Normalize`] for a node set of the one type `T`. It decodes
+    /// the parsed fields at `T` and erases the node back to canonical data.
+    pub(crate) fn normalize_as<T>(datum: Datum) -> Result<NodeData, FormatError>
+    where
+        T: NodeTag + serde::Serialize + serde::de::DeserializeOwned + gantz_core::Node,
+    {
+        let tag = datum.get("type").and_then(Datum::as_str).unwrap_or("?");
+        let err = |e: String| FormatError::node_deserialize(tag.to_string(), e);
+        if tag != T::TAG {
+            return Err(err(format!("not a `{}`", T::TAG)));
+        }
+        let Datum::Map(mut fields) = datum.clone() else {
+            return Err(err("not a map".to_string()));
+        };
+        fields.retain(|(k, _)| k != "type");
+        let node_data = NodeData::new(T::TAG, Datum::Map(fields));
+        let node: T =
+            gantz_core::data::reify_node_concrete(&node_data).map_err(|e| err(e.to_string()))?;
+        gantz_core::data::erase_node_typed(&node).map_err(|e| err(e.to_string()))
+    }
+}
+
+#[cfg(test)]
 mod tests {
-    //! `NodeSugar` and `Sugar` are both entirely optional for a downstream
-    //! node-set type. The `_with` entry points carry no `NodeSugar` bound, and a
-    //! node whose tag no sugar recognises simply round-trips through the generic
+    //! `NodeSugar` and `Sugar` are both entirely optional for a node type. A
+    //! node whose tag no sugar recognises round-trips through the generic
     //! `(node "Tag" ...)` form. This guards that property.
 
+    use super::test_util::normalize_as;
     use super::*;
+    use gantz_core::Node;
     use gantz_nodetag::NodeTag;
     use serde::{Deserialize, Serialize};
+    use std::collections::BTreeMap;
 
-    // A self-contained node set with one node type that implements neither
-    // `NodeSugar` nor any `Sugar`. It carries no first-class keyword at all.
-    trait Widget: std::any::Any + Node {}
-
+    // A node type with neither a `NodeSugar` nor a `Sugar`. It carries no
+    // first-class keyword at all.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, NodeTag)]
     struct Knob {
         value: i64,
@@ -191,28 +156,23 @@ mod tests {
         }
     }
 
-    impl Widget for Knob {}
-
-    // `Box<dyn Widget>` is the node-set type `N`. `impl_node_set_serde!`
-    // supplies its Serialize/Deserialize, and `gantz_core`'s blanket
-    // `Node for Box<T>` covers the rest. It implements no `NodeSugar`.
-    crate::impl_node_set_serde! {
-        dyn Widget {
-            Knob,
-        }
+    fn parse(text: &str) -> Result<Loaded, FormatError> {
+        let now = std::time::Duration::ZERO;
+        from_str_normalized(
+            text,
+            now,
+            &CoreSugar,
+            &BTreeMap::new(),
+            &normalize_as::<Knob>,
+        )
     }
 
     #[test]
-    fn the_with_variants_need_no_node_sugar() {
+    fn a_node_without_sugar_round_trips_in_the_generic_form() {
         // A graph with one node written in the generic form. `Knob` is unknown to
         // every sugar, so it must round-trip via `(node "Knob" ...)`.
         let text = "(graph g (k (node \"Knob\" (value 7))))";
-
-        // Both `_with` calls compile and run even though `Box<dyn Widget>`
-        // implements neither `NodeSugar` nor `Sugar`. The convenience
-        // `from_str` and `to_string` would require a `NodeSugar` impl.
-        let loaded = from_str_with::<Box<dyn Widget>>(text, std::time::Duration::ZERO, &CoreSugar)
-            .expect("parse without NodeSugar");
+        let loaded = parse(text).expect("parse without NodeSugar");
         let dumped =
             to_string_with(&loaded.registry, &CoreSugar, &[]).expect("write without NodeSugar");
 
@@ -224,9 +184,7 @@ mod tests {
         assert!(dumped.text.contains("(value 7)"));
 
         // The reparse is stable.
-        let reloaded =
-            from_str_with::<Box<dyn Widget>>(&dumped.text, std::time::Duration::ZERO, &CoreSugar)
-                .expect("reparse");
+        let reloaded = parse(&dumped.text).expect("reparse");
         assert_eq!(
             to_string_with(&reloaded.registry, &CoreSugar, &[])
                 .expect("rewrite")
@@ -247,8 +205,7 @@ mod tests {
               (c1 (time 1 0) (graph g1))\n\
               (c2 (time 2 0) (graph g2))\n\
               (c3 (time 3 0) (parent c1) (merge-parents c2) (graph g3)))";
-        let loaded = from_str_with::<Box<dyn Widget>>(text, std::time::Duration::ZERO, &CoreSugar)
-            .expect("parse merge commit");
+        let loaded = parse(text).expect("parse merge commit");
         let merge = loaded
             .registry
             .commits()
@@ -263,9 +220,7 @@ mod tests {
         // carry no `merge-parents` clause.
         let dumped = to_string_with(&loaded.registry, &CoreSugar, &[]).expect("write merge commit");
         assert_eq!(dumped.text.matches("(merge-parents").count(), 1);
-        let reloaded =
-            from_str_with::<Box<dyn Widget>>(&dumped.text, std::time::Duration::ZERO, &CoreSugar)
-                .expect("reparse");
+        let reloaded = parse(&dumped.text).expect("reparse");
         let re_merge = reloaded
             .registry
             .commits()
@@ -325,14 +280,14 @@ mod data_only_tests {
 
 #[cfg(test)]
 mod seed_tests {
+    use super::test_util::normalize_as;
     use super::*;
+    use gantz_core::Node;
     use gantz_nodetag::NodeTag;
     use serde::{Deserialize, Serialize};
+    use std::collections::BTreeMap;
 
-    // A ref-capable node set with one type that matches the wire tag the
-    // format's ref lowering produces.
-    trait RefNode: std::any::Any + Node {}
-
+    // A ref node that matches the wire tag the format's ref lowering produces.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, NodeTag)]
     #[tag("NamedRef")]
     struct TestRef {
@@ -352,18 +307,12 @@ mod seed_tests {
         }
     }
 
-    impl RefNode for TestRef {}
-
-    crate::impl_node_set_serde! {
-        dyn RefNode {
-            TestRef,
-        }
-    }
-
-    impl NodeSugar for Box<dyn RefNode> {
-        fn sugar() -> Sugars<'static> {
-            Sugars(vec![&CoreSugar])
-        }
+    fn parse(
+        text: &str,
+        seed: &BTreeMap<String, gantz_ca::GraphAddr>,
+    ) -> Result<Loaded, FormatError> {
+        let now = std::time::Duration::ZERO;
+        from_str_normalized(text, now, &CoreSugar, seed, &normalize_as::<TestRef>)
     }
 
     fn seed_graph() -> gantz_ca::GraphAddr {
@@ -376,11 +325,9 @@ mod seed_tests {
             .registry
             .commit_graph_ref(&commit)
             .expect("graph for name");
-        let graph: gantz_core::node::graph::Graph<Box<dyn RefNode>> =
-            gantz_core::data::reify(data_graph).expect("reify through the node set");
-        let node = graph
-            .node_indices()
-            .find_map(|ix| (&*graph[ix] as &dyn std::any::Any).downcast_ref::<TestRef>())
+        let node: TestRef = data_graph
+            .node_weights()
+            .find_map(|nd| gantz_core::data::reify_node_concrete(nd).ok())
             .expect("a ref node");
         node.ref_.content_addr()
     }
@@ -391,9 +338,8 @@ mod seed_tests {
     #[test]
     fn seed_resolves_foreign_names() {
         let text = "(graph use-foreign (r (ref foreign)))";
-        let now = std::time::Duration::ZERO;
 
-        let err = match from_str::<Box<dyn RefNode>>(text, now) {
+        let err = match parse(text, &BTreeMap::new()) {
             Err(e) => e,
             Ok(_) => panic!("must not resolve"),
         };
@@ -405,7 +351,7 @@ mod seed_tests {
         let seed = [("foreign".to_string(), seed_graph())]
             .into_iter()
             .collect();
-        let loaded = from_str_seeded::<Box<dyn RefNode>>(text, now, &seed).expect("seeded parse");
+        let loaded = parse(text, &seed).expect("seeded parse");
         assert_eq!(
             ref_addr_of(&loaded, "use-foreign"),
             gantz_ca::ContentAddr::from(seed_graph()),
@@ -419,9 +365,8 @@ mod seed_tests {
     fn seed_heals_stale_pinned_addr() {
         let stale = "ee".repeat(32);
         let text = format!("(graph use-foreign (r (ref foreign \"{stale}\")))");
-        let now = std::time::Duration::ZERO;
 
-        let err = match from_str::<Box<dyn RefNode>>(&text, now) {
+        let err = match parse(&text, &BTreeMap::new()) {
             Err(e) => e,
             Ok(_) => panic!("must not resolve"),
         };
@@ -430,7 +375,7 @@ mod seed_tests {
         let seed = [("foreign".to_string(), seed_graph())]
             .into_iter()
             .collect();
-        let loaded = from_str_seeded::<Box<dyn RefNode>>(&text, now, &seed).expect("seeded parse");
+        let loaded = parse(&text, &seed).expect("seeded parse");
         assert_eq!(
             ref_addr_of(&loaded, "use-foreign"),
             gantz_ca::ContentAddr::from(seed_graph()),

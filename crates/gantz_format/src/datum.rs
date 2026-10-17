@@ -6,7 +6,7 @@
 //! [`datum_from_expr`] reads one back from a parsed Steel expression.
 
 use crate::sexpr::{self, list_args, quote, span_src};
-pub use gantz_core::datum::{Datum, from_datum, node_datum};
+pub use gantz_core::datum::{Datum, node_datum};
 use steel::parser::ast::{Atom, ExprKind};
 use steel::parser::tokens::TokenType;
 
@@ -144,7 +144,7 @@ fn key_text(k: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gantz_core::datum::to_datum;
+    use gantz_core::datum::{from_datum, to_datum};
     use serde::de::DeserializeOwned;
     use serde::{Deserialize, Serialize};
     use std::collections::BTreeMap;

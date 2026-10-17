@@ -10,8 +10,7 @@
 //! Steel text.
 //!
 //! The deserializer is self-describing. `Datum`'s `deserialize_any`
-//! dispatches each datum kind to the matching `visit_*`. Tag-dispatched
-//! node-set serde in `gantz_format::impl_node_set_serde!` and
+//! dispatches each datum kind to the matching `visit_*`.
 //! `#[serde(tag = ...)]` derives rely on this.
 //!
 //! Each integer has one canonical form. An integer that fits in `i64` is
@@ -922,8 +921,7 @@ impl ser::Serializer for MapKeySerializer {
 /// Transcode into a `Datum` from any self-describing format, mirroring
 /// `serde_json::Value`'s `Deserialize`. The input is buffered as a `Datum`,
 /// which can then re-drive a concrete type's `Deserialize` via
-/// [`from_datum`]. `gantz_format::impl_node_set_serde!` buffers node fields
-/// this way when they precede the `type` tag.
+/// [`from_datum`].
 impl<'de> Deserialize<'de> for Datum {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where

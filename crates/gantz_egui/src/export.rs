@@ -83,7 +83,7 @@ pub fn parse_export_at(
 /// Like [`parse_export_at`], but resolves names the document does not define
 /// through `seed`. The seed maps externally-known names to head graphs. This
 /// lets a base source reference graphs another source defines. See
-/// [`gantz_format::from_str_seeded`].
+/// [`gantz_format::from_str_normalized`].
 pub fn parse_export_seeded_at(
     bytes: &[u8],
     now: gantz_ca::Timestamp,
@@ -541,10 +541,9 @@ mod tests {
 
         // The working graph in data form. A ref to `leaf` plus a plain expr
         // node.
-        let mut typed = TestGraph::default();
-        let a = typed.add_node(named_ref("leaf", leaf_ga));
-        let b = typed.add_node(expr("(+ 2 2)"));
-        let working = gantz_core::data::erase(&typed).unwrap();
+        let mut working = TestGraph::default();
+        let a = working.add_node(named_ref("leaf", leaf_ga));
+        let b = working.add_node(expr("(+ 2 2)"));
         let mut layout = gantz_edit::Layout::default();
         layout.insert(
             gantz_edit::NodeId::from_index(a.index()),

@@ -1,17 +1,17 @@
 //! Tests for `root_port_info`, the root-level DSP port classification
 //! behind DSP edge styling.
 
-use gantz_ca::ContentAddr;
+use gantz_ca::{ContentAddr, NodeData};
 use gantz_core::Edge;
-use gantz_core::data::ReifiedGraphs;
+use gantz_core::data::{ReifiedGraphs, ReifyNodeError, erase_node_tagged};
 use gantz_core::node::graph::Graph;
 use gantz_core::node::{AsRefNode, ExprCtx, ExprResult, MetaCtx, Ref, parse_expr};
 use gantz_plyphon::{NodeDsp, Out, PortShape, PortShapes, ToNodeDsp, UnitNode, root_port_info};
 use plyphon::Rate;
 
 /// A minimal node standing in for the app's node set. Adjacent tagging keeps
-/// the serde a `type`-tagged map, which the erase codec requires, while
-/// admitting any variant payload shape.
+/// each variant's serde a map, which `erase_node_tagged` requires, while
+/// admitting any variant payload shape. See [`erase`] and [`reify`].
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "type", content = "c")]
 enum N {
@@ -74,11 +74,37 @@ impl gantz_core::Node for N {
     }
 }
 
+/// Erase `node` under its variant's name.
+fn erase(node: &N) -> NodeData {
+    let tag = match node {
+        N::Unit(_) => "Unit",
+        N::Out(_) => "Out",
+        N::Ref(_) => "Ref",
+        N::Inlet => "Inlet",
+        N::Outlet => "Outlet",
+        N::Other => "Other",
+    };
+    erase_node_tagged(tag, node).expect("erase")
+}
+
+/// Reify a stored node through the enum's tagged serde.
+fn reify(node_data: &NodeData) -> Result<N, ReifyNodeError> {
+    let gantz_ca::Datum::Map(fields) = node_data.data.clone() else {
+        unreachable!("`erase` stores a map");
+    };
+    let tagged = gantz_ca::Datum::tagged(&node_data.tag, fields);
+    gantz_ca::datum::from_datum(tagged).map_err(|source| ReifyNodeError {
+        tag: node_data.tag.clone(),
+        source,
+    })
+}
+
 /// Erase and commit `graph`. Returns its graph address as a `ContentAddr`,
 /// the form `Ref::content_addr` reports.
 fn commit(registry: &mut gantz_ca::Registry, graph: Graph<N>) -> ContentAddr {
     let now = std::time::Duration::from_secs(1);
-    let (dg, addr) = gantz_core::data::erase_with_addr(&graph).expect("erase");
+    let dg = graph.map(|_, n| erase(n), |_, e| *e);
+    let addr = gantz_ca::graph_addr(&dg);
     registry.commit_graph(now, None, addr, || dg);
     addr.into()
 }
@@ -86,7 +112,7 @@ fn commit(registry: &mut gantz_ca::Registry, graph: Graph<N>) -> ContentAddr {
 /// Reify the whole registry column into a typed cache.
 fn reify_all(registry: &gantz_ca::Registry) -> ReifiedGraphs<N> {
     let mut reified = ReifiedGraphs::new();
-    let errs = reified.ensure_all(registry);
+    let errs = reified.ensure_all_with(registry, reify);
     assert!(errs.is_empty(), "{errs:?}");
     reified
 }
