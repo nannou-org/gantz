@@ -177,12 +177,13 @@ impl Env<'_> {
         let graph = self.graphs.get(&graph_ca)?;
         let get_node = |c: &ca::ContentAddr| self.node(c);
         let meta_ctx = node::MetaCtx::new(&get_node);
+        let role = match kind {
+            crate::SocketKind::Input => node::Role::Inlet,
+            crate::SocketKind::Output => node::Role::Outlet,
+        };
         let node_ref = graph
             .node_references()
-            .filter(|n| match kind {
-                crate::SocketKind::Input => n.weight().inlet(meta_ctx),
-                crate::SocketKind::Output => n.weight().outlet(meta_ctx),
-            })
+            .filter(|n| n.weight().role(meta_ctx) == role)
             .nth(ix)?;
         let marker = node_ref.weight();
         // An inlet exposes its doc on its output socket. An outlet uses its

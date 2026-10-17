@@ -53,7 +53,7 @@ use petgraph::visit::EdgeRef;
 use gantz_ca::{ContentAddr, GraphAddr};
 use gantz_core::Edge;
 use gantz_core::node::graph::{Graph, NodeIx};
-use gantz_core::node::{GetNode, MetaCtx};
+use gantz_core::node::{GetNode, MetaCtx, Role};
 
 use crate::dsp::{NodeDsp, ToNodeDsp};
 
@@ -202,10 +202,10 @@ impl<N: ToNodeDsp> ToNodeDsp for Flat<N> {
 /// edges. See the module docs.
 ///
 /// `get_node` backs the [`MetaCtx`] used to identify inlets and outlets via
-/// the [`gantz_core::Node::inlet`] and [`outlet`](gantz_core::Node::outlet)
-/// predicates, so identification agrees with the control compiler, including
-/// through refs. Nodes that are neither graph refs nor boundaries are copied
-/// as-is. Non-DSP nodes ride along and derivation ignores them.
+/// [`gantz_core::Node::role`], so identification agrees with the control
+/// compiler, including through refs. Nodes that are neither graph refs nor
+/// boundaries are copied as-is. Non-DSP nodes ride along and derivation
+/// ignores them.
 pub fn flatten<'g, N>(
     get_node: GetNode<'_>,
     graph: &'g Graph<N>,
@@ -381,7 +381,7 @@ where
                     levels[id].child.insert(ix, child);
                 }
             }
-        } else if node.inlet(ctx) {
+        } else if node.role(ctx) == Role::Inlet {
             levels[id].inlets.push(ix);
             // A root-level inlet is the flat graph's own interface, so keep it
             // as a marker for template derivation. Nested inlets dissolve.
@@ -393,7 +393,7 @@ where
                 });
                 levels[id].kept.insert(ix, flat);
             }
-        } else if node.outlet(ctx) {
+        } else if node.role(ctx) == Role::Outlet {
             levels[id].outlets.push(ix);
             if parent.is_none() {
                 let index = levels[id].outlets.len() - 1;

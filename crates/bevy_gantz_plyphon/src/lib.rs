@@ -3665,11 +3665,12 @@ mod tests {
         fn expr(&self, _ctx: gantz_core::node::ExprCtx<'_, '_>) -> gantz_core::node::ExprResult {
             gantz_core::node::parse_expr("'()")
         }
-        fn inlet(&self, _ctx: gantz_core::node::MetaCtx) -> bool {
-            matches!(self, TestN::Inlet)
-        }
-        fn outlet(&self, _ctx: gantz_core::node::MetaCtx) -> bool {
-            matches!(self, TestN::Outlet)
+        fn role(&self, _ctx: gantz_core::node::MetaCtx) -> gantz_core::node::Role {
+            match self {
+                TestN::Inlet => gantz_core::node::Role::Inlet,
+                TestN::Outlet => gantz_core::node::Role::Outlet,
+                _ => gantz_core::node::Role::Plain,
+            }
         }
         fn n_inputs(&self, _ctx: gantz_core::node::MetaCtx) -> usize {
             match self {

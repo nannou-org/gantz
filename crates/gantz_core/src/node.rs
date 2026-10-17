@@ -116,23 +116,13 @@ pub trait Node: std::any::Any {
         vec![]
     }
 
-    /// Whether or not this node acts as an inlet for some nested graph.
-    fn inlet(&self, _ctx: MetaCtx) -> bool {
-        false
-    }
-
-    /// Whether or not this node acts as an outlet for some nested graph.
-    fn outlet(&self, _ctx: MetaCtx) -> bool {
-        false
-    }
-
-    /// Whether or not this node is a unit delay. Its output is the value its
-    /// input received on the previous evaluation.
+    /// The node's structural role in its graph. See [`Role`].
     ///
-    /// Delay nodes are compiler intrinsics and no [`Node::expr`] is
-    /// generated. See [`Delay`].
-    fn delay(&self, _ctx: MetaCtx) -> bool {
-        false
+    /// A node that wraps another node forwards its role.
+    ///
+    /// By default, this is [`Role::Plain`].
+    fn role(&self, _ctx: MetaCtx) -> Role {
+        Role::Plain
     }
 
     /// Whether or not the node requires access to state.
@@ -220,6 +210,24 @@ pub enum EvalConf {
     ///
     /// An element for each connection, `true` if eval-enabled.
     Set(Conns),
+}
+
+/// A node's structural role in its graph. See [`Node::role`].
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub enum Role {
+    /// An ordinary node.
+    #[default]
+    Plain,
+    /// An inlet of the graph, for use as a nested graph.
+    Inlet,
+    /// An outlet of the graph, for use as a nested graph.
+    Outlet,
+    /// A unit delay. Its output is the value its input received on the
+    /// previous evaluation.
+    ///
+    /// Delay nodes are compiler intrinsics and no [`Node::expr`] is
+    /// generated. See [`Delay`].
+    Delay,
 }
 
 /// Type used to represent a node's ID within a graph.
@@ -414,16 +422,8 @@ macro_rules! impl_node_for_ptr {
                 (**self).pull_eval(ctx)
             }
 
-            fn inlet(&self, ctx: MetaCtx) -> bool {
-                (**self).inlet(ctx)
-            }
-
-            fn outlet(&self, ctx: MetaCtx) -> bool {
-                (**self).outlet(ctx)
-            }
-
-            fn delay(&self, ctx: MetaCtx) -> bool {
-                (**self).delay(ctx)
+            fn role(&self, ctx: MetaCtx) -> Role {
+                (**self).role(ctx)
             }
 
             fn stateful(&self, ctx: MetaCtx) -> bool {

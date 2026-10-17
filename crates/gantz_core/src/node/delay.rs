@@ -33,8 +33,8 @@ impl Node for Delay {
         1
     }
 
-    fn delay(&self, _ctx: node::MetaCtx) -> bool {
-        true
+    fn role(&self, _ctx: node::MetaCtx) -> node::Role {
+        node::Role::Delay
     }
 
     /// The delay holds its previous-evaluation value in state.

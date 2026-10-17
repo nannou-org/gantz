@@ -66,12 +66,8 @@ impl<N: Node> Node for Pull<N> {
         vec![self.conf.clone()]
     }
 
-    fn inlet(&self, ctx: node::MetaCtx) -> bool {
-        self.node.inlet(ctx)
-    }
-
-    fn outlet(&self, ctx: node::MetaCtx) -> bool {
-        self.node.outlet(ctx)
+    fn role(&self, ctx: node::MetaCtx) -> node::Role {
+        self.node.role(ctx)
     }
 
     fn stateful(&self, ctx: node::MetaCtx) -> bool {
@@ -92,5 +88,9 @@ impl<N: Node> Node for Pull<N> {
 
     fn required_modules(&self, ctx: node::MetaCtx) -> Vec<String> {
         self.node.required_modules(ctx)
+    }
+
+    fn visit(&self, ctx: node::visit::Ctx<'_, '_>, visitor: &mut dyn node::Visitor) {
+        self.node.visit(ctx, visitor)
     }
 }
