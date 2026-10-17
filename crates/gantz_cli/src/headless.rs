@@ -46,12 +46,9 @@ pub fn base_sources(conf: &Conf) -> Vec<Source> {
         .collect()
 }
 
-/// Parse every source seeded with the names loaded so far, to a fixpoint.
-///
-/// A source may reference names another source defines, so a source whose
-/// references do not resolve yet is deferred to the next round. Once a full
-/// round makes no progress the deferred sources keep their missing
-/// dependency error. Later sources shadow earlier names, as in the app.
+/// Parse every source seeded with the names loaded so far, to a fixpoint. See
+/// [`gantz_egui::base::load_to_fixpoint`]. Later sources shadow earlier
+/// names, as in the app.
 pub fn load_sources(
     sources: &[Source],
     now: gantz_ca::Timestamp,
@@ -61,49 +58,25 @@ pub fn load_sources(
     let mut registry = gantz_ca::Registry::default();
     let mut parsed: Vec<Option<Result<Parsed, ParseExportError>>> =
         sources.iter().map(|_| None).collect();
-    let parse = |ix: usize, names: &gantz_egui::reg::Names, registry: &gantz_ca::Registry| {
-        let seed = gantz_egui::base::seed_graph_addrs(names, registry);
+    let failed = gantz_egui::base::load_to_fixpoint(sources.len(), |ix| {
+        let seed = gantz_egui::base::seed_graph_addrs(&names, &registry);
         let text = std::str::from_utf8(&sources[ix].bytes).map_err(ParseExportError::Utf8)?;
-        let (registry, labels) = gantz_egui::format::from_str_labeled(text, now, &seed, codec)
+        let (source, labels) = gantz_egui::format::from_str_labeled(text, now, &seed, codec)
             .map_err(ParseExportError::Format)?;
-        Ok(Parsed { registry, labels })
-    };
-    let is_missing_dep = |e: &ParseExportError| {
-        matches!(
-            e,
-            ParseExportError::Format(e)
-                if matches!(e.kind, gantz_format::ErrorKind::MissingDependency(_))
-        )
-    };
-    let mut pending: Vec<usize> = (0..sources.len()).collect();
-    loop {
-        let mut deferred = vec![];
-        for ix in pending.iter().copied() {
-            match parse(ix, &names, &registry) {
-                Err(e) if is_missing_dep(&e) => deferred.push(ix),
-                Err(e) => parsed[ix] = Some(Err(e)),
-                Ok(source) => {
-                    let heads = source.registry.heads();
-                    names.extend(heads.map(|(n, ca)| (n.clone(), ca)));
-                    registry.merge(source.registry.clone());
-                    parsed[ix] = Some(Ok(source));
-                }
-            }
-        }
-        if deferred.is_empty() {
-            break;
-        }
-        if deferred.len() == pending.len() {
-            for ix in deferred {
-                parsed[ix] = Some(parse(ix, &names, &registry));
-            }
-            break;
-        }
-        pending = deferred;
+        names.extend(source.heads().map(|(n, ca)| (n.clone(), ca)));
+        registry.merge(source.clone());
+        parsed[ix] = Some(Ok(Parsed {
+            registry: source,
+            labels,
+        }));
+        Ok(())
+    });
+    for (ix, e) in failed {
+        parsed[ix] = Some(Err(e));
     }
     let parsed = parsed
         .into_iter()
-        .map(|p| p.expect("every source is parsed or deferred to a final parse"))
+        .map(|p| p.expect("every source loads or fails"))
         .collect();
     Loaded { registry, parsed }
 }

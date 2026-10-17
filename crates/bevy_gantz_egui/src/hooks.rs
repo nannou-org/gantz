@@ -1,7 +1,7 @@
 //! Observers that keep the GUI state in step with head events.
 
 use crate::{
-    GraphCache, GraphView, GuiState, HeadGuiState, HeadNodeInstances, NodeCodecRes, PerfVm,
+    GraphCache, GraphView, GuiState, HeadNodeInstances, NodeCodecRes, PerfVm, ResyncRefsEvent,
     refresh_cache,
 };
 use bevy_ecs::prelude::*;
@@ -42,7 +42,6 @@ pub fn on_head_opened(
         .unwrap_or_default();
 
     cmds.entity(event.entity)
-        .insert(HeadGuiState::default())
         .insert(GraphView(head_view))
         .insert(HeadNodeInstances::default());
 }
@@ -109,7 +108,6 @@ pub fn on_head_changed(
     }
 
     cmds.entity(event.entity)
-        .insert(HeadGuiState::default())
         .insert(GraphView(head_view))
         .insert(HeadNodeInstances::default());
 }
@@ -150,19 +148,11 @@ pub fn on_head_committed(
     }
 }
 
-/// On any head commit, propagate the change to referrers. Bring all
-/// sync-enabled `NamedRef`s up to date and refresh any open head whose commit
-/// moved. For example, a nested graph edit propagates up to its open parent.
-pub fn on_head_committed_resync(
-    _trigger: On<head::CommittedEvent>,
-    mut registry: ResMut<Registry>,
-    mut cache: ResMut<GraphCache>,
-    codec: Res<NodeCodecRes>,
-    mut heads: Query<head::OpenHeadData, With<head::OpenHead>>,
-) {
-    let moves = gantz_egui::sync::resync(&mut registry, bevy_gantz::reg::timestamp());
-    refresh_cache(&registry, &mut cache, &codec.0);
-    refresh_moved_heads(&moves, &mut registry, &mut heads);
+/// On any head commit, propagate the change to referrers with a
+/// [`ResyncRefsEvent`]. For example, a nested graph edit propagates up to its
+/// open parent.
+pub fn on_head_committed_resync(_trigger: On<head::CommittedEvent>, mut cmds: Commands) {
+    cmds.trigger(ResyncRefsEvent::default());
 }
 
 /// On a fork, give the fork independent nested children. Copy the original's

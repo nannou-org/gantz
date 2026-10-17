@@ -1,10 +1,11 @@
 //! Applying changes that arrive from elsewhere, such as a collaborative
 //! session or the vault.
 
+use crate::edit::HeadEdit;
 use crate::graphs::remove_name;
 use crate::hooks::refresh_moved_heads;
 use crate::merge::finish_merge_commit;
-use crate::{BuiltinNodes, ForHead, GraphCache, GraphView, GuiState, NodeCodecRes, refresh_cache};
+use crate::{ForHead, GraphCache, GuiState, NodeCodecRes, refresh_cache};
 use bevy_ecs::prelude::*;
 use bevy_egui::EguiContexts;
 use bevy_gantz::Registry;
@@ -33,94 +34,64 @@ pub struct SyncRemoteTip {
 /// Handle [`SyncRemoteTip`]. The session analogue of [`on_merge_head`].
 ///
 /// [`on_merge_head`]: crate::on_merge_head
-pub fn on_sync_remote_tip(
-    trigger: On<ForHead<SyncRemoteTip>>,
-    mut registry: ResMut<Registry>,
-    mut cache: ResMut<GraphCache>,
-    builtins: Res<BuiltinNodes>,
-    codec: Res<NodeCodecRes>,
-    mut gui_state: ResMut<GuiState>,
-    mut vms: NonSendMut<head::HeadVms>,
-    mut cmds: Commands,
-    mut heads: Query<
-        (&mut head::HeadRef, &mut head::WorkingGraph, &mut GraphView),
-        With<head::OpenHead>,
-    >,
-) {
+pub fn on_sync_remote_tip(trigger: On<ForHead<SyncRemoteTip>>, mut edits: HeadEdit) {
     let event = trigger.event();
-    let Ok((mut head_ref, mut wg, mut gv)) = heads.get_mut(event.head) else {
-        log::error!("SyncRemoteTip: head not found for entity {:?}", event.head);
-        return;
-    };
-    let Some(head_state) = gui_state.open_heads.get_mut(&**head_ref) else {
-        log::error!("SyncRemoteTip: GUI state not found for head");
-        return;
-    };
-    let Some(vm) = vms.get_mut(&event.head) else {
-        log::error!("SyncRemoteTip: VM not found for head");
-        return;
-    };
-
-    let old_head = head_ref.0.clone();
-    let outcome = gantz_egui::ops::sync_remote_tip(
-        &mut registry,
-        &mut head_ref.0,
-        &mut wg,
-        vm,
-        &mut gv,
-        &mut head_state.scene.interaction.selection,
-        event.data.remote,
-        event.data.resolutions,
-        event.data.adopt_unrelated,
-    );
-    // The sync may have minted a merge commit and graph.
-    refresh_cache(&registry, &mut cache, &codec.0);
-
-    match outcome {
-        gantz_egui::ops::SyncTipOutcome::UpToDate => (),
-        gantz_egui::ops::SyncTipOutcome::Moved(target) => {
-            // A remote edit invalidates local redo just like a local one. The
-            // Merged arm clears via CommittedEvent. A stale session-redo would
-            // otherwise mint a whole-graph revert that clobbers the peers'
-            // newer work.
-            gui_state.redo_stacks.remove(&old_head);
-            gui_state.undo_cursors.remove(&old_head);
-            cmds.trigger(head::MoveHeadEvent {
-                entity: event.head,
-                target,
-            });
-        }
-        gantz_egui::ops::SyncTipOutcome::Merged {
-            new_commit,
-            conflicts,
-            ..
-        } => {
-            if conflicts > 0 {
-                log::info!("session merge auto-resolved {conflicts} conflict(s)");
+    let tip = &event.data;
+    let moved = edits.apply(event.head, "SyncRemoteTip", |e| {
+        let Some(vm) = e.vm.as_deref_mut() else {
+            log::error!("SyncRemoteTip: VM not found for head");
+            return None;
+        };
+        let old_head = e.head.clone();
+        let outcome = gantz_egui::ops::sync_remote_tip(
+            e.registry,
+            e.head,
+            e.graph,
+            vm,
+            e.view,
+            &mut e.state.scene.interaction.selection,
+            tip.remote,
+            tip.resolutions,
+            tip.adopt_unrelated,
+        );
+        match outcome {
+            gantz_egui::ops::SyncTipOutcome::UpToDate => (),
+            gantz_egui::ops::SyncTipOutcome::Moved(target) => {
+                let entity = e.entity;
+                e.cmds.trigger(head::MoveHeadEvent { entity, target });
+                return Some(old_head);
             }
-            log::debug!("session merge -> {}", new_commit.display_short());
-            let committed = head::CommittedEvent {
-                entity: event.head,
-                old_head,
-                new_head: head_ref.0.clone(),
-            };
-            finish_merge_commit(
+            gantz_egui::ops::SyncTipOutcome::Merged {
                 new_commit,
-                committed,
-                &wg.0,
-                &gv.0,
-                &mut registry,
-                (&cache, &builtins, &codec),
-                vm,
-                &mut cmds,
-            );
+                conflicts,
+                ..
+            } => {
+                if conflicts > 0 {
+                    log::info!("session merge auto-resolved {conflicts} conflict(s)");
+                }
+                log::debug!("session merge -> {}", new_commit.display_short());
+                let committed = head::CommittedEvent {
+                    entity: e.entity,
+                    old_head,
+                    new_head: e.head.clone(),
+                };
+                finish_merge_commit(e, new_commit, committed);
+            }
+            gantz_egui::ops::SyncTipOutcome::Blocked(reasons) => {
+                log::warn!("session sync blocked: {}", reasons.join("; "));
+            }
+            gantz_egui::ops::SyncTipOutcome::Unrelated => {
+                log::warn!("session sync: remote tip shares no history with the local graph");
+            }
         }
-        gantz_egui::ops::SyncTipOutcome::Blocked(reasons) => {
-            log::warn!("session sync blocked: {}", reasons.join("; "));
-        }
-        gantz_egui::ops::SyncTipOutcome::Unrelated => {
-            log::warn!("session sync: remote tip shares no history with the local graph");
-        }
+        None
+    });
+    // A remote edit invalidates local redo just like a local one. A merge
+    // clears it through its `CommittedEvent`. A stale session-redo would
+    // otherwise mint a whole-graph revert that clobbers the peers' newer work.
+    if let Some(Some(old_head)) = moved {
+        edits.gui_state.redo_stacks.remove(&old_head);
+        edits.gui_state.undo_cursors.remove(&old_head);
     }
 }
 
@@ -162,9 +133,8 @@ pub struct RenameHeadEvent {
     pub to: ca::Name,
 }
 
-/// Handle [`ResyncRefsEvent`]. The same pass as [`on_head_committed_resync`].
-///
-/// [`on_head_committed_resync`]: crate::on_head_committed_resync
+/// Handle [`ResyncRefsEvent`]. Bring sync-enabled `NamedRef`s up to date and
+/// refresh the open heads whose commits moved.
 pub fn on_resync_refs(
     trigger: On<ResyncRefsEvent>,
     mut registry: ResMut<Registry>,

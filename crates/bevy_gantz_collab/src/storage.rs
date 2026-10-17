@@ -1,29 +1,15 @@
-//! Persistence for the collab session configurations and the vault
-//! agreement over the app's key-value storage in `gantz_store`.
-//! `gantz_collab::identity` persists the identity.
+//! Persistence for the vault agreement over the app's key-value storage in
+//! `gantz_store`. `gantz_collab::identity` persists the identity.
 
-use gantz_collab::{Session, VaultId};
+use gantz_collab::VaultId;
 use gantz_store::{Load, Save, load, save};
 
 /// What each name was last agreed at with a vault, with the vault. See
 /// `gantz_collab_sync::VaultLink::synced`.
 pub type VaultSynced = (VaultId, gantz_collab_sync::Synced);
 
-/// The key holding the persisted session configurations.
-pub const SESSIONS_KEY: &str = "collab-sessions";
-
 /// The key holding the persisted [`VaultSynced`].
 const VAULT_SYNCED_KEY: &str = "vault-synced";
-
-/// Persist the session configurations.
-pub fn save_sessions(storage: &mut impl Save, sessions: &[Session]) {
-    save(storage, SESSIONS_KEY, &sessions);
-}
-
-/// Load the persisted session configurations.
-pub fn load_sessions(storage: &impl Load) -> Vec<Session> {
-    load(storage, SESSIONS_KEY).unwrap_or_default()
-}
 
 /// Persist the vault agreement. Write it after the registry in the same
 /// batch, so a crash can only leave it behind the registry, never ahead.

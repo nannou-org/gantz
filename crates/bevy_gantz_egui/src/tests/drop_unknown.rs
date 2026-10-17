@@ -21,6 +21,7 @@ fn first_node(app: &bevy_app::App, name: &Name) -> NodeData {
 fn discarding_unrecognised_settings_commits_and_undo_restores_them() {
     let mut app = super::test_app(|| {});
     app.init_resource::<crate::GuiState>()
+        .add_observer(crate::on_head_opened)
         .add_observer(crate::on_drop_unknown_data)
         .add_observer(crate::on_undo);
 
