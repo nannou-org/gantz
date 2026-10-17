@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/nannou-org/gantz/compare/bevy_gantz-v0.7.0...bevy_gantz-v0.8.0) - 2026-10-17
+
+### Other
+
+- [**breaking**] move sections, ref resync and NamedRef into gantz_edit
+- remove dead GUI state and session storage, fix stale docs
+- *(bevy_gantz)* share one retarget between replace and move
+
 ## [0.7.0](https://github.com/nannou-org/gantz/compare/bevy_gantz-v0.6.0...bevy_gantz-v0.7.0) - 2026-10-03
 
 ### Added

@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_cli-v0.2.0...gantz_cli-v0.3.0) - 2026-10-17
+
+### Added
+
+- *(gantz_cli)* [**breaking**] hand out the vault ticket only on request
+- [**breaking**] log the devices that a vault refuses
+- *(bevy_gantz_collab)* [**breaking**] link the app to a vault
+
+### Fixed
+
+- *(gantz_cli)* keep iroh's network reports out of the default logs
+- *(gantz_cli)* leave the timestamps of vault logs to the journal
+- *(gantz_cli)* log without colour when stderr is not a terminal
+- *(gantz_cli)* close the vault's connections when interrupted
+
+### Other
+
+- [**breaking**] move sections, ref resync and NamedRef into gantz_edit
+- share one fixpoint loop for base sources
+- *(gantz_cli)* say that only serve creates the vault directory
+
 ## [0.2.0](https://github.com/nannou-org/gantz/compare/gantz_cli-v0.1.0...gantz_cli-v0.2.0) - 2026-10-03
 
 ### Added

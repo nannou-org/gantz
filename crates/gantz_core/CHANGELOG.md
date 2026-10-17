@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.8.0...gantz_core-v0.9.0) - 2026-10-17
+
+### Fixed
+
+- *(gantz_core)* report a graph that fails to reify only once
+
+### Other
+
+- *(gantz_core)* [**breaking**] remove the unused EvalFn and graph::hash
+- *(gantz_core)* split compile.rs into order and link modules
+- *(gantz_core)* [**breaking**] replace the inlet, outlet and delay bools with a role
+- [**breaking**] remove the serde-tag node codec
+
 ## [0.8.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.7.0...gantz_core-v0.8.0) - 2026-10-03
 
 ### Added

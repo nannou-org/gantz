@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.9.0...gantz_egui-v0.10.0) - 2026-10-17
+
+### Added
+
+- flag graphs that a newer gantz synced here
+- *(bevy_gantz_collab)* [**breaking**] link the app to a vault
+- *(gantz_egui)* add the vault settings
+
+### Fixed
+
+- *(gantz_egui)* re-seed edit buffers when their source changes
+- *(gantz_egui)* give each inspected node its own id scope
+- *(gantz_egui)* keep duplicates out of the log/trace message window
+- *(gantz_egui)* enforce minimum pane sizes
+- *(gantz_egui)* keep the vault buttons in reach in a narrow pane
+
+### Other
+
+- *(gantz_core)* [**breaking**] replace the inlet, outlet and delay bools with a role
+- [**breaking**] remove the serde-tag node codec
+- [**breaking**] move sections, ref resync and NamedRef into gantz_edit
+- [**breaking**] add the gantz_edit crate with the view model
+- *(gantz_egui)* [**breaking**] remove dead widget and env fns
+- *(gantz_egui)* [**breaking**] keep the graph tabs in GantzState
+- *(gantz_egui)* restore node instances through one helper
+- *(gantz_egui)* share one pane context and render each pane in its own fn
+- *(gantz_egui)* split the Gantz widget into modules
+- share one fixpoint loop for base sources
+- [**breaking**] report every widget action as a response payload
+- *(gantz_egui)* shrink the demo to a minimal single-graph host
+- Merge pull request #424 from nannou-org/fix/log-trace-dup-window
+
 ## [0.9.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.8.0...gantz_egui-v0.9.0) - 2026-10-03
 
 ### Added

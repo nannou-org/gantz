@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.9.0...bevy_gantz_egui-v0.10.0) - 2026-10-17
+
+### Added
+
+- *(bevy_gantz_collab)* [**breaking**] link the app to a vault
+
+### Fixed
+
+- *(gantz_core)* report a graph that fails to reify only once
+
+### Other
+
+- [**breaking**] move sections, ref resync and NamedRef into gantz_edit
+- [**breaking**] add the gantz_edit crate with the view model
+- *(gantz_egui)* [**breaking**] keep the graph tabs in GantzState
+- remove dead GUI state and session storage, fix stale docs
+- share one fixpoint loop for base sources
+- *(bevy_gantz_egui)* build the widget once for docked and pop-out panes
+- *(bevy_gantz_egui)* share the head edit and resync passes
+- *(bevy_gantz_egui)* split lib.rs into modules
+- [**breaking**] report every widget action as a response payload
+
 ## [0.9.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.8.0...bevy_gantz_egui-v0.9.0) - 2026-10-03
 
 ### Added
