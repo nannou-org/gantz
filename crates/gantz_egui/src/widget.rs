@@ -11,7 +11,6 @@ pub use gantz::{
     AlignConfig, BaseSourcesCtx, EdgeConfig, FollowSelectionConfig, Gantz, GantzState, GridConfig,
     LayoutConfig, NodeViewPane, Pane, PaneWindowGeometry, PaneWindowMode, SceneConfig, SnapConfig,
     SnapMode, WindowedPane, close_windowed_pane, pane_key, redock_windowed_pane,
-    update_graph_pane_head,
 };
 pub use global_config::{GlobalConfigResponse, global_config};
 pub use graph_config::{GraphConfig, GraphConfigResponse};
@@ -106,6 +105,12 @@ pub(crate) fn discard_button(ui: &mut egui::Ui) -> bool {
         .clicked()
 }
 
+/// The warning line that tells why a node is locked. See [`locked_text`].
+pub(crate) fn locked_label(ui: &mut egui::Ui, lost: &[String]) {
+    let text = format!("{LOCK_GLYPH} {}", locked_text(lost));
+    ui.colored_label(ui.visuals().warn_fg_color, text);
+}
+
 /// Why a node is locked, given the data it holds that this build drops. See
 /// [`crate::node::InstanceEntry::lost`].
 pub(crate) fn locked_text(lost: &[String]) -> String {
@@ -182,11 +187,6 @@ pub(crate) fn push_entry<T: RunEntry>(entries: &mut VecDeque<T>, max_entries: us
     while entries.len() > max_entries {
         entries.pop_front();
     }
-}
-
-/// Simple shorthand for viewing steel code without highlights.
-pub fn steel_view(ui: &mut egui::Ui, code: &str) {
-    SteelView::new(code).show(ui);
 }
 
 /// A titled, full-width group. Settings tabs use it to separate sections.

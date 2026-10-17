@@ -143,16 +143,6 @@ impl Env<'_> {
         types
     }
 
-    /// The formatted keyboard shortcut for the node palette entry `node_type`,
-    /// if any.
-    pub fn command_formatted_kb_shortcut(
-        &self,
-        _ctx: &egui::Context,
-        _node_type: &str,
-    ) -> Option<String> {
-        None
-    }
-
     /// Whether referencing the graph named `target` from the graph named
     /// `editing` would create a reference cycle. See
     /// [`crate::cycle::would_cycle`].

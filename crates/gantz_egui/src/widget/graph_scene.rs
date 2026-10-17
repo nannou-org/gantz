@@ -983,37 +983,9 @@ fn nodes(
             }
         });
 
-        // Return the instance to the cache. Erase it back into the weight only
-        // when a response marked a CA-affecting change. See the `changed`
-        // contract on `NodeUi`. The entry's witness updates in the same breath,
-        // so the cache hits exactly while the stored weight is untouched.
-        // Non-CA state lives in VM or egui memory by contract.
         if let Some(entry) = instance {
-            if node_changed {
-                *changed |= instances.write_back(n_ix, entry, &mut graph[n_id]);
-            } else if validate && entry.lost.is_empty() {
-                // An unmarked weight mutation would otherwise persist
-                // invisibly in the cached instance. Warn and evict, so the
-                // mutation drops exactly as it would uncached.
-                match entry.inst.erase() {
-                    Ok(node_data) => {
-                        if node_data.content_addr() != entry.baseline {
-                            log::warn!(
-                                "node {n_ix} ({}): CA-affecting state changed without a \
-                                 `changed` response; the edit was dropped (see `NodeUi`)",
-                                graph[n_id].tag,
-                            );
-                        } else {
-                            instances.put(n_ix, entry);
-                        }
-                    }
-                    Err(e) => {
-                        log::warn!("node {n_ix}: change-tracking validation failed to erase: {e}");
-                    }
-                }
-            } else {
-                instances.put(n_ix, entry);
-            }
+            let weight = &mut graph[n_id];
+            *changed |= instances.restore(n_ix, entry, weight, node_changed, validate);
         }
 
         responses.extend(crate::action::state_written(&mut writes));
