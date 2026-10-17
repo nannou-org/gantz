@@ -187,8 +187,8 @@ pub fn raise_named(
 }
 
 /// A stored node's tagged datum. Its `"type"` tag entry is prepended to its
-/// field map. This is the exact inverse of erasure's tag split, so the datum
-/// matches what node-set serde would produce with no node type involved.
+/// field map. This is the form a [`crate::Normalize`] fn reads back, with no
+/// node type involved.
 fn node_value(node_data: &NodeData) -> Result<Datum, FormatError> {
     match &node_data.data {
         Datum::Map(fields) => Ok(Datum::tagged(&node_data.tag, fields.clone())),

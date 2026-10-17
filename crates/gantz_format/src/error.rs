@@ -46,7 +46,7 @@ pub enum ErrorKind {
     BadAddr(String),
     /// References between names formed a cycle.
     CycleInRefs(Vec<String>),
-    /// A node failed to deserialize through the node set's serde dispatch.
+    /// A node failed to decode through the node set's codec.
     NodeDeserialize {
         /// The node's `"type"` tag, if known.
         tag: String,

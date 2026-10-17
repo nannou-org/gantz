@@ -14,7 +14,6 @@ use gantz_ca::{ContentAddr, DataGraph, NodeData};
 use gantz_core::Builtins;
 use gantz_core::data::{EraseNodeError, ReifyError, ReifyNodeError};
 use gantz_core::node::graph::Graph;
-use petgraph::visit::EdgeRef;
 use std::any::Any;
 use std::collections::HashMap;
 
@@ -148,20 +147,9 @@ impl NodeCodec {
     }
 
     /// Reify a stored graph. Node weights go through [`Self::reify_ui`].
-    /// Indices and edges are preserved verbatim. This mirrors
-    /// [`gantz_core::data::reify`].
+    /// Indices and edges are preserved verbatim.
     pub fn reify_graph(&self, dg: &DataGraph) -> Result<Graph<DynNode>, ReifyError> {
-        let mut out = Graph::with_capacity(dg.node_count(), dg.edge_count());
-        for (node_ix, node_data) in dg.node_weights().enumerate() {
-            let inst = self
-                .reify_ui(node_data)
-                .map_err(|source| ReifyError { node_ix, source })?;
-            out.add_node(inst.node);
-        }
-        for e in dg.edge_references() {
-            out.add_edge(e.source(), e.target(), *e.weight());
-        }
-        Ok(out)
+        gantz_core::data::reify_with(dg, |nd| self.reify_ui(nd).map(|inst| inst.node))
     }
 
     /// Round-trip a node's data form through its type. Reify, then erase.

@@ -14,8 +14,8 @@ gantz_core.workspace = true
 gantz_nodetag.workspace = true
 log.workspace = true
 petgraph.workspace = true
-serde.workspace = true
 steel-core.workspace = true
 
 [dev-dependencies]
+serde.workspace = true
 serde_json.workspace = true

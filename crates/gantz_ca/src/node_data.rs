@@ -17,8 +17,7 @@ pub type DataGraph = petgraph::graph::Graph<NodeData, Edge, petgraph::Directed, 
 ///
 /// - `tag` is the node type's wire tag, `gantz_nodetag::NodeTag::TAG`. It
 ///   identifies how to interpret `data`.
-/// - `data` is the node's field datum. This is the tagged map produced by
-///   node-set serde minus its `"type"` entry.
+/// - `data` is the node's field datum, the map its own serde produces.
 /// - `refs` and `blobs` are the node's outgoing content references. They are
 ///   extracted from `Node::required_addrs` and `Node::required_blobs` when a
 ///   typed node is erased. They are stored structurally and covered by the

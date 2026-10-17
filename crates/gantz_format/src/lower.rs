@@ -7,7 +7,7 @@
 //! is a label and which no commit references is a hand-authored named graph.
 //! It auto-registers under that label with a root commit synthesised at `now`.
 
-use crate::datum::{Datum, from_datum};
+use crate::datum::Datum;
 use crate::error::{ErrorKind, FormatError};
 use crate::model::{
     Addr, CommitDecl, Document, Form, GraphBody, GraphDef, NameDecl, NodeDecl, NodeSpec, RefSpec,
@@ -18,8 +18,6 @@ use gantz_ca::{
 };
 use gantz_core::edge::Edge;
 use gantz_core::node::{Input, Output};
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
@@ -28,17 +26,15 @@ use std::time::Duration;
 /// stored [`NodeData`], with fields validated and the refs and blobs columns
 /// recomputed.
 ///
-/// The node-set entry points such as [`crate::from_str`] supply the node set's
-/// serde round-trip. Richer layers such as a GUI's value-level codec supply
-/// their own.
+/// A node set's codec supplies it, for example a GUI's value-level codec.
 pub type Normalize<'a> = dyn Fn(Datum) -> Result<NodeData, FormatError> + 'a;
 
 /// The result of lowering a [`Document`]. It holds the registry plus the
 /// resolution context and preserved extra forms an extender needs.
 ///
 /// The registry stores graphs in their erased data form. See
-/// [`gantz_core::data`]. The node-set type the document was lowered through is
-/// only the codec, not part of the result.
+/// [`gantz_core::data`]. The [`Normalize`] fn the document was lowered
+/// through is only the codec, not part of the result.
 pub struct Loaded {
     /// The content-addressed registry.
     pub registry: Registry,
@@ -68,40 +64,15 @@ struct Resolve<'a> {
     /// Every graph built so far, for resolving concrete-address prefixes.
     known: &'a [GraphAddr],
     /// The head graph of each externally-known name, consulted as a fallback
-    /// after the document's own names. See [`crate::from_str_seeded`].
+    /// after the document's own names. See [`crate::from_str_normalized`].
     seed: &'a BTreeMap<String, GraphAddr>,
 }
 
 /// Lower a parsed [`Document`] into a [`Loaded`] registry, synthesising root
 /// commits at `now` for any graph the `(commits ...)` table does not describe.
-pub fn lower<N>(doc: Document, now: Timestamp) -> Result<Loaded, FormatError>
-where
-    N: Serialize + DeserializeOwned + gantz_core::Node,
-{
-    lower_seeded::<N>(doc, now, &BTreeMap::new())
-}
-
-/// As [`lower`], but names the document does not define resolve through
-/// `seed`. See [`crate::from_str_seeded`] for how the seed affects content
-/// addresses.
-pub fn lower_seeded<N>(
-    doc: Document,
-    now: Timestamp,
-    seed: &BTreeMap<String, GraphAddr>,
-) -> Result<Loaded, FormatError>
-where
-    // Nodes are deserialized through the node set's serde, then erased back
-    // to data for storage. `gantz_core::data::erase_node` requires
-    // `Serialize` and `Node`. Registry addresses are always computed on the
-    // erased form.
-    N: Serialize + DeserializeOwned + gantz_core::Node,
-{
-    lower_normalized(doc, now, seed, &serde_normalize::<N>)
-}
-
-/// As [`lower_seeded`], with an explicit [`Normalize`] seam in place of a
-/// node-set type parameter.
-pub fn lower_normalized(
+/// Names the document does not define resolve through `seed`. See
+/// [`crate::from_str_normalized`] for how the seed affects content addresses.
+pub fn lower(
     doc: Document,
     now: Timestamp,
     seed: &BTreeMap<String, GraphAddr>,
@@ -286,24 +257,6 @@ fn build_node(
             normalize(v)
         }
     }
-}
-
-/// The node-set-serde [`Normalize`] implementation backing [`lower`] and
-/// [`lower_seeded`]. It deserializes the tagged datum through `N`, then erases
-/// the node back to its canonical data form.
-fn serde_normalize<N>(datum: Datum) -> Result<NodeData, FormatError>
-where
-    N: Serialize + DeserializeOwned + gantz_core::Node,
-{
-    let tag = datum
-        .get("type")
-        .and_then(Datum::as_str)
-        .unwrap_or("?")
-        .to_string();
-    let node: N =
-        from_datum(datum).map_err(|e| FormatError::node_deserialize(tag.clone(), e.to_string()))?;
-    gantz_core::data::erase_node(&node)
-        .map_err(|e| FormatError::node_deserialize(tag, e.to_string()))
 }
 
 fn resolve_ref_value(refspec: &RefSpec, resolve: &Resolve) -> Result<Datum, FormatError> {
