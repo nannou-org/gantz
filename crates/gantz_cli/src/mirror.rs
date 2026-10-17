@@ -259,6 +259,17 @@ pub fn apply_text(
         let mut head = ca::Head::Branch(name.clone());
         let new = if gantz_egui::reg::head_graph_addr(registry, name) == Some(ga) {
             let current = registry.head(name).expect("the name has a head");
+            // The file may place only some nodes. A node it leaves out keeps
+            // its stored position, so it neither counts as a move nor loses
+            // its position in a layout commit.
+            let stored = gantz_edit::section::view(registry, &current);
+            let unseeded = stored.is_none();
+            let view = view.map(|mut v| {
+                if let Some(stored) = stored {
+                    v.layout = stored.layout.into_iter().chain(v.layout).collect();
+                }
+                v
+            });
             let layout = view
                 .as_ref()
                 .and_then(|v| gantz_edit::view::commit_layout(registry, ts, &mut head, v));
@@ -269,7 +280,7 @@ pub fn apply_text(
                     new
                 }
                 // No baseline view yet. Seed one so the next edit compares.
-                (None, Some(v)) if gantz_edit::section::view(registry, &current).is_none() => {
+                (None, Some(v)) if unseeded => {
                     gantz_edit::section::seed_view(registry, current, v);
                     current
                 }
