@@ -200,6 +200,11 @@ fn cascade_unplaced(view: &mut SceneView, node_count: usize) {
 /// compared. The `camera` is excluded, so camera pan and zoom never produce a
 /// layout commit.
 ///
+/// The caller decides when the user edited the layout, and calls this only
+/// then. A live layout also differs from the baseline with no edit, for
+/// example after a GUI snaps positions to a grid. The comparison only skips
+/// an edit that changed no position.
+///
 /// Returns the new commit address when a layout commit was created. Returns
 /// `None` when there is no baseline view yet or no node-position change. A
 /// missing baseline means the head commit's view section entry has not been

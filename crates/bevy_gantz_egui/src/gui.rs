@@ -293,6 +293,14 @@ pub(crate) fn handle_gantz_response(
         );
     }
 
+    // Mark each head whose layout the user edited, for the next layout
+    // settle to commit.
+    for head in &response.layout_edited_heads {
+        if let Some(&entity) = head_to_entity.get(head) {
+            cmds.entity(entity).insert(crate::LayoutEdited);
+        }
+    }
+
     // Dispatch the dynamic response payloads emitted during the GUI pass.
     // `RegisterResponseExt` registers the types in `ResponseDispatchers`.
     // Unregistered payloads are reported.

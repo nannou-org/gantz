@@ -1,8 +1,8 @@
 //! Observers that keep the GUI state in step with head events.
 
 use crate::{
-    GraphCache, GraphView, GuiState, HeadNodeInstances, NodeCodecRes, PerfVm, ResyncRefsEvent,
-    refresh_cache,
+    GraphCache, GraphView, GuiState, HeadNodeInstances, LayoutEdited, NodeCodecRes, PerfVm,
+    ResyncRefsEvent, refresh_cache,
 };
 use bevy_ecs::prelude::*;
 use bevy_gantz::EvalEntryComplete;
@@ -104,7 +104,8 @@ pub fn on_head_changed(
 
     cmds.entity(event.entity)
         .insert(GraphView(head_view))
-        .insert(HeadNodeInstances::default());
+        .insert(HeadNodeInstances::default())
+        .remove::<LayoutEdited>();
 }
 
 /// Remove GUI state for closed head.

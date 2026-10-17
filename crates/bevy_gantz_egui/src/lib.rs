@@ -77,7 +77,9 @@ use response::{
 };
 use settings::{on_compile_config, on_validate_change_tracking};
 pub use sugar::BevySugar;
-pub use view::{LayoutCommittedEvent, ViewPersistSet, persist_camera_and_seed, settle_layout};
+pub use view::{
+    LayoutCommittedEvent, LayoutEdited, ViewPersistSet, persist_camera_and_seed, settle_layout,
+};
 pub use vm::{EntrypointFn, EntrypointFns};
 
 /// Plugin providing egui-based UI for gantz.

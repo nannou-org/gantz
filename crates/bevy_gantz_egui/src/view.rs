@@ -16,6 +16,12 @@ use gantz_ca as ca;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
 pub struct ViewPersistSet;
 
+/// Marks an open head whose node layout the user edited since the last
+/// layout settle. Only a marked head can mint a layout commit. See
+/// [`settle_layout`].
+#[derive(Clone, Copy, Component, Debug, Default)]
+pub struct LayoutEdited;
+
 /// Keep each open head's camera current and seed its commit's layout baseline.
 ///
 /// Runs every frame. Each commit's stored `layout` stays frozen as an undo
@@ -50,8 +56,12 @@ pub fn persist_camera_and_seed(
 }
 
 /// On layout settle, signalled by [`DebouncedInputEvent`], fork a layout-only
-/// commit for any open head whose node positions changed since its frozen
-/// baseline view.
+/// commit for any open head marked [`LayoutEdited`] whose node positions
+/// changed since its frozen baseline view. The marker clears either way.
+///
+/// Only an edit counts. The live layout also differs from the baseline with
+/// no edit, for example after the scene snaps positions or fills in the
+/// position of a node that had none.
 ///
 /// Mirrors the graph-commit path's GUI bookkeeping. It migrates per-head GUI
 /// state, clears redo and migrates the graph pane. It does not fire
@@ -64,10 +74,14 @@ pub fn persist_camera_and_seed(
 pub fn settle_layout(
     mut registry: ResMut<Registry>,
     mut gui_state: ResMut<GuiState>,
-    mut heads: Query<(Entity, &mut head::HeadRef, &GraphView), With<head::OpenHead>>,
+    mut heads: Query<
+        (Entity, &mut head::HeadRef, &GraphView),
+        (With<head::OpenHead>, With<LayoutEdited>),
+    >,
     mut cmds: Commands,
 ) {
     for (entity, mut head_ref, head_view) in heads.iter_mut() {
+        cmds.entity(entity).remove::<LayoutEdited>();
         let old_head = (**head_ref).clone();
         let Some(new_commit) = gantz_edit::view::commit_layout(
             &mut registry,
