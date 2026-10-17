@@ -44,7 +44,11 @@ jobs:
               cargo check --locked --all-targets --no-default-features --features datum -p gantz_ui"
             cache: features
           - command: fmt -- --ci
+          # The checks build the most paths, mostly check results that nothing
+          # reuses. Their upload once stalled and failed the job, so they
+          # only pull from the cache. The other jobs still push the deps.
           - command: flake check --no-update-lock-file
+            skip-push: true
           - command: build --print-build-logs --no-update-lock-file .#gantz-website
     steps:
       - uses: actions/checkout@v5
@@ -53,6 +57,7 @@ jobs:
         with:
           name: mitchmindtree-gantz
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
+          skipPush: ${{ matrix.skip-push == true }}
       # One cache per cargo job. With a shared key, the first job to finish
       # saves its target dir for all the others.
       - uses: Swatinem/rust-cache@v2
@@ -113,7 +118,19 @@ jobs:
           name: mitchmindtree-gantz
           authToken: "${{ secrets.CACHIX_AUTH_TOKEN }}"
       - run: nix build --print-build-logs .#gantz-website
-      - uses: peaceiris/actions-gh-pages@v4
+      # PR previews, their cleanups and this deploy all push to gh-pages and
+      # can race. A rejected push retries once, on the new tip.
+      - id: publish
+        continue-on-error: true
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./result
+          keep_files: true
+      - if: steps.publish.outcome == 'failure'
+        run: sleep $((RANDOM % 20 + 5))
+      - if: steps.publish.outcome == 'failure'
+        uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./result

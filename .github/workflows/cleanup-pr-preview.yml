@@ -26,7 +26,14 @@ jobs:
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add -A
             git commit -m "chore: remove PR preview for #${{ github.event.pull_request.number }}" || echo "Nothing to commit"
-            git push
+            # Preview deploys push to gh-pages too. Replay onto the new tip
+            # when a push is rejected.
+            for _ in 1 2 3; do
+              git push && exit 0
+              sleep $((RANDOM % 20 + 5))
+              git pull --rebase origin gh-pages
+            done
+            exit 1
           else
             echo "Preview directory does not exist, skipping cleanup"
           fi
