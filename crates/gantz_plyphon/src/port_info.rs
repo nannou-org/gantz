@@ -27,7 +27,7 @@ use petgraph::visit::EdgeRef;
 use gantz_ca::ContentAddr;
 use gantz_core::data::ReifiedGraphs;
 use gantz_core::node::graph::{Graph, NodeIx};
-use gantz_core::node::{AsRefNode, MetaCtx};
+use gantz_core::node::{AsRefNode, MetaCtx, Role};
 use plyphon::Rate;
 
 use crate::dsp::{PortShape, PortShapes, ToNodeDsp};
@@ -114,7 +114,7 @@ where
     // nested views style their interface edges too. Inlets go before outlets,
     // so an outlet fed by a signal-classified inlet then classifies signal.
     for ix in graph.node_indices() {
-        if graph[ix].inlet(ctx) {
+        if graph[ix].role(ctx) == Role::Inlet {
             let signal = graph.edges_directed(ix, Direction::Outgoing).any(|e| {
                 let dst = (e.target().index(), e.weight().input.0 as usize);
                 info.signal_inputs.contains(&dst)
@@ -125,7 +125,7 @@ where
         }
     }
     for ix in graph.node_indices() {
-        if graph[ix].outlet(ctx) {
+        if graph[ix].role(ctx) == Role::Outlet {
             let signal = graph.edges_directed(ix, Direction::Incoming).any(|e| {
                 let src = (e.source().index(), e.weight().output.0 as usize);
                 info.signal_outputs.contains_key(&src)
@@ -165,7 +165,7 @@ where
     memos.inlet_stack.push(ca);
     let inlets: Vec<_> = graph
         .node_indices()
-        .filter(|&n| graph[n].inlet(ctx))
+        .filter(|&n| graph[n].role(ctx) == Role::Inlet)
         .collect();
     let mut result = Vec::with_capacity(inlets.len());
     for inlet in inlets {
@@ -200,7 +200,11 @@ where
 {
     reified
         .get(&ca.into())
-        .map(|g| g.node_indices().filter(|&n| g[n].outlet(ctx)).count())
+        .map(|g| {
+            g.node_indices()
+                .filter(|&n| g[n].role(ctx) == Role::Outlet)
+                .count()
+        })
         .unwrap_or(0)
 }
 
@@ -234,7 +238,7 @@ where
     let mut sources = Vec::new();
     let outlet_node = graph
         .node_indices()
-        .filter(|&n| graph[n].outlet(ctx))
+        .filter(|&n| graph[n].role(ctx) == Role::Outlet)
         .nth(outlet);
     if let Some(o) = outlet_node {
         let feeds: Vec<(usize, usize)> = graph

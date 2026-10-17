@@ -146,12 +146,12 @@ impl gantz_core::Node for N {
         gantz_core::node::parse_expr("'()")
     }
 
-    fn inlet(&self, _ctx: gantz_core::node::MetaCtx) -> bool {
-        matches!(self, N::Inlet)
-    }
-
-    fn outlet(&self, _ctx: gantz_core::node::MetaCtx) -> bool {
-        matches!(self, N::Outlet)
+    fn role(&self, _ctx: gantz_core::node::MetaCtx) -> gantz_core::node::Role {
+        match self {
+            N::Inlet => gantz_core::node::Role::Inlet,
+            N::Outlet => gantz_core::node::Role::Outlet,
+            _ => gantz_core::node::Role::Plain,
+        }
     }
 
     fn n_inputs(&self, _ctx: gantz_core::node::MetaCtx) -> usize {

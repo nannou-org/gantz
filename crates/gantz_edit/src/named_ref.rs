@@ -182,12 +182,8 @@ impl Node for NamedRef {
         self.ref_.register(ctx)
     }
 
-    fn inlet(&self, ctx: MetaCtx) -> bool {
-        self.ref_.inlet(ctx)
-    }
-
-    fn outlet(&self, ctx: MetaCtx) -> bool {
-        self.ref_.outlet(ctx)
+    fn role(&self, ctx: MetaCtx) -> node::Role {
+        self.ref_.role(ctx)
     }
 
     fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {
@@ -255,4 +251,22 @@ pub fn with_named_ref_mut(weight: &mut NodeData, f: impl FnOnce(&mut NamedRef) -
 
 fn is_default<T: Default + PartialEq>(t: &T) -> bool {
     *t == T::default()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A reference takes the role of the node it references.
+    #[test]
+    fn role_follows_the_referenced_node() {
+        let delay = gantz_core::node::Delay;
+        let ca = gantz_core::data::erase_node_typed(&delay)
+            .unwrap()
+            .content_addr();
+        let get_node = |addr: &gantz_ca::ContentAddr| (*addr == ca).then_some(&delay as &dyn Node);
+        let ctx = MetaCtx::new(&get_node);
+        let named = NamedRef::new("d".parse().unwrap(), gantz_core::node::Ref::new(ca));
+        assert_eq!(named.role(ctx), node::Role::Delay);
+    }
 }

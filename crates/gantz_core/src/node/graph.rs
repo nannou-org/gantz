@@ -66,13 +66,13 @@ pub struct Outlet {
 impl<N: Node> Node for Graph<N> {
     fn n_inputs(&self, ctx: node::MetaCtx) -> usize {
         self.node_references()
-            .filter(|n_ref| n_ref.weight().inlet(ctx))
+            .filter(|n_ref| n_ref.weight().role(ctx) == node::Role::Inlet)
             .count()
     }
 
     fn n_outputs(&self, ctx: node::MetaCtx) -> usize {
         self.node_references()
-            .filter(|n_ref| n_ref.weight().outlet(ctx))
+            .filter(|n_ref| n_ref.weight().role(ctx) == node::Role::Outlet)
             .count()
     }
 
@@ -132,8 +132,8 @@ impl Node for Inlet {
         1
     }
 
-    fn inlet(&self, _ctx: node::MetaCtx) -> bool {
-        true
+    fn role(&self, _ctx: node::MetaCtx) -> node::Role {
+        node::Role::Inlet
     }
 }
 
@@ -155,8 +155,8 @@ impl Node for Outlet {
         0
     }
 
-    fn outlet(&self, _ctx: node::MetaCtx) -> bool {
-        true
+    fn role(&self, _ctx: node::MetaCtx) -> node::Role {
+        node::Role::Outlet
     }
 }
 
@@ -223,7 +223,7 @@ where
 
     let n_outlets = g
         .node_references()
-        .filter(|n_ref| n_ref.weight().outlet(meta_ctx))
+        .filter(|n_ref| n_ref.weight().role(meta_ctx) == node::Role::Outlet)
         .count();
     let active: Vec<usize> = outputs
         .iter()

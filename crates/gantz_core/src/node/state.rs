@@ -103,12 +103,8 @@ where
         self.node.pull_eval(ctx)
     }
 
-    fn inlet(&self, ctx: node::MetaCtx) -> bool {
-        self.node.inlet(ctx)
-    }
-
-    fn outlet(&self, ctx: node::MetaCtx) -> bool {
-        self.node.outlet(ctx)
+    fn role(&self, ctx: node::MetaCtx) -> node::Role {
+        self.node.role(ctx)
     }
 
     fn stateful(&self, _ctx: node::MetaCtx) -> bool {
@@ -143,6 +139,10 @@ where
 
     fn required_modules(&self, ctx: node::MetaCtx) -> Vec<String> {
         self.node.required_modules(ctx)
+    }
+
+    fn visit(&self, ctx: node::visit::Ctx<'_, '_>, visitor: &mut dyn node::Visitor) {
+        self.node.visit(ctx, visitor)
     }
 }
 

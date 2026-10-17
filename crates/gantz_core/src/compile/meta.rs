@@ -6,7 +6,7 @@ use crate::{
         RoseTree,
         error::{InvalidOutputIndex, MetaError, NodeConnsError, TooManyConns},
     },
-    node::{self, Node},
+    node::{self, Node, Role},
     visit::{self, Visitor},
 };
 use petgraph::visit::{
@@ -134,14 +134,17 @@ impl Meta {
             );
         }
 
-        if node.inlet(ctx) {
-            self.inlets.insert(id);
-        }
-        if node.outlet(ctx) {
-            self.outlets.insert(id);
-        }
-        if node.delay(ctx) {
-            self.delays.insert(id);
+        match node.role(ctx) {
+            Role::Plain => (),
+            Role::Inlet => {
+                self.inlets.insert(id);
+            }
+            Role::Outlet => {
+                self.outlets.insert(id);
+            }
+            Role::Delay => {
+                self.delays.insert(id);
+            }
         }
         if node.stateful(ctx) {
             self.stateful.insert(id);

@@ -947,6 +947,7 @@ pub(crate) fn inlet_outlet_ids(
     env: &Env<'_>,
     g: &gantz_ca::DataGraph,
 ) -> (Vec<node::Id>, Vec<node::Id>) {
+    use gantz_core::node::Role;
     let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
     let ctx = gantz_core::node::MetaCtx::new(&get_node);
     let mut inlets = vec![];
@@ -955,11 +956,10 @@ pub(crate) fn inlet_outlet_ids(
         let Ok(inst) = env.codec.reify_ui(n_ref.weight()) else {
             continue;
         };
-        if inst.node.inlet(ctx) {
-            inlets.push(n_ref.id().index());
-        }
-        if inst.node.outlet(ctx) {
-            outlets.push(n_ref.id().index());
+        match inst.node.role(ctx) {
+            Role::Inlet => inlets.push(n_ref.id().index()),
+            Role::Outlet => outlets.push(n_ref.id().index()),
+            Role::Plain | Role::Delay => (),
         }
     }
     (inlets, outlets)

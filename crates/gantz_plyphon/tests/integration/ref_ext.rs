@@ -50,12 +50,12 @@ impl gantz_core::Node for N {
         1
     }
 
-    fn inlet(&self, _ctx: MetaCtx) -> bool {
-        matches!(self, N::Inlet)
-    }
-
-    fn outlet(&self, _ctx: MetaCtx) -> bool {
-        matches!(self, N::Outlet)
+    fn role(&self, _ctx: MetaCtx) -> gantz_core::node::Role {
+        match self {
+            N::Inlet => gantz_core::node::Role::Inlet,
+            N::Outlet => gantz_core::node::Role::Outlet,
+            _ => gantz_core::node::Role::Plain,
+        }
     }
 
     // Reference nodes report their target, so erasure populates the stored

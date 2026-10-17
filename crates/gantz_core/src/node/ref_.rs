@@ -251,16 +251,10 @@ impl Node for Ref {
         }
     }
 
-    fn inlet(&self, ctx: node::MetaCtx) -> bool {
-        ctx.node(&self.addr).map(|n| n.inlet(ctx)).unwrap_or(false)
-    }
-
-    fn outlet(&self, ctx: node::MetaCtx) -> bool {
-        ctx.node(&self.addr).map(|n| n.outlet(ctx)).unwrap_or(false)
-    }
-
-    fn delay(&self, ctx: node::MetaCtx) -> bool {
-        ctx.node(&self.addr).map(|n| n.delay(ctx)).unwrap_or(false)
+    fn role(&self, ctx: node::MetaCtx) -> node::Role {
+        ctx.node(&self.addr)
+            .map(|n| n.role(ctx))
+            .unwrap_or_default()
     }
 
     fn required_addrs(&self) -> Vec<gantz_ca::ContentAddr> {

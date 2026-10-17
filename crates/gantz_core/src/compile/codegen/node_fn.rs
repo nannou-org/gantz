@@ -53,7 +53,7 @@ impl Visitor for NodeFns<'_> {
         // Inlet and outlet nodes get no node fn. Their values resolve as
         // bindings.
         let meta_ctx = node::MetaCtx::new(ctx.get_node());
-        if node.inlet(meta_ctx) || node.outlet(meta_ctx) {
+        if matches!(node.role(meta_ctx), node::Role::Inlet | node::Role::Outlet) {
             return;
         }
 
