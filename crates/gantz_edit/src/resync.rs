@@ -9,12 +9,11 @@
 //!
 //! The whole cascade operates on the registry's stored [`DataGraph`]s
 //! directly. Each `NamedRef` weight is rewritten in place via a tag-gated
-//! monomorphic round-trip in `with_named_ref_mut`. No node-set type parameter
+//! monomorphic round-trip in [`with_named_ref_mut`]. No node-set type parameter
 //! is involved.
 
-use crate::node::NamedRef;
-use gantz_ca::{CommitAddr, DataGraph, GraphAddr, Name, NodeData, Registry};
-use gantz_nodetag::NodeTag;
+use crate::named_ref::{NamedRef, named_ref_of, with_named_ref_mut};
+use gantz_ca::{CommitAddr, DataGraph, GraphAddr, Name, Registry};
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::time::Duration;
 
@@ -29,56 +28,6 @@ pub struct Moved {
     pub new_commit: CommitAddr,
 }
 
-/// Run `f` over the [`NamedRef`] stored in `weight`, writing the rewritten
-/// node back when `f` reports a change. Returns whether `weight` changed.
-///
-/// Tag-gated. Only a weight whose tag is exactly `NamedRef`'s matches. `Fn`
-/// and `FnNamedRef` reference a graph without standing in for it, so they
-/// never match. The edit goes through [`edit_node_typed`], which recomputes
-/// the refs column and keeps data that this build does not recognise.
-/// Failures are logged and reported as unchanged.
-///
-/// [`edit_node_typed`]: gantz_core::data::edit_node_typed
-pub(crate) fn with_named_ref_mut(
-    weight: &mut NodeData,
-    f: impl FnOnce(&mut NamedRef) -> bool,
-) -> bool {
-    use gantz_core::data::{EditNodeError, edit_node_typed};
-    if weight.tag != <NamedRef as NodeTag>::TAG {
-        return false;
-    }
-    match edit_node_typed(weight, f) {
-        Ok(changed) => changed,
-        Err(EditNodeError::Lossy(lost)) => {
-            log::warn!(
-                "a `NamedRef` holds data this gantz does not recognise ({}), so it keeps its \
-                 reference",
-                lost.join(", "),
-            );
-            false
-        }
-        Err(e) => {
-            log::error!("failed to edit a stored `NamedRef`: {e}");
-            false
-        }
-    }
-}
-
-/// The [`NamedRef`] stored in `weight`, if it is one. Tag-gated like
-/// [`with_named_ref_mut`]. Codec failures are logged and read as `None`.
-fn named_ref_of(weight: &NodeData) -> Option<NamedRef> {
-    if weight.tag != <NamedRef as NodeTag>::TAG {
-        return None;
-    }
-    match gantz_core::data::reify_node_concrete::<NamedRef>(weight) {
-        Ok(named_ref) => Some(named_ref),
-        Err(e) => {
-            log::error!("failed to decode a stored `NamedRef`: {e}");
-            None
-        }
-    }
-}
-
 /// Every [`NamedRef`] in `graph` as its name, the graph it points at and
 /// whether it follows the name's latest commit. Nodes that fail to decode
 /// are skipped.
@@ -86,7 +35,7 @@ pub fn named_refs(graph: &DataGraph) -> impl Iterator<Item = (Name, GraphAddr, b
     graph.node_weights().filter_map(|weight| {
         let named_ref = named_ref_of(weight)?;
         let graph = GraphAddr::from(named_ref.content_addr());
-        Some((named_ref.name().clone(), graph, named_ref.sync))
+        Some((named_ref.name().clone(), graph, named_ref.sync()))
     })
 }
 
@@ -318,7 +267,7 @@ pub fn session_scope(registry: &Registry, root: &Name) -> BTreeSet<Name> {
         };
         for weight in graph.node_weights() {
             if let Some(named_ref) = named_ref_of(weight) {
-                if named_ref.sync && !scope.contains(named_ref.name()) {
+                if named_ref.sync() && !scope.contains(named_ref.name()) {
                     queue.push_back(named_ref.name().clone());
                 }
             }
@@ -390,7 +339,7 @@ pub fn promote_nested(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gantz_ca::{ContentAddr, Datum};
+    use gantz_ca::{ContentAddr, Datum, NodeData};
     use std::time::Duration;
 
     /// An erased [`NamedRef`] node weight. Scope walking reads the erased
@@ -420,6 +369,17 @@ mod tests {
 
     fn names(names: impl IntoIterator<Item = &'static str>) -> BTreeSet<Name> {
         names.into_iter().map(|n| n.parse().unwrap()).collect()
+    }
+
+    /// `node_data` as a newer gantz might store it, with a `future` field
+    /// that this build does not recognise.
+    fn with_unknown_field(mut node_data: NodeData) -> NodeData {
+        let Datum::Map(fields) = &mut node_data.data else {
+            panic!("node data is a map");
+        };
+        fields.push(("future".to_string(), Datum::Bool(true)));
+        node_data.canonicalize();
+        node_data
     }
 
     #[test]
@@ -462,7 +422,6 @@ mod tests {
     // its refs column follows the new target.
     #[test]
     fn a_resync_keeps_unknown_data() {
-        use crate::test_node::{has_unknown_field, with_unknown_field};
         let mut weight = with_unknown_field(ref_node("jam", true));
         let target = ContentAddr::from([2; 32]);
         let resynced = with_named_ref_mut(&mut weight, |named_ref| {
@@ -471,7 +430,7 @@ mod tests {
             true
         });
         assert!(resynced);
-        assert!(has_unknown_field(&weight));
+        assert!(weight.data.get("future").is_some());
         assert_eq!(named_ref_of(&weight).unwrap().ref_().content_addr(), target);
         assert_eq!(weight.refs, [target]);
     }

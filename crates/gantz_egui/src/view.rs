@@ -1,103 +1,36 @@
-//! Viewport-independent camera + layout state for a graph scene.
+//! The bridge between a [`SceneView`] and an [`egui_graph::View`].
 //!
-//! The persisted and runtime currency for a graph's view is [`SceneView`], a
-//! [`Camera`] plus a node [`Layout`](egui_graph::Layout). It is viewport
-//! independent. The camera stores a centre and a zoom factor in screen points
-//! per graph unit rather than a visible rectangle. The zoom level is therefore
-//! preserved across sessions and window sizes. An [`egui_graph::View`] has a
-//! viewport-dependent `scene_rect`. It is materialised from a `SceneView` only
-//! at the `egui_graph` API boundary, where the live viewport size is known.
-//! See [`SceneView::take_egui`] and [`SceneView::restore_egui`].
+//! An [`egui_graph::View`] has a viewport-dependent `scene_rect`. It is
+//! materialised from a viewport-independent [`SceneView`] only at the
+//! `egui_graph` API boundary, where the live viewport size is known.
 
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use gantz_edit::{Camera, Layout, NodeId, SceneView};
 
-/// A graph scene camera, independent of the viewport size.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Camera {
-    /// The point in graph space at the centre of the view.
-    pub center: egui::Pos2,
-    /// The zoom factor in screen points per graph unit. `1.0` shows one graph
-    /// unit per point, with no scaling.
-    pub zoom: f32,
-}
-
-impl Default for Camera {
-    fn default() -> Self {
-        Self {
-            center: egui::Pos2::ZERO,
-            zoom: 1.0,
-        }
+/// Materialise an [`egui_graph::View`] for a viewport of `viewport` size.
+/// This moves the layout out of `view` and leaves it empty. Pair with
+/// [`restore_egui`] to write the mutated view back.
+pub fn take_egui(view: &mut SceneView, viewport: egui::Vec2) -> egui_graph::View {
+    egui_graph::View {
+        scene_rect: view.camera.to_scene_rect(viewport),
+        layout: view
+            .layout
+            .drain()
+            .map(|(NodeId(id), pos)| (egui_graph::NodeId(id), pos))
+            .collect(),
     }
 }
 
-impl Camera {
-    /// The visible [`egui::Rect`] in graph space this camera maps to for a
-    /// viewport of the given size. It is a `viewport / zoom` sized rect centred
-    /// on [`Camera::center`]. `egui`'s `Scene` fits this rect back into the
-    /// viewport, which reproduces exactly `zoom` points per graph unit.
-    pub fn to_scene_rect(self, viewport: egui::Vec2) -> egui::Rect {
-        let zoom = if self.zoom > 0.0 { self.zoom } else { 1.0 };
-        egui::Rect::from_center_size(self.center, viewport / zoom)
-    }
-
-    /// Recover the camera from a `scene_rect` and the viewport it was fit into.
-    /// This is the inverse of [`Camera::to_scene_rect`]. It is exact when the
-    /// rect shares the viewport's aspect ratio, which holds once `egui`'s
-    /// `Scene` has fit it.
-    pub fn from_scene_rect(rect: egui::Rect, viewport: egui::Vec2) -> Self {
-        let size = rect.size();
-        let zoom = if size.x > 0.0 && size.y > 0.0 {
-            (viewport / size).min_elem()
-        } else {
-            1.0
-        };
-        Self {
-            center: rect.center(),
-            zoom,
-        }
-    }
+/// Write back an [`egui_graph::View`] mutated by the `egui_graph` pass.
+/// Recovers the viewport-independent [`Camera`] from its `scene_rect`.
+pub fn restore_egui(view: &mut SceneView, egui_view: egui_graph::View, viewport: egui::Vec2) {
+    view.camera = Camera::from_scene_rect(egui_view.scene_rect, viewport);
+    view.layout = from_egui_layout(egui_view.layout);
 }
 
-/// A graph scene's persisted view, a [`Camera`] plus the node
-/// [`Layout`](egui_graph::Layout).
-///
-/// This is the viewport-independent currency stored in memory and on disk. See
-/// the [module docs](self).
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
-pub struct SceneView {
-    #[serde(default)]
-    pub camera: Camera,
-    /// Node positions in graph space. Serialised sorted for deterministic output.
-    #[serde(default, serialize_with = "serialize_sorted_layout")]
-    pub layout: egui_graph::Layout,
-}
-
-impl SceneView {
-    /// Materialise an [`egui_graph::View`] for a viewport of `viewport` size.
-    /// This takes the layout and leaves it empty to avoid a per-frame clone.
-    /// Pair with [`SceneView::restore_egui`] to write the mutated view back.
-    pub fn take_egui(&mut self, viewport: egui::Vec2) -> egui_graph::View {
-        egui_graph::View {
-            scene_rect: self.camera.to_scene_rect(viewport),
-            layout: std::mem::take(&mut self.layout),
-        }
-    }
-
-    /// Write back an [`egui_graph::View`] mutated by the `egui_graph` pass.
-    /// Recovers the viewport-independent [`Camera`] from its `scene_rect`.
-    pub fn restore_egui(&mut self, view: egui_graph::View, viewport: egui::Vec2) {
-        self.camera = Camera::from_scene_rect(view.scene_rect, viewport);
-        self.layout = view.layout;
-    }
-}
-
-/// Serialise a [`Layout`](egui_graph::Layout) with deterministically sorted
-/// keys. This mirrors `egui_graph`'s own sorted-layout serialisation.
-fn serialize_sorted_layout<S: serde::Serializer>(
-    layout: &egui_graph::Layout,
-    s: S,
-) -> Result<S::Ok, S::Error> {
-    let sorted: BTreeMap<_, _> = layout.iter().collect();
-    sorted.serialize(s)
+/// Convert an `egui_graph` layout, such as an auto-layout result.
+pub fn from_egui_layout(layout: egui_graph::Layout) -> Layout {
+    layout
+        .into_iter()
+        .map(|(egui_graph::NodeId(id), pos)| (NodeId(id), pos))
+        .collect()
 }

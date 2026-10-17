@@ -387,7 +387,7 @@ where
 /// plain `ui.painter()` overlay.
 fn paint_peer_pointers(
     rect: egui::Rect,
-    camera: crate::Camera,
+    camera: gantz_edit::Camera,
     pointers: &[crate::collab::PointerDisplay],
     ui: &egui::Ui,
 ) {

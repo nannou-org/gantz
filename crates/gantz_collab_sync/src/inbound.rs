@@ -12,7 +12,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// Branch names the host has open as heads, with their live camera when the
 /// host has one. A headless host passes an empty map.
-pub type OpenHeads = BTreeMap<ca::Name, Option<gantz_egui::Camera>>;
+pub type OpenHeads = BTreeMap<ca::Name, Option<gantz_edit::Camera>>;
 
 /// What the host must do after a [`poll`], replayed in order.
 #[derive(Debug)]
@@ -412,7 +412,7 @@ fn apply_join_snapshot(
 
     // Serve the adopted closure onward and open the shared graph.
     let branch = state.branch_name();
-    let scope = gantz_egui::sync::session_scope(cx.registry, &branch);
+    let scope = gantz_edit::resync::session_scope(cx.registry, &branch);
     crate::serve_scope(cx.handle, state, cx.registry, &scope);
     if !cx.open.contains_key(&branch) {
         cx.effects.push(Effect::Open(branch));
@@ -438,7 +438,7 @@ fn apply_join_snapshot(
 pub(crate) fn apply_sections(
     registry: &mut ca::Registry,
     sections: Vec<SectionEntry>,
-    local_camera: Option<gantz_egui::Camera>,
+    local_camera: Option<gantz_edit::Camera>,
 ) {
     use gantz_ca::SectionDecl;
     for (id, policy, liveness, key, mut value) in sections {
@@ -446,12 +446,12 @@ pub(crate) fn apply_sections(
         if keep_existing && registry.section_entry(&id, &key).is_some() {
             continue;
         }
-        if id == gantz_egui::section::VIEWS_ID {
+        if id == gantz_edit::section::VIEWS_ID {
             if let (Some(camera), Some(mut view)) =
-                (local_camera, gantz_egui::section::Views::decode(&value))
+                (local_camera, gantz_edit::section::Views::decode(&value))
             {
                 view.camera = camera;
-                match gantz_egui::section::Views::encode(&view) {
+                match gantz_edit::section::Views::encode(&view) {
                     Ok(encoded) => value = encoded,
                     Err(e) => {
                         log::warn!("failed to re-encode an adopted view: {e}");
@@ -465,7 +465,7 @@ pub(crate) fn apply_sections(
 }
 
 /// The live camera of the session's open branch head, if any.
-fn local_camera(cx: &Cx<'_>, state: &SessionState) -> Option<gantz_egui::Camera> {
+fn local_camera(cx: &Cx<'_>, state: &SessionState) -> Option<gantz_edit::Camera> {
     cx.open.get(&state.branch_name()).copied().flatten()
 }
 
@@ -834,9 +834,9 @@ pub(crate) fn merge_headless(
     let conflicts = outcome.conflicts.len();
     let graph_ca = ca::graph_addr(&outcome.graph);
     let mut branch_head = ca::Head::Branch(name.clone());
-    let first_view = gantz_egui::section::view(registry, &first);
-    let second_view = gantz_egui::section::view(registry, &second);
-    let seeded = gantz_egui::ops::merged_view(
+    let first_view = gantz_edit::section::view(registry, &first);
+    let second_view = gantz_edit::section::view(registry, &second);
+    let seeded = gantz_edit::view::merged_view(
         &outcome.node_srcs,
         first_view.as_ref(),
         second_view.as_ref(),
@@ -844,6 +844,6 @@ pub(crate) fn merge_headless(
     let graph = outcome.graph;
     let minted =
         registry.commit_merge_canonical(first, second, graph_ca, || graph, &mut branch_head);
-    gantz_egui::section::seed_view(registry, minted, &seeded);
+    gantz_edit::section::seed_view(registry, minted, &seeded);
     Ok(Some((minted, conflicts)))
 }

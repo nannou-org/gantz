@@ -91,14 +91,14 @@ fn apply_text_commits_an_edit_with_the_previous_head_as_parent() {
     assert_eq!(*n, name("g"));
     assert_eq!(registry.head(&name("g")), Some(*c1));
     assert!(
-        gantz_egui::section::view(&registry, c1).is_some(),
+        gantz_edit::section::view(&registry, c1).is_some(),
         "layout attached"
     );
 
     let second = apply(&mut registry, &mut file, G2, 2);
     let (_, c2) = &second.committed[0];
     assert_eq!(registry.commits()[c2].parent, Some(*c1));
-    assert!(gantz_egui::section::view(&registry, c2).is_some());
+    assert!(gantz_edit::section::view(&registry, c2).is_some());
     assert_eq!(file.heads[&name("g")], *c2);
 }
 
@@ -144,7 +144,7 @@ fn layout_only_edit_mints_a_layout_commit() {
     let c2 = registry.head(&name("g")).unwrap();
     assert_ne!(c1, c2);
     assert_eq!(registry.commits()[&c1].graph, registry.commits()[&c2].graph);
-    let view = gantz_egui::section::view(&registry, &c2).unwrap();
+    let view = gantz_edit::section::view(&registry, &c2).unwrap();
     assert!(view.layout.iter().any(|(_, p)| p.x == 200.0), "{view:?}");
 }
 
@@ -196,7 +196,7 @@ fn non_sync_pins_survive_a_round_trip_and_sync_refs_follow() {
     let graph = registry
         .head_graph(&ca::Head::Branch(name("following")))
         .unwrap();
-    let refs: Vec<_> = gantz_egui::sync::named_refs(graph).collect();
+    let refs: Vec<_> = gantz_edit::resync::named_refs(graph).collect();
     assert_eq!(refs, vec![(name("add"), add_after, true)]);
 }
 
@@ -310,13 +310,13 @@ fn nested_refs_are_in_scope_and_served() {
     let graph = registry
         .head_graph(&ca::Head::Branch(root.clone()))
         .unwrap();
-    let refs: Vec<_> = gantz_egui::sync::named_refs(graph).collect();
+    let refs: Vec<_> = gantz_edit::resync::named_refs(graph).collect();
     assert_eq!(refs.len(), 3);
     for (n, ga, sync) in &refs {
         assert!(sync);
         assert_eq!(gantz_egui::reg::head_graph_addr(&registry, n), Some(*ga));
     }
-    let scope = gantz_egui::sync::session_scope(&registry, &root);
+    let scope = gantz_edit::resync::session_scope(&registry, &root);
     let expected: BTreeSet<ca::Name> = ["add", "root", "root:gain", "root:half"]
         .into_iter()
         .map(name)

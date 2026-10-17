@@ -1071,6 +1071,7 @@ dependencies = [
  "gantz_collab",
  "gantz_collab_sync",
  "gantz_core",
+ "gantz_edit",
  "gantz_egui",
  "gantz_format",
  "gantz_store",
@@ -1101,6 +1102,7 @@ dependencies = [
  "gantz_base",
  "gantz_ca",
  "gantz_core",
+ "gantz_edit",
  "gantz_egui",
  "gantz_format",
  "gantz_io",
@@ -3873,12 +3875,12 @@ dependencies = [
  "bevy_gantz_plyphon",
  "bevy_pkv",
  "clap",
- "egui_graph",
  "gantz_base",
  "gantz_ca",
  "gantz_cli",
  "gantz_collab",
  "gantz_core",
+ "gantz_edit",
  "gantz_egui",
  "gantz_format",
  "gantz_io",
@@ -3932,6 +3934,7 @@ dependencies = [
  "gantz_collab",
  "gantz_collab_sync",
  "gantz_core",
+ "gantz_edit",
  "gantz_egui",
  "gantz_format",
  "gantz_io",
@@ -3972,7 +3975,7 @@ dependencies = [
  "async-channel",
  "gantz_ca",
  "gantz_collab",
- "gantz_egui",
+ "gantz_edit",
  "iroh",
  "log",
  "serde",
@@ -3996,6 +3999,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "gantz_edit"
+version = "0.1.0"
+dependencies = [
+ "emath",
+ "gantz_ca",
+ "gantz_core",
+ "gantz_nodetag",
+ "log",
+ "serde",
+]
+
+[[package]]
 name = "gantz_egui"
 version = "0.9.0"
 dependencies = [
@@ -4009,6 +4024,7 @@ dependencies = [
  "egui_tiles",
  "gantz_ca",
  "gantz_core",
+ "gantz_edit",
  "gantz_format",
  "gantz_io",
  "gantz_nodetag",
@@ -4102,6 +4118,7 @@ dependencies = [
  "egui_plot",
  "gantz_ca",
  "gantz_core",
+ "gantz_edit",
  "gantz_egui",
  "gantz_format",
  "gantz_nodetag",

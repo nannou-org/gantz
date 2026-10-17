@@ -221,7 +221,7 @@ struct Retarget {
 }
 
 /// The id of the shared graph-description section. The GUI layer's typed
-/// declaration `gantz_egui::section::Descriptions` mirrors it.
+/// declaration `gantz_edit::section::Descriptions` mirrors it.
 pub const DESCRIPTIONS_ID: &str = "gantz.description";
 
 impl Deref for HeadRef {

@@ -81,7 +81,7 @@ impl gantz_core::node::AsRefNode for DynNode {
     fn as_ref_node(&self) -> Option<&gantz_core::node::Ref> {
         let node: &dyn gantz_core::Node = &**self;
         let any: &dyn Any = node;
-        any.downcast_ref::<crate::node::NamedRef>()
+        any.downcast_ref::<gantz_edit::NamedRef>()
             .map(|nr| nr.ref_())
             .or_else(|| any.downcast_ref::<gantz_core::node::Ref>())
     }

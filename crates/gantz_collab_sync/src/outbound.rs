@@ -25,7 +25,7 @@ pub fn announce(
     }
     sessions.dirty = false;
     for (id, state) in sessions.sessions.iter_mut() {
-        let scope = gantz_egui::sync::session_scope(registry, &state.branch_name());
+        let scope = gantz_edit::resync::session_scope(registry, &state.branch_name());
         let mut changed = Vec::new();
         serve_scope(handle, state, registry, &scope);
         for name in &scope {

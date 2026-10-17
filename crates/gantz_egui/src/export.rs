@@ -286,7 +286,7 @@ pub struct Copied {
     /// stored data form.
     pub graph: DataGraph,
     /// Positions of nodes in the subgraph.
-    pub positions: egui_graph::Layout,
+    pub positions: gantz_edit::Layout,
 }
 
 /// Build a [`Copied`] payload from the selected nodes in a graph.
@@ -299,21 +299,16 @@ pub fn copy(
     registry: &gantz_ca::Registry,
     graph: &DataGraph,
     selected: &HashSet<node::graph::NodeIx>,
-    layout: &egui_graph::Layout,
+    layout: &gantz_edit::Layout,
 ) -> Copied {
     let subgraph = gantz_core::graph::extract_subgraph(graph, selected);
 
     // Iterate selected nodes in sorted order alongside new node indices. This
     // matches `extract_subgraph`'s deterministic order.
-    let mut positions = egui_graph::Layout::default();
     let sorted: std::collections::BTreeSet<_> = selected.iter().copied().collect();
-    for (old_ix, new_ix) in sorted.iter().zip(subgraph.node_indices()) {
-        let old_id = egui_graph::NodeId(old_ix.index() as u64);
-        let new_id = egui_graph::NodeId(new_ix.index() as u64);
-        if let Some(&pos) = layout.get(&old_id) {
-            positions.insert(new_id, pos);
-        }
-    }
+    let pairs = sorted.iter().zip(subgraph.node_indices());
+    let pairs = pairs.map(|(old, new)| (old.index(), new.index()));
+    let positions = gantz_edit::view::remap(layout, pairs).collect();
 
     // Collect registry deps transitively. Include the graphs the selected
     // nodes reference, and the graphs those graphs reference in turn, so the
@@ -378,7 +373,7 @@ pub fn copy(
 pub fn paste(
     registry: &mut gantz_ca::Registry,
     target_graph: &mut DataGraph,
-    target_layout: &mut egui_graph::Layout,
+    target_layout: &mut gantz_edit::Layout,
     copied: &Copied,
     offset: egui::Vec2,
 ) -> Vec<node::graph::NodeIx> {
@@ -386,13 +381,10 @@ pub fn paste(
     let new_indices = gantz_core::graph::add_subgraph(target_graph, &copied.graph);
 
     // Map positions from subgraph indices to target indices with offset.
-    for (sub_ix, &target_ix) in copied.graph.node_indices().zip(new_indices.iter()) {
-        let sub_id = egui_graph::NodeId(sub_ix.index() as u64);
-        let target_id = egui_graph::NodeId(target_ix.index() as u64);
-        if let Some(&pos) = copied.positions.get(&sub_id) {
-            target_layout.insert(target_id, pos + offset);
-        }
-    }
+    let pairs = copied.graph.node_indices().zip(&new_indices);
+    let pairs = pairs.map(|(sub, target)| (sub.index(), target.index()));
+    let positions = gantz_edit::view::remap(&copied.positions, pairs);
+    target_layout.extend(positions.map(|(id, pos)| (id, pos + offset)));
 
     new_indices
 }
@@ -421,11 +413,11 @@ pub fn copied_to_string(
 
     // Carry the positions as the clipboard commit's view. The camera is
     // irrelevant for a clipboard payload, so use the default.
-    let view = crate::SceneView {
-        camera: crate::Camera::default(),
+    let view = gantz_edit::SceneView {
+        camera: gantz_edit::Camera::default(),
         layout: copied.positions.clone(),
     };
-    crate::section::set_view(&mut registry, commit_ca, &view);
+    gantz_edit::section::set_view(&mut registry, commit_ca, &view);
 
     crate::format::to_string(&registry, codec)
 }
@@ -445,7 +437,7 @@ pub fn copied_from_str(text: &str, codec: &NodeCodec) -> Result<Copied, ParseCop
         .commit_graph_ref(&clip_ca)
         .ok_or(ParseCopiedError::NotClipboard)?
         .clone();
-    let positions = crate::section::view(&registry, &clip_ca)
+    let positions = gantz_edit::section::view(&registry, &clip_ca)
         .map(|view| view.layout)
         .unwrap_or_default();
 
@@ -502,34 +494,34 @@ mod tests {
     fn merge_keeps_existing_gui_sections() {
         let mut registry = test_registry();
         let ca = commit_addr_raw(10);
-        let mut existing_view = crate::SceneView::default();
+        let mut existing_view = gantz_edit::SceneView::default();
         existing_view
             .layout
-            .insert(egui_graph::NodeId(0), Default::default());
-        crate::section::set_view(&mut registry, ca, &existing_view);
-        crate::section::set_description(&mut registry, name("alpha"), "local".to_string());
-        crate::section::set_demo(&mut registry, name("alpha"), "demo-a".to_string());
+            .insert(gantz_edit::NodeId(0), Default::default());
+        gantz_edit::section::set_view(&mut registry, ca, &existing_view);
+        gantz_edit::section::set_description(&mut registry, name("alpha"), "local".to_string());
+        gantz_edit::section::set_demo(&mut registry, name("alpha"), "demo-a".to_string());
 
         let mut incoming = test_registry();
-        crate::section::set_view(&mut incoming, ca, &crate::SceneView::default());
-        crate::section::set_description(&mut incoming, name("alpha"), "imported".to_string());
-        crate::section::set_demo(&mut incoming, name("alpha"), "demo-b".to_string());
-        crate::section::set_description(&mut incoming, name("beta"), "new".to_string());
+        gantz_edit::section::set_view(&mut incoming, ca, &gantz_edit::SceneView::default());
+        gantz_edit::section::set_description(&mut incoming, name("alpha"), "imported".to_string());
+        gantz_edit::section::set_demo(&mut incoming, name("alpha"), "demo-b".to_string());
+        gantz_edit::section::set_description(&mut incoming, name("beta"), "new".to_string());
         registry.merge(incoming);
 
         // The existing view with one layout entry is preserved, not replaced.
-        let view = crate::section::view(&registry, &ca).unwrap();
+        let view = gantz_edit::section::view(&registry, &ca).unwrap();
         assert_eq!(view.layout.len(), 1);
         assert_eq!(
-            crate::section::description(&registry, &name("alpha")).as_deref(),
+            gantz_edit::section::description(&registry, &name("alpha")).as_deref(),
             Some("local"),
         );
         assert_eq!(
-            crate::section::demo(&registry, &name("alpha")).as_deref(),
+            gantz_edit::section::demo(&registry, &name("alpha")).as_deref(),
             Some("demo-a"),
         );
         assert_eq!(
-            crate::section::description(&registry, &name("beta")).as_deref(),
+            gantz_edit::section::description(&registry, &name("beta")).as_deref(),
             Some("new"),
         );
     }
@@ -545,7 +537,7 @@ mod tests {
         let mut leaf_g = TestGraph::default();
         leaf_g.add_node(expr("(+ 1 1)"));
         let (_, leaf_ga) = commit_named(&mut reg, Duration::from_secs(1), &leaf_g, &name("leaf"));
-        crate::section::set_description(&mut reg, name("leaf"), "a leaf".to_string());
+        gantz_edit::section::set_description(&mut reg, name("leaf"), "a leaf".to_string());
 
         // The working graph in data form. A ref to `leaf` plus a plain expr
         // node.
@@ -553,9 +545,15 @@ mod tests {
         let a = typed.add_node(named_ref("leaf", leaf_ga));
         let b = typed.add_node(expr("(+ 2 2)"));
         let working = gantz_core::data::erase(&typed).unwrap();
-        let mut layout = egui_graph::Layout::default();
-        layout.insert(egui_graph::NodeId(a.index() as u64), egui::pos2(1.0, 2.0));
-        layout.insert(egui_graph::NodeId(b.index() as u64), egui::pos2(3.0, 4.0));
+        let mut layout = gantz_edit::Layout::default();
+        layout.insert(
+            gantz_edit::NodeId::from_index(a.index()),
+            egui::pos2(1.0, 2.0),
+        );
+        layout.insert(
+            gantz_edit::NodeId::from_index(b.index()),
+            egui::pos2(3.0, 4.0),
+        );
         let selected: HashSet<_> = working.node_indices().collect();
 
         let copied = copy(&reg, &working, &selected, &layout);
@@ -568,7 +566,7 @@ mod tests {
         // The subgraph and its positions survive.
         assert_eq!(back.graph.node_count(), 2);
         for ix in [a, b] {
-            let id = egui_graph::NodeId(ix.index() as u64);
+            let id = gantz_edit::NodeId::from_index(ix.index());
             assert_eq!(back.positions.get(&id), copied.positions.get(&id));
         }
 
@@ -577,7 +575,7 @@ mod tests {
         assert!(back.registry.graph(&leaf_ga).is_some());
         assert!(back.registry.head(&name("leaf")).is_some());
         assert_eq!(
-            crate::section::description(&back.registry, &name("leaf")).as_deref(),
+            gantz_edit::section::description(&back.registry, &name("leaf")).as_deref(),
             Some("a leaf"),
         );
         assert!(
@@ -589,7 +587,7 @@ mod tests {
         // Pasting merges the deps so the ref resolves in the target.
         let mut target_reg = gantz_ca::Registry::default();
         let mut target_graph = DataGraph::default();
-        let mut target_layout = egui_graph::Layout::default();
+        let mut target_layout = gantz_edit::Layout::default();
         let new = paste(
             &mut target_reg,
             &mut target_graph,
@@ -601,7 +599,7 @@ mod tests {
         assert!(target_reg.graph(&leaf_ga).is_some());
         assert!(target_reg.head(&name("leaf")).is_some());
         assert_eq!(
-            target_layout.get(&egui_graph::NodeId(new[0].index() as u64)),
+            target_layout.get(&gantz_edit::NodeId::from_index(new[0].index())),
             Some(&egui::pos2(11.0, 12.0)),
         );
     }
@@ -620,11 +618,11 @@ mod tests {
         root_g.add_node(named_ref("leaf", leaf_ga));
         let (root_ca, root_ga) =
             commit_named(&mut reg, Duration::from_secs(2), &root_g, &name("root"));
-        crate::section::set_description(&mut reg, name("root"), "the root".to_string());
-        let mut view = crate::SceneView::default();
+        gantz_edit::section::set_description(&mut reg, name("root"), "the root".to_string());
+        let mut view = gantz_edit::SceneView::default();
         view.layout
-            .insert(egui_graph::NodeId(0), egui::pos2(5.0, 6.0));
-        crate::section::set_view(&mut reg, root_ca, &view);
+            .insert(gantz_edit::NodeId(0), egui::pos2(5.0, 6.0));
+        gantz_edit::section::set_view(&mut reg, root_ca, &view);
 
         let heads = [
             gantz_ca::Head::Branch(name("root")),
@@ -640,12 +638,12 @@ mod tests {
         assert!(fresh.graph(&root_ga).is_some());
         assert_eq!(fresh.head(&name("root")), Some(root_ca));
         assert_eq!(
-            crate::section::description(&fresh, &name("root")).as_deref(),
+            gantz_edit::section::description(&fresh, &name("root")).as_deref(),
             Some("the root"),
         );
-        let view = crate::section::view(&fresh, &root_ca).expect("view survives");
+        let view = gantz_edit::section::view(&fresh, &root_ca).expect("view survives");
         assert_eq!(
-            view.layout.get(&egui_graph::NodeId(0)).copied(),
+            view.layout.get(&gantz_edit::NodeId(0)).copied(),
             Some(egui::pos2(5.0, 6.0)),
         );
     }

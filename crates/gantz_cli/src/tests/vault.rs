@@ -161,9 +161,9 @@ fn devices_sync_through_a_vault_that_survives_a_restart() {
     });
     // A description reaches the other device alone, without a graph edit.
     let riff_name: ca::Name = "riff".parse().unwrap();
-    let described = |reg: &ca::Registry| gantz_egui::section::description(reg, &riff_name);
+    let described = |reg: &ca::Registry| gantz_edit::section::description(reg, &riff_name);
     let text = "a riff".to_string();
-    gantz_egui::section::set_description(&mut a.registry, riff_name.clone(), text);
+    gantz_edit::section::set_description(&mut a.registry, riff_name.clone(), text);
     step_until(&mut vault, &mut [&mut a, &mut b], |v, d| {
         described(&v.registry).is_some() && described(&d[1].registry).is_some()
     });

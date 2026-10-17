@@ -3,11 +3,12 @@
 //! share the VM-state, layout and selection migration through a merge
 //! outcome.
 
-use super::{cascade_pos, node_id};
 use crate::widget::graph_scene::NodeIndex;
 use gantz_ca::CommitAddr;
 use gantz_ca::DataGraph;
 use gantz_core::node;
+use gantz_edit::NodeId;
+use gantz_edit::view::cascade_pos;
 use steel::steel_vm::engine::Engine;
 
 /// Migrate a head's index-keyed VM state, layout and selection through a
@@ -32,11 +33,11 @@ use steel::steel_vm::engine::Engine;
 pub(crate) fn apply_merge_migration(
     node_srcs: &[gantz_ca::merge::NodeSrc],
     local_side: gantz_ca::merge::Side,
-    other_view: Option<&crate::SceneView>,
+    other_view: Option<&gantz_edit::SceneView>,
     local: &DataGraph,
     merged: &DataGraph,
     vm: &mut Engine,
-    head_view: &mut crate::SceneView,
+    head_view: &mut gantz_edit::SceneView,
     selection: &mut crate::widget::graph_scene::Selection,
 ) -> gantz_ca::Matching {
     // Where each pre-merge local node ended up, and where each node that
@@ -64,11 +65,8 @@ pub(crate) fn apply_merge_migration(
         log::error!("merge migration: failed to remap node state: {e}");
     }
     let old_layout = std::mem::take(&mut head_view.layout);
-    for (&l, &m) in &local_map {
-        if let Some(pos) = old_layout.get(&node_id(l)) {
-            head_view.layout.insert(node_id(m), *pos);
-        }
-    }
+    let pairs = local_map.iter().map(|(&l, &m)| (l, m));
+    head_view.layout = gantz_edit::view::remap(&old_layout, pairs).collect();
     selection.nodes = selection
         .nodes
         .iter()
@@ -79,9 +77,9 @@ pub(crate) fn apply_merge_migration(
     // Seed layout for merged-in nodes from the other side's persisted view.
     for (i, &(m, o)) in other_only.iter().enumerate() {
         let pos = other_view
-            .and_then(|v| v.layout.get(&node_id(o)).copied())
+            .and_then(|v| v.layout.get(&NodeId::from_index(o)).copied())
             .unwrap_or_else(|| cascade_pos(head_view.camera.center, i));
-        head_view.layout.insert(node_id(m), pos);
+        head_view.layout.insert(NodeId::from_index(m), pos);
     }
     local_map
 }
@@ -135,7 +133,7 @@ pub fn merge_head(
     head: &mut gantz_ca::Head,
     graph: &mut DataGraph,
     vm: &mut Engine,
-    head_view: &mut crate::SceneView,
+    head_view: &mut gantz_edit::SceneView,
     selection: &mut crate::widget::graph_scene::Selection,
     source: &str,
     resolutions: gantz_ca::Resolutions,
@@ -175,7 +173,7 @@ pub fn merge_head(
     // merged indices. The head's working graph plays the ours side. By the
     // committed-working-graph invariant it is ours' tip graph. Layout for
     // merged-in nodes seeds from the source branch's persisted view.
-    let theirs_view = crate::section::view(registry, &theirs_tip);
+    let theirs_view = gantz_edit::section::view(registry, &theirs_tip);
     let ours_map = apply_merge_migration(
         &outcome.node_srcs,
         gantz_ca::merge::Side::Ours,
@@ -263,7 +261,7 @@ pub fn sync_remote_tip(
     head: &mut gantz_ca::Head,
     graph: &mut DataGraph,
     vm: &mut Engine,
-    head_view: &mut crate::SceneView,
+    head_view: &mut gantz_edit::SceneView,
     selection: &mut crate::widget::graph_scene::Selection,
     remote: CommitAddr,
     resolutions: gantz_ca::Resolutions,
@@ -307,7 +305,7 @@ pub fn sync_remote_tip(
     } else {
         (gantz_ca::merge::Side::Theirs, first)
     };
-    let other_view = crate::section::view(registry, &other_tip);
+    let other_view = gantz_edit::section::view(registry, &other_tip);
     let mapping = apply_merge_migration(
         &outcome.node_srcs,
         local_side,
@@ -339,11 +337,11 @@ pub fn sync_remote_tip(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ops::node_id;
     use crate::ops::test_util::*;
     use crate::widget::graph_scene::Selection;
     use gantz_core::ROOT_STATE;
     use gantz_core::node::graph::NodeIx;
+    use gantz_edit::NodeId;
     use steel::SteelVal;
 
     #[allow(clippy::type_complexity)]
@@ -352,7 +350,7 @@ mod tests {
         head: &mut gantz_ca::Head,
         graph: &mut DataGraph,
         vm: &mut Engine,
-        view: &mut crate::SceneView,
+        view: &mut gantz_edit::SceneView,
         selection: &mut Selection,
         auto_resolve: bool,
     ) -> MergeHeadOutcome {
@@ -380,9 +378,11 @@ mod tests {
         let theirs_tip = reg.head(&"beta".parse().unwrap()).unwrap();
         let mut graph = test_graph(&[1, 20]);
         let mut vm = Engine::new_base();
-        let mut view = crate::SceneView::default();
-        view.layout.insert(node_id(0), egui::pos2(0.0, 0.0));
-        view.layout.insert(node_id(1), egui::pos2(1.0, 0.0));
+        let mut view = gantz_edit::SceneView::default();
+        view.layout
+            .insert(NodeId::from_index(0), egui::pos2(0.0, 0.0));
+        view.layout
+            .insert(NodeId::from_index(1), egui::pos2(1.0, 0.0));
         let mut selection = Selection::default();
         selection.nodes.insert(NodeIx::new(1));
 
@@ -404,8 +404,11 @@ mod tests {
         assert_eq!(weights, vec![1, 20, 3]);
         // Ours' layout and selection are untouched. The merged-in node has a
         // fallback layout entry.
-        assert_eq!(view.layout.get(&node_id(1)), Some(&egui::pos2(1.0, 0.0)));
-        assert!(view.layout.contains_key(&node_id(2)));
+        assert_eq!(
+            view.layout.get(&NodeId::from_index(1)),
+            Some(&egui::pos2(1.0, 0.0))
+        );
+        assert!(view.layout.contains_key(&NodeId::from_index(2)));
         assert!(selection.nodes.contains(&NodeIx::new(1)));
         // The commit joins both parents and the head advanced to it.
         let commit = &reg.commits()[&new_commit];
@@ -423,9 +426,11 @@ mod tests {
         let mut vm = Engine::new_base();
         vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
         node::state::update_value(&mut vm, &[1], SteelVal::IntV(42)).unwrap();
-        let mut view = crate::SceneView::default();
-        view.layout.insert(node_id(0), egui::pos2(0.0, 0.0));
-        view.layout.insert(node_id(1), egui::pos2(1.0, 0.0));
+        let mut view = gantz_edit::SceneView::default();
+        view.layout
+            .insert(NodeId::from_index(0), egui::pos2(0.0, 0.0));
+        view.layout
+            .insert(NodeId::from_index(1), egui::pos2(1.0, 0.0));
         let mut selection = Selection::default();
         selection.nodes.insert(NodeIx::new(1));
 
@@ -450,7 +455,10 @@ mod tests {
         let state = node::state::extract_value(&vm, &[0]).unwrap();
         assert_eq!(state, Some(SteelVal::IntV(42)));
         assert_eq!(view.layout.len(), 1);
-        assert_eq!(view.layout.get(&node_id(0)), Some(&egui::pos2(1.0, 0.0)));
+        assert_eq!(
+            view.layout.get(&NodeId::from_index(0)),
+            Some(&egui::pos2(1.0, 0.0))
+        );
         assert_eq!(
             selection.nodes.iter().copied().collect::<Vec<_>>(),
             vec![NodeIx::new(0)],
@@ -465,7 +473,7 @@ mod tests {
         let ours_tip = reg.head_commit_ca(&head).unwrap();
         let mut graph = test_graph(&[1, 20]);
         let mut vm = Engine::new_base();
-        let mut view = crate::SceneView::default();
+        let mut view = gantz_edit::SceneView::default();
         let mut selection = Selection::default();
 
         let outcome = run_merge(
@@ -511,7 +519,7 @@ mod tests {
         let mut head = gantz_ca::Head::Branch("alpha".parse().unwrap());
         let mut graph = test_graph(&[1]);
         let mut vm = Engine::new_base();
-        let mut view = crate::SceneView::default();
+        let mut view = gantz_edit::SceneView::default();
         let mut selection = Selection::default();
 
         let outcome = run_merge(
@@ -546,7 +554,7 @@ mod tests {
         head: &mut gantz_ca::Head,
         graph: &mut DataGraph,
         vm: &mut Engine,
-        view: &mut crate::SceneView,
+        view: &mut gantz_edit::SceneView,
         selection: &mut Selection,
         remote: CommitAddr,
     ) -> SyncTipOutcome {
@@ -575,7 +583,7 @@ mod tests {
         let beta_tip = reg_1.head(&"beta".parse().unwrap()).unwrap();
         let mut graph_1 = test_graph(&[1, 20]);
         let mut vm_1 = Engine::new_base();
-        let mut view_1 = crate::SceneView::default();
+        let mut view_1 = gantz_edit::SceneView::default();
         let mut selection_1 = Selection::default();
         let outcome_1 = run_sync(
             &mut reg_1,
@@ -611,8 +619,10 @@ mod tests {
         let mut vm_2 = Engine::new_base();
         vm_2.register_value(ROOT_STATE, SteelVal::empty_hashmap());
         node::state::update_value(&mut vm_2, &[2], SteelVal::IntV(7)).unwrap();
-        let mut view_2 = crate::SceneView::default();
-        view_2.layout.insert(node_id(2), egui::pos2(2.0, 0.0));
+        let mut view_2 = gantz_edit::SceneView::default();
+        view_2
+            .layout
+            .insert(NodeId::from_index(2), egui::pos2(2.0, 0.0));
         let mut selection_2 = Selection::default();
         selection_2.nodes.insert(NodeIx::new(2));
         let outcome_2 = run_sync(
@@ -641,7 +651,10 @@ mod tests {
         assert_eq!(mapping, gantz_ca::Matching::from([(0, 0), (1, 1), (2, 2)]));
         let state = node::state::extract_value(&vm_2, &[2]).unwrap();
         assert_eq!(state, Some(SteelVal::IntV(7)));
-        assert_eq!(view_2.layout.get(&node_id(2)), Some(&egui::pos2(2.0, 0.0)));
+        assert_eq!(
+            view_2.layout.get(&NodeId::from_index(2)),
+            Some(&egui::pos2(2.0, 0.0))
+        );
         assert!(selection_2.nodes.contains(&NodeIx::new(2)));
     }
 
@@ -707,7 +720,7 @@ mod tests {
             let mut head = gantz_ca::Head::Branch("alpha".parse().unwrap());
             let mut graph = reg.commit_graph_ref(&local).unwrap().clone();
             let mut vm = Engine::new_base();
-            let mut view = crate::SceneView::default();
+            let mut view = gantz_edit::SceneView::default();
             let mut selection = Selection::default();
             let outcome = sync_remote_tip(
                 &mut reg,

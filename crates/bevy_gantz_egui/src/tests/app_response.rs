@@ -92,9 +92,9 @@ fn a_named_graph_takes_a_description_and_a_demo() {
     );
 
     let registry = app.world().resource::<Registry>();
-    let described = gantz_egui::section::description(registry, &jam);
+    let described = gantz_edit::section::description(registry, &jam);
     assert_eq!(described.as_deref(), Some("a jam"));
-    let demo = gantz_egui::section::demo(registry, &jam);
+    let demo = gantz_edit::section::demo(registry, &jam);
     assert_eq!(demo.as_deref(), Some("demo-jam"));
 
     dispatch(
@@ -105,7 +105,7 @@ fn a_named_graph_takes_a_description_and_a_demo() {
         },
     );
     let registry = app.world().resource::<Registry>();
-    assert_eq!(gantz_egui::section::demo(registry, &jam), None);
+    assert_eq!(gantz_edit::section::demo(registry, &jam), None);
 }
 
 /// A removed name's open head stays open on the name's last commit.

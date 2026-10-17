@@ -3,7 +3,8 @@
 
 use crate::ref_ext::{DSP_REF_EXT_KEY, DspRefExt};
 use gantz_ca::ContentAddr;
-use gantz_egui::node::{NamedRef, RefExtUi};
+use gantz_edit::NamedRef;
+use gantz_egui::node::RefExtUi;
 use gantz_egui::widget::node_inspector;
 use gantz_egui::{InspectorRowsResponse, NodeCtx};
 use std::collections::HashSet;

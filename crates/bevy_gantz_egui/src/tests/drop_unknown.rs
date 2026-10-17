@@ -5,7 +5,7 @@ use bevy_ecs::prelude::*;
 use bevy_gantz::{Registry, head, timestamp};
 use gantz_ca::{DataGraph, Datum, Head, Name, NodeData};
 use gantz_core::data::erase_node_typed;
-use gantz_egui::node::NamedRef;
+use gantz_edit::NamedRef;
 
 /// The first node of `name`'s head graph.
 fn first_node(app: &bevy_app::App, name: &Name) -> NodeData {

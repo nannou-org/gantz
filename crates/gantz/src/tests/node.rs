@@ -16,7 +16,7 @@ fn name(s: &str) -> gantz_ca::Name {
 
 /// The `NamedRef` within an erased app node, if it is one.
 #[allow(clippy::borrowed_box)]
-fn as_named_ref(node: &DynNode) -> Option<&gantz_egui::node::NamedRef> {
+fn as_named_ref(node: &DynNode) -> Option<&gantz_edit::NamedRef> {
     let n: &dyn gantz_core::Node = &**node;
     (n as &dyn std::any::Any).downcast_ref()
 }
@@ -200,7 +200,7 @@ fn gui_marker_registry_lookups() {
     // An `Fn`-wrapped ref erases under its own tag, which the data walk's
     // reference rule does not match by design. The ref is still carried
     // structurally for reachability.
-    let named = gantz_egui::node::NamedRef::new(name("child"), gantz_core::node::Ref::new(child));
+    let named = gantz_edit::NamedRef::new(name("child"), gantz_core::node::Ref::new(child));
     let nd = erased(&gantz_core::node::Fn(named));
     assert!(gantz_egui::node::gui::ref_target_of(&nd).is_none());
     assert_eq!(nd.refs, vec![child]);
@@ -484,7 +484,7 @@ fn unknown_unit_name_fails_to_reify() {
 fn node_set_data() -> Vec<gantz_ca::NodeData> {
     let mut nodes: Vec<gantz_ca::NodeData> =
         node_set_cases().into_iter().map(node_data_of).collect();
-    let mut ext_ref = gantz_egui::node::NamedRef::new(
+    let mut ext_ref = gantz_edit::NamedRef::new(
         name("mul"),
         gantz_core::node::Ref::new(gantz_ca::ContentAddr([0; 32])),
     );
@@ -493,12 +493,10 @@ fn node_set_data() -> Vec<gantz_ca::NodeData> {
         .unwrap();
     nodes.push(erased(&ext_ref));
     nodes.push(erased(&gantz_io::Log::default()));
-    nodes.push(erased(&gantz_core::node::Fn(
-        gantz_egui::node::NamedRef::new(
-            name("mul"),
-            gantz_core::node::Ref::new(gantz_ca::ContentAddr([1; 32])),
-        ),
-    )));
+    nodes.push(erased(&gantz_core::node::Fn(gantz_edit::NamedRef::new(
+        name("mul"),
+        gantz_core::node::Ref::new(gantz_ca::ContentAddr([1; 32])),
+    ))));
     nodes.push(erased(&gantz_plyphon::Sample::new(
         gantz_ca::ContentAddr([3; 32]),
         2,
@@ -1664,14 +1662,14 @@ fn layout_roundtrips() {
     let e1: DataReg =
         gantz_egui::format::from_str(text1, now, &crate::node::codec()).expect("from_str 1");
     let head = e1.head(&name("mul")).expect("mul name");
-    let view = gantz_egui::section::view(&e1, &head).expect("view");
+    let view = gantz_edit::section::view(&e1, &head).expect("view");
     // `m` is node index 0, `l` is 1.
     assert_eq!(
-        view.layout.get(&egui_graph::NodeId(0)).map(|p| (p.x, p.y)),
+        view.layout.get(&gantz_edit::NodeId(0)).map(|p| (p.x, p.y)),
         Some((-10.0, 20.0))
     );
     assert_eq!(
-        view.layout.get(&egui_graph::NodeId(1)).map(|p| (p.x, p.y)),
+        view.layout.get(&gantz_edit::NodeId(1)).map(|p| (p.x, p.y)),
         Some((3.5, -4.5))
     );
     assert_eq!((view.camera.center.x, view.camera.center.y), (25.0, -15.0));
@@ -1681,10 +1679,10 @@ fn layout_roundtrips() {
     let e2: DataReg =
         gantz_egui::format::from_str(&text2, now, &crate::node::codec()).expect("from_str 2");
     let head2 = e2.head(&name("mul")).expect("mul name 2");
-    let view2 = gantz_egui::section::view(&e2, &head2).expect("view 2");
+    let view2 = gantz_edit::section::view(&e2, &head2).expect("view 2");
     assert_eq!(view.layout.len(), view2.layout.len());
     assert_eq!(
-        view2.layout.get(&egui_graph::NodeId(0)).map(|p| (p.x, p.y)),
+        view2.layout.get(&gantz_edit::NodeId(0)).map(|p| (p.x, p.y)),
         Some((-10.0, 20.0))
     );
     assert_eq!(view2.camera, view.camera);
@@ -1710,7 +1708,7 @@ fn legacy_scene_form_parses_to_camera() {
     let e: DataReg =
         gantz_egui::format::from_str(text, now, &crate::node::codec()).expect("from_str");
     let head = e.head(&name("mul")).expect("mul name");
-    let view = gantz_egui::section::view(&e, &head).expect("view");
+    let view = gantz_edit::section::view(&e, &head).expect("view");
     // Centre of (-50,-50)..(100,100), default zoom.
     assert_eq!((view.camera.center.x, view.camera.center.y), (25.0, 25.0));
     assert_eq!(view.camera.zoom, 1.0);
@@ -1734,9 +1732,9 @@ fn clipboard_round_trips_through_gantz_text() {
     graph.add_edge(a, b, gantz_core::Edge::new(0.into(), 0.into()));
 
     let registry = DataReg::default();
-    let mut layout = egui_graph::Layout::default();
-    layout.insert(egui_graph::NodeId(0), egui::pos2(1.0, 2.0));
-    layout.insert(egui_graph::NodeId(1), egui::pos2(3.0, 4.0));
+    let mut layout = gantz_edit::Layout::default();
+    layout.insert(gantz_edit::NodeId(0), egui::pos2(1.0, 2.0));
+    layout.insert(gantz_edit::NodeId(1), egui::pos2(3.0, 4.0));
     let selected: HashSet<gantz_core::node::graph::NodeIx> = [a, b].into_iter().collect();
 
     let copied = export::copy(&registry, &graph, &selected, &layout);
@@ -1751,25 +1749,25 @@ fn clipboard_round_trips_through_gantz_text() {
     assert_eq!(back.graph.edge_count(), 1);
     assert_eq!(
         back.positions
-            .get(&egui_graph::NodeId(0))
+            .get(&gantz_edit::NodeId(0))
             .map(|p| (p.x, p.y)),
         Some((1.0, 2.0)),
     );
     assert_eq!(
         back.positions
-            .get(&egui_graph::NodeId(1))
+            .get(&gantz_edit::NodeId(1))
             .map(|p| (p.x, p.y)),
         Some((3.0, 4.0)),
     );
 }
 
-/// Editing a nested child commits it to a new address. `sync::resync` must
+/// Editing a nested child commits it to a new address. `resync::resync` must
 /// then propagate that up to its parent and recommit the parent, so its
 /// `NamedRef` references the child's new graph.
 #[test]
 fn resync_propagates_child_edit_to_parent() {
     use gantz_core::node::{Identity, Ref};
-    use gantz_egui::node::NamedRef;
+    use gantz_edit::NamedRef;
     use std::time::Duration;
 
     let ts = Duration::from_secs(0);
@@ -1792,7 +1790,7 @@ fn resync_propagates_child_edit_to_parent() {
     assert_ne!(child_old, child_new);
 
     // Resync: the parent must follow the child's new head graph.
-    let moves = gantz_egui::sync::resync(&mut registry, ts);
+    let moves = gantz_edit::resync::resync(&mut registry, ts);
     assert!(
         moves.iter().any(|m| m.name == name("p")),
         "parent should have recommitted: {moves:?}"
@@ -1814,12 +1812,12 @@ fn resync_propagates_child_edit_to_parent() {
 }
 
 /// Forking a graph with a nested child gives the fork its own child.
-/// `sync::fork_nested` copies the `parent:*` subtree to the fork and
+/// `resync::fork_nested` copies the `parent:*` subtree to the fork and
 /// rewrites its references. The original's children are untouched.
 #[test]
 fn fork_nested_gives_independent_children() {
     use gantz_core::node::{Identity, Ref};
-    use gantz_egui::node::NamedRef;
+    use gantz_edit::NamedRef;
     use std::time::Duration;
 
     let ts = Duration::from_secs(0);
@@ -1842,7 +1840,7 @@ fn fork_nested_gives_independent_children() {
     registry.set_head(name("B"), b_commit);
 
     // Cascade to give B its own nested child B:1.
-    let moves = gantz_egui::sync::fork_nested(&mut registry, ts, &name("A"), &name("B"));
+    let moves = gantz_edit::resync::fork_nested(&mut registry, ts, &name("A"), &name("B"));
     assert!(
         moves.iter().any(|m| m.name == name("B:1")),
         "B:1 should be created: {moves:?}"
@@ -1876,8 +1874,8 @@ fn fork_nested_gives_independent_children() {
 #[test]
 fn clipboard_round_trips_nested_ref() {
     use gantz_core::node::{Identity, Ref};
+    use gantz_edit::NamedRef;
     use gantz_egui::export;
-    use gantz_egui::node::NamedRef;
     use std::collections::HashSet;
     use std::time::Duration;
 
@@ -1897,7 +1895,7 @@ fn clipboard_round_trips_nested_ref() {
     let selected: HashSet<_> = [nref].into_iter().collect();
 
     // Copy, then clipboard text, then paste.
-    let copied = export::copy(&registry, &graph, &selected, &egui_graph::Layout::default());
+    let copied = export::copy(&registry, &graph, &selected, &gantz_edit::Layout::default());
     let text = export::copied_to_string(&copied, &crate::node::codec()).expect("copied to text");
     let back: export::Copied =
         export::copied_from_str(&text, &crate::node::codec()).expect("copied from text");
@@ -1917,7 +1915,7 @@ fn clipboard_round_trips_nested_ref() {
 #[test]
 fn promote_nested_repoints_all_parent_instances() {
     use gantz_core::node::{Identity, Ref};
-    use gantz_egui::node::NamedRef;
+    use gantz_edit::NamedRef;
     use std::time::Duration;
 
     let ts = Duration::from_secs(0);
@@ -1937,7 +1935,7 @@ fn promote_nested_repoints_all_parent_instances() {
     let a1_graph = registry.commits()[&a1].graph;
     let b = registry.commit_graph(ts, Some(a1), a1_graph, || unreachable!());
     registry.set_head(name("B"), b);
-    let moves = gantz_egui::sync::promote_nested(&mut registry, ts, &name("A:1"), &name("B"));
+    let moves = gantz_edit::resync::promote_nested(&mut registry, ts, &name("A:1"), &name("B"));
 
     assert!(
         moves.iter().any(|m| m.name == name("A")),
@@ -2079,7 +2077,7 @@ fn base_refs_are_synced() {
 /// `NamedRef::sync`.
 #[test]
 fn named_ref_sync_affects_content_addr() {
-    use gantz_egui::node::NamedRef;
+    use gantz_edit::NamedRef;
     let ca = gantz_ca::ContentAddr::from([0u8; 32]);
     let ref_ = gantz_core::node::Ref::new(ca);
     let off = NamedRef::new(name("x"), ref_.clone());
@@ -2093,7 +2091,7 @@ fn named_ref_sync_affects_content_addr() {
 }
 
 /// A node's erased content address.
-fn erased_addr(named: &gantz_egui::node::NamedRef) -> gantz_ca::ContentAddr {
+fn erased_addr(named: &gantz_edit::NamedRef) -> gantz_ca::ContentAddr {
     gantz_core::data::erase_node_typed(named)
         .unwrap()
         .content_addr()
@@ -2103,7 +2101,7 @@ fn erased_addr(named: &gantz_egui::node::NamedRef) -> gantz_ca::ContentAddr {
 /// address every existing graph's references already hash to.
 #[test]
 fn named_ref_ext_free_content_addr_is_pinned() {
-    use gantz_egui::node::NamedRef;
+    use gantz_edit::NamedRef;
     let ca = gantz_ca::ContentAddr::from([0u8; 32]);
     let named = NamedRef::new(name("mul"), gantz_core::node::Ref::new(ca));
     assert_eq!(
@@ -2118,7 +2116,7 @@ fn named_ref_ext_free_content_addr_is_pinned() {
 /// forking. Forking still resets `sync` by design.
 #[test]
 fn named_ref_ext_survives_repointing_and_fork() {
-    use gantz_egui::node::NamedRef;
+    use gantz_edit::NamedRef;
 
     let ext = TestExt { inline: true };
     let key = "test.ext";

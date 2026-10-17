@@ -18,11 +18,11 @@ bevy_gantz_collab = { workspace = true, optional = true }
 bevy_gantz_egui.workspace = true
 bevy_gantz_plyphon.workspace = true
 bevy_pkv.workspace = true
-egui_graph.workspace = true
 gantz_base.workspace = true
 gantz_ca.workspace = true
 gantz_collab = { workspace = true, optional = true }
 gantz_core.workspace = true
+gantz_edit.workspace = true
 gantz_egui.workspace = true
 gantz_format.workspace = true
 gantz_io.workspace = true

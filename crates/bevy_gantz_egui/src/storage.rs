@@ -62,7 +62,7 @@ pub fn load_open(
             let graph = head_graph(registry, &head)?;
             let head_view = registry
                 .head_commit_ca(&head)
-                .and_then(|ca| gantz_egui::section::view(registry, &ca))
+                .and_then(|ca| gantz_edit::section::view(registry, &ca))
                 .map(GraphView)
                 .unwrap_or_default();
             Some((head, graph, head_view))

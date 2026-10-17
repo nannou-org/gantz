@@ -11,7 +11,7 @@ repository.workspace = true
 [dependencies]
 gantz_ca.workspace = true
 gantz_collab.workspace = true
-gantz_egui.workspace = true
+gantz_edit.workspace = true
 log.workspace = true
 serde.workspace = true
 web-time.workspace = true

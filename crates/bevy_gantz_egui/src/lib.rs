@@ -308,7 +308,7 @@ fn clear_ui_providers(
 /// The `OpenHeadViews` query silently skips entities missing any of them.
 #[derive(Component, Default, Clone)]
 #[require(HeadNodeInstances, PerfVm)]
-pub struct GraphView(pub gantz_egui::SceneView);
+pub struct GraphView(pub gantz_edit::SceneView);
 
 /// Per-head cache of reified node instances for the working graph.
 ///
@@ -449,7 +449,7 @@ impl DerefMut for GuiState {
 }
 
 impl Deref for GraphView {
-    type Target = gantz_egui::SceneView;
+    type Target = gantz_edit::SceneView;
     fn deref(&self) -> &Self::Target {
         &self.0
     }

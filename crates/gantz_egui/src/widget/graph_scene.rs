@@ -249,7 +249,7 @@ impl<'a> GraphScene<'a> {
     /// Returns a response containing both the scene response and all node responses.
     pub fn show(
         self,
-        scene_view: &mut crate::SceneView,
+        scene_view: &mut gantz_edit::SceneView,
         state: &mut GraphSceneState,
         vm: &mut Engine,
         ui: &mut egui::Ui,
@@ -260,7 +260,7 @@ impl<'a> GraphScene<'a> {
         // reproduces the camera's zoom exactly. `restore_egui` recovers the
         // camera after the pass.
         let viewport = ui.available_rect_before_wrap().size();
-        let mut egui_view = scene_view.take_egui(viewport);
+        let mut egui_view = crate::view::take_egui(scene_view, viewport);
         let view = &mut egui_view;
         // Consume one-shot layout and center requests. A request raised
         // during this pass applies on the next pass.
@@ -361,22 +361,6 @@ impl<'a> GraphScene<'a> {
                 .collect();
         }
 
-        // Apply deferred deletes now the scene no longer borrows `view`. Removal
-        // swap-removes nodes, so this migrates the swapped node's state, layout
-        // and selection. See `crate::ops::remove_nodes`. The returned reindex
-        // is surfaced so callers can migrate their own index-keyed data too.
-        let reindex = crate::ops::remove_nodes(
-            self.graph,
-            vm,
-            &mut view.layout,
-            &mut state.interaction.selection,
-            self.instances,
-            to_delete,
-        );
-        if !reindex.is_empty() {
-            changed = true;
-        }
-
         // Track the latest pointer position over the scene in graph space so a
         // node added via the node palette lands under the pointer. While the
         // palette window covers the scene, `contains_pointer` is false, so this
@@ -472,7 +456,24 @@ impl<'a> GraphScene<'a> {
         // Recover the viewport-independent camera from the `egui_graph` view,
         // which egui may have panned or zoomed this pass, and write back the
         // possibly relaid-out node layout.
-        scene_view.restore_egui(egui_view, viewport);
+        crate::view::restore_egui(scene_view, egui_view, viewport);
+
+        // Apply deferred deletes now the scene no longer borrows the view.
+        // Removal swap-removes nodes, so this migrates the swapped node's
+        // state, layout and selection. See `crate::ops::remove_nodes`. The
+        // returned reindex is surfaced so callers can migrate their own
+        // index-keyed data too.
+        let reindex = crate::ops::remove_nodes(
+            self.graph,
+            vm,
+            &mut scene_view.layout,
+            &mut state.interaction.selection,
+            self.instances,
+            to_delete,
+        );
+        if !reindex.is_empty() {
+            changed = true;
+        }
 
         GraphSceneResponse {
             scene: graph_response.response,

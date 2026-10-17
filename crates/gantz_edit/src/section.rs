@@ -1,9 +1,8 @@
-//! The GUI's registry metadata sections: graph descriptions, demo
+//! The editor's registry metadata sections: graph descriptions, demo
 //! associations and per-commit scene views.
 //!
 //! Each section is declared via [`gantz_ca::SectionDecl`], so the data rides
 //! the registry through merge, prune, export and the `.gantz` text format.
-//! See [`crate::format`] for the friendly text forms.
 
 use crate::SceneView;
 use gantz_ca::{

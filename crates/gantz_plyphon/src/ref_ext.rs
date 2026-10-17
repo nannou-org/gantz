@@ -47,23 +47,13 @@ const DSP_NODE_TAGS: [&str; 10] = [
     crate::Unpack::TAG,
 ];
 
-/// The wire tag of `gantz_egui`'s `NamedRef` wrapper.
-///
-/// A literal rather than `NamedRef::TAG` so the headless build, with no
-/// `gantz_egui` in the tree, still recognises stored references. The tag is
-/// already a cross-crate wire convention, since `gantz_format`'s raise and
-/// lower match it at the data level. The `egui`-gated test below pins this
-/// constant to the type's own `NodeTag` so a renamed tag cannot drift
-/// silently.
-const NAMED_REF_TAG: &str = "NamedRef";
-
 /// The wire tags of reference-transparent nodes, the data-level equivalent of
 /// the [`AsRefNode`](gantz_core::node::AsRefNode) probe. A bare
 /// [`Ref`](gantz_core::node::Ref) or a `NamedRef` wrapper stands in for the
 /// graph it references, so DSP-ness flows through it. `FnNamedRef` is absent
 /// by design. A function value references a graph without standing in for
 /// it, mirroring its missing `AsRefNode` impl.
-const REF_NODE_TAGS: [&str; 2] = [gantz_core::node::Ref::TAG, NAMED_REF_TAG];
+const REF_NODE_TAGS: [&str; 2] = [gantz_core::node::Ref::TAG, gantz_edit::NamedRef::TAG];
 
 /// The graph addresses of every registry graph containing DSP nodes, directly
 /// or transitively through references. They are [`ContentAddr`]s, the form
@@ -128,16 +118,4 @@ fn is_dsp(
     stack.pop();
     memo.insert(ga, dsp);
     dsp
-}
-
-#[cfg(all(test, feature = "egui"))]
-mod tests {
-    use super::*;
-
-    /// Pin the headless literal to the type's own wire tag. A `NamedRef` tag
-    /// rename must show up here, not as silently broken discovery.
-    #[test]
-    fn named_ref_tag_matches_node_tag() {
-        assert_eq!(NAMED_REF_TAG, gantz_egui::node::NamedRef::TAG);
-    }
 }

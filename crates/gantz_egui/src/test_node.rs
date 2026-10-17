@@ -2,9 +2,9 @@
 //! tests. It has `Expr` and `Bang` leaves plus `NamedRef` for graph
 //! references.
 
-use crate::node::NamedRef;
 use dyn_clone::DynClone;
 use gantz_core::node::graph::Graph;
+use gantz_edit::NamedRef;
 use std::any::Any;
 
 pub trait TestNode: Any + DynClone + gantz_core::Node {}
@@ -22,7 +22,7 @@ gantz_format::impl_node_set_serde! {
     dyn TestNode {
         gantz_core::node::Expr,
         crate::node::Bang,
-        crate::node::NamedRef,
+        gantz_edit::NamedRef,
     }
 }
 
@@ -39,7 +39,7 @@ pub fn codec() -> crate::node::NodeCodec {
         Box<dyn TestNode> {
             gantz_core::node::Expr,
             crate::node::Bang,
-            crate::node::NamedRef,
+            gantz_edit::NamedRef,
         }
     }
 }

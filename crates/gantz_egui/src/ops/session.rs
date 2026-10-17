@@ -97,7 +97,7 @@ pub fn session_undo(
     undo_cursors: &mut HashMap<gantz_ca::Head, RevertCursor>,
     timestamp: gantz_ca::Timestamp,
     head: &gantz_ca::Head,
-    live_camera: Option<crate::Camera>,
+    live_camera: Option<gantz_edit::Camera>,
 ) -> Option<CommitAddr> {
     let tip = registry.head_commit_ca(head)?;
     let base = undo_cursors
@@ -124,7 +124,7 @@ pub fn session_redo(
     undo_cursors: &mut HashMap<gantz_ca::Head, RevertCursor>,
     timestamp: gantz_ca::Timestamp,
     head: &gantz_ca::Head,
-    live_camera: Option<crate::Camera>,
+    live_camera: Option<gantz_edit::Camera>,
 ) -> Option<CommitAddr> {
     let tip = registry.head_commit_ca(head)?;
     let target = redo_stacks.get_mut(head)?.pop()?;
@@ -141,9 +141,9 @@ fn copy_view(
     registry: &mut gantz_ca::Registry,
     src: CommitAddr,
     dst: CommitAddr,
-    live_camera: Option<crate::Camera>,
+    live_camera: Option<gantz_edit::Camera>,
 ) {
-    let Some(mut view) = crate::section::view(registry, &src) else {
+    let Some(mut view) = gantz_edit::section::view(registry, &src) else {
         return;
     };
     if view.layout.is_empty() {
@@ -152,14 +152,14 @@ fn copy_view(
     if let Some(camera) = live_camera {
         view.camera = camera;
     }
-    crate::section::set_view(registry, dst, &view);
+    gantz_edit::section::set_view(registry, dst, &view);
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ops::node_id;
     use crate::ops::test_util::*;
+    use gantz_edit::NodeId;
 
     // Session undo commits the previous graph forward.
     #[test]
@@ -209,18 +209,18 @@ mod tests {
 
         // Stored views for the history commits. None for the mints yet.
         let view = |x: f32| {
-            let mut v = crate::SceneView::default();
-            v.layout.insert(node_id(0), egui::pos2(x, 0.0));
+            let mut v = gantz_edit::SceneView::default();
+            v.layout.insert(NodeId::from_index(0), egui::pos2(x, 0.0));
             v
         };
-        crate::section::set_view(&mut reg, e1, &view(1.0));
-        crate::section::set_view(&mut reg, l, &view(2.0));
-        crate::section::set_view(&mut reg, e2, &view(3.0));
+        gantz_edit::section::set_view(&mut reg, e1, &view(1.0));
+        gantz_edit::section::set_view(&mut reg, l, &view(2.0));
+        gantz_edit::section::set_view(&mut reg, e2, &view(3.0));
         let stored =
-            |reg: &gantz_ca::Registry, ca: CommitAddr| crate::section::view(reg, &ca).unwrap();
+            |reg: &gantz_ca::Registry, ca: CommitAddr| gantz_edit::section::view(reg, &ca).unwrap();
         let mut redo = HashMap::new();
         let mut cursors = HashMap::new();
-        let cam = crate::Camera {
+        let cam = gantz_edit::Camera {
             center: egui::pos2(9.0, 9.0),
             zoom: 2.0,
         };

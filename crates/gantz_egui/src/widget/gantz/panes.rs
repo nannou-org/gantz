@@ -151,7 +151,7 @@ where
             // The graph's current description. Only named graphs have one.
             let current_description = match &head {
                 gantz_ca::Head::Branch(name) => {
-                    crate::section::description(gantz.env.registry, name)
+                    gantz_edit::section::description(gantz.env.registry, name)
                 }
                 _ => None,
             };
@@ -1327,7 +1327,7 @@ pub(super) fn graph_scene(
     view_toggles: &mut ViewToggles,
     ext_panes: &[widget::ExtPaneEntry],
     edge_styles: &[&dyn widget::EdgeStyle],
-    head_view: &mut crate::SceneView,
+    head_view: &mut gantz_edit::SceneView,
     layout_params: egui_graph::LayoutParams,
     scene_config: SceneConfig,
     immutable: bool,
@@ -1354,14 +1354,21 @@ pub(super) fn graph_scene(
     // back to egui's fit-to-bounds, zooming out to frame every node. A freshly
     // opened graph should instead sit at its natural 1:1 zoom.
     if head_view.layout.is_empty() {
-        head_view.layout =
-            widget::graph_scene::layout(registry, codec, graph, id, &layout_params, ui.ctx(), None);
+        head_view.layout = crate::view::from_egui_layout(widget::graph_scene::layout(
+            registry,
+            codec,
+            graph,
+            id,
+            &layout_params,
+            ui.ctx(),
+            None,
+        ));
         let mut bounds: Option<egui::Rect> = None;
         for &pos in head_view.layout.values() {
             let r = egui::Rect::from_min_size(pos, egui::Vec2::ZERO);
             bounds = Some(bounds.map_or(r, |b| b.union(r)));
         }
-        head_view.camera = crate::Camera {
+        head_view.camera = gantz_edit::Camera {
             center: bounds.map_or(egui::Pos2::ZERO, |b| b.center()),
             zoom: 1.0,
         };

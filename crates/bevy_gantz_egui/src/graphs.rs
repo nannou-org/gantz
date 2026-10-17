@@ -34,9 +34,9 @@ pub(crate) fn on_set_demo(
 ) {
     let gantz_egui::SetDemo { name, demo } = &trigger.event().0;
     match demo {
-        Some(demo) => gantz_egui::section::set_demo(&mut registry.0, name.clone(), demo.clone()),
+        Some(demo) => gantz_edit::section::set_demo(&mut registry.0, name.clone(), demo.clone()),
         None => {
-            gantz_egui::section::remove_demo(&mut registry.0, name);
+            gantz_edit::section::remove_demo(&mut registry.0, name);
         }
     }
 }
@@ -47,7 +47,7 @@ pub(crate) fn on_set_description(
     mut registry: ResMut<Registry>,
 ) {
     let gantz_egui::SetDescription { name, description } = &trigger.event().0;
-    gantz_egui::section::set_description(&mut registry.0, name.clone(), description.clone());
+    gantz_edit::section::set_description(&mut registry.0, name.clone(), description.clone());
 }
 
 /// Remove `name`, first detaching the open heads on it onto its current

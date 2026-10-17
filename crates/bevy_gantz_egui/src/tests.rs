@@ -28,7 +28,7 @@ fn codec() -> gantz_egui::node::NodeCodec {
             crate::node::LoadBang,
             crate::node::Sleep,
             gantz_egui::node::Inspect,
-            gantz_egui::node::NamedRef,
+            gantz_edit::NamedRef,
         }
     }
 }

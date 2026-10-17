@@ -99,17 +99,17 @@ pub fn load(
         // The base's GUI metadata must win over the user's persisted
         // entries. The demo and view sections merge KeepExisting, so
         // reinsert the parsed entries after the merge.
-        let demos: Vec<_> = gantz_egui::section::demos(&parsed).collect();
-        let views: Vec<_> = gantz_egui::section::views(&parsed).collect();
+        let demos: Vec<_> = gantz_edit::section::demos(&parsed).collect();
+        let views: Vec<_> = gantz_edit::section::views(&parsed).collect();
         // The merge's `heads_replaced` is not logged. Base names replacing
         // a user's persisted edits on launch is the intended reset, not a
         // collision. Source-vs-source collisions are warned above.
         registry.merge(parsed);
         for (name, demo) in demos {
-            gantz_egui::section::set_demo(&mut registry.0, name, demo);
+            gantz_edit::section::set_demo(&mut registry.0, name, demo);
         }
         for (ca, view) in views {
-            gantz_egui::section::set_view(&mut registry.0, ca, &view);
+            gantz_edit::section::set_view(&mut registry.0, ca, &view);
         }
         Ok(())
     });

@@ -141,7 +141,7 @@ pub fn markers(g: &gantz_ca::DataGraph) -> Vec<(node::Id, Gui)> {
 /// `AsRefNode` rule as a pure data check. The plyphon DSP-graph walk uses
 /// the same tag rule.
 pub fn ref_target_of(nd: &gantz_ca::NodeData) -> Option<gantz_ca::ContentAddr> {
-    let is_ref = nd.tag == crate::node::NamedRef::TAG || nd.tag == gantz_core::node::Ref::TAG;
+    let is_ref = nd.tag == gantz_edit::NamedRef::TAG || nd.tag == gantz_core::node::Ref::TAG;
     is_ref.then(|| nd.refs.first().copied()).flatten()
 }
 

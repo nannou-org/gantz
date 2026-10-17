@@ -12,7 +12,6 @@ pub use gantz_core::node::{Id, state};
 pub use gui::{GUI_REF_EXT_KEY, Gui, GuiDisplay, GuiRefExt, GuiRole};
 pub use inspect::Inspect;
 pub use instance_cache::{InstanceEntry, NodeInstances};
-pub use named_ref::{NamedRef, missing_color, outdated_color};
 pub use number::{Number, NumberInput};
 pub use plot::{F32, Plot, PlotLook, PlotMode, PlotStyle};
 pub use ref_ext::RefExtUi;
@@ -25,7 +24,6 @@ pub mod fn_named_ref;
 pub mod gui;
 pub mod inspect;
 pub mod instance_cache;
-pub mod named_ref;
 pub mod number;
 pub mod plot;
 pub mod ref_ext;
@@ -41,7 +39,7 @@ pub fn builtins() -> Vec<gantz_core::Builtin> {
         .expect("`id` must erase")
         .content_addr();
     let name = gantz_core::node::IDENTITY_NAME.parse().expect("infallible");
-    let named_ref = NamedRef::new(name, gantz_core::node::Ref::new(identity_ca));
+    let named_ref = gantz_edit::NamedRef::new(name, gantz_core::node::Ref::new(identity_ca));
     vec![
         Builtin::new("bang", &Bang::default()),
         Builtin::new("bind", &Bind::default()),
@@ -52,4 +50,14 @@ pub fn builtins() -> Vec<gantz_core::Builtin> {
         Builtin::new("number", &Number::default()),
         Builtin::new("plot", &Plot::default()),
     ]
+}
+
+/// The warning color used for outdated references.
+pub fn outdated_color() -> egui::Color32 {
+    egui::Color32::from_rgb(200, 150, 50)
+}
+
+/// The error color used for missing references.
+pub fn missing_color() -> egui::Color32 {
+    egui::Color32::from_rgb(200, 80, 80)
 }
