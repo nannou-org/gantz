@@ -1,9 +1,6 @@
 //! Provides [`visit()`] and [`register()`] fns for generic gantz graphs.
 
-use std::{
-    collections::{BTreeSet, HashMap, HashSet},
-    hash::{Hash, Hasher},
-};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use crate::{
     Edge,
@@ -11,30 +8,10 @@ use crate::{
     visit,
 };
 use petgraph::visit::{
-    Data, EdgeRef, IntoEdgeReferences, IntoEdgesDirected, IntoNeighborsDirected,
-    IntoNodeIdentifiers, IntoNodeReferences, NodeIndexable, NodeRef, Topo, Visitable,
+    Data, EdgeRef, IntoEdgesDirected, IntoNeighborsDirected, IntoNodeIdentifiers,
+    IntoNodeReferences, NodeIndexable, NodeRef, Topo, Visitable,
 };
 use steel::steel_vm::engine::Engine;
-
-/// Hash the nodes, edges and their IDs of the given graph.
-pub fn hash<G, H>(g: G, h: &mut H)
-where
-    G: Data + IntoEdgeReferences + IntoNodeReferences,
-    G::EdgeId: Hash,
-    G::EdgeWeight: Hash,
-    G::NodeId: Hash,
-    G::NodeWeight: Hash,
-    H: Hasher,
-{
-    for n in g.node_references() {
-        n.id().hash(h);
-        n.weight().hash(h);
-    }
-    for e in g.edge_references() {
-        e.id().hash(h);
-        e.weight().hash(h);
-    }
-}
 
 /// All of `g`'s nodes. The topological order where it exists, then any nodes
 /// on a directed cycle appended in index order. [`Topo`] never yields the

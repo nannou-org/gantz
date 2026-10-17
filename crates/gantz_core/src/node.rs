@@ -263,11 +263,6 @@ pub struct ExprCtx<'env, 'data> {
     outputs: &'data Conns,
 }
 
-/// Represents a function that can be called to begin evaluation of the graph
-/// from some node.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct EvalFn;
-
 /// Error during expression generation.
 #[derive(Clone, Debug, thiserror::Error)]
 #[error("{0}")]
