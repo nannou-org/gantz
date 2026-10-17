@@ -184,6 +184,13 @@ pub struct GantzResponse {
     /// every open graph each frame. May contain duplicates. Treat membership
     /// as a set.
     pub changed_heads: Vec<gantz_ca::Head>,
+    /// Heads whose node layout the user edited this frame. See
+    /// [`GraphSceneResponse::layout_edited`]. Lets the application commit a
+    /// layout change only after an edit. May contain duplicates. Treat
+    /// membership as a set.
+    ///
+    /// [`GraphSceneResponse::layout_edited`]: crate::widget::graph_scene::GraphSceneResponse::layout_edited
+    pub layout_edited_heads: Vec<gantz_ca::Head>,
     /// Dynamic payloads emitted from within the widget tree, tagged with the
     /// emitting head. See [`crate::response`] for the handling contract.
     pub responses: Responses,
@@ -222,6 +229,7 @@ impl GantzResponse {
         GantzResponse {
             focused_head,
             changed_heads: Vec::new(),
+            layout_edited_heads: Vec::new(),
             responses: Responses::default(),
             windowed_panes: Vec::new(),
             node_view_reindexes: Vec::new(),

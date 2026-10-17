@@ -337,6 +337,9 @@ where
             if response.changed {
                 self.cx.response.changed_heads.push(pane_head.clone());
             }
+            if response.layout_edited {
+                self.cx.response.layout_edited_heads.push(pane_head.clone());
+            }
             // Collect this frame's deletions. `Gantz::show` migrates the
             // top-level tree's node-view paths past them after layout, since
             // the live top-level tree is not reachable here mid-traversal.

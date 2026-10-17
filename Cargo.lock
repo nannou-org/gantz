@@ -3306,12 +3306,13 @@ dependencies = [
 
 [[package]]
 name = "egui_graph"
-version = "0.16.4"
+version = "0.17.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e6bc1e0491c946dfc569b375ec721de32938a7057b36a4b897b77656d2a8ae6"
+checksum = "b43b8c60a96671486d5c17caf412f3790320a55cb66d6ce0978a6f2ed779f6da"
 dependencies = [
  "egui",
  "serde",
+ "siphasher",
 ]
 
 [[package]]
@@ -7953,6 +7954,12 @@ checksum = "7a75cbde1bf934313596a004973e462f9a82caa814dcf1a5f507bdf51597eeb4"
 dependencies = [
  "bitflags 2.13.0",
 ]
+
+[[package]]
+name = "siphasher"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
 
 [[package]]
 name = "sized-chunks"
