@@ -11,14 +11,14 @@
 use bevy::{prelude::*, window::Window};
 use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
 use bevy_gantz::{
-    FocusedHead, GantzPlugin, HeadRef, HeadTabOrder, OpenHead, OpenHeadDataReadOnly, WorkingGraph,
+    FocusedHead, GantzPlugin, HeadTabOrder, OpenHead, OpenHeadDataReadOnly,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
-    timestamp,
 };
-use bevy_gantz_egui::{BuiltinNodes, GantzEguiPlugin, GuiState, TraceCapture};
+use bevy_gantz_egui::{BuiltinNodes, GantzEguiPlugin, GuiState};
 use bevy_pkv::PkvStore;
 use storage::Pkv;
 
+mod app;
 mod node;
 mod storage;
 
@@ -41,7 +41,7 @@ fn main() {
         // The app's node codec is the node-set manifest for the reify and
         // erase seam and the `.gantz` parse and export paths.
         .insert_resource(bevy_gantz_egui::NodeCodecRes(node::codec()))
-        .add_plugins(DefaultPlugins.set(log_plugin()).set(window_plugin()))
+        .add_plugins(DefaultPlugins.set(app::log_plugin()).set(window_plugin()))
         .add_plugins(EguiPlugin::default())
         .add_plugins(DebouncedInputPlugin::<DebouncedInputEvent>::new(0.25))
         .insert_resource(Pkv::new(PkvStore::new("nannou-org", "gantz-update-base")))
@@ -74,13 +74,13 @@ fn main() {
         .add_systems(
             Startup,
             (
-                setup_camera,
+                app::setup_camera,
                 setup_gui_state,
                 bevy_gantz_egui::base::load.after(setup_gui_state),
-                setup_open.after(bevy_gantz_egui::base::load),
+                app::setup_open.after(bevy_gantz_egui::base::load),
             ),
         )
-        .add_systems(EguiPrimaryContextPass, load_egui_memory)
+        .add_systems(EguiPrimaryContextPass, app::load_egui_memory)
         .add_systems(
             Update,
             (bevy_gantz_egui::base::export_to_file, persist_state)
@@ -90,19 +90,6 @@ fn main() {
                 .run_if(on_message::<DebouncedInputEvent>),
         )
         .run();
-}
-
-fn log_plugin() -> bevy::log::LogPlugin {
-    bevy::log::LogPlugin {
-        custom_layer: move |app| {
-            // `get_resource_or_init` shares the instance with
-            // `GantzEguiPlugin`'s `init_resource`, so plugin order does not
-            // matter.
-            let capture = app.world_mut().get_resource_or_init::<TraceCapture>();
-            Some(Box::new(capture.0.clone().layer()))
-        },
-        ..Default::default()
-    }
 }
 
 fn window_plugin() -> bevy::window::WindowPlugin {
@@ -118,49 +105,9 @@ fn window_plugin() -> bevy::window::WindowPlugin {
     }
 }
 
-fn setup_camera(mut cmds: Commands) {
-    cmds.spawn(Camera2d);
-}
-
 fn setup_gui_state(storage: Res<Pkv>, mut cmds: Commands) {
     let gui_state = bevy_gantz_egui::storage::load_gui_state(&*storage);
     cmds.insert_resource(gui_state);
-}
-
-fn setup_open(
-    storage: Res<Pkv>,
-    mut registry: ResMut<bevy_gantz::Registry>,
-    mut cmds: Commands,
-    mut tab_order: ResMut<HeadTabOrder>,
-    mut focused: ResMut<FocusedHead>,
-) {
-    let loaded = bevy_gantz_egui::storage::load_open(&*storage, &mut *registry, timestamp());
-    let focused_head = gantz_store::load_focused_head(&*storage);
-
-    // `OpenHead`'s required components cover the compile outcome. `GraphView`'s
-    // cover the rest of the per-head GUI state. `vm::sync` initializes the VMs
-    // on the first `Update`.
-    for (head, graph, head_view) in loaded {
-        let is_focused = focused_head.as_ref() == Some(&head);
-        let entity = cmds
-            .spawn((OpenHead, HeadRef(head), WorkingGraph(graph), head_view))
-            .id();
-
-        tab_order.push(entity);
-
-        if is_focused || (**focused).is_none() {
-            **focused = Some(entity);
-        }
-    }
-}
-
-fn load_egui_memory(mut ctxs: EguiContexts, mut storage: ResMut<Pkv>, mut loaded: Local<bool>) {
-    if !*loaded {
-        if let Ok(ctx) = ctxs.ctx_mut() {
-            bevy_gantz_egui::storage::load_egui_memory(&mut *storage, ctx);
-            *loaded = true;
-        }
-    }
 }
 
 fn persist_state(
@@ -171,21 +118,7 @@ fn persist_state(
     focused: Res<FocusedHead>,
     heads_query: Query<OpenHeadDataReadOnly, With<OpenHead>>,
 ) {
-    let heads: Vec<_> = tab_order
-        .iter()
-        .filter_map(|&entity| {
-            heads_query
-                .get(entity)
-                .ok()
-                .map(|data| (**data.head_ref).clone())
-        })
-        .collect();
-    gantz_store::save_open_heads(&mut *storage, &heads);
-    if let Some(focused_entity) = **focused {
-        if let Ok(data) = heads_query.get(focused_entity) {
-            gantz_store::save_focused_head(&mut *storage, &**data.head_ref);
-        }
-    }
+    app::save_open_heads(&mut *storage, &tab_order, &focused, &heads_query);
     bevy_gantz_egui::storage::save_gui_state(&mut *storage, &gui_state);
     if let Ok(ctx) = ctxs.ctx_mut() {
         bevy_gantz_egui::storage::save_egui_memory(&mut *storage, ctx);
