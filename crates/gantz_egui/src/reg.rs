@@ -4,6 +4,8 @@
 //! registry, the builtin palette, the app's node codec and the reified
 //! caches. The caches serve registry graphs and builtins as typed nodes.
 
+pub use gantz_edit::base::Names;
+
 use crate::node::{NodeCodec, UiBuiltins};
 use gantz_ca as ca;
 use gantz_core::data::ReifiedGraphs;
@@ -11,7 +13,6 @@ use gantz_core::node;
 use gantz_core::{Builtins, Node};
 use petgraph::visit::{IntoNodeReferences, NodeRef};
 use std::borrow::Cow;
-use std::collections::BTreeMap;
 
 /// The environment the gantz_egui widgets and nodes read. Every shared
 /// immutable input to a GUI pass.
@@ -36,9 +37,6 @@ pub struct Env<'a> {
     /// One reified instance per builtin, keyed by erased content address.
     pub instances: &'a UiBuiltins,
 }
-
-/// Named heads (branches), ordered by name.
-pub type Names = BTreeMap<ca::Name, ca::CommitAddr>;
 
 impl Env<'_> {
     /// Look up a node by content address.

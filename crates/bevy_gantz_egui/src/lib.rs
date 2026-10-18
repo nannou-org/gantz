@@ -128,7 +128,7 @@ impl Plugin for GantzEguiPlugin {
         app.world_mut()
             .get_resource_or_init::<base::BaseSources>()
             .0
-            .push(gantz_egui::base::BaseSource {
+            .push(gantz_edit::base::BaseSource {
                 name: "gantz",
                 bytes: gantz_base::BYTES,
                 renames: gantz_base::RENAMES,

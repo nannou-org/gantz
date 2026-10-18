@@ -15,6 +15,7 @@ bevy_tasks.workspace = true
 cpal.workspace = true
 gantz_ca.workspace = true
 gantz_core.workspace = true
+gantz_edit.workspace = true
 gantz_egui.workspace = true
 gantz_nodetag.workspace = true
 gantz_plyphon = { workspace = true, features = ["egui"] }

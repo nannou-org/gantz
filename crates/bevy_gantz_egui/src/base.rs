@@ -28,7 +28,7 @@ use bevy_ecs::prelude::*;
 use bevy_gantz::Registry;
 use bevy_log as log;
 use gantz_ca::Name;
-use gantz_egui::base::{BASE_TIMESTAMP, BaseSource, seed_graph_addrs};
+use gantz_edit::base::{BASE_TIMESTAMP, BaseSource, seed_graph_addrs};
 use std::collections::HashMap;
 
 use crate::{BaseNames, NodeCodecRes};
@@ -69,7 +69,7 @@ pub struct ExportPaths {
 /// the registry. Populates [`BaseNames`] and [`BaseNameSources`].
 ///
 /// A source may reference names another source defines, so loading runs to a
-/// fixpoint. See [`gantz_egui::base::load_to_fixpoint`]. Push order does not
+/// fixpoint. See [`gantz_edit::base::load_to_fixpoint`]. Push order does not
 /// matter. A source whose references never resolve, or that fails to parse, is
 /// logged and dropped.
 pub fn load(
@@ -80,15 +80,15 @@ pub fn load(
     mut base_names: ResMut<BaseNames>,
     mut name_sources: ResMut<BaseNameSources>,
 ) {
-    let renames = gantz_egui::base::renames(&sources.0);
-    let failed = gantz_egui::base::load_to_fixpoint(sources.0.len(), |ix| {
+    let renames = gantz_edit::base::renames(&sources.0);
+    let failed = gantz_edit::base::load_to_fixpoint(sources.0.len(), |ix| {
         let source = &sources.0[ix];
         let seed = seed_graph_addrs(&base_names.0, &renames, &registry);
-        let parsed = gantz_egui::export::parse_export_seeded_at(
+        let parsed = gantz_edit::export::parse_export_seeded_at(
             source.bytes,
             BASE_TIMESTAMP,
             &seed,
-            &codec.0,
+            codec.0.data(),
         )?;
         for (name, ca) in parsed.heads() {
             let display = name.to_string();
@@ -152,7 +152,7 @@ pub fn export_to_file(
         // name, with no transitive closure. Loading resolves them with the
         // seeded parse.
         let names: Vec<String> = names.iter().map(|name| name.to_string()).collect();
-        match gantz_egui::export::export_names_sexpr_named(&registry, &names, &codec.0) {
+        match gantz_edit::export::export_names_sexpr_named(&registry, &names, codec.0.data()) {
             Ok(text) => {
                 if let Err(e) = std::fs::write(path, text) {
                     log::error!("export_to_file: failed to write {path}: {e}");

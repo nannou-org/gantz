@@ -1130,6 +1130,7 @@ dependencies = [
  "egui_graph",
  "gantz_ca",
  "gantz_core",
+ "gantz_edit",
  "gantz_egui",
  "gantz_format",
  "gantz_nodetag",
@@ -4011,6 +4012,7 @@ dependencies = [
  "log",
  "serde",
  "thiserror 2.0.17",
+ "web-time",
 ]
 
 [[package]]

@@ -66,9 +66,12 @@ fn round_trip(infra: Infra) {
 
     // The host's store: `jam` at one commit, from real nodes.
     let text = "(graph jam (b bang))";
-    let parsed =
-        gantz_egui::export::parse_export_at(text.as_bytes(), Duration::from_secs(1), &conf.codec)
-            .unwrap();
+    let parsed = gantz_edit::export::parse_export_at(
+        text.as_bytes(),
+        Duration::from_secs(1),
+        conf.codec.data(),
+    )
+    .unwrap();
     let jam: ca::Name = "jam".parse().unwrap();
     let tip = parsed.head(&jam).unwrap();
     let commit = parsed.commits()[&tip].clone();

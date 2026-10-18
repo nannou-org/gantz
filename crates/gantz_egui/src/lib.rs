@@ -10,10 +10,7 @@ use steel::{
 };
 
 pub mod action;
-pub mod base;
 pub mod collab;
-pub mod export;
-pub mod format;
 mod impls;
 pub mod keybind;
 pub mod merge;
@@ -408,7 +405,7 @@ pub enum PastePos {
 }
 
 /// Resolve a [`PastePos`] to a concrete offset vector for use with
-/// [`export::paste`].
+/// [`gantz_edit::export::paste`].
 pub fn resolve_paste_offset(pos: &PastePos, copied_positions: &gantz_edit::Layout) -> egui::Vec2 {
     match pos {
         PastePos::Offset(v) => *v,

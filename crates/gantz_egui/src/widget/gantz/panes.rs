@@ -7,12 +7,13 @@ use super::{FileDrop, FileDropTarget, LogSource, NESTED_GRAPH_TYPE, NodeTyCmd, P
 use crate::{
     Action, CopyNodes, CreateNestedGraph, CreateNode, CutNodes, DuplicateNodes, Env,
     ExportAllNamed, ExportHead, ExportStyle, HeadAccess, ImportStyle, Keymap, NodeCtx, NodeUi,
-    Paste, Redo, ReplaceHead, ReplaceNode, ResetTilesLayout, Undo, export,
+    Paste, Redo, ReplaceHead, ReplaceNode, ResetTilesLayout, Undo,
     node::NodeCodec,
     response::{DynResponse, Responses},
     widget::{self, GraphScene, graph_scene},
 };
 use gantz_core::node;
+use gantz_edit::export;
 use petgraph::visit::IntoNodeIdentifiers;
 use std::collections::{BTreeSet, HashMap};
 use steel::steel_vm::engine::Engine;
@@ -929,9 +930,23 @@ pub(super) fn collect_gantz_file_drops(ctx: &egui::Context) -> Vec<FileDrop> {
     dropped
         .iter()
         .filter(|f| export::is_maybe_gantz(f.path.as_deref()))
-        .filter_map(|f| export::read_dropped_file(f))
+        .filter_map(read_dropped_file)
         .map(|bytes| FileDrop { bytes, target })
         .collect()
+}
+
+/// Read bytes from an [`egui::DroppedFile`].
+///
+/// Tries `file.bytes` first for web, then `std::fs::read` from `file.path` for
+/// desktop.
+fn read_dropped_file(file: &egui::DroppedFile) -> Option<Vec<u8>> {
+    if let Some(ref bytes) = file.bytes {
+        return Some(bytes.to_vec());
+    }
+    if let Some(ref path) = file.path {
+        return std::fs::read(path).ok();
+    }
+    None
 }
 
 /// The output count of every node in `g`. It backs the GUI Preview tree's

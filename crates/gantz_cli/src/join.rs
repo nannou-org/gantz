@@ -75,7 +75,7 @@ impl Peer {
         let registry = crate::headless::load_sources(
             &crate::headless::base_sources(conf),
             &[],
-            gantz_egui::base::BASE_TIMESTAMP,
+            gantz_edit::base::BASE_TIMESTAMP,
             &conf.codec,
         )
         .registry;

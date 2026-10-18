@@ -4,7 +4,7 @@
 //! node set of a [`Conf`] and the plain functions of the gantz crates.
 
 use crate::Conf;
-use gantz_egui::export::ParseExportError;
+use gantz_edit::export::ParseExportError;
 use gantz_egui::node::DynNode;
 use std::borrow::Cow;
 
@@ -32,7 +32,7 @@ pub struct Parsed {
     /// The graphs the source defines.
     pub registry: gantz_ca::Registry,
     /// The node labels of the source's named graphs.
-    pub labels: gantz_egui::format::NodeLabels,
+    pub labels: gantz_edit::format::NodeLabels,
 }
 
 /// The configured base sources, in load order, labelled `<base:NAME>`.
@@ -47,9 +47,9 @@ pub fn base_sources(conf: &Conf) -> Vec<Source> {
 }
 
 /// Parse every source seeded with the names loaded so far, to a fixpoint. See
-/// [`gantz_egui::base::load_to_fixpoint`]. Later sources shadow earlier
+/// [`gantz_edit::base::load_to_fixpoint`]. Later sources shadow earlier
 /// names, as in the app. An old name in `renames` resolves to its new name's
-/// graph, see [`gantz_egui::base::with_old_names`].
+/// graph, see [`gantz_edit::base::with_old_names`].
 pub fn load_sources(
     sources: &[Source],
     renames: &[(gantz_ca::Name, gantz_ca::Name)],
@@ -60,10 +60,10 @@ pub fn load_sources(
     let mut registry = gantz_ca::Registry::default();
     let mut parsed: Vec<Option<Result<Parsed, ParseExportError>>> =
         sources.iter().map(|_| None).collect();
-    let failed = gantz_egui::base::load_to_fixpoint(sources.len(), |ix| {
-        let seed = gantz_egui::base::seed_graph_addrs(&names, renames, &registry);
+    let failed = gantz_edit::base::load_to_fixpoint(sources.len(), |ix| {
+        let seed = gantz_edit::base::seed_graph_addrs(&names, renames, &registry);
         let text = std::str::from_utf8(&sources[ix].bytes).map_err(ParseExportError::Utf8)?;
-        let (source, labels) = gantz_egui::format::from_str_labeled(text, now, &seed, codec)
+        let (source, labels) = gantz_edit::format::from_str_labeled(text, now, &seed, codec.data())
             .map_err(ParseExportError::Format)?;
         names.extend(source.heads().map(|(n, ca)| (n.clone(), ca)));
         registry.merge(source.clone());

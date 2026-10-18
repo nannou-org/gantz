@@ -51,7 +51,7 @@ pub struct ResetBaseGraphEvent(pub ca::Name);
 ///
 /// Exports the head's graph with transitive dependencies and views to a
 /// `.gantz` file chosen via an `rfd` file dialog. The export is serialized as
-/// `.gantz` text by [`gantz_egui::export`].
+/// `.gantz` text by [`gantz_edit::export`].
 pub fn on_export_head(
     trigger: On<ExportHeadEvent>,
     registry: Res<Registry>,
@@ -65,7 +65,7 @@ pub fn on_export_head(
     };
     let head: &ca::Head = &**head_ref;
 
-    let text = match gantz_egui::export::export_heads_sexpr(&registry, [head], &codec.0) {
+    let text = match gantz_edit::export::export_heads_sexpr(&registry, [head], codec.0.data()) {
         Ok(s) => s,
         Err(e) => {
             log::error!("ExportHead: failed to serialize: {e}");
@@ -73,12 +73,12 @@ pub fn on_export_head(
         }
     };
 
-    let default_name = gantz_egui::export::default_filename(&head);
+    let default_name = gantz_edit::export::default_filename(&head);
 
     let dialog = rfd::AsyncFileDialog::new()
         .set_title("Export Graph")
         .set_file_name(&default_name)
-        .add_filter("Gantz Export", &[gantz_egui::export::FILE_EXTENSION]);
+        .add_filter("Gantz Export", &[gantz_edit::export::FILE_EXTENSION]);
     spawn_save(dialog, text, "graph");
 }
 
@@ -101,19 +101,20 @@ pub fn on_export_all_named(
         return;
     }
 
-    let text = match gantz_egui::export::export_heads_sexpr(&registry, named_heads.iter(), &codec.0)
-    {
-        Ok(s) => s,
-        Err(e) => {
-            log::error!("ExportAllNamed: failed to serialize: {e}");
-            return;
-        }
-    };
+    let text =
+        match gantz_edit::export::export_heads_sexpr(&registry, named_heads.iter(), codec.0.data())
+        {
+            Ok(s) => s,
+            Err(e) => {
+                log::error!("ExportAllNamed: failed to serialize: {e}");
+                return;
+            }
+        };
 
     let dialog = rfd::AsyncFileDialog::new()
         .set_title("Export All Named Graphs")
-        .set_file_name(&format!("gantz.{}", gantz_egui::export::FILE_EXTENSION))
-        .add_filter("Gantz Export", &[gantz_egui::export::FILE_EXTENSION]);
+        .set_file_name(&format!("gantz.{}", gantz_edit::export::FILE_EXTENSION))
+        .add_filter("Gantz Export", &[gantz_edit::export::FILE_EXTENSION]);
     spawn_save(dialog, text, "all named graphs");
 }
 
@@ -172,7 +173,7 @@ pub fn on_import_file(
     mut cmds: Commands,
 ) {
     let event = trigger.event();
-    let mut export = match gantz_egui::export::parse_export(&event.bytes, &codec.0) {
+    let mut export = match gantz_edit::export::parse_export(&event.bytes, codec.0.data()) {
         Ok(e) => e,
         Err(e) => {
             log::error!("ImportFile: {e}");
@@ -181,13 +182,13 @@ pub fn on_import_file(
     };
 
     // A file written before a base rename names the old base graphs.
-    let renames = gantz_egui::base::renames(&sources.0);
+    let renames = gantz_edit::base::renames(&sources.0);
     gantz_edit::resync::rename(&mut export, bevy_gantz::reg::timestamp(), &renames);
 
     // The root name is needed only to open a head. Compute it before the
     // merge consumes the export.
     let root_name = if event.open_head {
-        gantz_egui::export::unique_root_name(&export)
+        gantz_edit::export::unique_root_name(&export)
     } else {
         None
     };
@@ -228,13 +229,13 @@ pub fn on_reset_base_graph(
         log::warn!("ResetBaseGraph: no base source recorded for '{name}'");
         return;
     };
-    let renames = gantz_egui::base::renames(&sources.0);
-    let seed = gantz_egui::base::seed_graph_addrs(&base_names.0, &renames, &registry);
-    let export: gantz_ca::Registry = match gantz_egui::export::parse_export_seeded_at(
+    let renames = gantz_edit::base::renames(&sources.0);
+    let seed = gantz_edit::base::seed_graph_addrs(&base_names.0, &renames, &registry);
+    let export: gantz_ca::Registry = match gantz_edit::export::parse_export_seeded_at(
         source.bytes,
-        gantz_egui::base::BASE_TIMESTAMP,
+        gantz_edit::base::BASE_TIMESTAMP,
         &seed,
-        &codec.0,
+        codec.0.data(),
     ) {
         Ok(e) => e,
         Err(e) => {
@@ -315,7 +316,7 @@ pub(crate) fn on_import(
     if import_task.is_some() {
         return;
     }
-    let ext = gantz_egui::export::FILE_EXTENSION;
+    let ext = gantz_edit::export::FILE_EXTENSION;
     let dialog = rfd::AsyncFileDialog::new()
         .set_title("Import")
         .add_filter("Gantz Export", &[ext]);

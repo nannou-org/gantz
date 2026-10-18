@@ -1,5 +1,5 @@
 use crate::Conf;
-use gantz_egui::base::BaseSource;
+use gantz_edit::base::BaseSource;
 
 mod cli;
 #[cfg(feature = "collab")]

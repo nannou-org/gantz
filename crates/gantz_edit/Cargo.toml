@@ -17,3 +17,4 @@ gantz_nodetag.workspace = true
 log.workspace = true
 serde.workspace = true
 thiserror.workspace = true
+web-time.workspace = true
