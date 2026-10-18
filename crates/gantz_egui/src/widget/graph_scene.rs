@@ -540,7 +540,7 @@ pub fn layout(
                     .get(&node_id)
                     .cloned()
                     .unwrap_or_else(|| [200.0, 50.0].into());
-                let (inputs, outputs) = match codec.reify_ui(&graph[n]) {
+                let (inputs, outputs) = match codec.reify(&graph[n]) {
                     Ok(inst) => (inst.node.n_inputs(meta_ctx), inst.node.n_outputs(meta_ctx)),
                     Err(_) => placeholder_socket_counts(graph, n),
                 };
@@ -897,7 +897,7 @@ fn nodes(
                         .is_some_and(|w| match instances_ref.peek(n.index(), w) {
                             Some(inst) => inst.node.stateful(meta_ctx),
                             None => codec
-                                .reify_ui(w)
+                                .reify(w)
                                 .is_ok_and(|inst| inst.node.stateful(meta_ctx)),
                         })
                 });

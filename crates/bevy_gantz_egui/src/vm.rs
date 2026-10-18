@@ -112,7 +112,7 @@ pub fn sync(
         // per-frame retry. It surfaces a compile diagnostic attributed to the
         // failing node so the scene glows its placeholder. Any previous VM
         // stays evaluable.
-        let reify = |nd: &ca::NodeData| codec.0.reify_ui(nd).map(|inst| inst.node);
+        let reify = |nd: &ca::NodeData| codec.0.reify(nd).map(|inst| inst.node);
         if let Err(e) = cache.0.ensure_with(&registry, [graph_ca.into()], reify) {
             log::error!("cannot compile head: {e}");
             // Attribute the failing node when it lies in the head's own root

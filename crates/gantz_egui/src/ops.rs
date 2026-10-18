@@ -9,11 +9,12 @@
 use crate::node::NodeCodec;
 use crate::widget::gantz::OpenHeadState;
 use crate::widget::graph_scene::NodeIndex;
-use crate::{CreateNode, DropUnknownData, InspectEdge, PastePos, ReplaceNode, export};
+use crate::{CreateNode, DropUnknownData, InspectEdge, PastePos, ReplaceNode};
 use gantz_ca::{CommitAddr, DataGraph, GraphAddr, Name, NodeData};
 use gantz_core::node::{self, GetNode};
 use gantz_edit::NamedRef;
 use gantz_edit::NodeId;
+use gantz_edit::export;
 use gantz_edit::named_ref::named_ref_of;
 pub use merge::{MergeHeadOutcome, SyncTipOutcome, merge_head, sync_remote_tip};
 use petgraph::visit::EdgeRef;
@@ -148,7 +149,7 @@ pub fn copy_nodes(
         return None;
     }
     let copied = export::copy(registry, graph, selection, &head_view.layout);
-    match export::copied_to_string(&copied, codec) {
+    match export::copied_to_string(&copied, codec.data()) {
         Ok(text) => Some(text),
         Err(e) => {
             log::error!("CopyNodes: failed to serialize: {e}");
@@ -191,7 +192,7 @@ pub fn create_node(
 
     // Register the new node with the VM. This is its one transient typed
     // appearance.
-    match codec.reify_ui(&graph[node_ix]) {
+    match codec.reify(&graph[node_ix]) {
         Ok(inst) => {
             let node_path = [node_ix.index()];
             let reg_ctx = node::RegCtx::new(get_node, &node_path, vm);
@@ -251,7 +252,7 @@ pub fn replace_node(
         log::error!("ReplaceNode: unknown node type: {node_type}");
         return false;
     };
-    let inst = match codec.reify_ui(&node) {
+    let inst = match codec.reify(&node) {
         Ok(inst) => inst,
         Err(e) => {
             log::error!("ReplaceNode: cannot reify '{node_type}': {e}");
@@ -723,7 +724,7 @@ pub fn inspect_edge(
 
     // Register the new node with the VM. This is its one transient typed
     // appearance.
-    match codec.reify_ui(&graph[inspect_id]) {
+    match codec.reify(&graph[inspect_id]) {
         Ok(inst) => {
             let node_path = [inspect_id.index()];
             let reg_ctx = node::RegCtx::new(get_node, &node_path, vm);
@@ -767,7 +768,7 @@ pub fn paste(
     pos: &PastePos,
     codec: &NodeCodec,
 ) -> bool {
-    let copied: export::Copied = match export::copied_from_str(text, codec) {
+    let copied: export::Copied = match export::copied_from_str(text, codec.data()) {
         Ok(c) => c,
         Err(e) => {
             log::debug!("Clipboard does not contain a valid gantz payload: {e}");

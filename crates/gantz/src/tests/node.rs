@@ -137,7 +137,7 @@ fn gui_marker_registry() -> DataReg {
 
 (graph parent
   (c (ref child)))";
-    gantz_egui::format::from_str(text, Duration::from_secs(0), &crate::node::codec())
+    gantz_edit::format::from_str(text, Duration::from_secs(0), crate::node::codec().data())
         .expect("from_str")
 }
 
@@ -230,7 +230,7 @@ fn builtins_round_trip_through_codec() {
     for name in builtins.names() {
         let nd = builtins.node_data(name).expect("named builtin");
         let inst = codec
-            .reify_ui(nd)
+            .reify(nd)
             .unwrap_or_else(|e| panic!("builtin `{name}` failed to reify: {e}"));
         let back = inst
             .erase()
@@ -468,7 +468,7 @@ fn unknown_unit_name_fails_to_reify() {
             Datum::Str("NoSuchUnit".to_string()),
         )]),
     );
-    let err = match crate::node::codec().reify_ui(&nd) {
+    let err = match crate::node::codec().reify(&nd) {
         Ok(_) => panic!("an unknown unit name must fail to reify"),
         Err(err) => err,
     };
@@ -527,7 +527,7 @@ fn node_set_erases_canonically() {
             nd.tag,
         );
         let inst = codec
-            .reify_ui(&nd)
+            .reify(&nd)
             .unwrap_or_else(|e| panic!("case {i}: reify failed: {e}"));
         let nd2 = inst.erase().expect("re-erase");
         let back = inst.node;
@@ -1017,7 +1017,7 @@ fn head_graph_with_unconnected_inlets_derives_sound() {
   (s ~sinosc) (out ~out) (i inlet) (o outlet)
   (-> s (out 0)))";
     let registry: DataReg =
-        gantz_egui::format::from_str(text, Duration::from_secs(0), &crate::node::codec())
+        gantz_edit::format::from_str(text, Duration::from_secs(0), crate::node::codec().data())
             .expect("from_str");
     let reified = reify_all(&registry);
     let head = gantz_ca::Head::Branch(name("head"));
@@ -1090,7 +1090,7 @@ fn nested_dsp_graph_flattens_derives_and_bridges_state() {
   (s ~sinosc) (sub (ref env:1)) (out ~out)
   (-> s (sub 0)) (-> sub (out 0)))";
     let registry: DataReg =
-        gantz_egui::format::from_str(text, Duration::from_secs(0), &crate::node::codec())
+        gantz_edit::format::from_str(text, Duration::from_secs(0), crate::node::codec().data())
             .expect("from_str");
     let reified = reify_all(&registry);
     let parent_head = gantz_ca::Head::Branch(name("env"));
@@ -1171,7 +1171,7 @@ fn instanced_refs_share_one_variant() {
 (graph env
   (a (ref voice)) (b (ref voice)))";
     let registry: DataReg =
-        gantz_egui::format::from_str(text, Duration::from_secs(0), &crate::node::codec())
+        gantz_edit::format::from_str(text, Duration::from_secs(0), crate::node::codec().data())
             .expect("from_str");
     let reified = reify_all(&registry);
     let head = gantz_ca::Head::Branch(name("env"));
@@ -1470,8 +1470,9 @@ fn scopeout_suppresses_output_without_trigger() {
 fn lower_mul_matches_base_graph_addr() {
     use std::time::Duration;
 
-    let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &crate::node::codec())
-        .expect("parse base");
+    let base: DataReg =
+        gantz_edit::export::parse_export(gantz_base::BYTES, crate::node::codec().data())
+            .expect("parse base");
     let base_head = gantz_ca::Head::Branch(name("mul"));
     let base_graph = base.head_graph(&base_head).expect("base mul graph");
     let base_addr = gantz_ca::ContentAddr::from(gantz_ca::graph_addr(base_graph)).to_string();
@@ -1482,7 +1483,7 @@ fn lower_mul_matches_base_graph_addr() {
   (l (inlet \"number\" \"left operand\")) (r (inlet \"number\" \"right operand\")) (out (outlet \"number\" \"product\"))
   (-> l (m 0)) (-> r (m 1)) (-> m out))";
     let mine: DataReg =
-        gantz_egui::format::from_str(text, Duration::from_secs(0), &crate::node::codec())
+        gantz_edit::format::from_str(text, Duration::from_secs(0), crate::node::codec().data())
             .expect("lower");
     let head = gantz_ca::Head::Branch(name("mul"));
     let graph = mine.head_graph(&head).expect("mul graph");
@@ -1499,11 +1500,13 @@ fn base_gantz_loads_and_reserializes() {
     use std::collections::BTreeSet;
     use std::time::Duration;
 
-    let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &crate::node::codec())
-        .expect("parse base");
-    let text = gantz_egui::format::to_string(&base, &crate::node::codec()).expect("to_string");
+    let base: DataReg =
+        gantz_edit::export::parse_export(gantz_base::BYTES, crate::node::codec().data())
+            .expect("parse base");
+    let text =
+        gantz_edit::format::to_string(&base, crate::node::codec().data()).expect("to_string");
     let back: DataReg =
-        gantz_egui::format::from_str(&text, Duration::from_secs(0), &crate::node::codec())
+        gantz_edit::format::from_str(&text, Duration::from_secs(0), crate::node::codec().data())
             .expect("from_str");
 
     let base_names: BTreeSet<_> = base.heads().map(|(n, _)| n.clone()).collect();
@@ -1541,10 +1544,10 @@ fn nested_graph_roundtrips() {
   (sub (ref env:1))
   (-> in (sub 0)) (-> sub out))";
     let e1: DataReg =
-        gantz_egui::format::from_str(text1, now, &crate::node::codec()).expect("from_str 1");
-    let text2 = gantz_egui::format::to_string(&e1, &crate::node::codec()).expect("to_string");
+        gantz_edit::format::from_str(text1, now, crate::node::codec().data()).expect("from_str 1");
+    let text2 = gantz_edit::format::to_string(&e1, crate::node::codec().data()).expect("to_string");
     let e2: DataReg =
-        gantz_egui::format::from_str(&text2, now, &crate::node::codec()).expect("from_str 2");
+        gantz_edit::format::from_str(&text2, now, crate::node::codec().data()).expect("from_str 2");
 
     for n in ["env", "env:1"] {
         let head = gantz_ca::Head::Branch(name(n));
@@ -1573,9 +1576,10 @@ fn output_is_valid_steel() {
   (l (log warn))
   (-> n (s 0)) (-> (s 1) (b 0)))";
     let registry: DataReg =
-        gantz_egui::format::from_str(text1, Duration::from_secs(0), &crate::node::codec())
+        gantz_edit::format::from_str(text1, Duration::from_secs(0), crate::node::codec().data())
             .expect("from_str");
-    let out = gantz_egui::format::to_string(&registry, &crate::node::codec()).expect("to_string");
+    let out =
+        gantz_edit::format::to_string(&registry, crate::node::codec().data()).expect("to_string");
     steel::parser::parser::Parser::parse(&out)
         .unwrap_or_else(|e| panic!("output is not valid Steel: {e}\n--- output ---\n{out}"));
 }
@@ -1596,7 +1600,7 @@ fn tick_node_compiles() {
   (l (log warn))
   (-> t (l 0)))";
     let registry: DataReg =
-        gantz_egui::format::from_str(text, Duration::from_secs(0), &crate::node::codec())
+        gantz_edit::format::from_str(text, Duration::from_secs(0), crate::node::codec().data())
             .expect("from_str");
     let reified = reify_all(&registry);
     let head = gantz_ca::Head::Branch(name("g"));
@@ -1646,7 +1650,7 @@ fn load_node_compiles_and_evaluates() {
   (-> a (l 0))
   (-> b (l 0)))";
     let registry: DataReg =
-        gantz_egui::format::from_str(text, Duration::from_secs(0), &crate::node::codec())
+        gantz_edit::format::from_str(text, Duration::from_secs(0), crate::node::codec().data())
             .expect("from_str");
     let reified = reify_all(&registry);
     let head = gantz_ca::Head::Branch(name("g"));
@@ -1693,7 +1697,7 @@ fn import_clears_absent_parent() {
 (commits (\"abcd1234\" (time 5 0) (parent \"deadbeef\") (graph g)))
 (names (gname \"abcd1234\"))";
     let registry: DataReg =
-        gantz_egui::format::from_str(text, Duration::from_secs(0), &crate::node::codec())
+        gantz_edit::format::from_str(text, Duration::from_secs(0), crate::node::codec().data())
             .expect("import");
     let commit = registry.named_commit(&name("gname")).expect("commit");
     assert_eq!(commit.parent, None, "absent parent must be cleared to None");
@@ -1717,7 +1721,7 @@ fn layout_roundtrips() {
   (camera 25 -15 1.5))";
 
     let e1: DataReg =
-        gantz_egui::format::from_str(text1, now, &crate::node::codec()).expect("from_str 1");
+        gantz_edit::format::from_str(text1, now, crate::node::codec().data()).expect("from_str 1");
     let head = e1.head(&name("mul")).expect("mul name");
     let view = gantz_edit::section::view(&e1, &head).expect("view");
     // `m` is node index 0, `l` is 1.
@@ -1732,9 +1736,9 @@ fn layout_roundtrips() {
     assert_eq!((view.camera.center.x, view.camera.center.y), (25.0, -15.0));
     assert_eq!(view.camera.zoom, 1.5);
 
-    let text2 = gantz_egui::format::to_string(&e1, &crate::node::codec()).expect("to_string");
+    let text2 = gantz_edit::format::to_string(&e1, crate::node::codec().data()).expect("to_string");
     let e2: DataReg =
-        gantz_egui::format::from_str(&text2, now, &crate::node::codec()).expect("from_str 2");
+        gantz_edit::format::from_str(&text2, now, crate::node::codec().data()).expect("from_str 2");
     let head2 = e2.head(&name("mul")).expect("mul name 2");
     let view2 = gantz_edit::section::view(&e2, &head2).expect("view 2");
     assert_eq!(view.layout.len(), view2.layout.len());
@@ -1763,7 +1767,7 @@ fn legacy_scene_form_parses_to_camera() {
   (scene -50 -50 100 100))";
 
     let e: DataReg =
-        gantz_egui::format::from_str(text, now, &crate::node::codec()).expect("from_str");
+        gantz_edit::format::from_str(text, now, crate::node::codec().data()).expect("from_str");
     let head = e.head(&name("mul")).expect("mul name");
     let view = gantz_edit::section::view(&e, &head).expect("view");
     // Centre of (-50,-50)..(100,100), default zoom.
@@ -1777,7 +1781,7 @@ fn legacy_scene_form_parses_to_camera() {
 #[test]
 fn clipboard_round_trips_through_gantz_text() {
     use bevy_egui::egui;
-    use gantz_egui::export;
+    use gantz_edit::export;
     use std::collections::HashSet;
 
     // The clipboard operates on the working graph's data form.
@@ -1795,13 +1799,14 @@ fn clipboard_round_trips_through_gantz_text() {
     let selected: HashSet<gantz_core::node::graph::NodeIx> = [a, b].into_iter().collect();
 
     let copied = export::copy(&registry, &graph, &selected, &layout);
-    let text = export::copied_to_string(&copied, &crate::node::codec()).expect("copied to text");
+    let text =
+        export::copied_to_string(&copied, crate::node::codec().data()).expect("copied to text");
     // The clipboard payload is itself reader-valid `.gantz` text.
     steel::parser::parser::Parser::parse(&text)
         .unwrap_or_else(|e| panic!("clipboard text is not valid Steel: {e}\n{text}"));
 
     let back: export::Copied =
-        export::copied_from_str(&text, &crate::node::codec()).expect("copied from text");
+        export::copied_from_str(&text, crate::node::codec().data()).expect("copied from text");
     assert_eq!(back.graph.node_count(), 2);
     assert_eq!(back.graph.edge_count(), 1);
     assert_eq!(
@@ -1932,7 +1937,7 @@ fn fork_nested_gives_independent_children() {
 fn clipboard_round_trips_nested_ref() {
     use gantz_core::node::{Identity, Ref};
     use gantz_edit::NamedRef;
-    use gantz_egui::export;
+    use gantz_edit::export;
     use std::collections::HashSet;
     use std::time::Duration;
 
@@ -1953,9 +1958,10 @@ fn clipboard_round_trips_nested_ref() {
 
     // Copy, then clipboard text, then paste.
     let copied = export::copy(&registry, &graph, &selected, &gantz_edit::Layout::default());
-    let text = export::copied_to_string(&copied, &crate::node::codec()).expect("copied to text");
+    let text =
+        export::copied_to_string(&copied, crate::node::codec().data()).expect("copied to text");
     let back: export::Copied =
-        export::copied_from_str(&text, &crate::node::codec()).expect("copied from text");
+        export::copied_from_str(&text, crate::node::codec().data()).expect("copied from text");
 
     assert_eq!(back.graph.node_count(), 1, "the nested-ref node must paste");
     let kept = back.graph.node_weights().any(|n| {
@@ -2029,8 +2035,9 @@ fn promote_nested_repoints_all_parent_instances() {
 /// under the default config.
 #[test]
 fn base_graphs_all_compile() {
-    let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &crate::node::codec())
-        .expect("parse base");
+    let base: DataReg =
+        gantz_edit::export::parse_export(gantz_base::BYTES, crate::node::codec().data())
+            .expect("parse base");
     let reified = reify_all(&base);
     let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
@@ -2082,7 +2089,7 @@ fn expr_require_sugar_compiles_and_evaluates() {
   (-> b u)
   (-> u c))";
     let registry: DataReg =
-        gantz_egui::format::from_str(text, Duration::from_secs(0), &crate::node::codec())
+        gantz_edit::format::from_str(text, Duration::from_secs(0), crate::node::codec().data())
             .expect("from_str");
     let reified = reify_all(&registry);
     let builtins = builtins_with_instances(&crate::conf());
@@ -2114,9 +2121,11 @@ fn expr_require_sugar_compiles_and_evaluates() {
 /// one `#:sync` per `ref`.
 #[test]
 fn base_refs_are_synced() {
-    let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &crate::node::codec())
-        .expect("parse base");
-    let text = gantz_egui::format::to_string(&base, &crate::node::codec()).expect("to_string");
+    let base: DataReg =
+        gantz_edit::export::parse_export(gantz_base::BYTES, crate::node::codec().data())
+            .expect("parse base");
+    let text =
+        gantz_edit::format::to_string(&base, crate::node::codec().data()).expect("to_string");
     let refs = text.matches("(ref ").count() + text.matches("(fn-ref ").count();
     let synced = text.matches("#:sync").count();
     assert!(refs > 0, "expected base to contain refs");
@@ -2259,11 +2268,12 @@ fn ext_text_roundtrip_preserves_addr_and_ext() {
   (-> a (mref 0)) (-> b (mref 1)) (-> mref out))";
 
     let export1: DataReg =
-        gantz_egui::format::from_str(text1, now, &crate::node::codec()).expect("from_str 1");
-    let text2 = gantz_egui::format::to_string(&export1, &crate::node::codec()).expect("to_string");
+        gantz_edit::format::from_str(text1, now, crate::node::codec().data()).expect("from_str 1");
+    let text2 =
+        gantz_edit::format::to_string(&export1, crate::node::codec().data()).expect("to_string");
     assert!(text2.contains("#:ext"), "ext tail must survive\n{text2}");
     let export2: DataReg =
-        gantz_egui::format::from_str(&text2, Duration::from_secs(7), &crate::node::codec())
+        gantz_edit::format::from_str(&text2, Duration::from_secs(7), crate::node::codec().data())
             .expect("from_str 2");
 
     for (name, head1) in export1.heads() {
@@ -2295,11 +2305,13 @@ fn ext_text_roundtrip_preserves_addr_and_ext() {
 #[test]
 fn base_socket_docs() {
     use gantz_egui::SocketKind;
-    let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &crate::node::codec())
-        .expect("parse base");
+    let base: DataReg =
+        gantz_edit::export::parse_export(gantz_base::BYTES, crate::node::codec().data())
+            .expect("parse base");
 
     // No primitive socket serializes as a bare `inlet` or `outlet`.
-    let text = gantz_egui::format::to_string(&base, &crate::node::codec()).expect("to_string");
+    let text =
+        gantz_edit::format::to_string(&base, crate::node::codec().data()).expect("to_string");
     let bare = text.matches(" inlet)").count() + text.matches(" outlet)").count();
     assert_eq!(
         bare, 0,
@@ -2344,8 +2356,9 @@ fn base_socket_docs() {
 fn demos_evaluate() {
     use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
 
-    let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &crate::node::codec())
-        .expect("parse base");
+    let base: DataReg =
+        gantz_edit::export::parse_export(gantz_base::BYTES, crate::node::codec().data())
+            .expect("parse base");
     let reified = reify_all(&base);
     let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
@@ -2470,7 +2483,7 @@ fn base_list_nodes_evaluate() {
     let base = std::str::from_utf8(gantz_base::BYTES).expect("utf8");
     let text = format!("{base}\n{TEST_GRAPH}");
     let registry: DataReg =
-        gantz_egui::format::from_str(&text, Duration::from_secs(0), &crate::node::codec())
+        gantz_edit::format::from_str(&text, Duration::from_secs(0), crate::node::codec().data())
             .expect("from_str");
     let reified = reify_all(&registry);
     let builtins = builtins_with_instances(&crate::conf());
@@ -2540,7 +2553,7 @@ fn base_pattern_combinator_nodes_evaluate() {
     let loaded = gantz_cli::headless::load_sources(
         &sources,
         &[],
-        gantz_egui::base::BASE_TIMESTAMP,
+        gantz_edit::base::BASE_TIMESTAMP,
         &crate::node::codec(),
     );
     for (source, parsed) in sources.iter().zip(&loaded.parsed) {
@@ -2593,8 +2606,9 @@ fn base_gui_markers_decode_clean() {
         matches!(elem, gantz_ui::Element::Error(_)) || elem.children().iter().any(has_error)
     }
 
-    let base: DataReg = gantz_egui::export::parse_export(gantz_base::BYTES, &crate::node::codec())
-        .expect("parse base");
+    let base: DataReg =
+        gantz_edit::export::parse_export(gantz_base::BYTES, crate::node::codec().data())
+            .expect("parse base");
     let reified = reify_all(&base);
     let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
@@ -2685,11 +2699,12 @@ fn demo_pplot_plots_every_source() {
     use gantz_core::compile::entry_fn_name;
     use gantz_core::steel::SteelVal;
 
-    let ts = gantz_egui::base::BASE_TIMESTAMP;
+    let ts = gantz_edit::base::BASE_TIMESTAMP;
     let mut merged = DataReg::default();
     for bytes in [gantz_base::BYTES, gantz_pattern::BASE_BYTES] {
         let export: DataReg =
-            gantz_egui::export::parse_export_at(bytes, ts, &crate::node::codec()).expect("parse");
+            gantz_edit::export::parse_export_at(bytes, ts, crate::node::codec().data())
+                .expect("parse");
         merged.merge(export);
     }
     let reified = reify_all(&merged);
@@ -2747,7 +2762,7 @@ fn demo_pplot_plots_every_source() {
 fn demo_pattern_partial_evals_are_silent() {
     use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
 
-    let ts = gantz_egui::base::BASE_TIMESTAMP;
+    let ts = gantz_edit::base::BASE_TIMESTAMP;
     let mut merged = DataReg::default();
     for bytes in [
         gantz_base::BYTES,
@@ -2755,7 +2770,8 @@ fn demo_pattern_partial_evals_are_silent() {
         gantz_pattern::BASE_BYTES,
     ] {
         let export: DataReg =
-            gantz_egui::export::parse_export_at(bytes, ts, &crate::node::codec()).expect("parse");
+            gantz_edit::export::parse_export_at(bytes, ts, crate::node::codec().data())
+                .expect("parse");
         merged.merge(export);
     }
     let reified = reify_all(&merged);
@@ -2844,7 +2860,7 @@ fn demo_pattern_partial_evals_are_silent() {
 
 /// Resetting a demo re-parses the base and merges the demo's commit subset
 /// back in. The base's hand-authored graphs are stamped at the fixed
-/// `gantz_egui::base::BASE_TIMESTAMP`, so the re-parse reproduces
+/// `gantz_edit::base::BASE_TIMESTAMP`, so the re-parse reproduces
 /// the primitive commit addresses loaded at startup. The reset demo's
 /// `ref`s still resolve and it recompiles. With a wall-clock timestamp
 /// the re-parsed demo would reference fresh primitive commits absent from
@@ -2853,9 +2869,9 @@ fn demo_pattern_partial_evals_are_silent() {
 fn reset_then_reopen_demo_recompiles() {
     use gantz_core::compile::{Config, push_pull_entrypoints};
 
-    let ts = gantz_egui::base::BASE_TIMESTAMP;
+    let ts = gantz_edit::base::BASE_TIMESTAMP;
     let parse = || -> DataReg {
-        gantz_egui::export::parse_export_at(gantz_base::BYTES, ts, &crate::node::codec())
+        gantz_edit::export::parse_export_at(gantz_base::BYTES, ts, crate::node::codec().data())
             .expect("parse base")
     };
     let startup = parse();
@@ -2943,7 +2959,7 @@ fn base_names_do_not_shadow_builtins() {
     let loaded = gantz_cli::headless::load_sources(
         &sources,
         &[],
-        gantz_egui::base::BASE_TIMESTAMP,
+        gantz_edit::base::BASE_TIMESTAMP,
         &crate::node::codec(),
     );
     for (source, parsed) in sources.iter().zip(&loaded.parsed) {
@@ -2974,10 +2990,10 @@ fn base_names_do_not_shadow_builtins() {
 fn base_sources_parse_reproducibly() {
     use std::collections::BTreeMap;
     let heads = |source: &gantz_cli::headless::Source| -> BTreeMap<_, _> {
-        gantz_egui::export::parse_export_at(
+        gantz_edit::export::parse_export_at(
             &source.bytes,
-            gantz_egui::base::BASE_TIMESTAMP,
-            &crate::node::codec(),
+            gantz_edit::base::BASE_TIMESTAMP,
+            crate::node::codec().data(),
         )
         .unwrap_or_else(|e| panic!("{}: parse failed: {e}", source.label))
         .heads()
@@ -3017,10 +3033,10 @@ const PLYPHON_DEMOS: [&str; 10] = [
 fn plyphon_base_demos_derive_and_build() {
     use bevy_gantz_plyphon::plyphon;
 
-    let registry: DataReg = gantz_egui::export::parse_export_at(
+    let registry: DataReg = gantz_edit::export::parse_export_at(
         gantz_plyphon::BASE_BYTES,
-        gantz_egui::base::BASE_TIMESTAMP,
-        &crate::node::codec(),
+        gantz_edit::base::BASE_TIMESTAMP,
+        crate::node::codec().data(),
     )
     .expect("parse");
     let reified = reify_all(&registry);
@@ -3092,10 +3108,10 @@ fn plyphon_base_demos_derive_and_build() {
 #[test]
 fn cross_source_base_refs_resolve_via_seed() {
     use std::collections::BTreeMap;
-    let ts = gantz_egui::base::BASE_TIMESTAMP;
+    let ts = gantz_edit::base::BASE_TIMESTAMP;
 
     let core: DataReg =
-        gantz_egui::export::parse_export_at(gantz_base::BYTES, ts, &crate::node::codec())
+        gantz_edit::export::parse_export_at(gantz_base::BYTES, ts, crate::node::codec().data())
             .expect("parse core");
     // The name to head graph associations the seeded parse resolves
     // foreign refs through.
@@ -3112,8 +3128,8 @@ fn cross_source_base_refs_resolve_via_seed() {
   (-> a (add0 0)) (-> b (add0 1)) (-> add0 out))";
 
     // Unseeded, the foreign name cannot resolve.
-    match gantz_egui::export::parse_export_at(text.as_bytes(), ts, &crate::node::codec()) {
-        Err(gantz_egui::export::ParseExportError::Format(e)) => assert!(
+    match gantz_edit::export::parse_export_at(text.as_bytes(), ts, crate::node::codec().data()) {
+        Err(gantz_edit::export::ParseExportError::Format(e)) => assert!(
             matches!(&e.kind, gantz_format::ErrorKind::MissingDependency(n) if n == "add"),
             "unexpected error kind: {e:?}",
         ),
@@ -3122,11 +3138,11 @@ fn cross_source_base_refs_resolve_via_seed() {
     }
 
     // Seeded with the core source's names, it resolves to the core content.
-    let domain: DataReg = gantz_egui::export::parse_export_seeded_at(
+    let domain: DataReg = gantz_edit::export::parse_export_seeded_at(
         text.as_bytes(),
         ts,
         &seed,
-        &crate::node::codec(),
+        crate::node::codec().data(),
     )
     .expect("seeded parse");
     let mut merged = core;
@@ -3148,9 +3164,12 @@ fn cross_source_base_refs_resolve_via_seed() {
     });
 
     // The domain source's own export keeps `add` by name only.
-    let out =
-        gantz_egui::export::export_names_sexpr_named(&merged, ["wrap-add"], &crate::node::codec())
-            .expect("per-source export");
+    let out = gantz_edit::export::export_names_sexpr_named(
+        &merged,
+        ["wrap-add"],
+        crate::node::codec().data(),
+    )
+    .expect("per-source export");
     assert!(out.contains("(graph wrap-add"), "own graph present:\n{out}");
     assert!(out.contains("(ref add"), "foreign ref by name:\n{out}");
     assert!(

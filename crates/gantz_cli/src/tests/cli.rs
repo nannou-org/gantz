@@ -1,7 +1,7 @@
 use super::conf;
 use crate::headless::{self, Source};
 use crate::{Emit, check, compile, fmt, is_address_mode, list, run_graph};
-use gantz_egui::base::BASE_TIMESTAMP;
+use gantz_edit::base::BASE_TIMESTAMP;
 use std::borrow::Cow;
 use std::ops::Range;
 
@@ -58,13 +58,13 @@ fn fmt_rewrites_labels_and_is_idempotent() {
 #[test]
 fn fmt_keeps_address_mode() {
     let codec = conf().codec;
-    let base = gantz_egui::export::parse_export_at(gantz_base::BYTES, BASE_TIMESTAMP, &codec)
+    let base = gantz_edit::export::parse_export_at(gantz_base::BYTES, BASE_TIMESTAMP, codec.data())
         .expect("parse base");
     let heads: Vec<_> = base
         .heads()
         .map(|(n, _)| gantz_ca::Head::Branch(n.clone()))
         .collect();
-    let text = gantz_egui::export::export_heads_sexpr(&base, &heads, &codec).expect("export");
+    let text = gantz_edit::export::export_heads_sexpr(&base, &heads, codec.data()).expect("export");
     assert!(is_address_mode(&text));
 
     let sources = vec![Source {

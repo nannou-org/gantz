@@ -76,7 +76,7 @@ impl NodeInstances {
                 return Ok(entry);
             }
         }
-        let inst = codec.reify_ui(data)?;
+        let inst = codec.reify(data)?;
         let (baseline, lost) = match inst.erase() {
             Ok(roundtrip) => (roundtrip.content_addr(), data.lost_in(&roundtrip)),
             Err(_) => (data.content_addr(), Vec::new()),
@@ -301,7 +301,7 @@ mod tests {
         let mut cache = NodeInstances::default();
         let mut entry = cache.take(&codec, 0, &old).unwrap();
         // Stand-in for an in-place UI edit of the instance.
-        entry.inst = codec.reify_ui(&new).unwrap();
+        entry.inst = codec.reify(&new).unwrap();
         entry.src = entry.inst.erase().unwrap();
         let ptr = inst_ptr(&entry);
         cache.put(0, entry);
@@ -381,7 +381,7 @@ mod tests {
         let mut entry = cache.take(&codec, 0, &data).unwrap();
         assert_eq!(entry.lost, vec!["future".to_string()]);
         // Stand-in for an in-place UI edit of the instance.
-        entry.inst = codec.reify_ui(&expr_data("(* $l $r)")).unwrap();
+        entry.inst = codec.reify(&expr_data("(* $l $r)")).unwrap();
         let mut weight = data.clone();
         assert!(!cache.write_back(0, entry, &mut weight));
         assert_eq!(weight, data);
@@ -399,7 +399,7 @@ mod tests {
         let mut entry = cache.take(&codec, 0, &old).unwrap();
         assert!(entry.lost.is_empty());
         assert_eq!(entry.baseline, old.content_addr());
-        entry.inst = codec.reify_ui(&new).unwrap();
+        entry.inst = codec.reify(&new).unwrap();
         let mut weight = old;
         assert!(cache.write_back(0, entry, &mut weight));
         assert_eq!(weight, new);
@@ -428,7 +428,7 @@ mod tests {
         let new = expr_data("(* $l $r)");
         let mut cache = NodeInstances::default();
         let mut entry = cache.take(&codec, 0, &old).unwrap();
-        entry.inst = codec.reify_ui(&new).unwrap();
+        entry.inst = codec.reify(&new).unwrap();
         let mut weight = old;
         assert!(cache.restore(0, entry, &mut weight, true, true));
         assert_eq!(weight, new);
@@ -446,7 +446,7 @@ mod tests {
         let mut cache = NodeInstances::default();
         for validate in [false, true] {
             let mut entry = cache.take(&codec, 0, &old).unwrap();
-            entry.inst = codec.reify_ui(&new).unwrap();
+            entry.inst = codec.reify(&new).unwrap();
             let mut weight = old.clone();
             assert!(!cache.restore(0, entry, &mut weight, false, validate));
             assert_eq!(weight, old);

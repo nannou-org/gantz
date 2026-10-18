@@ -118,7 +118,7 @@ fn store_name() -> String {
 /// The [`gantz_cli`] configuration over the app's node set.
 #[cfg(not(target_arch = "wasm32"))]
 fn conf() -> gantz_cli::Conf {
-    use gantz_egui::base::BaseSource;
+    use gantz_edit::base::BaseSource;
     gantz_cli::Conf {
         codec: node::codec(),
         builtins: node::builtins(),
@@ -175,7 +175,7 @@ fn setup_resources(
         Ok(meta) => {
             upgrade_store(&mut storage, meta.format, &mut registry, &mut persisted);
             // Stored graphs and references may still use old base names.
-            let renames = gantz_egui::base::renames(&sources.0);
+            let renames = gantz_edit::base::renames(&sources.0);
             bevy_gantz_egui::storage::rename(&mut *storage, &mut registry, &renames, timestamp());
         }
         Err(e) => {

@@ -2,8 +2,7 @@
 //! pre-composed named graphs.
 
 use crate::export::ParseExportError;
-use crate::reg::Names;
-use gantz_ca::{GraphAddr, Name};
+use gantz_ca::{CommitAddr, GraphAddr, Name};
 use std::collections::BTreeMap;
 
 /// One domain's baked-in base `.gantz` export.
@@ -18,6 +17,9 @@ pub struct BaseSource {
     /// resolves an old name to its new name's graph. See [`renames`].
     pub renames: &'static [(&'static str, &'static str)],
 }
+
+/// Named heads, ordered by name.
+pub type Names = BTreeMap<Name, CommitAddr>;
 
 /// The fixed timestamp used to stamp the base's hand-authored graphs.
 ///

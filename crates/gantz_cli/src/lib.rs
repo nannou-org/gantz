@@ -40,8 +40,8 @@
 
 use crate::headless::Source;
 use clap::{Args, Subcommand, ValueEnum};
-use gantz_egui::base::BASE_TIMESTAMP;
-use gantz_egui::export::ParseExportError;
+use gantz_edit::base::BASE_TIMESTAMP;
+use gantz_edit::export::ParseExportError;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io::IsTerminal;
@@ -68,7 +68,7 @@ pub struct Conf {
     /// The Steel modules that every graph's VM registers beyond the core set.
     pub steel_modules: Vec<gantz_core::vm::SteelModule>,
     /// The embedded base sources, in load order.
-    pub base_sources: Vec<gantz_egui::base::BaseSource>,
+    pub base_sources: Vec<gantz_edit::base::BaseSource>,
     /// Every entrypoint to compile for a graph.
     pub entrypoints: fn(
         gantz_core::node::GetNode<'_>,
@@ -483,7 +483,7 @@ fn with_sources(
 /// name an earlier source defined is a warning. A base graph's old name
 /// resolves to the graph, so a file written before a rename still loads.
 fn load(conf: &Conf, sources: &[Source], targets: Range<usize>) -> (headless::Loaded, Output) {
-    let renames = gantz_egui::base::renames(&conf.base_sources);
+    let renames = gantz_edit::base::renames(&conf.base_sources);
     let loaded = headless::load_sources(sources, &renames, BASE_TIMESTAMP, &conf.codec);
     let mut output = Output::default();
     for (source, parsed) in sources.iter().zip(&loaded.parsed) {
@@ -563,9 +563,9 @@ pub fn fmt(conf: &Conf, sources: &[Source], targets: Range<usize>, check: bool) 
             continue;
         };
         let canonical = if is_address_mode(text) {
-            gantz_egui::format::to_string(&parsed.registry, &codec)
+            gantz_edit::format::to_string(&parsed.registry, codec.data())
         } else {
-            gantz_egui::format::to_string_named(&parsed.registry, &codec)
+            gantz_edit::format::to_string_named(&parsed.registry, codec.data())
         };
         let canonical = match canonical {
             Ok(canonical) => canonical,
@@ -860,7 +860,7 @@ fn target_graph<'a>(
             }
             name
         }
-        None => gantz_egui::export::unique_root_name(registry).ok_or_else(|| {
+        None => gantz_edit::export::unique_root_name(registry).ok_or_else(|| {
             let names: Vec<String> = registry.heads().map(|(n, _)| n.to_string()).collect();
             Some(format!(
                 "{label}: no unique root graph, pass --graph <NAME>. Graphs: {}",

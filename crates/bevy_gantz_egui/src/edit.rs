@@ -284,7 +284,7 @@ pub fn on_copy_nodes(
 /// Handle paste selection payloads.
 ///
 /// Resolves the clipboard text via [`bevy_egui::EguiClipboard`] when the
-/// payload does not carry it. Parses it into a [`gantz_egui::export::Copied`],
+/// payload does not carry it. Parses it into a [`gantz_edit::export::Copied`],
 /// merges registry dependencies, adds the subgraph, maps positions, and
 /// selects the pasted nodes.
 pub fn on_paste(

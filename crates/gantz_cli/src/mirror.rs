@@ -10,7 +10,7 @@
 //! Nothing here touches the network. The registry is the caller's.
 
 use gantz_ca as ca;
-use gantz_egui::export::ParseExportError;
+use gantz_edit::export::ParseExportError;
 use gantz_egui::node::NodeCodec;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -135,7 +135,7 @@ impl Mirror {
         let mut results = Vec::new();
         let mut paths: Vec<PathBuf> = std::fs::read_dir(&self.dir)?
             .filter_map(|entry| entry.ok().map(|e| e.path()))
-            .filter(|path| gantz_egui::export::is_gantz_path(path))
+            .filter(|path| gantz_edit::export::is_gantz_path(path))
             .collect();
         paths.sort();
         for path in paths {
@@ -210,7 +210,7 @@ pub fn filename(root: &ca::Name) -> Option<String> {
         || s.contains(['/', '\\', '\0'])
         || s == ".."
         || s == ".";
-    (!unusable).then(|| format!("{s}.{}", gantz_egui::export::FILE_EXTENSION))
+    (!unusable).then(|| format!("{s}.{}", gantz_edit::export::FILE_EXTENSION))
 }
 
 /// The inline-name text of exactly `names`, with references to other names
@@ -221,7 +221,7 @@ pub fn render(
     codec: &NodeCodec,
 ) -> Result<String, gantz_format::FormatError> {
     let names: Vec<String> = names.iter().map(ToString::to_string).collect();
-    gantz_egui::export::export_names_sexpr_named(registry, &names, codec)
+    gantz_edit::export::export_names_sexpr_named(registry, &names, codec.data())
 }
 
 /// Parse `bytes` seeded with the registry's names and the file's pins, and
@@ -239,7 +239,7 @@ pub fn apply_text(
     codec: &NodeCodec,
 ) -> Result<Applied, ParseExportError> {
     let seed = seed(registry, file);
-    let parsed = gantz_egui::export::parse_export_seeded_at(bytes, now, &seed, codec)?;
+    let parsed = gantz_edit::export::parse_export_seeded_at(bytes, now, &seed, codec.data())?;
     let newest = registry
         .commits()
         .values()
