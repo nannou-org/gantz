@@ -91,7 +91,7 @@ pub fn reify_all(
     codec: &gantz_egui::node::NodeCodec,
 ) -> (Reified, Vec<gantz_core::data::EnsureError>) {
     let mut reified = Reified::new();
-    let errs = reified.ensure_all_with(reg, |nd| codec.reify_ui(nd).map(|inst| inst.node));
+    let errs = reified.ensure_all_with(reg, |nd| codec.reify(nd).map(|inst| inst.node));
     (reified, errs)
 }
 

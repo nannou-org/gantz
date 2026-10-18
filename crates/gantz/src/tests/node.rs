@@ -230,7 +230,7 @@ fn builtins_round_trip_through_codec() {
     for name in builtins.names() {
         let nd = builtins.node_data(name).expect("named builtin");
         let inst = codec
-            .reify_ui(nd)
+            .reify(nd)
             .unwrap_or_else(|e| panic!("builtin `{name}` failed to reify: {e}"));
         let back = inst
             .erase()
@@ -468,7 +468,7 @@ fn unknown_unit_name_fails_to_reify() {
             Datum::Str("NoSuchUnit".to_string()),
         )]),
     );
-    let err = match crate::node::codec().reify_ui(&nd) {
+    let err = match crate::node::codec().reify(&nd) {
         Ok(_) => panic!("an unknown unit name must fail to reify"),
         Err(err) => err,
     };
@@ -527,7 +527,7 @@ fn node_set_erases_canonically() {
             nd.tag,
         );
         let inst = codec
-            .reify_ui(&nd)
+            .reify(&nd)
             .unwrap_or_else(|e| panic!("case {i}: reify failed: {e}"));
         let nd2 = inst.erase().expect("re-erase");
         let back = inst.node;

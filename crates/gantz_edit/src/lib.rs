@@ -7,13 +7,24 @@
 //!   that carry it between commits.
 //! - [`section`] declares the registry metadata sections, such as
 //!   descriptions, demos and views.
+//! - [`codec`] converts between a node set's typed nodes and their stored
+//!   form.
 //! - [`NamedRef`] references a graph by name. [`resync`] keeps every
 //!   reference current, and [`cycle`] refuses references that would form a
 //!   cycle.
 
+#[doc(hidden)]
+pub use gantz_ca;
+#[doc(hidden)]
+pub use gantz_core;
+#[doc(hidden)]
+pub use gantz_format;
+#[doc(hidden)]
+pub use gantz_nodetag;
 pub use named_ref::NamedRef;
 pub use view::{Camera, Layout, NodeId, SceneView};
 
+pub mod codec;
 pub mod cycle;
 pub mod named_ref;
 pub mod resync;

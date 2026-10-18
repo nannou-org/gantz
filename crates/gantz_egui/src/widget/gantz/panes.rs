@@ -469,7 +469,7 @@ where
                             else {
                                 continue;
                             };
-                            let Ok(inst) = codec.reify_ui(weight) else {
+                            let Ok(inst) = codec.reify(weight) else {
                                 continue;
                             };
                             labels.insert(path, inst.node.name(env).to_string());
@@ -576,9 +576,7 @@ fn render_node_view<Access>(
                 .node_weight(graph_scene::NodeIndex::new(ix))
                 .is_some_and(|w| match data.instances.peek(ix, w) {
                     Some(inst) => inst.node.view_no_margin(),
-                    None => codec
-                        .reify_ui(w)
-                        .is_ok_and(|inst| inst.node.view_no_margin()),
+                    None => codec.reify(w).is_ok_and(|inst| inst.node.view_no_margin()),
                 })
         })
         .unwrap_or(false);
@@ -952,7 +950,7 @@ fn node_output_counts(
     let ctx = gantz_core::node::MetaCtx::new(&get_node);
     g.node_references()
         .filter_map(|n| {
-            let inst = codec.reify_ui(n.weight()).ok()?;
+            let inst = codec.reify(n.weight()).ok()?;
             Some((n.id().index(), inst.node.n_outputs(ctx)))
         })
         .collect()

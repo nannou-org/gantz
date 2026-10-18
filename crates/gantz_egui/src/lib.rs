@@ -36,6 +36,8 @@ pub use gantz_ca;
 #[doc(hidden)]
 pub use gantz_core;
 #[doc(hidden)]
+pub use gantz_edit;
+#[doc(hidden)]
 pub use gantz_format;
 #[doc(hidden)]
 pub use gantz_nodetag;
@@ -953,7 +955,7 @@ pub(crate) fn inlet_outlet_ids(
     let mut inlets = vec![];
     let mut outlets = vec![];
     for n_ref in g.node_references() {
-        let Ok(inst) = env.codec.reify_ui(n_ref.weight()) else {
+        let Ok(inst) = env.codec.reify(n_ref.weight()) else {
             continue;
         };
         match inst.node.role(ctx) {

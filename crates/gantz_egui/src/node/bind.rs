@@ -155,7 +155,7 @@ fn targets(env: &Env<'_>, graph: &DataGraph, me: Option<node::Id>) -> Vec<(node:
         .node_references()
         .filter(|n| Some(n.id().index()) != me)
         .filter_map(|n| {
-            let inst = env.codec.reify_ui(n.weight()).ok()?;
+            let inst = env.codec.reify(n.weight()).ok()?;
             let eligible = inst.node.stateful(meta) || !inst.node.push_eval(meta).is_empty();
             eligible.then(|| (n.id().index(), inst.node.name(env).into_owned()))
         })

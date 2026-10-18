@@ -108,7 +108,7 @@ pub fn env<'a>(
 /// compiled in, are logged once and remain cache misses that typed lookups
 /// degrade over.
 pub fn refresh_cache(reg: &Registry, cache: &mut GraphCache, codec: &NodeCodec) {
-    let reify = |nd: &ca::NodeData| codec.reify_ui(nd).map(|inst| inst.node);
+    let reify = |nd: &ca::NodeData| codec.reify(nd).map(|inst| inst.node);
     for e in cache.0.ensure_all_with(reg, reify) {
         log::error!("failed to reify registry graph: {e}");
     }

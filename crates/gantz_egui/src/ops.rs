@@ -191,7 +191,7 @@ pub fn create_node(
 
     // Register the new node with the VM. This is its one transient typed
     // appearance.
-    match codec.reify_ui(&graph[node_ix]) {
+    match codec.reify(&graph[node_ix]) {
         Ok(inst) => {
             let node_path = [node_ix.index()];
             let reg_ctx = node::RegCtx::new(get_node, &node_path, vm);
@@ -251,7 +251,7 @@ pub fn replace_node(
         log::error!("ReplaceNode: unknown node type: {node_type}");
         return false;
     };
-    let inst = match codec.reify_ui(&node) {
+    let inst = match codec.reify(&node) {
         Ok(inst) => inst,
         Err(e) => {
             log::error!("ReplaceNode: cannot reify '{node_type}': {e}");
@@ -723,7 +723,7 @@ pub fn inspect_edge(
 
     // Register the new node with the VM. This is its one transient typed
     // appearance.
-    match codec.reify_ui(&graph[inspect_id]) {
+    match codec.reify(&graph[inspect_id]) {
         Ok(inst) => {
             let node_path = [inspect_id.index()];
             let reg_ctx = node::RegCtx::new(get_node, &node_path, vm);
