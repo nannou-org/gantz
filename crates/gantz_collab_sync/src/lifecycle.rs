@@ -161,12 +161,6 @@ pub fn resync_headless(
     now: ca::Timestamp,
 ) -> Vec<gantz_edit::resync::Moved> {
     let moves = gantz_edit::resync::resync(registry, now);
-    for m in &moves {
-        if gantz_edit::section::view(registry, &m.new_commit).is_none() {
-            if let Some(view) = gantz_edit::section::view(registry, &m.old_commit) {
-                gantz_edit::section::set_view(registry, m.new_commit, &view);
-            }
-        }
-    }
+    gantz_edit::resync::carry_views(registry, &moves);
     moves
 }

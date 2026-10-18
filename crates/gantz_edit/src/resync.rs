@@ -14,7 +14,7 @@
 
 use crate::named_ref::{NamedRef, named_ref_of, with_named_ref_mut};
 use gantz_ca::{CommitAddr, DataGraph, GraphAddr, Name, Registry};
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::time::Duration;
 
 /// A named graph whose commit moved during [`resync`] or a rename cascade.
@@ -26,6 +26,16 @@ pub struct Moved {
     pub old_commit: CommitAddr,
     /// The commit the name points at now.
     pub new_commit: CommitAddr,
+}
+
+/// The result of a [`rename`].
+#[derive(Clone, Debug, Default)]
+pub struct Renamed {
+    /// Each head that moved, nested descendants included, with its new name.
+    pub heads: BTreeMap<Name, Name>,
+    /// The named graphs whose commits moved, in order. Names are the new
+    /// names.
+    pub moves: Vec<Moved>,
 }
 
 /// Every [`NamedRef`] in `graph` as its name, the graph it points at and
@@ -336,6 +346,78 @@ pub fn promote_nested(
     moves
 }
 
+/// Rename named graphs. Each `(old, new)` pair renames `old` and the names
+/// nested under it, `old:*`.
+///
+/// A head moves with its name-keyed metadata when the new name is free. See
+/// [`Registry::rename_head`]. A pair whose new name, or a name it would give
+/// a descendant, already has a head moves no head.
+///
+/// Every [`NamedRef`] that names an old name takes the new name, whether or
+/// not the old head exists, and the graph that holds it is recommitted. A
+/// pinned reference keeps its target. If a head or reference moved, [`resync`]
+/// then brings each sync-enabled reference up to its head commit. A demo
+/// association that names an old name follows it, and each moved graph's view
+/// carries to its new commit. A rename that matches nothing changes nothing.
+pub fn rename(registry: &mut Registry, timestamp: Duration, renames: &[(Name, Name)]) -> Renamed {
+    let renamed = |name: &Name| {
+        renames
+            .iter()
+            .find_map(|(old, new)| name.replace_prefix(old, new))
+    };
+
+    let mut heads = BTreeMap::new();
+    for (old, new) in renames {
+        let subtree: Vec<(Name, Name)> = registry
+            .heads()
+            .filter_map(|(n, _)| Some((n.clone(), n.replace_prefix(old, new)?)))
+            .collect();
+        if subtree.iter().all(|(_, n)| registry.head(n).is_none()) {
+            heads.extend(subtree);
+        }
+    }
+    for (old, new) in &heads {
+        registry.rename_head(old, new.clone());
+    }
+
+    let mut moves = Vec::new();
+    let all: Vec<(Name, CommitAddr)> = registry.heads().map(|(n, c)| (n.clone(), c)).collect();
+    for (name, commit) in all {
+        moves.extend(commit_rewritten(registry, timestamp, &name, commit, |nr| {
+            let Some(new) = renamed(nr.name()) else {
+                return false;
+            };
+            nr.rename(new, nr.content_addr());
+            true
+        }));
+    }
+    let demos: Vec<(Name, String)> = crate::section::demos(registry).collect();
+    for (subject, demo) in demos {
+        let demo: Name = demo.parse().expect("infallible");
+        if let Some(new) = renamed(&demo) {
+            crate::section::set_demo(registry, subject, new.to_string());
+        }
+    }
+    if !heads.is_empty() || !moves.is_empty() {
+        moves.extend(resync(registry, timestamp));
+    }
+    carry_views(registry, &moves);
+    Renamed { heads, moves }
+}
+
+/// Carry each moved graph's view to its new commit, unless the new commit
+/// already has one. `moves` must be in the order they happened, so a graph
+/// that moved twice carries its view along both steps.
+pub fn carry_views(registry: &mut Registry, moves: &[Moved]) {
+    for m in moves {
+        if crate::section::view(registry, &m.new_commit).is_none() {
+            if let Some(view) = crate::section::view(registry, &m.old_commit) {
+                crate::section::set_view(registry, m.new_commit, &view);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,5 +529,148 @@ mod tests {
         let moved = resync(&mut registry, Duration::from_secs(11));
         assert_eq!(moved.len(), 1);
         assert_eq!(moved[0].name, "user".parse::<Name>().unwrap());
+    }
+
+    /// Commit a graph of `refs` under `name`, at its real address, so resync
+    /// can compare references with their names' graphs.
+    fn commit_refs(registry: &mut Registry, name: &str, refs: &[(&str, bool)]) -> CommitAddr {
+        let mut graph = DataGraph::default();
+        graph.add_node(NodeData::new("test", Datum::Map(vec![])));
+        for &(target, sync) in refs {
+            let target: Name = target.parse().unwrap();
+            let addr = registry
+                .named_commit(&target)
+                .map(|c| ContentAddr::from(c.graph))
+                .unwrap_or(ContentAddr::from([0; 32]));
+            let ref_ = gantz_core::node::Ref::new(addr);
+            let named_ref = match sync {
+                true => NamedRef::with_sync(target, ref_),
+                false => NamedRef::new(target, ref_),
+            };
+            graph.add_node(gantz_core::data::erase_node_typed(&named_ref).unwrap());
+        }
+        let graph_ca = gantz_ca::graph_addr(&graph);
+        let name: Name = name.parse().unwrap();
+        registry.commit_graph_to_name(Duration::from_secs(1), graph_ca, || graph, &name)
+    }
+
+    fn graph_of(registry: &Registry, name: &str) -> GraphAddr {
+        registry.named_commit(&name.parse().unwrap()).unwrap().graph
+    }
+
+    /// The only reference in `name`'s graph, as its name and target.
+    fn only_ref(registry: &Registry, name: &str) -> (Name, GraphAddr) {
+        let graph = registry.graph(&graph_of(registry, name)).unwrap();
+        let refs: Vec<_> = named_refs(graph).map(|(n, ga, _)| (n, ga)).collect();
+        assert_eq!(refs.len(), 1, "{refs:?}");
+        refs.into_iter().next().unwrap()
+    }
+
+    #[test]
+    fn rename_moves_children_and_follows_references() {
+        let mut registry = Registry::default();
+        commit_refs(&mut registry, "uirow:1", &[]);
+        commit_refs(&mut registry, "uirow", &[("uirow:1", true)]);
+        commit_refs(&mut registry, "demo-row", &[]);
+        let user = commit_refs(&mut registry, "user", &[("uirow", true)]);
+        commit_refs(&mut registry, "pinned", &[("uirow", false)]);
+        let old_row = graph_of(&registry, "uirow");
+        crate::section::set_description(&mut registry, "uirow".parse().unwrap(), "a row".into());
+        crate::section::set_demo(&mut registry, "uirow".parse().unwrap(), "demo-row".into());
+        crate::section::set_view(&mut registry, user, &crate::SceneView::default());
+
+        let renames = [
+            ("uirow".parse().unwrap(), "ui.row".parse().unwrap()),
+            ("demo-row".parse().unwrap(), "demo.row".parse().unwrap()),
+        ];
+        let renamed = rename(&mut registry, Duration::from_secs(2), &renames);
+
+        let heads: BTreeSet<Name> = registry.heads().map(|(n, _)| n.clone()).collect();
+        assert_eq!(
+            heads,
+            names(["demo.row", "pinned", "ui.row", "ui.row:1", "user"])
+        );
+        assert_eq!(
+            renamed.heads.get(&"uirow:1".parse().unwrap()),
+            Some(&"ui.row:1".parse().unwrap())
+        );
+        // The row now references its renamed child. The sync reference follows
+        // the row's new graph, and the pinned one keeps the old graph.
+        assert_eq!(
+            only_ref(&registry, "ui.row"),
+            ("ui.row:1".parse().unwrap(), graph_of(&registry, "ui.row:1"))
+        );
+        assert_eq!(
+            only_ref(&registry, "user"),
+            ("ui.row".parse().unwrap(), graph_of(&registry, "ui.row"))
+        );
+        assert_eq!(
+            only_ref(&registry, "pinned"),
+            ("ui.row".parse().unwrap(), old_row)
+        );
+        // Metadata and views follow.
+        let row: Name = "ui.row".parse().unwrap();
+        assert_eq!(
+            crate::section::description(&registry, &row).as_deref(),
+            Some("a row")
+        );
+        assert_eq!(
+            crate::section::demo(&registry, &row).as_deref(),
+            Some("demo.row")
+        );
+        let user_commit = registry.head(&"user".parse().unwrap()).unwrap();
+        assert_ne!(user_commit, user);
+        assert!(crate::section::view(&registry, &user_commit).is_some());
+    }
+
+    /// A rename onto a taken name moves no head, but references follow the
+    /// new name.
+    #[test]
+    fn rename_onto_a_taken_name_moves_only_references() {
+        let mut registry = Registry::default();
+        let old_row = commit_refs(&mut registry, "uirow", &[]);
+        commit_refs(&mut registry, "ui.row", &[("uirow", false)]);
+        commit_refs(&mut registry, "user", &[("uirow", true)]);
+        let renames = [("uirow".parse().unwrap(), "ui.row".parse().unwrap())];
+        let renamed = rename(&mut registry, Duration::from_secs(2), &renames);
+        assert!(renamed.heads.is_empty());
+        assert_eq!(registry.head(&"uirow".parse().unwrap()), Some(old_row));
+        assert_eq!(
+            only_ref(&registry, "user"),
+            ("ui.row".parse().unwrap(), graph_of(&registry, "ui.row"))
+        );
+    }
+
+    /// A rename that matches nothing leaves a stale sync reference as it is.
+    #[test]
+    fn rename_matching_nothing_changes_nothing() {
+        let mut registry = Registry::default();
+        commit_refs(&mut registry, "lib", &[]);
+        let user = commit_refs(&mut registry, "user", &[("lib", true)]);
+        commit_refs(&mut registry, "lib", &[("other", false)]);
+        let renames = [("old".parse().unwrap(), "ns.old".parse().unwrap())];
+        let renamed = rename(&mut registry, Duration::from_secs(2), &renames);
+        assert!(renamed.heads.is_empty() && renamed.moves.is_empty());
+        assert_eq!(registry.head(&"user".parse().unwrap()), Some(user));
+    }
+
+    /// A reference to an old name with no head, as an old file that only
+    /// names a graph leaves, follows the new name.
+    #[test]
+    fn rename_moves_references_to_an_old_name_without_a_head() {
+        let mut registry = Registry::default();
+        commit_refs(&mut registry, "ui.row:1", &[]);
+        commit_refs(&mut registry, "ui.row", &[]);
+        commit_refs(&mut registry, "user", &[("uirow", true), ("uirow:1", true)]);
+        let renames = [("uirow".parse().unwrap(), "ui.row".parse().unwrap())];
+        rename(&mut registry, Duration::from_secs(2), &renames);
+        let graph = registry.graph(&graph_of(&registry, "user")).unwrap();
+        let refs: BTreeSet<(Name, GraphAddr)> =
+            named_refs(graph).map(|(n, ga, _)| (n, ga)).collect();
+        let expected = ["ui.row", "ui.row:1"]
+            .map(|n| (n.parse().unwrap(), graph_of(&registry, n)))
+            .into_iter()
+            .collect();
+        assert_eq!(refs, expected);
     }
 }
