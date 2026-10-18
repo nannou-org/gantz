@@ -79,17 +79,7 @@ pub fn on_export_head(
         .set_title("Export Graph")
         .set_file_name(&default_name)
         .add_filter("Gantz Export", &[gantz_egui::export::FILE_EXTENSION]);
-    bevy_tasks::AsyncComputeTaskPool::get()
-        .spawn(async move {
-            if let Some(handle) = dialog.save_file().await {
-                if let Err(e) = handle.write(text.as_bytes()).await {
-                    log::error!("ExportHead: failed to write: {e}");
-                } else {
-                    log::info!("Exported graph to {}", handle.file_name());
-                }
-            }
-        })
-        .detach();
+    spawn_save(dialog, text, "graph");
 }
 
 /// Handle export-all-named events.
@@ -124,17 +114,7 @@ pub fn on_export_all_named(
         .set_title("Export All Named Graphs")
         .set_file_name(&format!("gantz.{}", gantz_egui::export::FILE_EXTENSION))
         .add_filter("Gantz Export", &[gantz_egui::export::FILE_EXTENSION]);
-    bevy_tasks::AsyncComputeTaskPool::get()
-        .spawn(async move {
-            if let Some(handle) = dialog.save_file().await {
-                if let Err(e) = handle.write(text.as_bytes()).await {
-                    log::error!("ExportAllNamed: failed to write: {e}");
-                } else {
-                    log::info!("Exported all named graphs to {}", handle.file_name());
-                }
-            }
-        })
-        .detach();
+    spawn_save(dialog, text, "all named graphs");
 }
 
 /// Handle style export events.
@@ -155,17 +135,7 @@ pub fn on_export_style(_trigger: On<ExportStyleEvent>, gui_state: Res<GuiState>)
         .set_title("Export Style")
         .set_file_name(&format!("gantz-style.{ext}"))
         .add_filter("Gantz Style", &[ext]);
-    bevy_tasks::AsyncComputeTaskPool::get()
-        .spawn(async move {
-            if let Some(handle) = dialog.save_file().await {
-                if let Err(e) = handle.write(text.as_bytes()).await {
-                    log::error!("ExportStyle: failed to write: {e}");
-                } else {
-                    log::info!("Exported style to {}", handle.file_name());
-                }
-            }
-        })
-        .detach();
+    spawn_save(dialog, text, "style");
 }
 
 /// Handle style import events by opening a file dialog.
@@ -185,11 +155,7 @@ pub fn on_import_style(
     let dialog = rfd::AsyncFileDialog::new()
         .set_title("Import Style")
         .add_filter("Gantz Style", &[ext]);
-    let task = bevy_tasks::AsyncComputeTaskPool::get().spawn(async move {
-        let handle = dialog.pick_file().await?;
-        Some(handle.read().await)
-    });
-    cmds.insert_resource(StyleImportTask(task));
+    cmds.insert_resource(StyleImportTask(spawn_pick(dialog)));
 }
 
 /// Handle import file events for dropped `.gantz` files.
@@ -353,11 +319,7 @@ pub(crate) fn on_import(
     let dialog = rfd::AsyncFileDialog::new()
         .set_title("Import")
         .add_filter("Gantz Export", &[ext]);
-    let task = bevy_tasks::AsyncComputeTaskPool::get().spawn(async move {
-        let handle = dialog.pick_file().await?;
-        Some(handle.read().await)
-    });
-    cmds.insert_resource(ImportTask(task));
+    cmds.insert_resource(ImportTask(spawn_pick(dialog)));
 }
 
 /// Move a named graph to another base source. This is durable wherever the
@@ -388,4 +350,28 @@ pub(crate) fn on_reset_all_demos(
             cmds.trigger(ResetBaseGraphEvent(name.clone()));
         }
     }
+}
+
+/// Write `text` to the file the user picks in `dialog`, off the main thread.
+/// `what` names the content in the log, such as "graph".
+fn spawn_save(dialog: rfd::AsyncFileDialog, text: String, what: &'static str) {
+    bevy_tasks::AsyncComputeTaskPool::get()
+        .spawn(async move {
+            if let Some(handle) = dialog.save_file().await {
+                match handle.write(text.as_bytes()).await {
+                    Ok(()) => log::info!("Exported {what} to {}", handle.file_name()),
+                    Err(e) => log::error!("Failed to export {what}: {e}"),
+                }
+            }
+        })
+        .detach();
+}
+
+/// Read the file the user picks in `dialog`, off the main thread. The task
+/// yields `None` when the dialog is cancelled.
+fn spawn_pick(dialog: rfd::AsyncFileDialog) -> bevy_tasks::Task<Option<Vec<u8>>> {
+    bevy_tasks::AsyncComputeTaskPool::get().spawn(async move {
+        let handle = dialog.pick_file().await?;
+        Some(handle.read().await)
+    })
 }
