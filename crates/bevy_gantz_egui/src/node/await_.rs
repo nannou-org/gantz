@@ -210,27 +210,19 @@ pub fn pending_handle(state: &SteelVal) -> Option<TaskHandle> {
 /// and head navigation migrate it with the node.
 pub fn drive_awaits(
     registry: Res<crate::Registry>,
-    cache: Res<crate::GraphCache>,
-    builtins: Res<crate::BuiltinNodes>,
+    index: Res<super::DriverIndex>,
     mut vms: NonSendMut<bevy_gantz::head::HeadVms>,
     heads: Query<(Entity, &bevy_gantz::head::HeadRef), With<bevy_gantz::head::OpenHead>>,
     mut cmds: Commands,
 ) {
     for (entity, head_ref) in heads.iter() {
-        // The head's committed graph, read from the reified cache. It equals
-        // the working graph, see `bevy_gantz::head::WorkingGraph`.
         let Some(graph_ca) = registry.head_commit(&head_ref.0).map(|c| c.graph) else {
             continue;
         };
-        let Some(graph) = cache.get(&graph_ca) else {
+        let Some(paths) = index.get(&graph_ca).map(|driven| &driven.awaits) else {
             continue;
         };
-        let get_node =
-            |ca: &gantz_ca::ContentAddr| crate::lookup_node(&cache, &builtins.instances, ca);
-
-        let found = super::find_nodes::<Await>(&get_node, graph);
-
-        if found.is_empty() {
+        if paths.is_empty() {
             continue;
         }
 
@@ -238,8 +230,8 @@ pub fn drive_awaits(
             continue;
         };
 
-        for (path, _) in found {
-            let state = match node::state::extract_value(vm, &path) {
+        for path in paths {
+            let state = match node::state::extract_value(vm, path) {
                 Ok(Some(state)) => state,
                 Ok(None) => continue,
                 Err(e) => {
@@ -257,12 +249,12 @@ pub fn drive_awaits(
                 Ok(val) => value_pair(val),
                 Err(err) => error_pair(err),
             };
-            if let Err(e) = node::state::update_value(vm, &path, pair) {
+            if let Err(e) = node::state::update_value(vm, path, pair) {
                 bevy_log::error!("await result write failed: {e}");
                 continue;
             }
             let n_outputs = 2;
-            let entrypoint = gantz_core::compile::entrypoint::push(path, n_outputs);
+            let entrypoint = gantz_core::compile::entrypoint::push(path.clone(), n_outputs);
             // The current module may not compile this entry fn. For example,
             // the task resolved in the same update as a graph edit.
             let fn_name = gantz_core::compile::entry_fn_name(&entrypoint.id());

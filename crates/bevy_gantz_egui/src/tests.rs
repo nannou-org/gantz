@@ -5,6 +5,7 @@ use bevy_gantz::{EntrypointSet, GantzPlugin, VmSet};
 
 mod app_response;
 mod await_;
+mod driver_index;
 mod drop_unknown;
 mod layout_settle;
 mod load_bang;
@@ -35,7 +36,8 @@ fn codec() -> gantz_egui::node::NodeCodec {
 }
 
 /// A headless app with the gantz plugin, the test codec, the `vm::sync`
-/// system over the crate's entrypoints, and the given entrypoint driver. The
+/// system over the crate's entrypoints, the driven-node index and the given
+/// entrypoint driver. The
 /// minimal plumbing a driver needs.
 fn test_app<M>(driver: impl IntoScheduleConfigs<ScheduleSystem, M>) -> App {
     let mut app = App::new();
@@ -44,10 +46,14 @@ fn test_app<M>(driver: impl IntoScheduleConfigs<ScheduleSystem, M>) -> App {
         .insert_resource(crate::NodeCodecRes(codec()))
         .init_resource::<crate::GraphCache>()
         .init_resource::<crate::BuiltinNodes>()
+        .init_resource::<crate::node::DriverIndex>()
         .add_systems(
             Update,
             (
                 crate::vm::sync.in_set(VmSet),
+                crate::node::index_driven_nodes
+                    .after(VmSet)
+                    .before(EntrypointSet),
                 driver.after(VmSet).in_set(EntrypointSet),
             ),
         );

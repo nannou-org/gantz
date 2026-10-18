@@ -104,16 +104,14 @@ pub fn entrypoints(
 
 /// Drives `update!` nodes every update, independent of GUI visibility.
 ///
-/// For each open head, walks the head's committed graph to find all
-/// `UpdateBang` nodes. Sets their state to the current update delta time and
-/// triggers a single push evaluation for all of them. The committed graph is
-/// read from the reified cache. It equals the working graph, see
-/// [`bevy_gantz::head::WorkingGraph`].
+/// For each open head, reads the `UpdateBang` nodes of the head's committed
+/// graph from the [`DriverIndex`](super::DriverIndex). Sets their state to the
+/// current update delta time and triggers a single push evaluation for all of
+/// them.
 pub fn drive_update_bangs(
     time: Res<Time>,
     registry: Res<crate::Registry>,
-    cache: Res<crate::GraphCache>,
-    builtins: Res<crate::BuiltinNodes>,
+    index: Res<super::DriverIndex>,
     mut vms: NonSendMut<bevy_gantz::head::HeadVms>,
     heads: Query<(Entity, &bevy_gantz::head::HeadRef), With<bevy_gantz::head::OpenHead>>,
     mut cmds: Commands,
@@ -124,17 +122,9 @@ pub fn drive_update_bangs(
         let Some(graph_ca) = registry.head_commit(&head_ref.0).map(|c| c.graph) else {
             continue;
         };
-        let Some(graph) = cache.get(&graph_ca) else {
+        let Some(paths) = index.get(&graph_ca).map(|driven| &driven.update) else {
             continue;
         };
-        let get_node =
-            |ca: &gantz_ca::ContentAddr| crate::lookup_node(&cache, &builtins.instances, ca);
-
-        let paths: Vec<_> = super::find_nodes::<UpdateBang>(&get_node, graph)
-            .into_iter()
-            .map(|(path, _)| path)
-            .collect();
-
         if paths.is_empty() {
             continue;
         }
@@ -142,15 +132,15 @@ pub fn drive_update_bangs(
         let Some(vm) = vms.get_mut(&entity) else {
             continue;
         };
-        for path in &paths {
+        for path in paths {
             if let Err(e) = node::state::update_value(vm, path, SteelVal::NumV(dt)) {
                 bevy_log::error!("update! state update failed: {e}");
             }
         }
 
         let sources = paths
-            .into_iter()
-            .map(|path| gantz_core::compile::entrypoint::push_source(path, 1));
+            .iter()
+            .map(|path| gantz_core::compile::entrypoint::push_source(path.clone(), 1));
         let entrypoint = gantz_core::compile::entrypoint::from_sources(sources);
         cmds.trigger(bevy_gantz::vm::EvalEntryEvent {
             head: entity,
