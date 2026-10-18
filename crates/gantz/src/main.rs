@@ -126,18 +126,22 @@ fn conf() -> gantz_cli::Conf {
             BaseSource {
                 name: "gantz",
                 bytes: gantz_base::BYTES,
+                renames: &[],
             },
             BaseSource {
                 name: "plyphon",
                 bytes: gantz_plyphon::BASE_BYTES,
+                renames: &[],
             },
             BaseSource {
                 name: "rng",
                 bytes: gantz_rng::BASE_BYTES,
+                renames: &[],
             },
             BaseSource {
                 name: "pattern",
                 bytes: gantz_pattern::BASE_BYTES,
+                renames: &[],
             },
         ],
         entrypoints: bevy_gantz_egui::entrypoints,
@@ -171,7 +175,11 @@ fn setup_window(storage: Res<Pkv>, mut windows: Query<&mut Window, With<PrimaryW
     }
 }
 
-fn setup_resources(mut storage: ResMut<Pkv>, mut cmds: Commands) {
+fn setup_resources(
+    mut storage: ResMut<Pkv>,
+    sources: Res<bevy_gantz_egui::base::BaseSources>,
+    mut cmds: Commands,
+) {
     let (registry, unreadable) = gantz_store::load_registry(&*storage);
     let mut registry = Registry(registry);
     let meta = gantz_store::writable_meta(&*storage, &unreadable);
@@ -180,7 +188,12 @@ fn setup_resources(mut storage: ResMut<Pkv>, mut cmds: Commands) {
     // detected on the first incremental save.
     let mut persisted = gantz_store::PersistedRegistry::from_registry(&registry, unreadable);
     match meta {
-        Ok(meta) => upgrade_store(&mut storage, meta.format, &mut registry, &mut persisted),
+        Ok(meta) => {
+            upgrade_store(&mut storage, meta.format, &mut registry, &mut persisted);
+            // Stored graphs and references may still use old base names.
+            let renames = gantz_egui::base::renames(&sources.0);
+            bevy_gantz_egui::storage::rename(&mut *storage, &mut registry, &renames, timestamp());
+        }
         Err(e) => {
             let reason = match e {
                 gantz_store::Unwritable::Newer(_) => {

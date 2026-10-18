@@ -150,6 +150,23 @@ fn check_warns_on_redefined_name() {
     assert!(output.warnings[0].contains("`add` redefines"));
 }
 
+/// A file that names a base graph by an old name still checks.
+#[test]
+fn check_resolves_an_old_base_name() {
+    let old = Source {
+        label: "old.gantz".to_string(),
+        bytes: Cow::Owned(WRAP_ADD.replace("(ref add", "(ref plus").into_bytes()),
+    };
+    let (sources, targets) = with_base(vec![old]);
+    let output = check(&conf(), &sources, targets.clone());
+    assert_eq!(output.diagnostics, ["old.gantz: missing dependency `plus`"]);
+
+    let mut conf = conf();
+    conf.base_sources[0].renames = &[("plus", "add")];
+    let output = check(&conf, &sources, targets);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+}
+
 /// A program that logs its arguments, with a push source at the root and
 /// one in a nested graph. The nested `main!` is not an entry.
 const PROG: &str = "\

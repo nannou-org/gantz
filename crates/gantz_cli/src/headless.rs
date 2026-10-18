@@ -48,9 +48,11 @@ pub fn base_sources(conf: &Conf) -> Vec<Source> {
 
 /// Parse every source seeded with the names loaded so far, to a fixpoint. See
 /// [`gantz_egui::base::load_to_fixpoint`]. Later sources shadow earlier
-/// names, as in the app.
+/// names, as in the app. An old name in `renames` resolves to its new name's
+/// graph, see [`gantz_egui::base::with_old_names`].
 pub fn load_sources(
     sources: &[Source],
+    renames: &[(gantz_ca::Name, gantz_ca::Name)],
     now: gantz_ca::Timestamp,
     codec: &gantz_egui::node::NodeCodec,
 ) -> Loaded {
@@ -59,7 +61,7 @@ pub fn load_sources(
     let mut parsed: Vec<Option<Result<Parsed, ParseExportError>>> =
         sources.iter().map(|_| None).collect();
     let failed = gantz_egui::base::load_to_fixpoint(sources.len(), |ix| {
-        let seed = gantz_egui::base::seed_graph_addrs(&names, &registry);
+        let seed = gantz_egui::base::seed_graph_addrs(&names, renames, &registry);
         let text = std::str::from_utf8(&sources[ix].bytes).map_err(ParseExportError::Utf8)?;
         let (source, labels) = gantz_egui::format::from_str_labeled(text, now, &seed, codec)
             .map_err(ParseExportError::Format)?;

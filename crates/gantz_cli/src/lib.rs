@@ -480,13 +480,11 @@ fn with_sources(
 /// Parse every source to a fixpoint.
 ///
 /// Parse failures are returned as diagnostics. A target that redefines a
-/// name an earlier source defined is a warning.
-fn load(
-    sources: &[Source],
-    targets: Range<usize>,
-    codec: &gantz_egui::node::NodeCodec,
-) -> (headless::Loaded, Output) {
-    let loaded = headless::load_sources(sources, BASE_TIMESTAMP, codec);
+/// name an earlier source defined is a warning. A base graph's old name
+/// resolves to the graph, so a file written before a rename still loads.
+fn load(conf: &Conf, sources: &[Source], targets: Range<usize>) -> (headless::Loaded, Output) {
+    let renames = gantz_egui::base::renames(&conf.base_sources);
+    let loaded = headless::load_sources(sources, &renames, BASE_TIMESTAMP, &conf.codec);
     let mut output = Output::default();
     for (source, parsed) in sources.iter().zip(&loaded.parsed) {
         if let Err(e) = parsed {
@@ -521,7 +519,7 @@ fn load(
 /// Reify failures join the parse diagnostics.
 fn ready(conf: &Conf, sources: &[Source], targets: Range<usize>) -> (Ready, Output) {
     let codec = conf.codec;
-    let (loaded, mut output) = load(sources, targets, &codec);
+    let (loaded, mut output) = load(conf, sources, targets);
     let (reified, errs) = headless::reify_all(&loaded.registry, &codec);
     output
         .diagnostics
@@ -554,7 +552,7 @@ pub(crate) fn is_address_mode(text: &str) -> bool {
 /// written.
 pub fn fmt(conf: &Conf, sources: &[Source], targets: Range<usize>, check: bool) -> Output {
     let codec = conf.codec;
-    let (loaded, mut output) = load(sources, targets.clone(), &codec);
+    let (loaded, mut output) = load(conf, sources, targets.clone());
     for ix in targets {
         let Ok(parsed) = &loaded.parsed[ix] else {
             continue;

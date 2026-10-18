@@ -592,6 +592,69 @@ fn node_set_keeps_its_addresses_through_the_store_and_the_wire() {
     }
 }
 
+/// A store in a new temp dir, and the dir for the test to remove.
+fn temp_store() -> (crate::storage::Pkv, std::path::PathBuf) {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("gantz-store-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let store = crate::storage::Pkv::new(bevy_pkv::PkvStore::new_in_dir(&dir));
+    (store, dir)
+}
+
+/// A store saved before a rename follows it. The reference to the old name,
+/// the open heads, the focused head and the GUI state take the new name.
+#[test]
+fn a_store_follows_a_rename() {
+    use gantz_ca::Head;
+    use gantz_core::node::{Identity, Ref};
+    use gantz_edit::NamedRef;
+
+    let ts = std::time::Duration::from_secs(1);
+    let mut registry = DataReg::default();
+    let row = data_graph([erased(&Identity)]);
+    let (_, row_ga) = commit_to_name(&mut registry, ts, row, &name("uirow"));
+    let jam = data_graph([erased(&NamedRef::with_sync(
+        name("uirow"),
+        Ref::new(row_ga.into()),
+    ))]);
+    commit_to_name(&mut registry, ts, jam, &name("jam"));
+
+    let (mut store, dir) = temp_store();
+    let mut persisted = gantz_store::PersistedRegistry::default();
+    gantz_store::save_registry_incremental(&mut store, &registry, &mut persisted);
+    let old_row = Head::Branch(name("uirow"));
+    let jam = Head::Branch(name("jam"));
+    gantz_store::save_open_heads(&mut store, &[old_row.clone(), jam.clone()]);
+    gantz_store::save_focused_head(&mut store, &old_row);
+    let mut gui_state = bevy_gantz_egui::GuiState::default();
+    gui_state
+        .0
+        .open_heads
+        .insert(old_row.clone(), Default::default());
+    bevy_gantz_egui::storage::save_gui_state(&mut store, &gui_state);
+
+    let (mut registry, _) = gantz_store::load_registry(&store);
+    let renames = [(name("uirow"), name("ui.row"))];
+    bevy_gantz_egui::storage::rename(&mut store, &mut registry, &renames, ts * 2);
+
+    let row = Head::Branch(name("ui.row"));
+    assert_eq!(registry.head(&name("uirow")), None);
+    let jam_ga = registry.named_commit(&name("jam")).unwrap().graph;
+    let refs: Vec<_> = gantz_edit::resync::named_refs(&registry.graphs()[&jam_ga]).collect();
+    assert_eq!(refs, [(name("ui.row"), row_ga, true)]);
+    let heads = gantz_store::load_open_heads(&store).unwrap();
+    assert_eq!(heads, [row.clone(), jam]);
+    assert_eq!(gantz_store::load_focused_head(&store), Some(row.clone()));
+    let gui_state = bevy_gantz_egui::storage::load_gui_state(&store);
+    assert!(gui_state.0.open_heads.contains_key(&row));
+    assert!(!gui_state.0.open_heads.contains_key(&old_row));
+    drop(store);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// An older build read every non-negative integer back as unsigned, and
 /// stored each graph under the address of the form it was built in. The
 /// upgrade moves each graph to its canonical address. Its commits, the
@@ -626,13 +689,7 @@ fn a_format_zero_store_moves_to_canonical_addresses() {
         [(jam.clone(), old_ca)].into(),
     );
 
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("gantz-store-{}-{nanos}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut store = crate::storage::Pkv::new(bevy_pkv::PkvStore::new_in_dir(&dir));
+    let (mut store, dir) = temp_store();
     let mut persisted = gantz_store::PersistedRegistry::default();
     gantz_store::save_registry_incremental(&mut store, &registry, &mut persisted);
     let old_heads = [Head::Commit(old_ca), Head::Branch(jam.clone())];
@@ -2482,6 +2539,7 @@ fn base_pattern_combinator_nodes_evaluate() {
     });
     let loaded = gantz_cli::headless::load_sources(
         &sources,
+        &[],
         gantz_egui::base::BASE_TIMESTAMP,
         &crate::node::codec(),
     );
@@ -2884,6 +2942,7 @@ fn base_names_do_not_shadow_builtins() {
     let sources = gantz_cli::headless::base_sources(&crate::conf());
     let loaded = gantz_cli::headless::load_sources(
         &sources,
+        &[],
         gantz_egui::base::BASE_TIMESTAMP,
         &crate::node::codec(),
     );

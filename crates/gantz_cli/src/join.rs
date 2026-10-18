@@ -74,6 +74,7 @@ impl Peer {
         let handle = gantz_collab::spawn(identity, config);
         let registry = crate::headless::load_sources(
             &crate::headless::base_sources(conf),
+            &[],
             gantz_egui::base::BASE_TIMESTAMP,
             &conf.codec,
         )

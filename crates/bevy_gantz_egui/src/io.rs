@@ -194,23 +194,29 @@ pub fn on_import_style(
 
 /// Handle import file events for dropped `.gantz` files.
 ///
-/// Deserializes the export, optionally computes root names, merges into the
-/// registry, and opens the unique root head if requested.
+/// Deserializes the export, renames old base names, optionally computes root
+/// names, merges into the registry, and opens the unique root head if
+/// requested.
 pub fn on_import_file(
     trigger: On<ImportFileEvent>,
+    sources: Res<base::BaseSources>,
     mut registry: ResMut<Registry>,
     mut cache: ResMut<GraphCache>,
     codec: Res<NodeCodecRes>,
     mut cmds: Commands,
 ) {
     let event = trigger.event();
-    let export = match gantz_egui::export::parse_export(&event.bytes, &codec.0) {
+    let mut export = match gantz_egui::export::parse_export(&event.bytes, &codec.0) {
         Ok(e) => e,
         Err(e) => {
             log::error!("ImportFile: {e}");
             return;
         }
     };
+
+    // A file written before a base rename names the old base graphs.
+    let renames = gantz_egui::base::renames(&sources.0);
+    gantz_edit::resync::rename(&mut export, bevy_gantz::reg::timestamp(), &renames);
 
     // The root name is needed only to open a head. Compute it before the
     // merge consumes the export.
@@ -256,7 +262,8 @@ pub fn on_reset_base_graph(
         log::warn!("ResetBaseGraph: no base source recorded for '{name}'");
         return;
     };
-    let seed = gantz_egui::base::seed_graph_addrs(&base_names.0, &registry);
+    let renames = gantz_egui::base::renames(&sources.0);
+    let seed = gantz_egui::base::seed_graph_addrs(&base_names.0, &renames, &registry);
     let export: gantz_ca::Registry = match gantz_egui::export::parse_export_seeded_at(
         source.bytes,
         gantz_egui::base::BASE_TIMESTAMP,
