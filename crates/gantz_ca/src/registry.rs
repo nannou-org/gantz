@@ -216,6 +216,32 @@ impl Registry {
         prev.as_ref().and_then(Heads::decode)
     }
 
+    /// Rename the head `old` to `new`.
+    ///
+    /// Entries keyed by `old` in `WithName`-liveness sections move with it.
+    /// Returns the head's commit. Returns `None` and changes nothing when
+    /// `old` has no head or `new` already has one.
+    pub fn rename_head(&mut self, old: &Name, new: Name) -> Option<CommitAddr> {
+        if self.head(&new).is_some() {
+            return None;
+        }
+        let commit = self.head(old)?;
+        let old_key = Key::Name(old.clone());
+        let new_key = Key::Name(new.clone());
+        for section in self.sections.values_mut() {
+            if section.liveness == Liveness::WithName {
+                if let Some(value) = section.entries.remove(&old_key) {
+                    section.entries.insert(new_key.clone(), value);
+                }
+            }
+        }
+        if let Some(heads) = self.sections.get_mut(Heads::ID) {
+            heads.entries.remove(&old_key);
+        }
+        self.set_head(new, commit);
+        Some(commit)
+    }
+
     /// Look-up the commit address pointed to by the given head.
     pub fn head_commit_ca(&self, head: &Head) -> Option<CommitAddr> {
         match head {
@@ -707,6 +733,36 @@ mod tests {
             reg.section_entry("test.description", &Key::Name(name("alpha")))
                 .is_none()
         );
+    }
+
+    #[test]
+    fn rename_head_moves_with_name_metadata() {
+        let (mut reg, ca, cb) = test_registry();
+        let doc = |reg: &Registry, n: &str| {
+            reg.section_entry("test.description", &Key::Name(name(n)))
+                .is_some()
+        };
+        section_insert_datum(
+            &mut reg,
+            "test.description",
+            MergePolicy::KeepExisting,
+            Liveness::WithName,
+            Key::Name(name("alpha")),
+            &"doc".to_string(),
+        )
+        .unwrap();
+        assert_eq!(reg.rename_head(&name("alpha"), name("beta")), Some(ca));
+        assert_eq!(reg.head(&name("alpha")), None);
+        assert_eq!(reg.head(&name("beta")), Some(ca));
+        assert!(!doc(&reg, "alpha"));
+        assert!(doc(&reg, "beta"));
+
+        // A missing old head or a taken new name changes nothing.
+        assert_eq!(reg.rename_head(&name("alpha"), name("gamma")), None);
+        reg.set_head(name("gamma"), cb);
+        assert_eq!(reg.rename_head(&name("beta"), name("gamma")), None);
+        assert_eq!(reg.head(&name("beta")), Some(ca));
+        assert_eq!(reg.head(&name("gamma")), Some(cb));
     }
 
     #[test]
