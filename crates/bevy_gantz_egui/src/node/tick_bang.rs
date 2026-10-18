@@ -359,8 +359,7 @@ pub fn drive_tick_bangs(
     time: Res<Time>,
     epoch: Res<bevy_gantz::EvalEpoch>,
     registry: Res<crate::Registry>,
-    cache: Res<crate::GraphCache>,
-    builtins: Res<crate::BuiltinNodes>,
+    index: Res<super::DriverIndex>,
     mut vms: NonSendMut<bevy_gantz::head::HeadVms>,
     heads: Query<(Entity, &bevy_gantz::head::HeadRef), With<bevy_gantz::head::OpenHead>>,
     mut cmds: Commands,
@@ -370,22 +369,12 @@ pub fn drive_tick_bangs(
     let now = epoch.now_secs();
 
     for (entity, head_ref) in heads.iter() {
-        // The head's committed graph, read from the reified cache. It equals
-        // the working graph, see `bevy_gantz::head::WorkingGraph`.
         let Some(graph_ca) = registry.head_commit(&head_ref.0).map(|c| c.graph) else {
             continue;
         };
-        let Some(graph) = cache.get(&graph_ca) else {
+        let Some(ticks) = index.get(&graph_ca).map(|driven| &driven.tick) else {
             continue;
         };
-        let get_node =
-            |ca: &gantz_ca::ContentAddr| crate::lookup_node(&cache, &builtins.instances, ca);
-
-        let ticks: Vec<_> = super::find_nodes::<TickBang>(&get_node, graph)
-            .into_iter()
-            .map(|(path, tick)| (path, tick.duration()))
-            .collect();
-
         if ticks.is_empty() {
             continue;
         }
@@ -394,7 +383,7 @@ pub fn drive_tick_bangs(
             continue;
         };
 
-        for (path, dur) in &ticks {
+        for (path, dur) in ticks {
             // The inspector clamps to `MIN_DURATION`, but never divide by a
             // non-positive duration.
             if !(*dur > 0.0) {

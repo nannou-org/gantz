@@ -179,6 +179,7 @@ impl Plugin for GantzEguiPlugin {
             .init_resource::<GraphCache>()
             .init_resource::<BuiltinNodes>()
             .init_resource::<BaseNames>()
+            .init_resource::<node::DriverIndex>()
             .init_resource::<base::BaseNameSources>()
             .init_resource::<GuiState>()
             .init_resource::<TraceCapture>()
@@ -243,6 +244,10 @@ impl Plugin for GantzEguiPlugin {
                 (
                     // Recompiles whenever a head's compile inputs change.
                     vm::sync.in_set(bevy_gantz::VmSet),
+                    // The drivers read the driven nodes from the index.
+                    node::index_driven_nodes
+                        .after(bevy_gantz::VmSet)
+                        .before(bevy_gantz::EntrypointSet),
                     // Runs before the other drivers so a loaded graph
                     // evaluates its `load!` nodes before its first `update!`
                     // and `tick!` passes.
