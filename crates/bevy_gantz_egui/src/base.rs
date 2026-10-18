@@ -209,14 +209,14 @@ mod tests {
     fn partition_names_routes_by_attribution() {
         let mut name_sources = BaseNameSources::default();
         name_sources.0.insert("add".to_string(), "gantz");
-        name_sources.0.insert("demo-sine".to_string(), "plyphon");
-        let names = [name("add"), name("demo-sine"), name("new")];
+        name_sources.0.insert("demo.sine".to_string(), "plyphon");
+        let names = [name("add"), name("demo.sine"), name("new")];
         let partitioned = partition_names(names.iter(), &name_sources, "gantz");
         assert_eq!(
             partitioned.get("gantz"),
             Some(&vec![name("add"), name("new")]),
         );
-        assert_eq!(partitioned.get("plyphon"), Some(&vec![name("demo-sine")]));
+        assert_eq!(partitioned.get("plyphon"), Some(&vec![name("demo.sine")]));
     }
 
     /// An unrecorded nested name follows its parent's attribution, however
@@ -224,18 +224,18 @@ mod tests {
     #[test]
     fn partition_names_nested_follow_their_parent() {
         let mut name_sources = BaseNameSources::default();
-        name_sources.0.insert("demo-sine".to_string(), "plyphon");
+        name_sources.0.insert("demo.sine".to_string(), "plyphon");
         let names = [
-            name("demo-sine:child"),
-            name("demo-sine:child:grandchild"),
+            name("demo.sine:child"),
+            name("demo.sine:child:grandchild"),
             name("orphan:child"),
         ];
         let partitioned = partition_names(names.iter(), &name_sources, "gantz");
         assert_eq!(
             partitioned.get("plyphon"),
             Some(&vec![
-                name("demo-sine:child"),
-                name("demo-sine:child:grandchild"),
+                name("demo.sine:child"),
+                name("demo.sine:child:grandchild"),
             ]),
         );
         assert_eq!(partitioned.get("gantz"), Some(&vec![name("orphan:child")]));

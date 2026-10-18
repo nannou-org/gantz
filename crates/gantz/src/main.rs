@@ -126,22 +126,22 @@ fn conf() -> gantz_cli::Conf {
             BaseSource {
                 name: "gantz",
                 bytes: gantz_base::BYTES,
-                renames: &[],
+                renames: gantz_base::RENAMES,
             },
             BaseSource {
                 name: "plyphon",
                 bytes: gantz_plyphon::BASE_BYTES,
-                renames: &[],
+                renames: gantz_plyphon::BASE_RENAMES,
             },
             BaseSource {
                 name: "rng",
                 bytes: gantz_rng::BASE_BYTES,
-                renames: &[],
+                renames: gantz_rng::BASE_RENAMES,
             },
             BaseSource {
                 name: "pattern",
                 bytes: gantz_pattern::BASE_BYTES,
-                renames: &[],
+                renames: gantz_pattern::BASE_RENAMES,
             },
         ],
         entrypoints: bevy_gantz_egui::entrypoints,

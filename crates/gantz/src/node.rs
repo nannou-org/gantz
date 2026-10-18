@@ -108,12 +108,12 @@ pub fn push_plain_domains(app: &mut bevy::app::App) {
             gantz_egui::base::BaseSource {
                 name: "rng",
                 bytes: gantz_rng::BASE_BYTES,
-                renames: &[],
+                renames: gantz_rng::BASE_RENAMES,
             },
             gantz_egui::base::BaseSource {
                 name: "pattern",
                 bytes: gantz_pattern::BASE_BYTES,
-                renames: &[],
+                renames: gantz_pattern::BASE_RENAMES,
             },
         ]);
 }

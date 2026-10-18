@@ -62,6 +62,18 @@ pub use steel::{MODULE, modules};
 /// thin expr nodes.
 pub const BASE_BYTES: &[u8] = include_bytes!("../base.gantz");
 
+/// Earlier names of the base graphs, each as `(old, new)`. A host renames
+/// stored graphs and references that still use an old name.
+pub const BASE_RENAMES: &[(&str, &str)] = &[
+    ("rngbernoulli", "rng.bernoulli"),
+    ("rngchoose", "rng.choose"),
+    ("rngfoldin", "rng.foldin"),
+    ("rnginteger", "rng.integer"),
+    ("rngshuffle", "rng.shuffle"),
+    ("rngsplit", "rng.split"),
+    ("rnguniform", "rng.uniform"),
+];
+
 /// A 64-bit seed. See the [crate docs](crate).
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct Seed(pub u64);

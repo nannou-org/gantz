@@ -377,14 +377,14 @@ pub(crate) fn on_set_base_source(
     }
 }
 
-/// Reset every `demo-*` base graph by re-merging it from its base source.
+/// Reset every `demo.` base graph by re-merging it from its base source.
 pub(crate) fn on_reset_all_demos(
     _trigger: On<ForApp<gantz_egui::ResetAllDemos>>,
     base_names: Res<BaseNames>,
     mut cmds: Commands,
 ) {
     for name in base_names.0.keys() {
-        if name.to_string().starts_with("demo-") {
+        if gantz_egui::widget::graph_select::is_demo(name) {
             cmds.trigger(ResetBaseGraphEvent(name.clone()));
         }
     }

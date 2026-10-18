@@ -210,7 +210,7 @@ mod tests {
         attr("label", SExpr::Str(text.to_string()))
     }
 
-    /// The `demo-gui` body tree.
+    /// The `demo.gui` body tree.
     fn adder() -> SExpr {
         let dialer = |id, text| list(vec![ident("dialer"), attrs(vec![bind(id), label(text)])]);
         list(vec![
