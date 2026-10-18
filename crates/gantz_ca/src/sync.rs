@@ -133,7 +133,7 @@ pub struct Applied {
     pub blobs: Vec<(SectionId, ContentAddr)>,
     /// The number of snapshot commits whose absent parents were detached on
     /// insert because the sender truncated history below them. A local
-    /// [`prune`](crate::reach::prune) leaves the same semantic behind.
+    /// [`prune`](crate::Registry::prune) leaves the same semantic behind.
     pub truncated: usize,
 }
 

@@ -29,7 +29,7 @@ use crate::{
 };
 use gantz_ca::{
     BlobLiveness, Bytes, Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, HEADS_ID, Key,
-    Liveness, MergePolicy, MergeReport, Name, Registry, Section, SectionId, Value, blob_addr,
+    MergeReport, Name, Registry, Section, SectionEntry, SectionId, Value, blob_addr,
     sync::VerifyError, verify_graph,
 };
 use std::{
@@ -39,10 +39,6 @@ use std::{
 
 /// One session's served content. See the module docs.
 pub type SessionRegistry = Registry;
-
-/// One section entry with its section's id and semantics, as content
-/// carries it. See [`Registry::set_section_value`].
-pub type SectionEntry = (SectionId, MergePolicy, Liveness, Key, Value);
 
 /// The graph and blob bytes one [`ObjectRef::Closure`] answer carries before
 /// it stops at the next commit boundary. Well under the runtime's response
@@ -146,8 +142,8 @@ pub fn merge(
     for (section, liveness, _, bytes) in blobs {
         incoming.add_blob(section, liveness, bytes);
     }
-    for (id, policy, liveness, key, value) in sections {
-        incoming.set_section_value(id, policy, liveness, key, value);
+    for entry in sections {
+        incoming.set_section_entry(entry);
     }
     Ok(store.merge(incoming))
 }
@@ -264,9 +260,9 @@ pub fn set_name_meta(
     for id in held {
         store.remove_section_entry(&id, &key);
     }
-    for (id, policy, liveness, entry_key, value) in entries {
-        if entry_key == key && id.as_str() != HEADS_ID {
-            store.set_section_value(id, policy, liveness, entry_key, value);
+    for entry in entries {
+        if entry.key == key && entry.id.as_str() != HEADS_ID {
+            store.set_section_entry(entry);
         }
     }
 }
@@ -431,6 +427,7 @@ fn keyed_sections(store: &SessionRegistry, key: Key) -> impl Iterator<Item = Obj
 mod tests {
     use super::*;
     use gantz_ca::{BlobLiveness, ContentAddr, Datum, GraphAddr, NodeData, commit_addr};
+    use gantz_ca::{Liveness, MergePolicy};
     use std::time::Duration;
 
     fn name(s: &str) -> Name {
@@ -555,8 +552,15 @@ mod tests {
     fn objects_serves_present_refs_and_skips_absent_ones() {
         let (mut store, root_ca, tip_ca, ga1) = test_store();
         let blob = store.add_blob("dsp.buffer", BlobLiveness::ContentReferenced, &b"pcm"[..]);
-        let (id, policy, liveness, key, value) = view_entry(tip_ca);
-        store.set_section_value(id.clone(), policy, liveness, key.clone(), value.clone());
+        let entry = view_entry(tip_ca);
+        store.set_section_entry(entry.clone());
+        let SectionEntry {
+            id,
+            policy,
+            liveness,
+            key,
+            value,
+        } = entry;
         let absent = ContentAddr::from([9; 32]);
         let want = Want {
             refs: vec![
@@ -611,28 +615,27 @@ mod tests {
 
     /// An `egui.view`-shaped section entry keyed by the given commit.
     fn view_entry(ca: CommitAddr) -> SectionEntry {
-        (
-            "egui.view".to_string(),
-            MergePolicy::KeepExisting,
-            Liveness::WithCommit,
-            Key::Commit(ca),
-            Value::Datum(Datum::Map(vec![("zoom".to_string(), Datum::F64(1.5))])),
-        )
+        SectionEntry {
+            id: "egui.view".to_string(),
+            policy: MergePolicy::KeepExisting,
+            liveness: Liveness::WithCommit,
+            key: Key::Commit(ca),
+            value: Value::Datum(Datum::Map(vec![("zoom".to_string(), Datum::F64(1.5))])),
+        }
     }
 
     #[test]
     fn merge_applies_sections_per_policy() {
         let (mut store, _root_ca, tip_ca, _ga1) = test_store();
-        let (id, policy, liveness, key, value) = view_entry(tip_ca);
-        merge(
-            &mut store,
-            [],
-            [],
-            [],
-            [(id.clone(), policy, liveness, key.clone(), value.clone())],
-            [],
-        )
-        .unwrap();
+        let entry = view_entry(tip_ca);
+        merge(&mut store, [], [], [], [entry.clone()], []).unwrap();
+        let SectionEntry {
+            id,
+            policy,
+            liveness,
+            key,
+            value,
+        } = entry.clone();
         assert_eq!(store.section_entry(&id, &key), Some(&value));
         let section = store.section(&id).unwrap();
         assert_eq!(section.policy, policy);
@@ -644,7 +647,10 @@ mod tests {
             [],
             [],
             [],
-            [(id.clone(), policy, liveness, key.clone(), differing)],
+            [SectionEntry {
+                value: differing,
+                ..entry
+            }],
             [],
         )
         .unwrap();
@@ -680,8 +686,15 @@ mod tests {
     #[test]
     fn objects_piggybacks_commit_sections() {
         let (mut store, root_ca, tip_ca, _ga1) = test_store();
-        let (id, policy, liveness, key, value) = view_entry(tip_ca);
-        store.set_section_value(id.clone(), policy, liveness, key.clone(), value.clone());
+        let entry = view_entry(tip_ca);
+        store.set_section_entry(entry.clone());
+        let SectionEntry {
+            id,
+            policy,
+            liveness,
+            key,
+            value,
+        } = entry;
         let want = Want {
             refs: vec![ObjectRef::Commit(tip_ca), ObjectRef::Commit(root_ca)],
         };
@@ -706,8 +719,7 @@ mod tests {
     fn snapshot_round_trips() {
         let (mut store, _root_ca, tip_ca, _ga1) = test_store();
         store.add_blob("dsp.buffer", BlobLiveness::ContentReferenced, &b"pcm"[..]);
-        let (id, policy, liveness, key, value) = view_entry(tip_ca);
-        store.set_section_value(id, policy, liveness, key, value);
+        store.set_section_entry(view_entry(tip_ca));
         let (heads, objects) = snapshot(&store);
         assert_eq!(heads, vec![(name("jam"), tip_ca)]);
         // The `heads` section travels as the dedicated head list, never as
@@ -745,7 +757,13 @@ mod tests {
                     value,
                 } => {
                     let value = proto::decode_value(&value).unwrap();
-                    sections.push((id, policy, liveness, key, value));
+                    sections.push(SectionEntry {
+                        id,
+                        policy,
+                        liveness,
+                        key,
+                        value,
+                    });
                 }
             }
         }
@@ -844,8 +862,7 @@ mod tests {
         g.add_node(node);
         let ga = gantz_ca::graph_addr(&g);
         let ca = store.commit_graph(Duration::from_secs(1), None, ga, || g);
-        let (id, policy, liveness, key, value) = view_entry(ca);
-        store.set_section_value(id, policy, liveness, key, value);
+        store.set_section_entry(view_entry(ca));
         let objects = objects(&store, &closure(&[ca], &[])).objects;
         assert!(objects.iter().any(|o| matches!(
             o,
@@ -874,13 +891,13 @@ mod tests {
         let entry = |id: &str, text: &str| {
             let value = Value::Datum(Datum::Str(text.to_string()));
             let key = Key::Name(jam.clone());
-            (
-                id.to_string(),
-                MergePolicy::KeepExisting,
-                Liveness::WithName,
-                key,
-                value,
-            )
+            SectionEntry {
+                id: id.to_string(),
+                policy: MergePolicy::KeepExisting,
+                liveness: Liveness::WithName,
+                key: key,
+                value: value,
+            }
         };
         let mut store = SessionRegistry::default();
         store.set_head(jam.clone(), CommitAddr::from(ContentAddr::from([1; 32])));

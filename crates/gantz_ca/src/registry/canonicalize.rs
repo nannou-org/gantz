@@ -11,12 +11,12 @@ use std::hash::Hash;
 /// The graphs and commits that [`Registry::canonicalize`] gave new
 /// addresses, from old to new.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Moved {
+pub struct Readdressed {
     pub graphs: BTreeMap<GraphAddr, GraphAddr>,
     pub commits: BTreeMap<CommitAddr, CommitAddr>,
 }
 
-impl Moved {
+impl Readdressed {
     /// Whether nothing moved.
     pub fn is_empty(&self) -> bool {
         self.graphs.is_empty() && self.commits.is_empty()
@@ -60,8 +60,8 @@ impl Registry {
     /// section keys and values. A store written before a change to the
     /// canonical form catches up this way. A canonical registry is left as
     /// it is.
-    pub fn canonicalize(&mut self) -> Moved {
-        let mut moved = Moved::default();
+    pub fn canonicalize(&mut self) -> Readdressed {
+        let mut moved = Readdressed::default();
         // Each moved address as it appears in datum strings, old to new.
         let mut strs = HashMap::new();
 
@@ -141,7 +141,7 @@ impl Registry {
 }
 
 /// Point `node` at the moved graphs, then canonicalize it.
-fn follow_moves(node: &mut NodeData, moved: &Moved, strs: &HashMap<String, String>) {
+fn follow_moves(node: &mut NodeData, moved: &Readdressed, strs: &HashMap<String, String>) {
     for r in &mut node.refs {
         *r = moved.graph(GraphAddr::from(*r)).into();
     }

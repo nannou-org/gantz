@@ -7,7 +7,7 @@ extern crate self as gantz_ca;
 #[doc(inline)]
 pub use ca::{ContentAddr, ContentAddrShort, content_addr};
 #[doc(inline)]
-pub use commit::{Branch, Commit, CommitAddr, Head, Timestamp, addr as commit_addr};
+pub use commit::{Commit, CommitAddr, Head, Timestamp, addr as commit_addr};
 #[doc(inline)]
 pub use datum::{Datum, DatumError, from_datum, to_datum};
 #[doc(inline)]
@@ -32,18 +32,16 @@ pub use name::{Name, SEP as NAME_SEP};
 #[doc(inline)]
 pub use node_data::{DataGraph, NodeData};
 #[doc(inline)]
-pub use reach::{
-    LiveSet, OutRefs, closure, closure_diff, closure_from, data_graph_out, export, prune,
-};
+pub use reach::{LiveSet, OutRefs, closure, closure_diff, closure_from, data_graph_out, export};
 #[doc(inline)]
 pub use registry::{
-    HEADS_ID, Heads, MergeReport, Moved, Registry, section_get, section_insert,
+    HEADS_ID, Heads, MergeReport, Readdressed, Registry, section_get, section_insert,
     section_insert_datum, section_iter, section_remove,
 };
 #[doc(inline)]
 pub use section::{
     BlobDecl, BlobLiveness, BlobStore, Bytes, Key, Liveness, MergePolicy, Section, SectionDecl,
-    SectionId, Value, blob_addr,
+    SectionEntry, SectionId, Value, blob_addr,
 };
 #[doc(inline)]
 pub use sync::{SyncStep, monotonic_timestamp, plan_sync_step, verify_graph};
@@ -59,7 +57,6 @@ pub mod history;
 pub mod merge;
 pub mod name;
 pub mod node_data;
-pub mod ops;
 pub mod reach;
 pub mod registry;
 pub mod section;

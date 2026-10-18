@@ -5,8 +5,8 @@
 //! `cargo test -p gantz_collab -- --ignored`.
 
 use gantz_ca::{
-    BlobLiveness, Commit, DataGraph, Datum, Key, Liveness, MergePolicy, Name, NodeData, Value,
-    blob_addr, commit_addr,
+    BlobLiveness, Commit, DataGraph, Datum, Key, Liveness, MergePolicy, Name, NodeData,
+    SectionEntry, Value, blob_addr, commit_addr,
 };
 use gantz_collab::{
     Access, Command, Event, Handle, Identity, Object, ObjectRef, PeerId, Role, Session,
@@ -100,13 +100,13 @@ fn share_join_and_fetch_between_two_runtimes() {
             heads: vec![],
             commits: vec![],
             graphs: vec![],
-            sections: vec![(
-                "egui.view".to_string(),
-                MergePolicy::KeepExisting,
-                Liveness::WithCommit,
-                Key::Commit(tip),
-                view.clone(),
-            )],
+            sections: vec![SectionEntry {
+                id: "egui.view".to_string(),
+                policy: MergePolicy::KeepExisting,
+                liveness: Liveness::WithCommit,
+                key: Key::Commit(tip),
+                value: view.clone(),
+            }],
             blobs: vec![(
                 "dsp.buffer".to_string(),
                 BlobLiveness::ContentReferenced,
@@ -361,16 +361,15 @@ fn vaults_pair_link_push_fetch_and_notify() {
     let tip = Commit::new(Duration::from_secs(2), Some(root_ca), graph_ca);
     let tip_ca = commit_addr(&tip);
     let description = Value::Datum(Datum::Str("a jam".to_string()));
-    let entry = (
-        "gantz.description".to_string(),
-        MergePolicy::KeepExisting,
-        Liveness::WithName,
-        Key::Name(jam.clone()),
-        description.clone(),
-    );
+    let entry = SectionEntry {
+        id: "gantz.description".to_string(),
+        policy: MergePolicy::KeepExisting,
+        liveness: Liveness::WithName,
+        key: Key::Name(jam.clone()),
+        value: description.clone(),
+    };
     let mut described = SessionRegistry::default();
-    let (id, policy, liveness, key, value) = entry.clone();
-    described.set_section_value(id, policy, liveness, key, value);
+    described.set_section_entry(entry.clone());
     let entries = store::name_meta(&described, &jam);
     let meta = store::meta_digest(&entries);
     let push = Push {

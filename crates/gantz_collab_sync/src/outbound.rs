@@ -2,7 +2,7 @@
 //! runtime-owned served store and broadcast to peers.
 
 use crate::{SessionState, Sessions};
-use gantz_ca as ca;
+use gantz_ca::{self as ca, SectionEntry};
 use gantz_collab::{Command, GossipMsg, Handle, PeerId, SessionId};
 use std::collections::BTreeSet;
 
@@ -137,13 +137,13 @@ pub fn serve_scope(
                 continue;
             }
             state.served_sections.insert(entry);
-            sections.push((
-                id.clone(),
-                section.policy,
-                section.liveness,
-                key.clone(),
-                value.clone(),
-            ));
+            sections.push(SectionEntry {
+                id: id.clone(),
+                policy: section.policy,
+                liveness: section.liveness,
+                key: key.clone(),
+                value: value.clone(),
+            });
         }
     }
     let mut heads = Vec::new();

@@ -6,7 +6,7 @@
 //! - The content columns. These are [`graphs`](Registry::graphs),
 //!   [`commits`](Registry::commits) and per-section
 //!   [`blobs`](Registry::blobs). They are immutable, content-addressed and
-//!   insert-only, except for [`prune`](crate::reach::prune).
+//!   insert-only, except for [`prune`](crate::Registry::prune).
 //! - The [`sections`](Registry::sections). These hold all mutable state.
 //!   Heads are the core-declared [`Heads`] section. Domains attach their own
 //!   metadata by declaring a [`SectionDecl`] in their own crate. The registry
@@ -24,7 +24,7 @@
 //! stored commit's parents are present or detached, never dangling, and its
 //! graph is present. [`add_commit`](Registry::add_commit) clears absent
 //! parents before hashing. [`sync::Staged::apply`] validates or detaches.
-//! [`prune`](crate::reach::prune) detaches after removal.
+//! [`prune`](crate::Registry::prune) detaches after removal.
 //!
 //! The commit methods take a `graph_ca` and a `graph` closure. The closure
 //! is called only when the registry has no graph at `graph_ca`. The caller
@@ -35,13 +35,13 @@
 use crate::section::{TryFromKey, value_to_datum};
 use crate::{
     BlobLiveness, BlobStore, Bytes, Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, Head,
-    Key, Liveness, MergePolicy, Name, NodeData, Section, SectionDecl, SectionId, Timestamp, Value,
-    commit_addr, datum::DatumError, graph_addr,
+    Key, Liveness, MergePolicy, Name, NodeData, Section, SectionDecl, SectionEntry, SectionId,
+    Timestamp, Value, commit_addr, datum::DatumError, graph_addr,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-pub use canonicalize::Moved;
+pub use canonicalize::Readdressed;
 
 mod canonicalize;
 
@@ -282,7 +282,8 @@ impl Registry {
         graph_ca: GraphAddr,
         graph: impl FnOnce() -> DataGraph,
     ) -> CommitAddr {
-        crate::ops::commit_graph(self, timestamp, parent_ca, graph_ca, graph)
+        self.insert_graph_lazily(graph_ca, graph);
+        self.insert_commit_at_addr(Commit::new(timestamp, parent_ca, graph_ca))
     }
 
     /// Commit the graph to the given name.
@@ -293,7 +294,10 @@ impl Registry {
         graph: impl FnOnce() -> DataGraph,
         name: &Name,
     ) -> CommitAddr {
-        crate::ops::commit_graph_to_name(self, timestamp, graph_ca, graph, name)
+        let parent_ca = self.head(name);
+        let commit_ca = self.commit_graph(timestamp, parent_ca, graph_ca, graph);
+        self.set_head(name.clone(), commit_ca);
+        commit_ca
     }
 
     /// Commit the graph at the given address and update `head` to a new
@@ -305,7 +309,10 @@ impl Registry {
         graph: impl FnOnce() -> DataGraph,
         head: &mut Head,
     ) -> CommitAddr {
-        crate::ops::commit_graph_to_head(self, timestamp, graph_ca, graph, head)
+        let parent_ca = self.head_commit_ca(head).unwrap();
+        let commit_ca = self.commit_graph(timestamp, Some(parent_ca), graph_ca, graph);
+        self.point_head_at(head, commit_ca);
+        commit_ca
     }
 
     /// Commit the graph at the given address as a merge of `theirs` into the
@@ -321,7 +328,8 @@ impl Registry {
         theirs: CommitAddr,
         head: &mut Head,
     ) -> CommitAddr {
-        crate::ops::commit_merge_to_head(self, timestamp, graph_ca, graph, theirs, head)
+        let ours = self.head_commit_ca(head).unwrap();
+        self.commit_merge(timestamp, ours, theirs, graph_ca, graph, head)
     }
 
     /// Commit the graph at the given address as a canonical merge of the
@@ -346,7 +354,52 @@ impl Registry {
         graph: impl FnOnce() -> DataGraph,
         head: &mut Head,
     ) -> CommitAddr {
-        crate::ops::commit_merge_canonical(self, a, b, graph_ca, graph, head)
+        let (first, second) = crate::sync::canonical_tips(&self.commits, a, b);
+        let timestamp = crate::sync::merge_timestamp(&self.commits, first, second);
+        self.commit_merge(timestamp, first, second, graph_ca, graph, head)
+    }
+
+    /// Commit a merge of `second` into `first` and point `head` at it.
+    fn commit_merge(
+        &mut self,
+        timestamp: Timestamp,
+        first: CommitAddr,
+        second: CommitAddr,
+        graph_ca: GraphAddr,
+        graph: impl FnOnce() -> DataGraph,
+        head: &mut Head,
+    ) -> CommitAddr {
+        self.insert_graph_lazily(graph_ca, graph);
+        let commit_ca =
+            self.insert_commit_at_addr(Commit::new_merge(timestamp, first, second, graph_ca));
+        self.point_head_at(head, commit_ca);
+        commit_ca
+    }
+
+    /// Insert the commit at its address and return the address.
+    fn insert_commit_at_addr(&mut self, commit: Commit) -> CommitAddr {
+        let commit_ca = commit_addr(&commit);
+        self.insert_commit_at(commit_ca, commit);
+        commit_ca
+    }
+
+    /// Point the head at the given commit. A branch head updates the heads
+    /// section. A detached head is reassigned directly.
+    fn point_head_at(&mut self, head: &mut Head, commit_ca: CommitAddr) {
+        match *head {
+            Head::Commit(ref mut ca) => *ca = commit_ca,
+            Head::Branch(ref name) => {
+                self.set_head(name.clone(), commit_ca);
+            }
+        }
+    }
+
+    /// Insert the graph at the given address, calling `graph()` only when the
+    /// address is absent.
+    fn insert_graph_lazily(&mut self, graph_ca: GraphAddr, graph: impl FnOnce() -> DataGraph) {
+        if self.graph(&graph_ca).is_none() {
+            self.insert_graph_at(graph_ca, graph());
+        }
     }
 
     /// Insert a commit, computing its address from the commit's contents.
@@ -440,6 +493,18 @@ impl Registry {
         Head::Commit(commit_ca)
     }
 
+    /// Insert a section entry. See [`set_section_value`](Self::set_section_value).
+    pub fn set_section_entry(&mut self, entry: SectionEntry) -> Option<Value> {
+        let SectionEntry {
+            id,
+            policy,
+            liveness,
+            key,
+            value,
+        } = entry;
+        self.set_section_value(id, policy, liveness, key, value)
+    }
+
     /// Insert a raw value into the section with the given id. The section is
     /// created and stamped with the given semantics on first write. An
     /// existing section's stored semantics win.
@@ -468,10 +533,12 @@ impl Registry {
             .and_then(|s| s.entries.remove(key))
     }
 
-    /// Retain only the live content and the section entries whose stored
-    /// liveness rule holds against the surviving state. See
-    /// [`reach::prune`](crate::reach::prune).
-    pub(crate) fn retain_live(&mut self, live: &crate::reach::LiveSet) {
+    /// Prune the registry down to the live set. Dead content is removed. Heads
+    /// pointing outside the live set are dropped. Each section's entries are
+    /// filtered by its stored liveness rule against the surviving state.
+    /// Invalid commit parents are detached. Emptied sections and blob stores
+    /// are removed.
+    pub fn prune(&mut self, live: &crate::reach::LiveSet) {
         self.commits.retain(|ca, _| live.commits.contains(ca));
         self.graphs.retain(|ga, _| live.graphs.contains(ga));
         for (id, store) in &mut self.blobs {

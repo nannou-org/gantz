@@ -294,9 +294,9 @@ pub fn upgrade(
     from: u32,
     registry: &mut ca::Registry,
     persisted: &mut PersistedRegistry,
-) -> ca::Moved {
+) -> ca::Readdressed {
     if from >= 1 {
-        return ca::Moved::default();
+        return ca::Readdressed::default();
     }
     let moved = registry.canonicalize();
     if !moved.is_empty() {
@@ -801,7 +801,7 @@ mod tests {
             graphs: HashSet::from([graph_addr(1)]),
             blobs: BTreeMap::new(),
         };
-        ca::prune(&mut reg, &live);
+        reg.prune(&live);
         save_registry_incremental(&mut store, &reg, &mut persisted);
         let writes = store.take_writes();
         // Both indices shrank, so they are rewritten.
