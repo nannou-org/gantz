@@ -172,7 +172,7 @@ impl gantz_core::Node for Pplot {
 
 impl NodeUi for Pplot {
     fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
-        "pplot".into()
+        sugar::KEYWORD.into()
     }
 
     fn description(&self) -> Option<&'static str> {

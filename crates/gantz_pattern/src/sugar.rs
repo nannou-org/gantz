@@ -1,8 +1,9 @@
 //! `.gantz` keyword sugar for the pattern node set.
 //!
-//! [`PatternSugar`] provides `(pmini "notation")` and, with the `egui`
-//! feature, `(pplot <keyword>...)`. Compose it with the other
-//! crates' sugars via [`gantz_format::Sugars`].
+//! [`PatternSugar`] provides `(pat.mini "notation")` and, with the `egui`
+//! feature, `(pat.plot <keyword>...)`. Compose it with the other
+//! crates' sugars via [`gantz_format::Sugars`]. The keywords from before the
+//! `pat.` namespace, `pmini` and `pplot`, still read.
 
 use crate::Pmini;
 #[cfg(feature = "egui")]
@@ -14,27 +15,33 @@ use gantz_nodetag::NodeTag;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PatternSugar;
 
+/// The [`Pmini`] keyword, also its builtin name.
+pub const MINI: &str = "pat.mini";
+
+/// The [`Pmini`] keyword from before the `pat.` namespace.
+const OLD_MINI: &str = "pmini";
+
 impl Sugar for PatternSugar {
     fn read_spec(&self, head: &str, args: SugarArgs<'_>) -> Result<Option<Datum>, FormatError> {
         match head {
-            "pmini" => {
+            MINI | OLD_MINI => {
                 let src = args.str_at(0).unwrap_or_default();
                 Ok(Some(node_datum(Pmini::TAG, vec![("src", Datum::Str(src))])))
             }
             #[cfg(feature = "egui")]
-            pplot::KEYWORD => pplot::read_spec(args).map(Some),
+            pplot::KEYWORD | pplot::OLD_KEYWORD => pplot::read_spec(args).map(Some),
             _ => Ok(None),
         }
     }
 
     fn read_bare(&self, keyword: &str) -> Option<Datum> {
         match keyword {
-            "pmini" => Some(node_datum(
+            MINI | OLD_MINI => Some(node_datum(
                 Pmini::TAG,
                 vec![("src", Datum::Str(String::new()))],
             )),
             #[cfg(feature = "egui")]
-            pplot::KEYWORD => pplot::read_bare(),
+            pplot::KEYWORD | pplot::OLD_KEYWORD => pplot::read_bare(),
             _ => None,
         }
     }
@@ -42,7 +49,7 @@ impl Sugar for PatternSugar {
     fn write_spec(&self, tag: &str, node: &Datum) -> Option<String> {
         if tag == Pmini::TAG {
             let src = node.get("src").and_then(Datum::as_str).unwrap_or("");
-            return Some(format!("(pmini {src:?})"));
+            return Some(format!("({MINI} {src:?})"));
         }
         #[cfg(feature = "egui")]
         if tag == pplot::tag() {
@@ -53,7 +60,7 @@ impl Sugar for PatternSugar {
 
     fn keyword_for_tag(&self, tag: &str) -> Option<&str> {
         if tag == Pmini::TAG {
-            return Some("pmini");
+            return Some(MINI);
         }
         #[cfg(feature = "egui")]
         if tag == pplot::tag() {
@@ -78,27 +85,25 @@ mod tests {
             .expect("recognised")
     }
 
-    // `(pmini "notation")` round-trips through read and write, escaping
+    // `(pat.mini "notation")` round-trips through read and write, escaping
     // quotes in the notation.
     #[test]
     fn pm_round_trips() {
-        let d = read(r#"(pmini "bd(3,8) ~ [sn sn]")"#);
+        let d = read(r#"(pat.mini "bd(3,8) ~ [sn sn]")"#);
         assert_eq!(
             d.get("src").and_then(Datum::as_str),
             Some("bd(3,8) ~ [sn sn]")
         );
         assert_eq!(
             PatternSugar.write_spec(Pmini::TAG, &d).as_deref(),
-            Some(r#"(pmini "bd(3,8) ~ [sn sn]")"#),
+            Some(r#"(pat.mini "bd(3,8) ~ [sn sn]")"#),
         );
-        // Bare `pmini` reads as an empty notation.
-        assert_eq!(
-            PatternSugar.read_bare("pmini"),
-            Some(node_datum(
-                Pmini::TAG,
-                vec![("src", Datum::Str(String::new()))]
-            )),
-        );
-        assert_eq!(PatternSugar.keyword_for_tag(Pmini::TAG), Some("pmini"));
+        // Bare `pat.mini` reads as an empty notation.
+        let empty = node_datum(Pmini::TAG, vec![("src", Datum::Str(String::new()))]);
+        assert_eq!(PatternSugar.read_bare("pat.mini"), Some(empty.clone()));
+        assert_eq!(PatternSugar.keyword_for_tag(Pmini::TAG), Some("pat.mini"));
+        // The old keyword still reads.
+        assert_eq!(read(r#"(pmini "bd(3,8) ~ [sn sn]")"#), d);
+        assert_eq!(PatternSugar.read_bare("pmini"), Some(empty));
     }
 }
