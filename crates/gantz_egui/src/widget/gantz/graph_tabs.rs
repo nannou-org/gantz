@@ -256,7 +256,7 @@ where
     fn pane_ui(
         &mut self,
         ui: &mut egui::Ui,
-        _tile_id: egui_tiles::TileId,
+        tile_id: egui_tiles::TileId,
         pane: &mut GraphPane,
     ) -> egui_tiles::UiResponse {
         let GraphPane(pane_head) = pane;
@@ -303,6 +303,7 @@ where
         let (graph_response, camera) = match self.cx.access.with_head_mut(pane_head, |data| {
             let camera = data.view.camera;
             let res = graph_scene(
+                egui::Id::new(("graph-scene", tile_id)),
                 self.cx.gantz.env,
                 self.cx.gantz.codec,
                 data.graph,

@@ -1315,9 +1315,12 @@ fn perf_view(title: &str, capture: &mut widget::PerfCapture, ui: &mut egui::Ui) 
 ///
 /// Payloads emitted within the scene are returned in
 /// [`GraphSceneResponse::responses`][graph_scene::GraphSceneResponse] for the
-/// caller to tag and merge.
+/// caller to tag and merge. `id` is the scene's egui id. It must stay the
+/// same while the head moves, as on a commit to a detached head, so the scene's
+/// egui state and layers persist.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn graph_scene(
+    id: egui::Id,
     registry: &Env<'_>,
     codec: &NodeCodec,
     graph: &mut gantz_ca::DataGraph,
@@ -1337,9 +1340,6 @@ pub(super) fn graph_scene(
     vm: &mut Engine,
     ui: &mut egui::Ui,
 ) -> Option<graph_scene::GraphSceneResponse> {
-    // A head shows exactly its root graph. Nested graphs are separate heads.
-    let id = egui::Id::new(head);
-
     // Select-all replaces the selection with every node. Handled here rather
     // than the outer command block because this is where the graph is in
     // scope. Gated like other command shortcuts so it does not fire while
@@ -1728,6 +1728,98 @@ fn steel_view(
 mod tests {
     use super::*;
 
+    /// The owned parts of an [`Env`] over an empty registry.
+    struct EnvParts {
+        registry: gantz_ca::Registry,
+        graphs: gantz_core::data::ReifiedGraphs<crate::node::DynNode>,
+        builtins: gantz_core::Builtins,
+        ui_builtins: crate::node::UiBuiltins,
+        codec: NodeCodec,
+    }
+
+    impl EnvParts {
+        fn new() -> Self {
+            Self {
+                registry: gantz_ca::Registry::default(),
+                graphs: gantz_core::data::ReifiedGraphs::new(),
+                builtins: gantz_core::Builtins::default(),
+                ui_builtins: crate::node::UiBuiltins::default(),
+                codec: crate::test_node::codec(),
+            }
+        }
+
+        fn env(&self) -> Env<'_> {
+            Env {
+                registry: &self.registry,
+                builtins: &self.builtins,
+                codec: &self.codec,
+                graphs: &self.graphs,
+                instances: &self.ui_builtins,
+            }
+        }
+    }
+
+    /// A graph of two unconnected `expr` nodes.
+    fn two_exprs() -> gantz_ca::DataGraph {
+        let expr = |src| {
+            let node = gantz_core::node::Expr::new(src).unwrap();
+            gantz_core::data::erase_node_typed(&node).unwrap()
+        };
+        let mut graph = gantz_ca::DataGraph::default();
+        graph.add_node(expr("(+ 1 2)"));
+        graph.add_node(expr("(+ 3 4)"));
+        graph
+    }
+
+    /// The scene keeps its egui state under the caller's id, whatever the
+    /// head. A head that moves, as on a commit to a detached head, keeps its
+    /// scene state.
+    #[test]
+    fn the_scene_state_does_not_follow_the_head() {
+        let parts = EnvParts::new();
+        let env = parts.env();
+        let mut graph = two_exprs();
+        let mut instances = crate::node::NodeInstances::default();
+        let mut vm = Engine::new_base();
+        let mut head_state = OpenHeadState::default();
+        let mut view_toggles = ViewToggles::default();
+        let mut head_view = gantz_edit::SceneView::default();
+        let keymap = Keymap::default();
+        let ctx = egui::Context::default();
+        let id = egui::Id::new("scene");
+        let commit = |b| gantz_ca::Head::Commit(gantz_ca::ContentAddr::from([b; 32]).into());
+        let (a, b) = (commit(1), commit(2));
+        for head in [&a, &b] {
+            let _ = ctx.run_ui(Default::default(), |ui| {
+                graph_scene(
+                    id,
+                    &env,
+                    &parts.codec,
+                    &mut graph,
+                    &mut instances,
+                    head,
+                    &mut head_state,
+                    &mut view_toggles,
+                    &[],
+                    &[],
+                    &mut head_view,
+                    widget::LayoutConfig::default().to_params(egui::Direction::TopDown),
+                    Default::default(),
+                    false,
+                    false,
+                    &keymap,
+                    &[],
+                    &mut vm,
+                    ui,
+                );
+            });
+        }
+        let sizes = |id| egui_graph::with_graph_memory(&ctx, id, |m| m.node_sizes().len());
+        assert_eq!(sizes(id), 2);
+        assert_eq!(sizes(egui::Id::new(&a)), 0);
+        assert_eq!(sizes(egui::Id::new(&b)), 0);
+    }
+
     /// Every action of a Graphs or History pane response becomes a payload.
     #[test]
     fn graph_select_actions_become_payloads() {
@@ -1770,25 +1862,10 @@ mod tests {
     /// column resize handles of two tables with one id.
     #[test]
     fn inspected_nodes_have_their_own_ids() {
-        let registry = gantz_ca::Registry::default();
-        let graphs = gantz_core::data::ReifiedGraphs::new();
-        let builtins = gantz_core::Builtins::default();
-        let ui_builtins = crate::node::UiBuiltins::default();
-        let codec = crate::test_node::codec();
-        let env = Env {
-            registry: &registry,
-            builtins: &builtins,
-            codec: &codec,
-            graphs: &graphs,
-            instances: &ui_builtins,
-        };
-        let expr = |src| {
-            let node = gantz_core::node::Expr::new(src).unwrap();
-            gantz_core::data::erase_node_typed(&node).unwrap()
-        };
-        let mut graph = gantz_ca::DataGraph::default();
-        graph.add_node(expr("(+ 1 2)"));
-        graph.add_node(expr("(+ 3 4)"));
+        let parts = EnvParts::new();
+        let env = parts.env();
+        let codec = &parts.codec;
+        let mut graph = two_exprs();
         let mut instances = crate::node::NodeInstances::default();
         let mut vm = Engine::new_base();
         let mut head_state = OpenHeadState::default();
@@ -1802,7 +1879,7 @@ mod tests {
             let output = ctx.run_ui(Default::default(), |ui| {
                 node_inspector(
                     &env,
-                    &codec,
+                    codec,
                     &mut graph,
                     &mut instances,
                     &mut vm,
