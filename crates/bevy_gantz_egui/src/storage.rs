@@ -128,7 +128,7 @@ pub fn load_egui_memory(storage: &impl Load, ctx: &egui::Context) {
 /// Point the saved open heads, focused head and GUI state at the commits
 /// that [`ca::Registry::canonicalize`] moved. Undo and redo history follows
 /// too.
-pub fn follow_moves(storage: &mut (impl Load + Save), moved: &ca::Moved) {
+pub fn follow_moves(storage: &mut (impl Load + Save), moved: &ca::Readdressed) {
     if let Some(heads) = gantz_store::load_open_heads(storage) {
         let heads: Vec<_> = heads.iter().map(|head| moved.head(head)).collect();
         gantz_store::save_open_heads(storage, &heads);

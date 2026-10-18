@@ -662,7 +662,7 @@ mod tests {
     #[test]
     fn move_head_moves_a_branch_in_place() {
         let (mut app, base, child) = app();
-        let name: ca::Branch = "g".parse().expect("infallible");
+        let name: ca::Name = "g".parse().expect("infallible");
         app.world_mut()
             .resource_mut::<Registry>()
             .set_head(name.clone(), base);

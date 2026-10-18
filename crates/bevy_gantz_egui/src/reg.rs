@@ -126,6 +126,6 @@ pub fn prune_unused(
         .filter_map(|h| registry.head_commit_ca(&**h))
         .collect::<Vec<_>>();
     let live = ca::closure(&registry.0, extra);
-    ca::prune(&mut registry.0, &live);
+    registry.0.prune(&live);
     cache.0.retain_live(&live);
 }

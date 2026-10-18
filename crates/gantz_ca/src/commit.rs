@@ -28,19 +28,15 @@ pub type Timestamp = std::time::Duration;
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize)]
 pub struct CommitAddr(ContentAddr);
 
-/// Represents a name used to track a working series of commits.
-///
-/// Users can think of this as their graph or project name.
-pub type Branch = Name;
-
 /// Acts as a pointer to the current working graph, whether directly to a commit
 /// or to a name mapping.
 #[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord, Deserialize, Serialize)]
 pub enum Head {
     /// The head is pointing directly to a commit.
     Commit(CommitAddr),
-    /// The head is pointing to a name which maps to a commit.
-    Branch(Branch),
+    /// The head is pointing to a name which maps to a commit. The name tracks a
+    /// working series of commits, a graph or project name to the user.
+    Branch(Name),
 }
 
 impl std::fmt::Display for Head {

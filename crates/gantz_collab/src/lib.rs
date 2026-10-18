@@ -69,7 +69,7 @@ pub use runtime::{
 #[doc(inline)]
 pub use session::{Access, ConnState, ParsePeerIdError, PeerId, Role, Session, SessionId};
 #[doc(inline)]
-pub use store::{SectionEntry, SessionEntry, SessionRegistry};
+pub use store::{SessionEntry, SessionRegistry};
 #[doc(inline)]
 pub use ticket::{SessionTicket, VaultTicket};
 #[doc(inline)]

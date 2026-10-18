@@ -31,10 +31,10 @@
 //! first could let a crash push an older head.
 
 use crate::{Effect, JoinError, OpenHeads, Sessions, inbound, lifecycle::session_resolutions};
-use gantz_ca as ca;
+use gantz_ca::{self as ca, SectionEntry};
 use gantz_collab::{
     Command, Event, Handle, MetaChange, NameState, ObjectRef, Objects, Outdated, PeerId, Push,
-    SectionEntry, VaultId, VaultTicket, VersionInfo, Want, store,
+    VaultId, VaultTicket, VersionInfo, Want, store,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -666,13 +666,13 @@ fn move_meta(registry: &mut ca::Registry, from: &ca::Name, to: &ca::Name) {
         .filter(|(id, _)| id.as_str() != ca::HEADS_ID)
         .filter_map(|(id, section)| {
             let value = section.entries.get(&key)?.clone();
-            Some((
-                id.clone(),
-                section.policy,
-                section.liveness,
-                to_key.clone(),
-                value,
-            ))
+            Some(SectionEntry {
+                id: id.clone(),
+                policy: section.policy,
+                liveness: section.liveness,
+                key: to_key.clone(),
+                value: value,
+            })
         })
         .collect();
     store::set_name_meta(registry, to, entries);
@@ -787,7 +787,7 @@ pub fn serve_push(registry: &mut ca::Registry, vault: VaultId, push: Push) -> Pu
     // entries alone.
     let meta = meta.map(|m| inbound::decode(m.entries).sections);
     let key = ca::Key::Name(name.clone());
-    let foreign = |(id, _, _, k, _): &SectionEntry| *k != key || id == ca::HEADS_ID;
+    let foreign = |e: &SectionEntry| e.key != key || e.id == ca::HEADS_ID;
     if meta.iter().flatten().any(foreign) {
         return PushOutcome::Invalid(format!("metadata for '{name}' holds other entries"));
     }

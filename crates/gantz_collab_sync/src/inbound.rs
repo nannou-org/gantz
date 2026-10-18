@@ -3,10 +3,10 @@
 //! name. What the host must do in response comes back as [`Effect`]s.
 
 use crate::{PeerPointer, PendingTip, SessionState, Sessions, vault};
-use gantz_ca as ca;
+use gantz_ca::{self as ca, SectionEntry};
 use gantz_collab::{
-    Command, ConnState, Event, GossipMsg, Handle, Object, ObjectRef, Objects, PeerId, SectionEntry,
-    SessionId, Want, proto,
+    Command, ConnState, Event, GossipMsg, Handle, Object, ObjectRef, Objects, PeerId, SessionId,
+    Want, proto,
 };
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
@@ -333,7 +333,13 @@ fn apply_join_snapshot(
                 key,
                 value,
             } => match proto::decode_value(&value) {
-                Ok(value) => sections.push((id, policy, liveness, key, value)),
+                Ok(value) => sections.push(SectionEntry {
+                    id,
+                    policy,
+                    liveness,
+                    key,
+                    value,
+                }),
                 Err(e) => log::warn!("join: undecodable section entry in snapshot: {e}"),
             },
         }
@@ -441,7 +447,14 @@ pub(crate) fn apply_sections(
     local_camera: Option<gantz_edit::Camera>,
 ) {
     use gantz_ca::SectionDecl;
-    for (id, policy, liveness, key, mut value) in sections {
+    for SectionEntry {
+        id,
+        policy,
+        liveness,
+        key,
+        mut value,
+    } in sections
+    {
         let keep_existing = matches!(policy, ca::MergePolicy::KeepExisting);
         if keep_existing && registry.section_entry(&id, &key).is_some() {
             continue;
@@ -627,7 +640,13 @@ pub(crate) fn decode(objects: Objects) -> Decoded {
                 key,
                 value,
             } => match proto::decode_value(&value) {
-                Ok(value) => decoded.sections.push((id, policy, liveness, key, value)),
+                Ok(value) => decoded.sections.push(SectionEntry {
+                    id,
+                    policy,
+                    liveness,
+                    key,
+                    value,
+                }),
                 Err(e) => log::warn!("fetch: undecodable section entry: {e}"),
             },
         }

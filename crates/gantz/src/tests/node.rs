@@ -2927,7 +2927,7 @@ fn sample_buffers_ride_reachability() {
     assert!(gantz_plyphon::audio_asset(&exported, &unused_addr).is_none());
 
     // Prune drops the unreferenced one in place.
-    gantz_ca::prune(&mut registry, &live);
+    registry.prune(&live);
     assert_eq!(
         gantz_plyphon::audio_asset(&registry, &used_addr),
         Some(used)

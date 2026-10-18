@@ -438,7 +438,7 @@ fn join_snapshot_tolerates_pruned_history() {
         graphs: [host.reg.commits()[&tip].graph].into_iter().collect(),
         blobs: Default::default(),
     };
-    crate::prune(&mut host.reg, &live);
+    host.reg.prune(&live);
     assert_ne!(
         commit_addr(&host.reg.commits()[&tip]),
         tip,

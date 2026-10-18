@@ -12,7 +12,7 @@
 //! section, plus any extra seeds the caller supplies.
 //!
 //! Section entry liveness is not part of [`LiveSet`]. It is a pure function
-//! of the surviving content, so [`export`] and [`prune`] apply each
+//! of the surviving content, so [`export`] and [`Registry::prune`] apply each
 //! section's stored [`Liveness`] rule against the filtered registry
 //! directly.
 
@@ -144,17 +144,8 @@ pub fn closure_diff(
 /// dropped, and their `WithName` metadata with them.
 pub fn export(reg: &Registry, live: &LiveSet) -> Registry {
     let mut exported = reg.clone();
-    prune(&mut exported, live);
+    exported.prune(live);
     exported
-}
-
-/// Prune the registry down to the live set. Dead content is removed. Heads
-/// pointing outside the live set are dropped. Each section's entries are
-/// filtered by its stored liveness rule against the surviving state.
-/// Invalid commit parents are detached. Emptied sections and blob stores
-/// are removed.
-pub fn prune(reg: &mut Registry, live: &LiveSet) {
-    reg.retain_live(live);
 }
 
 /// Walk commits and graphs from `seeds` over the edge rules. Content in `cut`
@@ -307,7 +298,7 @@ mod tests {
             .unwrap();
         }
         let live = closure(&reg, []);
-        prune(&mut reg, &live);
+        reg.prune(&live);
         assert!(reg.commits().contains_key(&live_c));
         assert!(!reg.commits().contains_key(&dead_c));
         let section = reg.section("test.view").unwrap();
@@ -327,7 +318,7 @@ mod tests {
             graphs: [ga].into_iter().collect(),
             blobs: BTreeMap::new(),
         };
-        prune(&mut reg, &live);
+        reg.prune(&live);
         assert!(!reg.commits().contains_key(&old));
         assert_eq!(reg.commits()[&tip].parent, None);
     }
@@ -455,7 +446,7 @@ mod tests {
         assert!(!live.graphs.contains(&dead));
         assert!(live.blob_live("dsp.buffer", &buf));
         assert!(!live.blob_live("dsp.buffer", &orphan));
-        prune(&mut reg, &live);
+        reg.prune(&live);
         assert!(reg.graph(&nested).is_some());
         assert!(reg.graph(&dead).is_none());
         assert!(reg.blob("dsp.buffer", &buf).is_some());

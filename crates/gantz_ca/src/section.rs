@@ -100,6 +100,19 @@ pub enum Value {
     Commit(CommitAddr),
 }
 
+/// One section entry with its section's id and semantics, as content carries
+/// it between registries. See [`Registry::set_section_entry`].
+///
+/// [`Registry::set_section_entry`]: crate::Registry::set_section_entry
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SectionEntry {
+    pub id: SectionId,
+    pub policy: MergePolicy,
+    pub liveness: Liveness,
+    pub key: Key,
+    pub value: Value,
+}
+
 /// How a section's entries merge when an incoming registry is merged in.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum MergePolicy {

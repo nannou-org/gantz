@@ -33,13 +33,14 @@ use crate::{
     identity::Identity,
     proto::{self, GossipMsg, Objects, SyncRequest, SyncResponse, Want},
     session::{PeerId, SessionId},
-    store::{self, SectionEntry, ServedVault, SessionEntry, Shared, SharedState},
+    store::{self, ServedVault, SessionEntry, Shared, SharedState},
     ticket::{SessionTicket, VaultTicket},
     vault::{NameState, Push, PushReply, VaultEntry, VaultId, WatchMsg},
     version::{self, Outdated, VERSION_ALPN, VersionInfo, VersionServer},
 };
 use gantz_ca::{
-    BlobLiveness, Bytes, Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, Name, SectionId,
+    BlobLiveness, Bytes, Commit, CommitAddr, ContentAddr, DataGraph, GraphAddr, Name, SectionEntry,
+    SectionId,
 };
 use iroh::{
     Endpoint, EndpointAddr, EndpointId, RelayMap, RelayMode, Watcher,
