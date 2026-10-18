@@ -60,6 +60,7 @@ fn conf() -> Conf {
         base_sources: vec![BaseSource {
             name: "gantz",
             bytes: gantz_base::BYTES,
+            renames: gantz_base::RENAMES,
         }],
         entrypoints: |get_node, graph| gantz_core::compile::push_pull_entrypoints(get_node, graph),
         org: "nannou-org",

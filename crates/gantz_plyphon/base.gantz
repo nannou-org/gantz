@@ -1,4 +1,4 @@
-(graph demo-freeverb
+(graph demo.freeverb
   (comment0 (comment "Reverb.\nDial the wet mix." 100 30))
   (number1 (number #:min 0.5 #:max 1))
   (~dust2 ~dust)
@@ -10,7 +10,7 @@
   (-> ~ringz3 ~freeverb4)
   (-> ~freeverb4 ~out5))
 
-(graph demo-kick
+(graph demo.kick
   (comment0 (comment "Kick drum.\nDial the rate, then shape the envelopes." 180 46))
   (number1 (number #:min 0.5 #:max 256))
   (~impulse2 (~impulse #:rate kr))
@@ -27,7 +27,7 @@
   (-> ~envgen4 (~mul6 1))
   (-> ~mul6 ~out7))
 
-(graph demo-looper
+(graph demo.looper
   (comment0 (comment "Looper.\nDial the playback speed." 110 30))
   (number1 (number #:min 0.5))
   (~dust2 ~dust)
@@ -43,7 +43,7 @@
   (-> ~buffer4 ~playbuf6)
   (-> ~playbuf6 ~out7))
 
-(graph demo-pluck
+(graph demo.pluck
   (comment0 (comment "Plucked string.\nDial the pluck rate and the string period." 200 30))
   (number1 (number #:min 2))
   (number2 (number #:min 0.0045 #:max 0.05))
@@ -60,7 +60,7 @@
   (-> load-bang7 number1)
   (-> load-bang7 number2))
 
-(graph demo-ringmod
+(graph demo.ringmod
   (comment0 (comment "Ring modulation.\nDial the two freqs." 130 30))
   (number1 (number #:min 220))
   (number2 (number #:min 2))
@@ -77,7 +77,7 @@
   (-> load-bang7 number1)
   (-> load-bang7 number2))
 
-(graph demo-samplehold
+(graph demo.samplehold
   (comment0 (comment "Sample and hold.\nDial the step rate and the pitch range." 190 30))
   (number1 (number #:min 8))
   (number2 (number #:min 300))
@@ -101,7 +101,7 @@
   (-> load-bang10 number2)
   (-> load-bang10 number3))
 
-(graph demo-sampler
+(graph demo.sampler
   (comment0 (comment "Sample player.\nSelect the ~sample and press Load.\nDial the playback speed." 230 45))
   (number1 (number #:min 0.5))
   (~sample2 ~sample)
@@ -111,12 +111,12 @@
   (-> ~sample2 ~playbuf3)
   (-> ~playbuf3 ~out4))
 
-(graph demo-sine
+(graph demo.sine
   (~sinosc0 ~sinosc)
   (~out1 ~out)
   (-> ~sinosc0 ~out1))
 
-(graph demo-waveshape
+(graph demo.waveshape
   (comment0 (comment "Waveshaping.\nDial the drive." 100 30))
   (number1 (number #:min 1))
   (~sinosc2 ~sinosc)
@@ -128,7 +128,7 @@
   (-> ~mul3 ~tanh4)
   (-> ~tanh4 ~out5))
 
-(graph demo-wavetable
+(graph demo.wavetable
   (comment0 (comment "Wavetable.\nDial the number of harmonics." 150 30))
   (number1 (number #:min 1 #:max 32))
   (expr2 (expr (transduce (range 0 512) (mapping (lambda (i) (* 0.5 (apply + (transduce (range 1 (+ (exact (round $h)) 1)) (mapping (lambda (k) (/ (sin (/ (* 6.283185307179586 k i) 512)) k))) (into-list)))))) (into-list))))
@@ -143,18 +143,18 @@
   (-> load-bang6 number1))
 
 (descriptions
-  (demo-freeverb "Random impulses ring a resonator into a reverb. Dial the number for the wet mix.")
-  (demo-kick "A kick drum. Each impulse starts a pitch envelope on a sine and an amp envelope that shapes it. Dial the number for the tempo. Drag the envelope points to reshape the kick while it plays.")
-  (demo-looper "Random impulses record into a buffer that plays back at another speed. Dial the number for the playback speed.")
-  (demo-pluck "Noise bursts pluck a Karplus-Strong string. Dial the numbers for the pluck rate and the string period.")
-  (demo-ringmod "Two sines multiplied. Dial the numbers to sweep from tremolo to ring modulation.")
-  (demo-samplehold "A latch samples white noise on each impulse. The result sets the frequency of a sine. Dial the numbers for the step rate and the pitch range.")
-  (demo-sampler "A sample plays in a loop. Select the ~sample node and press Load in its inspector to pick a WAV file. Dial the number for the playback speed.")
-  (demo-sine "A sine wave into the audio output - the simplest DSP graph.")
-  (demo-waveshape "A sine into a tanh waveshaper. Dial the number to raise the drive.")
-  (demo-wavetable "A list of numbers fills a wavetable buffer for an oscillator. Dial the number of harmonics to fill the table and hear the tone change."))
+  (demo.freeverb "Random impulses ring a resonator into a reverb. Dial the number for the wet mix.")
+  (demo.kick "A kick drum. Each impulse starts a pitch envelope on a sine and an amp envelope that shapes it. Dial the number for the tempo. Drag the envelope points to reshape the kick while it plays.")
+  (demo.looper "Random impulses record into a buffer that plays back at another speed. Dial the number for the playback speed.")
+  (demo.pluck "Noise bursts pluck a Karplus-Strong string. Dial the numbers for the pluck rate and the string period.")
+  (demo.ringmod "Two sines multiplied. Dial the numbers to sweep from tremolo to ring modulation.")
+  (demo.samplehold "A latch samples white noise on each impulse. The result sets the frequency of a sine. Dial the numbers for the step rate and the pitch range.")
+  (demo.sampler "A sample plays in a loop. Select the ~sample node and press Load in its inspector to pick a WAV file. Dial the number for the playback speed.")
+  (demo.sine "A sine wave into the audio output - the simplest DSP graph.")
+  (demo.waveshape "A sine into a tanh waveshaper. Dial the number to raise the drive.")
+  (demo.wavetable "A list of numbers fills a wavetable buffer for an oscillator. Dial the number of harmonics to fill the table and hear the tone change."))
 
-(layout demo-freeverb
+(layout demo.freeverb
   (comment0 -220 0)
   (number1 113 86)
   (~dust2 0 0)
@@ -163,7 +163,7 @@
   (~ringz3 0 80)
   (camera 0 120 1))
 
-(layout demo-kick
+(layout demo.kick
   (comment0 -280 0)
   (number1 0 0)
   (~envgen3 -240 140)
@@ -174,7 +174,7 @@
   (~sinosc5 -240 270)
   (camera 0 200 1))
 
-(layout demo-looper
+(layout demo.looper
   (comment0 -240 0)
   (number1 174 160)
   (~buffer4 -84 80)
@@ -185,7 +185,7 @@
   (~ringz3 0 80)
   (camera 0 160 1))
 
-(layout demo-pluck
+(layout demo.pluck
   (comment0 -235 2)
   (load-bang7 114 -97)
   (number1 53 18)
@@ -196,7 +196,7 @@
   (~whitenoise3 0 -97)
   (camera 0 110 1))
 
-(layout demo-ringmod
+(layout demo.ringmod
   (comment0 -240 0)
   (load-bang7 0 -69)
   (number1 -70 0)
@@ -207,7 +207,7 @@
   (~sinosc4 70 60)
   (camera 0 110 1))
 
-(layout demo-samplehold
+(layout demo.samplehold
   (comment0 -260 0)
   (load-bang10 155 -63)
   (number1 70 0)
@@ -221,7 +221,7 @@
   (~whitenoise4 -70 0)
   (camera 0 180 1))
 
-(layout demo-sampler
+(layout demo.sampler
   (comment0 -250 0)
   (number1 104 -3)
   (~out4 0 160)
@@ -229,12 +229,12 @@
   (~sample2 0 0)
   (camera 0 80 1))
 
-(layout demo-sine
+(layout demo.sine
   (~out1 0 80)
   (~sinosc0 0 0)
   (camera 0 40 1))
 
-(layout demo-waveshape
+(layout demo.waveshape
   (comment0 -200 0)
   (number1 110 20)
   (~mul3 0 80)
@@ -243,7 +243,7 @@
   (~tanh4 0 160)
   (camera 0 120 1))
 
-(layout demo-wavetable
+(layout demo.wavetable
   (comment0 -240 0)
   (expr2 0 80)
   (load-bang6 0 -42)

@@ -66,7 +66,7 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
-(graph demo-all
+(graph demo.all
   (comment0 (comment "All base nodes. Right-click any node and choose 'demo'." 360 15))
   (comment1 (comment "Arithmetic" 110 15))
   (ref2 (ref add #:sync))
@@ -102,20 +102,20 @@
   (ref32 (ref string? #:sync))
   (ref33 (ref list? #:sync))
   (comment34 (comment "GUI" 110 15))
-  (ref35 (ref uibutton #:sync))
-  (ref36 (ref uicol #:sync))
-  (ref37 (ref uidialer #:sync))
-  (ref38 (ref uiframe #:sync))
-  (ref39 (ref uigrid #:sync))
-  (ref40 (ref uilabel #:sync))
-  (ref41 (ref uimatrix #:sync))
-  (ref42 (ref uiplot #:sync))
-  (ref43 (ref uiref #:sync))
-  (ref44 (ref uirow #:sync))
-  (ref45 (ref uisep #:sync))
-  (ref46 (ref uispace #:sync))
-  (ref47 (ref uitoggle #:sync))
-  (ref48 (ref uivalue #:sync))
+  (ref35 (ref ui.button #:sync))
+  (ref36 (ref ui.col #:sync))
+  (ref37 (ref ui.dialer #:sync))
+  (ref38 (ref ui.frame #:sync))
+  (ref39 (ref ui.grid #:sync))
+  (ref40 (ref ui.label #:sync))
+  (ref41 (ref ui.matrix #:sync))
+  (ref42 (ref ui.plot #:sync))
+  (ref43 (ref ui.ref #:sync))
+  (ref44 (ref ui.row #:sync))
+  (ref45 (ref ui.sep #:sync))
+  (ref46 (ref ui.space #:sync))
+  (ref47 (ref ui.toggle #:sync))
+  (ref48 (ref ui.value #:sync))
   (ref49 (ref range #:sync))
   (ref50 (ref take #:sync))
   (ref51 (ref drop #:sync))
@@ -132,7 +132,7 @@
   (ref62 (ref find #:sync))
   (ref63 (ref sort #:sync)))
 
-(graph demo-arithmetic
+(graph demo.arithmetic
   (comment0 (comment "Arithmetic operations.\nChange `a` and `b` below.\nPress `!` to evaluate." 150 45))
   (bang1 bang)
   (number2 number)
@@ -182,7 +182,7 @@
   (-> number2 ref23)
   (-> ref23 inspect24))
 
-(graph demo-comparison
+(graph demo.comparison
   (comment0 (comment "Change `a` and `b` below, then press `!` to compare them." 125 45))
   (bang1 bang)
   (number2 number)
@@ -266,7 +266,7 @@
   (-> ref38 inspect42)
   (-> bang28 expr44))
 
-(graph demo-gui
+(graph demo.gui
   (bang0 bang)
   (number1 (number #:no-push-eval))
   (number2 (number #:no-push-eval))
@@ -280,26 +280,26 @@
   (expr10 (expr "b"))
   (expr11 (expr "add"))
   (expr12 (expr "a + b ="))
-  (ref13 (ref uidialer #:sync))
-  (ref14 (ref uidialer #:sync))
-  (ref15 (ref uibutton #:sync))
-  (ref16 (ref uilabel #:sync))
-  (ref17 (ref uivalue #:sync))
+  (ref13 (ref ui.dialer #:sync))
+  (ref14 (ref ui.dialer #:sync))
+  (ref15 (ref ui.button #:sync))
+  (ref16 (ref ui.label #:sync))
+  (ref17 (ref ui.value #:sync))
   (list18 list)
-  (ref19 (ref uirow #:sync))
+  (ref19 (ref ui.row #:sync))
   (list20 list)
-  (ref21 (ref uirow #:sync))
+  (ref21 (ref ui.row #:sync))
   (list22 (list #:count 3))
-  (ref23 (ref uicol #:sync))
+  (ref23 (ref ui.col #:sync))
   (gui24 gui)
   (gui25 (gui view))
   (comment26 (comment "A simple adder graph.\nWe'll make a GUI for this over to the right!" 261 29))
   (comment27 (comment "In gantz you can define your node's GUI as a graph too." 327 15))
   (comment28 (comment "A `bind` node allows for binding to the state of another node.\nYou can change what node it binds to in the Node Inspector pane." 470 29))
-  (comment29 (comment "Element nodes such as `uidialer`, `uibutton`, `uilabel` and `uivalue` build the tree.\nSmall literals such as labels come from `expr` nodes." 438 29))
-  (comment30 (comment "`list` gathers the children of a `uirow` or `uicol`.\nYou can set its input count in the Node Inspector pane." 329 29))
+  (comment29 (comment "Element nodes such as `ui.dialer`, `ui.button`, `ui.label` and `ui.value` build the tree.\nSmall literals such as labels come from `expr` nodes." 438 29))
+  (comment30 (comment "`list` gathers the children of a `ui.row` or `ui.col`.\nYou can set its input count in the Node Inspector pane." 329 29))
   (comment31 (comment "A `gui` node declares the tree wired into it as this graph's GUI.\n\ngui[body] - the GUI shown in the node's body.\ngui[view] - the GUI shown when popping out a node's GUI into a pane.\n\nOpen the \"GUI Preview\" pane to see the rendered GUI.\nOpen the \"GUI Tree\" pane to see the tree as text." 440 106))
-  (comment32 (comment "See the `demo-gui-compose` node for an example of how this node can be used." 469 15))
+  (comment32 (comment "See the `demo.gui-compose` node for an example of how this node can be used." 469 15))
   (-> bang0 number1)
   (-> bang0 number2)
   (-> number1 ref3)
@@ -326,32 +326,32 @@
   (-> ref23 gui24)
   (-> ref23 gui25))
 
-(graph demo-gui-compose
+(graph demo.gui-compose
   (comment0 (comment "Make sure to open the \"GUI Preview\" panel so you can preview the resulting GUI!" 472 15))
-  (ref1 (ref demo-gui #:sync))
-  (ref2 (ref demo-gui #:sync))
+  (ref1 (ref demo.gui #:sync))
+  (ref2 (ref demo.gui #:sync))
   (number3 (number #:min 0 #:max 1))
   (expr4 (expr (if (> $t 0.5) "t is high" "t is low")))
-  (ref5 (ref uilabel #:sync))
+  (ref5 (ref ui.label #:sync))
   (bind6 (bind 3))
   (expr7 (expr "t"))
   (expr8 (expr 0.0))
   (expr9 (expr 1.0))
-  (ref10 (ref uidialer #:sync))
+  (ref10 (ref ui.dialer #:sync))
   (bind11 (bind 1))
-  (ref12 (ref uiref #:sync))
+  (ref12 (ref ui.ref #:sync))
   (bind13 (bind 2))
-  (ref14 (ref uiref #:sync))
+  (ref14 (ref ui.ref #:sync))
   (list15 list)
-  (ref16 (ref uirow #:sync))
+  (ref16 (ref ui.row #:sync))
   (list17 (list #:count 3))
-  (ref18 (ref uicol #:sync))
+  (ref18 (ref ui.col #:sync))
   (gui19 gui)
-  (comment20 (comment "Our two instances of the `demo-gui` node.\nOur graph on the right will compose these into a new combined GUI!" 256 44))
-  (comment21 (comment "`uiref` embeds the GUI of the node instance that its `bind` input points to, allowing for arbitrary nesting and composition of GUI!" 340 44))
+  (comment20 (comment "Our two instances of the `demo.gui` node.\nOur graph on the right will compose these into a new combined GUI!" 256 44))
+  (comment21 (comment "`ui.ref` embeds the GUI of the node instance that its `bind` input points to, allowing for arbitrary nesting and composition of GUI!" 340 44))
   (comment22 (comment "In gantz, you can combine the GUIs of nested nodes." 311 15))
-  (comment23 (comment "This example composes two instances of our `demo-gui` node." 366 15))
-  (comment24 (comment "Checkout `demo-gui` first!" 163 15))
+  (comment23 (comment "This example composes two instances of our `demo.gui` node." 366 15))
+  (comment24 (comment "Checkout `demo.gui` first!" 163 15))
   (comment25 (comment "The `gui[body]` node will automatically pull evaluation as needed, however we can also manually push evaluation if we wish." 384 30))
   (comment26 (comment "The GUI can also respond to values from graph evaluation.\nThe label text is the one place an `expr` still does the work here." 384 30))
   (-> ref18 gui19)
@@ -371,7 +371,7 @@
   (-> ref16 (list17 2))
   (-> list17 ref18))
 
-(graph demo-list
+(graph demo.list
   (comment0 (comment "Bang to push the list into the nodes below." 140 30))
   (bang1 bang)
   (number2 number)
@@ -478,7 +478,7 @@
   (-> expr51 ref54)
   (-> ref54 inspect55))
 
-(graph demo-list-fn
+(graph demo.list-fn
   (comment0 (comment "Functions over lists. Bang to run every row.\nA `fn` node turns a graph into a function value.\nAn `expr` can make one with `lambda`." 300 45))
   (bang1 bang)
   (expr2 (expr (list 3 1 4 1 5 9 2 6)))
@@ -543,7 +543,7 @@
   (-> expr2 (ref28 1))
   (-> ref28 inspect29))
 
-(graph demo-logic
+(graph demo.logic
   (comment0 (comment "p = a<b, q = a>b. Bang to evaluate." 152 30))
   (bang1 bang)
   (number2 number)
@@ -615,7 +615,7 @@
   (-> ref29 inspect33)
   (-> ref35 inspect36))
 
-(graph demo-predicate
+(graph demo.predicate
   (comment0 (comment "Bang to test if the value is a number." 116 30))
   (bang1 bang)
   (expr2 (expr 42))
@@ -927,7 +927,7 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
-(graph uibutton
+(graph ui.button
   (expr0 (expr (ui-elem 'button '() (list (list 'bind $?bind) (list 'label $?label)) (None)) #:require "gantz/ui"))
   (inlet1 (inlet "path" "path of the node to push-eval on press"))
   (inlet2 (inlet "string" "button text"))
@@ -936,7 +936,7 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
-(graph uicol
+(graph ui.col
   (expr0 (expr (ui-elem 'col '() (list (list 'gap $?gap) (list 'align $?align)) $?children) #:require "gantz/ui"))
   (inlet1 (inlet "list" "child elements, or one element"))
   (inlet2 (inlet "number" "space between children"))
@@ -947,7 +947,7 @@
   (-> inlet3 (expr0 1))
   (-> expr0 outlet4))
 
-(graph uidialer
+(graph ui.dialer
   (expr0 (expr (ui-elem 'dialer '() (list (list 'bind $?bind) (list 'min $?min) (list 'max $?max) (list 'step $?step) (list 'precision (ui-int $?precision)) (list 'label $?label) (list 'push $?push)) (None)) #:require "gantz/ui"))
   (inlet1 (inlet "path" "path of the number node to edit"))
   (inlet2 (inlet "number" "lower bound"))
@@ -966,7 +966,7 @@
   (-> inlet7 (expr0 6))
   (-> expr0 outlet8))
 
-(graph uiframe
+(graph ui.frame
   (expr0 (expr (ui-elem 'frame '() (list (list 'title $?title)) $?children) #:require "gantz/ui"))
   (inlet1 (inlet "list" "child elements, or one element"))
   (inlet2 (inlet "string" "group box title"))
@@ -975,7 +975,7 @@
   (-> inlet2 expr0)
   (-> expr0 outlet3))
 
-(graph uigrid
+(graph ui.grid
   (expr0 (expr (ui-elem 'grid '() (list (list 'cols (ui-int $?cols)) (list 'gap $?gap)) $?children) #:require "gantz/ui"))
   (inlet1 (inlet "list" "child elements, filled row-major"))
   (inlet2 (inlet "number" "number of columns"))
@@ -986,7 +986,7 @@
   (-> inlet3 (expr0 1))
   (-> expr0 outlet4))
 
-(graph uilabel
+(graph ui.label
   (expr0 (expr (ui-elem 'label (list $?text) (list (list 'size $?size) (list 'color $?color)) (None)) #:require "gantz/ui"))
   (inlet1 (inlet "string" "text to display"))
   (inlet2 (inlet "number" "font size"))
@@ -997,7 +997,7 @@
   (-> inlet3 (expr0 2))
   (-> expr0 outlet4))
 
-(graph uimatrix
+(graph ui.matrix
   (expr0 (expr (ui-elem 'matrix '() (list (list 'bind $?bind) (list 'cell-size $?cell-size) (list 'push $?push)) (None)) #:require "gantz/ui"))
   (inlet1 (inlet "path" "path of the node whose rows of cells to edit"))
   (inlet2 (inlet "number" "cell size in points"))
@@ -1008,7 +1008,7 @@
   (-> inlet3 (expr0 2))
   (-> expr0 outlet4))
 
-(graph uiplot
+(graph ui.plot
   (expr0 (expr (ui-elem 'plot '() (list (list 'bind $?bind) (list 'mode $?mode) (list 'style $?style) (list 'color $?color) (list 'grid $?grid) (list 'axes $?axes) (list 'interactive $?interactive) (list 'y-min $?y-min) (list 'y-max $?y-max) (list 'w $?w) (list 'h $?h)) (None)) #:require "gantz/ui"))
   (inlet1 (inlet "path" "path of the node whose state to plot"))
   (inlet2 (inlet "symbol" "scope or signal"))
@@ -1035,14 +1035,14 @@
   (-> inlet11 (expr0 10))
   (-> expr0 outlet12))
 
-(graph uiref
+(graph ui.ref
   (expr0 (expr (ui-elem 'ref-gui (list (ui-id $?node)) '() (None)) #:require "gantz/ui"))
   (inlet1 (inlet "path" "path of the instance whose GUI to embed"))
   (outlet2 (outlet "element" "ref-gui element"))
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
-(graph uirow
+(graph ui.row
   (expr0 (expr (ui-elem 'row '() (list (list 'gap $?gap) (list 'align $?align)) $?children) #:require "gantz/ui"))
   (inlet1 (inlet "list" "child elements, or one element"))
   (inlet2 (inlet "number" "space between children"))
@@ -1053,19 +1053,19 @@
   (-> inlet3 (expr0 1))
   (-> expr0 outlet4))
 
-(graph uisep
+(graph ui.sep
   (expr0 (expr (quote (sep))))
   (outlet1 (outlet "element" "sep element"))
   (-> expr0 outlet1))
 
-(graph uispace
+(graph ui.space
   (expr0 (expr (ui-elem 'space (list $?amount) '() (None)) #:require "gantz/ui"))
   (inlet1 (inlet "number" "amount of space"))
   (outlet2 (outlet "element" "space element"))
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
-(graph uitoggle
+(graph ui.toggle
   (expr0 (expr (ui-elem 'toggle '() (list (list 'bind $?bind) (list 'label $?label) (list 'push $?push)) (None)) #:require "gantz/ui"))
   (inlet1 (inlet "path" "path of the node whose boolean state to edit"))
   (inlet2 (inlet "string" "inline label"))
@@ -1076,7 +1076,7 @@
   (-> inlet3 (expr0 2))
   (-> expr0 outlet4))
 
-(graph uivalue
+(graph ui.value
   (expr0 (expr (ui-elem 'value '() (list (list 'bind $?bind) (list 'wrap $?wrap)) (None)) #:require "gantz/ui"))
   (inlet1 (inlet "path" "path of the node whose state to show"))
   (inlet2 (inlet "boolean" "wrap long output"))
@@ -1103,15 +1103,15 @@
   (append "Concatenate two lists")
   (concat "Join a list of lists into one list")
   (cons "Prepend an item to a list")
-  (demo-all "Demo: a tour of the base nodes")
-  (demo-arithmetic "Demo: arithmetic operations")
-  (demo-comparison "Demo: comparison operators")
-  (demo-gui "Demo: declare a graph's GUI with a gui marker")
-  (demo-gui-compose "Demo: compose GUIs across graph instances")
-  (demo-list "Demo: list operations")
-  (demo-list-fn "Demo: functions over lists")
-  (demo-logic "Demo: boolean logic")
-  (demo-predicate "Demo: type predicates")
+  (demo.all "Demo: a tour of the base nodes")
+  (demo.arithmetic "Demo: arithmetic operations")
+  (demo.comparison "Demo: comparison operators")
+  (demo.gui "Demo: declare a graph's GUI with a gui marker")
+  (demo.gui-compose "Demo: compose GUIs across graph instances")
+  (demo.list "Demo: list operations")
+  (demo.list-fn "Demo: functions over lists")
+  (demo.logic "Demo: boolean logic")
+  (demo.predicate "Demo: type predicates")
   (div "Divide one number by another")
   (drop "A list without its first n items")
   (empty? "Whether a list is empty")
@@ -1145,20 +1145,20 @@
   (string? "Whether a value is a string")
   (sub "Subtract one number from another")
   (take "The first n items of a list")
-  (uibutton "GUI: a button that push-evals a node")
-  (uicol "GUI: stack children vertically")
-  (uidialer "GUI: a dialer editing a number node")
-  (uiframe "GUI: a titled group box around children")
-  (uigrid "GUI: lay children out in columns")
-  (uilabel "GUI: a text label")
-  (uimatrix "GUI: a grid of cells editing a node's rows")
-  (uiplot "GUI: plot a node's state")
-  (uiref "GUI: embed an instance's GUI")
-  (uirow "GUI: lay children out horizontally")
-  (uisep "GUI: a separator line")
-  (uispace "GUI: empty space")
-  (uitoggle "GUI: a checkbox editing a boolean node")
-  (uivalue "GUI: show a node's state")
+  (ui.button "GUI: a button that push-evals a node")
+  (ui.col "GUI: stack children vertically")
+  (ui.dialer "GUI: a dialer editing a number node")
+  (ui.frame "GUI: a titled group box around children")
+  (ui.grid "GUI: lay children out in columns")
+  (ui.label "GUI: a text label")
+  (ui.matrix "GUI: a grid of cells editing a node's rows")
+  (ui.plot "GUI: plot a node's state")
+  (ui.ref "GUI: embed an instance's GUI")
+  (ui.row "GUI: lay children out horizontally")
+  (ui.sep "GUI: a separator line")
+  (ui.space "GUI: empty space")
+  (ui.toggle "GUI: a checkbox editing a boolean node")
+  (ui.value "GUI: show a node's state")
   (zip "Pair the items of two lists by index"))
 
 (layout abs
@@ -1215,7 +1215,7 @@
   (outlet3 -54.8115 106.59375)
   (camera 26.500004 26.500004 1))
 
-(layout demo-all
+(layout demo.all
   (comment0 -8 -101)
   (comment1 -6 -32)
   (comment16 354 -32)
@@ -1282,7 +1282,7 @@
   (ref8 0 390)
   (camera 540 151.87439 1))
 
-(layout demo-arithmetic
+(layout demo.arithmetic
   (bang1 445 -303)
   (comment0 481 -318)
   (comment10 376 36)
@@ -1312,7 +1312,7 @@
   (ref8 206 -5)
   (camera 547 -99.921875 1))
 
-(layout demo-comparison
+(layout demo.comparison
   (bang1 400 -497)
   (bang28 548 12)
   (bang35 6 -22)
@@ -1360,7 +1360,7 @@
   (ref8 160 -214)
   (camera 444.5813 -158.21045 1))
 
-(layout demo-gui
+(layout demo.gui
   (bang0 -398 -67)
   (bind5 -64 -112)
   (bind6 112 -112)
@@ -1396,7 +1396,7 @@
   (ref3 -398 70)
   (camera 114.5564 120.61206 1))
 
-(layout demo-gui-compose
+(layout demo.gui-compose
   (bind11 444 -31)
   (bind13 509 -31)
   (bind6 164 -31)
@@ -1426,7 +1426,7 @@
   (ref5 50 -60)
   (camera 247.56079 36.77954 1))
 
-(layout demo-list
+(layout demo.list
   (bang1 212 323)
   (bang3 475 33)
   (bang31 49 59)
@@ -1486,7 +1486,7 @@
   (ref7 47 453)
   (camera 740 250 1))
 
-(layout demo-list-fn
+(layout demo.list-fn
   (bang1 0 -60)
   (comment0 60 -130)
   (comment10 200 180)
@@ -1520,7 +1520,7 @@
   (ref8 200 80)
   (camera 540 40 1))
 
-(layout demo-logic
+(layout demo.logic
   (bang1 -36 -220)
   (bang25 268 -184)
   (bang28 338 -185)
@@ -1560,7 +1560,7 @@
   (ref8 151 41)
   (camera 226.30664 17.393677 1))
 
-(layout demo-predicate
+(layout demo.predicate
   (bang1 -15 -179)
   (bang15 201 -69)
   (bang16 483 42)
@@ -1802,14 +1802,14 @@
   (outlet3 -70 106.59375)
   (camera 26.5 26.5 1))
 
-(layout uibutton
+(layout ui.button
   (expr0 -39.625 13.40625)
   (inlet1 -39.625 -75.78125)
   (inlet2 60.002 -75.78125)
   (outlet3 -39.625 106.59375)
   (camera 26.5 26.5 1))
 
-(layout uicol
+(layout ui.col
   (expr0 -89.4385 13.40625)
   (inlet1 -89.4385 -75.78125)
   (inlet2 10.1885 -75.78125)
@@ -1817,7 +1817,7 @@
   (outlet4 -89.4385 106.59375)
   (camera 26.5 26.5 1))
 
-(layout uidialer
+(layout ui.dialer
   (expr0 -288.692 13.40625)
   (inlet1 -288.692 -75.78125)
   (inlet2 -189.065 -75.78125)
@@ -1829,14 +1829,14 @@
   (outlet8 -288.692 106.59375)
   (camera 26.5 26.5 1))
 
-(layout uiframe
+(layout ui.frame
   (expr0 -39.625 13.40625)
   (inlet1 -39.625 -75.78125)
   (inlet2 60.002 -75.78125)
   (outlet3 -39.625 106.59375)
   (camera 26.5 26.5 1))
 
-(layout uigrid
+(layout ui.grid
   (expr0 -89.4385 13.40625)
   (inlet1 -89.4385 -75.78125)
   (inlet2 10.1885 -75.78125)
@@ -1844,7 +1844,7 @@
   (outlet4 -89.4385 106.59375)
   (camera 26.5 26.5 1))
 
-(layout uilabel
+(layout ui.label
   (expr0 -89.4385 13.40625)
   (inlet1 -89.4385 -75.78125)
   (inlet2 10.1885 -75.78125)
@@ -1852,7 +1852,7 @@
   (outlet4 -89.4385 106.59375)
   (camera 26.5 26.5 1))
 
-(layout uimatrix
+(layout ui.matrix
   (expr0 -89.4385 13.40625)
   (inlet1 -89.4385 -75.78125)
   (inlet2 10.1885 -75.78125)
@@ -1860,7 +1860,7 @@
   (outlet4 -89.4385 106.59375)
   (camera 26.5 26.5 1))
 
-(layout uiplot
+(layout ui.plot
   (expr0 -487.947 13.40625)
   (inlet1 -487.947 -75.78125)
   (inlet10 408.696 -75.78125)
@@ -1876,13 +1876,13 @@
   (outlet12 -487.947 106.59375)
   (camera 26.5 26.5 1))
 
-(layout uiref
+(layout ui.ref
   (expr0 10.1885 13.40625)
   (inlet1 10.1885 -75.78125)
   (outlet2 10.1885 106.59375)
   (camera 26.5 26.5 1))
 
-(layout uirow
+(layout ui.row
   (expr0 -89.4385 13.40625)
   (inlet1 -89.4385 -75.78125)
   (inlet2 10.1885 -75.78125)
@@ -1890,18 +1890,18 @@
   (outlet4 -89.4385 106.59375)
   (camera 26.5 26.5 1))
 
-(layout uisep
+(layout ui.sep
   (expr0 10.1885 13.40625)
   (outlet1 10.1885 106.59375)
   (camera 26.5 26.5 1))
 
-(layout uispace
+(layout ui.space
   (expr0 10.1885 13.40625)
   (inlet1 10.1885 -75.78125)
   (outlet2 10.1885 106.59375)
   (camera 26.5 26.5 1))
 
-(layout uitoggle
+(layout ui.toggle
   (expr0 -89.4385 13.40625)
   (inlet1 -89.4385 -75.78125)
   (inlet2 10.1885 -75.78125)
@@ -1909,7 +1909,7 @@
   (outlet4 -89.4385 106.59375)
   (camera 26.5 26.5 1))
 
-(layout uivalue
+(layout ui.value
   (expr0 -39.625 13.40625)
   (inlet1 -39.625 -75.78125)
   (inlet2 60.002 -75.78125)
@@ -1923,112 +1923,112 @@
   (outlet3 -56 106.59375)
   (camera 26.5 26.5 1))
 
-(demo abs "demo-arithmetic")
+(demo abs "demo.arithmetic")
 
-(demo add "demo-arithmetic")
+(demo add "demo.arithmetic")
 
-(demo all "demo-list-fn")
+(demo all "demo.list-fn")
 
-(demo and "demo-logic")
+(demo and "demo.logic")
 
-(demo any "demo-list-fn")
+(demo any "demo.list-fn")
 
-(demo append "demo-list")
+(demo append "demo.list")
 
-(demo concat "demo-list")
+(demo concat "demo.list")
 
-(demo cons "demo-list")
+(demo cons "demo.list")
 
-(demo div "demo-arithmetic")
+(demo div "demo.arithmetic")
 
-(demo drop "demo-list")
+(demo drop "demo.list")
 
-(demo empty? "demo-list")
+(demo empty? "demo.list")
 
-(demo eq "demo-comparison")
+(demo eq "demo.comparison")
 
-(demo filter "demo-list-fn")
+(demo filter "demo.list-fn")
 
-(demo find "demo-list-fn")
+(demo find "demo.list-fn")
 
-(demo first "demo-list")
+(demo first "demo.list")
 
-(demo flat-map "demo-list-fn")
+(demo flat-map "demo.list-fn")
 
-(demo fold "demo-list-fn")
+(demo fold "demo.list-fn")
 
-(demo gt "demo-comparison")
+(demo gt "demo.comparison")
 
-(demo gte "demo-comparison")
+(demo gte "demo.comparison")
 
-(demo last "demo-list")
+(demo last "demo.list")
 
-(demo length "demo-list")
+(demo length "demo.list")
 
-(demo list-ref "demo-list")
+(demo list-ref "demo.list")
 
-(demo list? "demo-predicate")
+(demo list? "demo.predicate")
 
-(demo lt "demo-comparison")
+(demo lt "demo.comparison")
 
-(demo lte "demo-comparison")
+(demo lte "demo.comparison")
 
-(demo map "demo-list-fn")
+(demo map "demo.list-fn")
 
-(demo mul "demo-arithmetic")
+(demo mul "demo.arithmetic")
 
-(demo neg "demo-arithmetic")
+(demo neg "demo.arithmetic")
 
-(demo neq "demo-comparison")
+(demo neq "demo.comparison")
 
-(demo not "demo-logic")
+(demo not "demo.logic")
 
-(demo number? "demo-predicate")
+(demo number? "demo.predicate")
 
-(demo or "demo-logic")
+(demo or "demo.logic")
 
-(demo range "demo-list")
+(demo range "demo.list")
 
-(demo rest "demo-list")
+(demo rest "demo.list")
 
-(demo reverse "demo-list")
+(demo reverse "demo.list")
 
-(demo select "demo-logic")
+(demo select "demo.logic")
 
-(demo sort "demo-list-fn")
+(demo sort "demo.list-fn")
 
-(demo string? "demo-predicate")
+(demo string? "demo.predicate")
 
-(demo sub "demo-arithmetic")
+(demo sub "demo.arithmetic")
 
-(demo take "demo-list")
+(demo take "demo.list")
 
-(demo uibutton "demo-gui")
+(demo ui.button "demo.gui")
 
-(demo uicol "demo-gui")
+(demo ui.col "demo.gui")
 
-(demo uidialer "demo-gui")
+(demo ui.dialer "demo.gui")
 
-(demo uiframe "demo-gui")
+(demo ui.frame "demo.gui")
 
-(demo uigrid "demo-gui")
+(demo ui.grid "demo.gui")
 
-(demo uilabel "demo-gui")
+(demo ui.label "demo.gui")
 
-(demo uimatrix "demo-gui")
+(demo ui.matrix "demo.gui")
 
-(demo uiplot "demo-gui")
+(demo ui.plot "demo.gui")
 
-(demo uiref "demo-gui")
+(demo ui.ref "demo.gui")
 
-(demo uirow "demo-gui")
+(demo ui.row "demo.gui")
 
-(demo uisep "demo-gui")
+(demo ui.sep "demo.gui")
 
-(demo uispace "demo-gui")
+(demo ui.space "demo.gui")
 
-(demo uitoggle "demo-gui")
+(demo ui.toggle "demo.gui")
 
-(demo uivalue "demo-gui")
+(demo ui.value "demo.gui")
 
-(demo zip "demo-list")
+(demo zip "demo.list")

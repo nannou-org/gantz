@@ -130,6 +130,23 @@ dedicated host code. The tree model is free of any GUI toolkit, so a graph's
 GUI travels with it wherever the graph goes. In this repo, we interpret the GUI
 tree using `egui`.
 
+### Naming
+
+A named graph can be in a namespace. The namespace comes first, and a `.`
+separates it from the rest of the name, as in `ui.row` or `pat.fast`. The base
+graphs use these namespaces:
+
+- `ui.` - GUI elements, such as `ui.row` and `ui.dialer`.
+- `rng.` - random values from a seed, such as `rng.uniform`.
+- `pat.` - patterns, such as `pat.fast` and the `pat.mini` node.
+- `demo.` - demos, such as `demo.gui`. Each graph in this namespace shows in
+  the demo list.
+
+The core graphs, such as `add` and `map`, have no namespace. DSP nodes start
+with `~`, as in `~out`, and entrypoint nodes end with `!`, as in `tick!`. A `-`
+joins the words of a name, as in `list-ref`. A `:` separates a nested graph
+from its parent, as in `parent:child`.
+
 [gantz_graf]: https://youtu.be/ev3vENli7wQ
 [steel]: https://github.com/mattwparas/steel
 [iroh]: https://github.com/n0-computer/iroh

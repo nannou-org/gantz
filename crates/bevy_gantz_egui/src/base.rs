@@ -13,6 +13,11 @@
 //! [`export_to_file`] writes such refs by name without embedding the foreign
 //! graphs.
 //!
+//! A source lists the old names of renamed graphs in
+//! [`BaseSource::renames`]. On launch, the host renames the stored graphs and
+//! references with [`crate::storage::rename`]. An imported file is renamed the
+//! same way, and a seeded parse resolves an old name to the renamed graph.
+//!
 //! [`BaseNames`] tracks the set of base node names so the UI can mark them.
 //! [`BaseNameSources`] tracks each name's owning source so `update-base`
 //! writes every source back to its own file and demo reset re-parses the
@@ -75,9 +80,10 @@ pub fn load(
     mut base_names: ResMut<BaseNames>,
     mut name_sources: ResMut<BaseNameSources>,
 ) {
+    let renames = gantz_egui::base::renames(&sources.0);
     let failed = gantz_egui::base::load_to_fixpoint(sources.0.len(), |ix| {
         let source = &sources.0[ix];
-        let seed = seed_graph_addrs(&base_names.0, &registry);
+        let seed = seed_graph_addrs(&base_names.0, &renames, &registry);
         let parsed = gantz_egui::export::parse_export_seeded_at(
             source.bytes,
             BASE_TIMESTAMP,
@@ -203,14 +209,14 @@ mod tests {
     fn partition_names_routes_by_attribution() {
         let mut name_sources = BaseNameSources::default();
         name_sources.0.insert("add".to_string(), "gantz");
-        name_sources.0.insert("demo-sine".to_string(), "plyphon");
-        let names = [name("add"), name("demo-sine"), name("new")];
+        name_sources.0.insert("demo.sine".to_string(), "plyphon");
+        let names = [name("add"), name("demo.sine"), name("new")];
         let partitioned = partition_names(names.iter(), &name_sources, "gantz");
         assert_eq!(
             partitioned.get("gantz"),
             Some(&vec![name("add"), name("new")]),
         );
-        assert_eq!(partitioned.get("plyphon"), Some(&vec![name("demo-sine")]));
+        assert_eq!(partitioned.get("plyphon"), Some(&vec![name("demo.sine")]));
     }
 
     /// An unrecorded nested name follows its parent's attribution, however
@@ -218,18 +224,18 @@ mod tests {
     #[test]
     fn partition_names_nested_follow_their_parent() {
         let mut name_sources = BaseNameSources::default();
-        name_sources.0.insert("demo-sine".to_string(), "plyphon");
+        name_sources.0.insert("demo.sine".to_string(), "plyphon");
         let names = [
-            name("demo-sine:child"),
-            name("demo-sine:child:grandchild"),
+            name("demo.sine:child"),
+            name("demo.sine:child:grandchild"),
             name("orphan:child"),
         ];
         let partitioned = partition_names(names.iter(), &name_sources, "gantz");
         assert_eq!(
             partitioned.get("plyphon"),
             Some(&vec![
-                name("demo-sine:child"),
-                name("demo-sine:child:grandchild"),
+                name("demo.sine:child"),
+                name("demo.sine:child:grandchild"),
             ]),
         );
         assert_eq!(partitioned.get("gantz"), Some(&vec![name("orphan:child")]));

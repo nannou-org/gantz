@@ -134,7 +134,7 @@ where
             };
             let immutable = head_immutable(&head, gantz.base_immutable, base_names);
 
-            // Collect demo-* names for the dropdown.
+            // Collect the `demo.` names for the dropdown.
             let demo_names: Vec<String> = names
                 .iter()
                 .filter(|(n, _)| widget::graph_select::is_demo(n))

@@ -42,3 +42,36 @@ pub fn modules() -> &'static [SteelModule] {
 /// The domain's base `.gantz` source. Named graphs wrapping the module
 /// fns as thin expr nodes, plus a tick-driven demo.
 pub const BASE_BYTES: &[u8] = include_bytes!("../base.gantz");
+
+/// Earlier names of the base graphs, each as `(old, new)`. A host renames
+/// stored graphs and references that still use an old name.
+pub const BASE_RENAMES: &[(&str, &str)] = &[
+    ("demo-pattern", "demo.pat"),
+    ("demo-pplot", "demo.pat.plot"),
+    ("papp", "pat.app"),
+    ("pdegradeby", "pat.degradeby"),
+    ("peuclid", "pat.euclid"),
+    ("peuclidfull", "pat.euclidfull"),
+    ("peuclidoff", "pat.euclidoff"),
+    ("pfast", "pat.fast"),
+    ("pfastcat", "pat.fastcat"),
+    ("pfilter", "pat.filter"),
+    ("pindices", "pat.indices"),
+    ("pjoin", "pat.join"),
+    ("pmap", "pat.map"),
+    ("pmapevents", "pat.mapevents"),
+    ("pmergewith", "pat.mergewith"),
+    ("ppure", "pat.pure"),
+    ("pquery", "pat.query"),
+    ("prand", "pat.rand"),
+    ("psaw", "pat.saw"),
+    ("psched", "pat.sched"),
+    ("pshift", "pat.shift"),
+    ("psilence", "pat.silence"),
+    ("pslow", "pat.slow"),
+    ("pslowcat", "pat.slowcat"),
+    ("pstack", "pat.stack"),
+    ("psteady", "pat.steady"),
+    ("ptimecat", "pat.timecat"),
+    ("pwindow", "pat.window"),
+];

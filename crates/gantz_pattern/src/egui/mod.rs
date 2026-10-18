@@ -33,7 +33,7 @@ fn hash_str(s: &str) -> u64 {
 
 impl NodeUi for Pmini {
     fn name(&self, _: &Env<'_>) -> std::borrow::Cow<'_, str> {
-        "pmini".into()
+        crate::sugar::MINI.into()
     }
 
     fn description(&self) -> Option<&'static str> {

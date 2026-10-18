@@ -3,6 +3,7 @@
 
 use crate::export::ParseExportError;
 use crate::reg::Names;
+use gantz_ca::{GraphAddr, Name};
 use std::collections::BTreeMap;
 
 /// One domain's baked-in base `.gantz` export.
@@ -12,6 +13,10 @@ pub struct BaseSource {
     pub name: &'static str,
     /// The `.gantz` bytes of the domain's base file.
     pub bytes: &'static [u8],
+    /// Earlier names of the source's graphs, each as `(old, new)`. A host
+    /// renames stored graphs and references with these, and a seeded parse
+    /// resolves an old name to its new name's graph. See [`renames`].
+    pub renames: &'static [(&'static str, &'static str)],
 }
 
 /// The fixed timestamp used to stamp the base's hand-authored graphs.
@@ -22,20 +27,60 @@ pub struct BaseSource {
 /// addresses reproducible.
 pub const BASE_TIMESTAMP: gantz_ca::Timestamp = std::time::Duration::ZERO;
 
+/// The [`BaseSource::renames`] of every source, in source order.
+pub fn renames<'a>(sources: impl IntoIterator<Item = &'a BaseSource>) -> Vec<(Name, Name)> {
+    sources
+        .into_iter()
+        .flat_map(|source| source.renames)
+        .map(|(old, new)| (name(old), name(new)))
+        .collect()
+}
+
 /// The name to head graph address seed for a seeded base parse. Each known
-/// base name resolves to its head commit's graph in the given registry. See
+/// base name resolves to its head commit's graph in the given registry, and
+/// so does each of its old names. See [`with_old_names`] and
 /// [`crate::export::parse_export_seeded_at`].
 pub fn seed_graph_addrs(
     names: &Names,
+    renames: &[(Name, Name)],
     registry: &gantz_ca::Registry,
-) -> BTreeMap<String, gantz_ca::GraphAddr> {
-    names
+) -> BTreeMap<String, GraphAddr> {
+    let seed = names
         .iter()
         .filter_map(|(name, ca)| {
             let commit = registry.commits().get(ca)?;
             Some((name.to_string(), commit.graph))
         })
-        .collect()
+        .collect();
+    with_old_names(seed, renames)
+}
+
+/// Add the old name of each seeded name that `renames` renamed, nested names
+/// included. An old name resolves to its new name's graph, so a file written
+/// before a rename still parses. A name the seed already has keeps its graph.
+pub fn with_old_names(
+    mut seed: BTreeMap<String, GraphAddr>,
+    renames: &[(Name, Name)],
+) -> BTreeMap<String, GraphAddr> {
+    let old_names: Vec<(String, GraphAddr)> = seed
+        .iter()
+        .filter_map(|(seeded, ga)| {
+            let seeded = name(seeded);
+            let old = renames
+                .iter()
+                .find_map(|(old, new)| seeded.replace_prefix(new, old))?;
+            Some((old.to_string(), *ga))
+        })
+        .collect();
+    for (old, ga) in old_names {
+        seed.entry(old).or_insert(ga);
+    }
+    seed
+}
+
+fn name(s: &str) -> Name {
+    let Ok(name) = s.parse();
+    name
 }
 
 /// Load `n` sources to a fixpoint. Returns the sources that failed, by index.
@@ -89,7 +134,7 @@ mod tests {
         let mut registry = gantz_ca::Registry::default();
         let mut loaded = vec![];
         let failed = load_to_fixpoint(sources.len(), |ix| {
-            let seed = seed_graph_addrs(&names, &registry);
+            let seed = seed_graph_addrs(&names, &[], &registry);
             let bytes = sources[ix].as_bytes();
             let parsed =
                 crate::export::parse_export_seeded_at(bytes, BASE_TIMESTAMP, &seed, &codec)?;
@@ -104,5 +149,28 @@ mod tests {
             .map(|(ix, e)| (*ix, e.is_missing_dependency()))
             .collect();
         assert_eq!(failed, [(2, true)]);
+    }
+
+    /// Old names resolve to their new names' graphs, nested names included.
+    /// A name the seed already has keeps its graph.
+    #[test]
+    fn old_names_seed_their_new_names_graphs() {
+        let ga = |b: u8| GraphAddr::from(gantz_ca::ContentAddr::from([b; 32]));
+        let seed = BTreeMap::from([
+            ("ui.row".to_string(), ga(1)),
+            ("ui.row:1".to_string(), ga(2)),
+            ("ui.col".to_string(), ga(3)),
+            ("uicol".to_string(), ga(4)),
+        ]);
+        let renames = [
+            (name("uirow"), name("ui.row")),
+            (name("uicol"), name("ui.col")),
+        ];
+        let seed = with_old_names(seed, &renames);
+        let get = |n: &str| seed.get(n).copied();
+        assert_eq!(get("uirow"), Some(ga(1)));
+        assert_eq!(get("uirow:1"), Some(ga(2)));
+        assert_eq!(get("uicol"), Some(ga(4)));
+        assert_eq!(seed.len(), 6);
     }
 }

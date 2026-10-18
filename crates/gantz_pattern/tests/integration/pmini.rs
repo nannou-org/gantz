@@ -1,4 +1,4 @@
-//! End-to-end compile and evaluate tests for the `pmini` node.
+//! End-to-end compile and evaluate tests for the `pat.mini` node.
 
 use gantz_core::node::{self, Node, WithPushEval};
 use gantz_core::steel::SteelVal;

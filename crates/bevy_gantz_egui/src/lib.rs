@@ -131,6 +131,7 @@ impl Plugin for GantzEguiPlugin {
             .push(gantz_egui::base::BaseSource {
                 name: "gantz",
                 bytes: gantz_base::BYTES,
+                renames: gantz_base::RENAMES,
             });
 
         // Builtin GUI response payload dispatchers. Head-scoped payloads

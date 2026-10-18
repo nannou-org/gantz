@@ -162,6 +162,42 @@ pub fn follow_moves(storage: &mut (impl Load + Save), moved: &ca::Moved) {
     save_gui_state(storage, &gui_state);
 }
 
+/// Rename named graphs in a loaded store. See
+/// [`gantz_edit::resync::rename`]. The saved open heads, focused head and GUI
+/// state follow each renamed head.
+pub fn rename(
+    storage: &mut (impl Load + Save),
+    registry: &mut ca::Registry,
+    renames: &[(ca::Name, ca::Name)],
+    ts: Duration,
+) {
+    let renamed = gantz_edit::resync::rename(registry, ts, renames);
+    if renamed.heads.is_empty() {
+        return;
+    }
+    let head = |head: &ca::Head| match head {
+        ca::Head::Branch(name) => match renamed.heads.get(name) {
+            Some(new) => ca::Head::Branch(new.clone()),
+            None => head.clone(),
+        },
+        ca::Head::Commit(_) => head.clone(),
+    };
+    if let Some(heads) = gantz_store::load_open_heads(storage) {
+        let heads: Vec<_> = heads.iter().map(head).collect();
+        gantz_store::save_open_heads(storage, &heads);
+    }
+    if let Some(focused) = gantz_store::load_focused_head(storage) {
+        gantz_store::save_focused_head(storage, &head(&focused));
+    }
+    let mut gui_state = load_gui_state(storage);
+    for (old, new) in &renamed.heads {
+        let old = ca::Head::Branch(old.clone());
+        let new = ca::Head::Branch(new.clone());
+        gui_state.0.migrate_head(&old, &new, false);
+    }
+    save_gui_state(storage, &gui_state);
+}
+
 #[cfg(test)]
 mod tests {
     /// `egui::Memory` must survive a bincode round-trip, the format used by

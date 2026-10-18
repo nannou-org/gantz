@@ -103,9 +103,9 @@ fn builtins_match_expected_name_set() {
         "main!",
         "number",
         "outlet",
+        "pat.mini",
+        "pat.plot",
         "plot",
-        "pmini",
-        "pplot",
         "sleep",
         "tick!",
         "update!",
@@ -592,6 +592,69 @@ fn node_set_keeps_its_addresses_through_the_store_and_the_wire() {
     }
 }
 
+/// A store in a new temp dir, and the dir for the test to remove.
+fn temp_store() -> (crate::storage::Pkv, std::path::PathBuf) {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    let dir = std::env::temp_dir().join(format!("gantz-store-{}-{nanos}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let store = crate::storage::Pkv::new(bevy_pkv::PkvStore::new_in_dir(&dir));
+    (store, dir)
+}
+
+/// A store saved before a rename follows it. The reference to the old name,
+/// the open heads, the focused head and the GUI state take the new name.
+#[test]
+fn a_store_follows_a_rename() {
+    use gantz_ca::Head;
+    use gantz_core::node::{Identity, Ref};
+    use gantz_edit::NamedRef;
+
+    let ts = std::time::Duration::from_secs(1);
+    let mut registry = DataReg::default();
+    let row = data_graph([erased(&Identity)]);
+    let (_, row_ga) = commit_to_name(&mut registry, ts, row, &name("uirow"));
+    let jam = data_graph([erased(&NamedRef::with_sync(
+        name("uirow"),
+        Ref::new(row_ga.into()),
+    ))]);
+    commit_to_name(&mut registry, ts, jam, &name("jam"));
+
+    let (mut store, dir) = temp_store();
+    let mut persisted = gantz_store::PersistedRegistry::default();
+    gantz_store::save_registry_incremental(&mut store, &registry, &mut persisted);
+    let old_row = Head::Branch(name("uirow"));
+    let jam = Head::Branch(name("jam"));
+    gantz_store::save_open_heads(&mut store, &[old_row.clone(), jam.clone()]);
+    gantz_store::save_focused_head(&mut store, &old_row);
+    let mut gui_state = bevy_gantz_egui::GuiState::default();
+    gui_state
+        .0
+        .open_heads
+        .insert(old_row.clone(), Default::default());
+    bevy_gantz_egui::storage::save_gui_state(&mut store, &gui_state);
+
+    let (mut registry, _) = gantz_store::load_registry(&store);
+    let renames = [(name("uirow"), name("ui.row"))];
+    bevy_gantz_egui::storage::rename(&mut store, &mut registry, &renames, ts * 2);
+
+    let row = Head::Branch(name("ui.row"));
+    assert_eq!(registry.head(&name("uirow")), None);
+    let jam_ga = registry.named_commit(&name("jam")).unwrap().graph;
+    let refs: Vec<_> = gantz_edit::resync::named_refs(&registry.graphs()[&jam_ga]).collect();
+    assert_eq!(refs, [(name("ui.row"), row_ga, true)]);
+    let heads = gantz_store::load_open_heads(&store).unwrap();
+    assert_eq!(heads, [row.clone(), jam]);
+    assert_eq!(gantz_store::load_focused_head(&store), Some(row.clone()));
+    let gui_state = bevy_gantz_egui::storage::load_gui_state(&store);
+    assert!(gui_state.0.open_heads.contains_key(&row));
+    assert!(!gui_state.0.open_heads.contains_key(&old_row));
+    drop(store);
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// An older build read every non-negative integer back as unsigned, and
 /// stored each graph under the address of the form it was built in. The
 /// upgrade moves each graph to its canonical address. Its commits, the
@@ -626,13 +689,7 @@ fn a_format_zero_store_moves_to_canonical_addresses() {
         [(jam.clone(), old_ca)].into(),
     );
 
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let dir = std::env::temp_dir().join(format!("gantz-store-{}-{nanos}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    let mut store = crate::storage::Pkv::new(bevy_pkv::PkvStore::new_in_dir(&dir));
+    let (mut store, dir) = temp_store();
     let mut persisted = gantz_store::PersistedRegistry::default();
     gantz_store::save_registry_incremental(&mut store, &registry, &mut persisted);
     let old_heads = [Head::Commit(old_ca), Head::Branch(jam.clone())];
@@ -1963,10 +2020,10 @@ fn promote_nested_repoints_all_parent_instances() {
 
 /// Every named graph shipped in `base.gantz` must compile to a valid Steel
 /// module with `emit_all_node_fns` and IR validation on. That includes all
-/// primitives, the `demo-*` graphs and the unconnected `demo-all` catalog.
+/// primitives, the `demo.` graphs and the unconnected `demo.all` catalog.
 /// `emit_all_node_fns` is the app's toggle to inspect every node's code.
 /// It emits each node's all-connected variant, which exercises the
-/// `demo-all` catalog's otherwise-unconnected `ref` nodes.
+/// `demo.all` catalog's otherwise-unconnected `ref` nodes.
 ///
 /// `cli::tests::check_passes_on_base_sources` compiles every base graph
 /// under the default config.
@@ -2271,17 +2328,17 @@ fn base_socket_docs() {
     );
 }
 
-/// End-to-end check of every bang-driven `demo-*` graph. Firing its first
+/// End-to-end check of every bang-driven `demo.` graph. Firing its first
 /// `bang` must evaluate all ops with default inputs without a runtime
 /// error or panic. The bang feeds every interactive input, so all of an
 /// op's inputs are active in one push. This guards the single-input-active
-/// failure. Demos driven only by a `gui` pull, e.g. `demo-gui-compose`,
+/// failure. Demos driven only by a `gui` pull, e.g. `demo.gui-compose`,
 /// are covered by `base_gui_markers_decode_clean`.
 ///
 /// It also guards two integer-op gotchas. `number` outputs floats, so
 /// `list-ref` and `mod` coerce via `(exact (round ...))`. `mod` must stay
 /// total. Steel's `modulo` aborts the process on a zero divisor. `mod`
-/// avoids that by returning the dividend, so firing `demo-arithmetic`
+/// avoids that by returning the dividend, so firing `demo.arithmetic`
 /// with its default `0` inputs must not crash.
 #[test]
 fn demos_evaluate() {
@@ -2297,13 +2354,13 @@ fn demos_evaluate() {
     let config = gantz_core::compile::Config::default();
 
     let demos = [
-        "demo-arithmetic",
-        "demo-comparison",
-        "demo-gui",
-        "demo-logic",
-        "demo-list",
-        "demo-list-fn",
-        "demo-predicate",
+        "demo.arithmetic",
+        "demo.comparison",
+        "demo.gui",
+        "demo.logic",
+        "demo.list",
+        "demo.list-fn",
+        "demo.predicate",
     ];
     for demo in demos {
         let head = gantz_ca::Head::Branch(name(demo));
@@ -2443,9 +2500,9 @@ fn base_list_nodes_evaluate() {
     fire_push(&mut vm, &eps, bang.index());
 }
 
-/// The `pjoin`, `pmergewith` and `ptimecat` base nodes give the expected
-/// patterns through `ref`s. `pmergewith` takes an `fn-ref` over the base
-/// `add` graph. `ptimecat` takes float weights, as `number` nodes emit
+/// The `pat.join`, `pat.mergewith` and `pat.timecat` base nodes give the expected
+/// patterns through `ref`s. `pat.mergewith` takes an `fn-ref` over the base
+/// `add` graph. `pat.timecat` takes float weights, as `number` nodes emit
 /// them, and several connections per inlet. Each `assert!` expr checks
 /// one output, so a wrong result errors the push.
 #[test]
@@ -2454,18 +2511,18 @@ fn base_pattern_combinator_nodes_evaluate() {
 (graph pattern-nodes-test
   (b bang)
   (inner (expr (pat/pure (pat/fast 2 (pat/pure 'x))) #:require "gantz/pattern"))
-  (jn (ref pjoin))
+  (jn (ref pat.join))
   (jn-ok (expr (assert! (equal? (list/map pat/event-value (pat/query $p (pat/span 0 1))) '(x x))) #:require "gantz/list" #:require "gantz/pattern"))
   (fadd (fn-ref add))
   (ones (expr (pat/fast 2 (pat/pure 1)) #:require "gantz/pattern"))
   (tens (expr (pat/pure 10) #:require "gantz/pattern"))
-  (mw (ref pmergewith))
+  (mw (ref pat.mergewith))
   (mw-ok (expr (assert! (equal? (list/map pat/event-value (pat/query $p (pat/span 0 1))) '(11 11))) #:require "gantz/list" #:require "gantz/pattern"))
   (w1 (expr 1.0))
   (w2 (expr 2.0))
   (pa (expr (pat/pure 'a) #:require "gantz/pattern"))
   (pb (expr (pat/pure 'b) #:require "gantz/pattern"))
-  (tc (ref ptimecat))
+  (tc (ref pat.timecat))
   (tc-vals-ok (expr (assert! (equal? (list/map pat/event-value (pat/query $p (pat/span 0 1))) '(a b))) #:require "gantz/list" #:require "gantz/pattern"))
   (tc-span-ok (expr (assert! (= (cdr (pat/event-whole (car (pat/query $p (pat/span 0 1))))) 1/3)) #:require "gantz/pattern"))
   (-> b inner) (-> b fadd) (-> b ones) (-> b tens)
@@ -2482,6 +2539,7 @@ fn base_pattern_combinator_nodes_evaluate() {
     });
     let loaded = gantz_cli::headless::load_sources(
         &sources,
+        &[],
         gantz_egui::base::BASE_TIMESTAMP,
         &crate::node::codec(),
     );
@@ -2603,8 +2661,8 @@ fn base_gui_markers_decode_clean() {
                 decoded.root,
             );
             // The node-built demo tree pins the element base nodes'
-            // output. Both markers of `demo-gui` receive the same tree.
-            if name.to_string() == "demo-gui" {
+            // output. Both markers of `demo.gui` receive the same tree.
+            if name.to_string() == "demo.gui" {
                 let flat = gantz_ui::sexpr::flat(&gantz_ui::encode(&decoded.root));
                 assert_eq!(
                     flat,
@@ -2620,7 +2678,7 @@ fn base_gui_markers_decode_clean() {
     assert!(checked > 0, "base.gantz declares no gui markers");
 }
 
-/// The load pass over demo-pplot leaves every pplot holding plot data with
+/// The load pass over demo.pat.plot leaves every pplot holding plot data with
 /// events or signal samples, so each value kind reaches its plot.
 #[test]
 fn demo_pplot_plots_every_source() {
@@ -2639,8 +2697,8 @@ fn demo_pplot_plots_every_source() {
     let codec = crate::node::codec();
     let reg_env = env(&merged, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
-    let head = gantz_ca::Head::Branch(name("demo-pplot"));
-    let graph = head_graph(&reified, &merged, &head).expect("demo-pplot graph");
+    let head = gantz_ca::Head::Branch(name("demo.pat.plot"));
+    let graph = head_graph(&reified, &merged, &head).expect("demo.pat.plot graph");
 
     let eps = bevy_gantz_egui::entrypoints(&get_node, graph);
     let (mut vm, _c) = gantz_core::vm::init_with_modules(
@@ -2654,7 +2712,7 @@ fn demo_pplot_plots_every_source() {
 
     // Each source has its own `load!`. The load pass fires them all at once.
     let load = bevy_gantz_egui::node::load_bang::entrypoint(&get_node, graph)
-        .expect("demo-pplot has no load!");
+        .expect("demo.pat.plot has no load!");
     vm.call_function_by_name_with_args(&entry_fn_name(&load.id()), vec![])
         .unwrap_or_else(|e| panic!("load pass errored: {e}"));
 
@@ -2662,7 +2720,7 @@ fn demo_pplot_plots_every_source() {
         .node_indices()
         .filter(|&ix| (&*graph[ix] as &dyn std::any::Any).is::<gantz_pattern::Pplot>())
         .collect();
-    assert!(!plots.is_empty(), "demo-pplot has no pplot");
+    assert!(!plots.is_empty(), "demo.pat.plot has no pplot");
     for ix in plots {
         let state = gantz_core::node::state::extract_value(&vm, &[ix.index()])
             .unwrap()
@@ -2680,7 +2738,7 @@ fn demo_pplot_plots_every_source() {
     }
 }
 
-/// Partial evals over demo-pattern stay silent. The tick entrypoint is
+/// Partial evals over demo.pat stay silent. The tick entrypoint is
 /// interleaved with the cps number node's push entrypoint. That push's
 /// cone reaches the pattern nodes without their pattern inputs. The
 /// pattern module guards its invocation sites against not-a-procedure
@@ -2706,8 +2764,8 @@ fn demo_pattern_partial_evals_are_silent() {
     let reg_env = env(&merged, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
     let config = gantz_core::compile::Config::default();
-    let head = gantz_ca::Head::Branch(name("demo-pattern"));
-    let graph = head_graph(&reified, &merged, &head).expect("demo-pattern graph");
+    let head = gantz_ca::Head::Branch(name("demo.pat"));
+    let graph = head_graph(&reified, &merged, &head).expect("demo.pat graph");
 
     let mut eps = push_pull_entrypoints(&get_node, graph);
     eps.extend(bevy_gantz_egui::node::tick_bang::entrypoints(
@@ -2806,7 +2864,7 @@ fn reset_then_reopen_demo_recompiles() {
     // Simulate `on_reset_base_graph`. Re-export the demo's reachable
     // subset from a fresh parse and merge it into the startup registry.
     let mut registry = startup;
-    let demo = name("demo-arithmetic");
+    let demo = name("demo.arithmetic");
     let demo_commit = reparse.head(&demo).expect("demo name");
     let live = gantz_ca::closure_from(&reparse, [demo_commit]);
     let mut subset = gantz_ca::export(&reparse, &live);
@@ -2884,6 +2942,7 @@ fn base_names_do_not_shadow_builtins() {
     let sources = gantz_cli::headless::base_sources(&crate::conf());
     let loaded = gantz_cli::headless::load_sources(
         &sources,
+        &[],
         gantz_egui::base::BASE_TIMESTAMP,
         &crate::node::codec(),
     );
@@ -2937,16 +2996,16 @@ fn base_sources_parse_reproducibly() {
 
 /// The demos in the plyphon base source.
 const PLYPHON_DEMOS: [&str; 10] = [
-    "demo-sine",
-    "demo-ringmod",
-    "demo-waveshape",
-    "demo-freeverb",
-    "demo-pluck",
-    "demo-samplehold",
-    "demo-looper",
-    "demo-sampler",
-    "demo-wavetable",
-    "demo-kick",
+    "demo.sine",
+    "demo.ringmod",
+    "demo.waveshape",
+    "demo.freeverb",
+    "demo.pluck",
+    "demo.samplehold",
+    "demo.looper",
+    "demo.sampler",
+    "demo.wavetable",
+    "demo.kick",
 ];
 
 /// Every plyphon base demo derives synthdefs that build in the real
@@ -2980,7 +3039,7 @@ fn plyphon_base_demos_derive_and_build() {
                 .ensure_compiled(&part.def.name)
                 .unwrap_or_else(|e| panic!("{demo}: def failed to build: {e:?}"));
         }
-        if demo == "demo-kick" {
+        if demo == "demo.kick" {
             let envs: Vec<_> = parts
                 .iter()
                 .flat_map(|p| p.def.units.iter())
@@ -2994,7 +3053,7 @@ fn plyphon_base_demos_derive_and_build() {
                 );
             }
         }
-        if demo == "demo-sampler" {
+        if demo == "demo.sampler" {
             let spec = parts
                 .iter()
                 .flat_map(|p| p.def.units.iter())
@@ -3007,8 +3066,8 @@ fn plyphon_base_demos_derive_and_build() {
             assert!(parts.iter().all(|p| p.buffers.is_empty()));
         }
         let units: &[&str] = match demo {
-            "demo-looper" => &["RecordBuf", "PlayBuf"],
-            "demo-wavetable" => &["Osc"],
+            "demo.looper" => &["RecordBuf", "PlayBuf"],
+            "demo.wavetable" => &["Osc"],
             _ => &[],
         };
         for &unit in units {

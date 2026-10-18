@@ -1,7 +1,7 @@
 //! The `bind` node holds a path to a node in its graph.
 //!
-//! Element base graphs such as `uidialer` and `uivalue` take the path on
-//! their `bind` inlet and `uiref` takes an instance id, so a GUI built from
+//! Element base graphs such as `ui.dialer` and `ui.value` take the path on
+//! their `bind` inlet and `ui.ref` takes an instance id, so a GUI built from
 //! nodes never carries a hand-typed index. The path is a node weight, so
 //! [`crate::ops::remove_nodes`] re-targets it when a removal swaps node
 //! indices, and empties it when the target itself is removed. An empty path
@@ -66,7 +66,7 @@ impl NodeUi for Bind {
     fn description(&self) -> Option<&'static str> {
         Some(
             "A path to a node in this graph, for an element's bind inlet or ref-gui. \
-             See the demo-gui graph",
+             See the demo.gui graph",
         )
     }
 

@@ -1,8 +1,8 @@
 //! `.gantz` keyword sugar for [`Pplot`].
 //!
-//! A default pplot is a bare `pplot`. A pplot whose settings differ only in
+//! A default pplot is a bare `pat.plot`. A pplot whose settings differ only in
 //! span, resolution, value layout or body size is written with keywords, for
-//! example `(pplot #:end 2 #:fit 2 #:expand #:width 240)`. Any other setting
+//! example `(pat.plot #:end 2 #:fit 2 #:expand #:width 240)`. Any other setting
 //! falls back to the generic node form, so nothing is lost.
 
 use super::{Pplot, Res, ValueLayout};
@@ -12,14 +12,17 @@ use gantz_nodetag::NodeTag;
 use num_rational::Ratio;
 
 /// The sugar keyword.
-pub(crate) const KEYWORD: &str = "pplot";
+pub(crate) const KEYWORD: &str = "pat.plot";
+
+/// The keyword from before the `pat.` namespace.
+pub(crate) const OLD_KEYWORD: &str = "pplot";
 
 /// The node's wire tag.
 pub(crate) fn tag() -> &'static str {
     Pplot::TAG
 }
 
-/// Read a `(pplot <keyword>...)` form.
+/// Read a `(pat.plot <keyword>...)` form.
 pub(crate) fn read_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     let mut p = Pplot::default();
     if let Some(start) = ratio_keyword(&args, "start")? {
@@ -51,7 +54,7 @@ pub(crate) fn read_bare() -> Option<Datum> {
     tagged(&Pplot::default())
 }
 
-/// Write a pplot as a bare `pplot` or a keyword form. `None` when a setting
+/// Write a pplot as a bare `pat.plot` or a keyword form. `None` when a setting
 /// has no keyword, so the generic node form applies.
 pub(crate) fn write_spec(node: &Datum) -> Option<String> {
     let p: Pplot = from_datum(node.clone()).ok()?;
@@ -136,20 +139,20 @@ mod tests {
     #[test]
     fn keywords_round_trip() {
         let bare = read_bare().expect("bare");
-        assert_eq!(write_spec(&bare).as_deref(), Some("pplot"));
-        let text = "(pplot #:start 1/3 #:end 2 #:fit 2.5 #:expand #:width 240 #:height 60)";
+        assert_eq!(write_spec(&bare).as_deref(), Some("pat.plot"));
+        let text = "(pat.plot #:start 1/3 #:end 2 #:fit 2.5 #:expand #:width 240 #:height 60)";
         assert_eq!(write_spec(&read(text)).as_deref(), Some(text));
-        let text = "(pplot #:fixed 64)";
+        let text = "(pat.plot #:fixed 64)";
         assert_eq!(write_spec(&read(text)).as_deref(), Some(text));
     }
 
     // Out-of-range integers clamp to the nearest valid setting.
     #[test]
     fn out_of_range_keywords_clamp() {
-        let p: Pplot = from_datum(read("(pplot #:fixed -5 #:width -1 #:height 99999)")).unwrap();
+        let p: Pplot = from_datum(read("(pat.plot #:fixed -5 #:width -1 #:height 99999)")).unwrap();
         assert!(matches!(p.res, Res::Fixed(1)));
         assert_eq!((p.look.width, p.look.height), (0, u16::MAX));
-        let p: Pplot = from_datum(read("(pplot #:fixed 99999)")).unwrap();
+        let p: Pplot = from_datum(read("(pat.plot #:fixed 99999)")).unwrap();
         assert!(matches!(p.res, Res::Fixed(Res::MAX)));
     }
 

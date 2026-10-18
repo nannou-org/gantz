@@ -14,6 +14,7 @@ fn name(s: &str) -> ca::Name {
 fn base_registry() -> ca::Registry {
     headless::load_sources(
         &headless::base_sources(&conf()),
+        &[],
         BASE_TIMESTAMP,
         &conf().codec,
     )

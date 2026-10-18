@@ -446,11 +446,11 @@ pub fn commits_by_recency(
     commits
 }
 
-/// Whether the name follows the `demo-*` naming convention for demo graphs.
-pub(crate) fn is_demo(name: &Name) -> bool {
+/// Whether the name is in the `demo.` namespace of demo graphs.
+pub fn is_demo(name: &Name) -> bool {
     name.segments()
         .first()
-        .is_some_and(|s| s.starts_with("demo-"))
+        .is_some_and(|s| s.starts_with("demo."))
 }
 
 /// Update `response` for a click on the row for `head`.

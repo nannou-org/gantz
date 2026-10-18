@@ -80,3 +80,18 @@ pub mod units;
 /// is self-contained. Its graphs compose builtin nodes and never ref other
 /// sources.
 pub const BASE_BYTES: &[u8] = include_bytes!("../base.gantz");
+
+/// Earlier names of the base graphs, each as `(old, new)`. A host renames
+/// stored graphs and references that still use an old name.
+pub const BASE_RENAMES: &[(&str, &str)] = &[
+    ("demo-freeverb", "demo.freeverb"),
+    ("demo-kick", "demo.kick"),
+    ("demo-looper", "demo.looper"),
+    ("demo-pluck", "demo.pluck"),
+    ("demo-ringmod", "demo.ringmod"),
+    ("demo-samplehold", "demo.samplehold"),
+    ("demo-sampler", "demo.sampler"),
+    ("demo-sine", "demo.sine"),
+    ("demo-waveshape", "demo.waveshape"),
+    ("demo-wavetable", "demo.wavetable"),
+];

@@ -640,7 +640,7 @@ pub struct SetBaseSource {
 #[derive(Clone, Debug)]
 pub struct ResetBaseGraph(pub gantz_ca::Name);
 
-/// Reset every `demo-*` base graph to its original form. App-level.
+/// Reset every `demo.` base graph to its original form. App-level.
 #[derive(Clone, Copy, Debug)]
 pub struct ResetAllDemos;
 

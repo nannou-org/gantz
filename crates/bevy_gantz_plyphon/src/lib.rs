@@ -249,6 +249,7 @@ impl Plugin for PlyphonPlugin {
             .push(gantz_egui::base::BaseSource {
                 name: "plyphon",
                 bytes: gantz_plyphon::BASE_BYTES,
+                renames: gantz_plyphon::BASE_RENAMES,
             });
         // Run once the `tick!` and `update!` drivers' triggered evaluations
         // have flushed, so the control values they queue are visible to the
