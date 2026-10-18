@@ -178,21 +178,7 @@ fn collect_batch_to_persist(
 ) -> Vec<(String, String)> {
     let mut batch = gantz_store::BatchWriter::default();
     gantz_store::save_registry_incremental(&mut batch, registry, persisted);
-    let heads: Vec<_> = tab_order
-        .iter()
-        .filter_map(|&entity| {
-            heads_query
-                .get(entity)
-                .ok()
-                .map(|data| (**data.head_ref).clone())
-        })
-        .collect();
-    gantz_store::save_open_heads(&mut batch, &heads);
-    if let Some(focused_entity) = **focused {
-        if let Ok(data) = heads_query.get(focused_entity) {
-            gantz_store::save_focused_head(&mut batch, &**data.head_ref);
-        }
-    }
+    crate::app::save_open_heads(&mut batch, tab_order, focused, heads_query);
     bevy_gantz_egui::storage::save_gui_state(&mut batch, gui_state);
     if let Some(window) = window {
         window::save(&mut batch, window);

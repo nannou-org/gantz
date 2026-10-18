@@ -2,18 +2,19 @@ use bevy::{
     prelude::*,
     window::{PrimaryWindow, Window},
 };
-use bevy_egui::{EguiContexts, EguiPlugin, EguiPrimaryContextPass};
+use bevy_egui::{EguiPlugin, EguiPrimaryContextPass};
 use bevy_gantz::{
-    FocusedHead, GantzPlugin, HeadRef, HeadTabOrder, OpenHead, Registry, WorkingGraph,
+    GantzPlugin, Registry,
     debounced_input::{DebouncedInputEvent, DebouncedInputPlugin},
     timestamp,
 };
-use bevy_gantz_egui::{BuiltinNodes, GantzEguiPlugin, TraceCapture};
+use bevy_gantz_egui::{BuiltinNodes, GantzEguiPlugin};
 use bevy_pkv::PkvStore;
 #[cfg(not(target_arch = "wasm32"))]
 use clap::Parser;
 use storage::Pkv;
 
+mod app;
 mod node;
 mod persist;
 mod storage;
@@ -62,7 +63,7 @@ fn main() {
         // The app's node codec is the node-set manifest for the reify and
         // erase seam and the `.gantz` parse and export paths.
         .insert_resource(bevy_gantz_egui::NodeCodecRes(node::codec()))
-        .add_plugins(DefaultPlugins.set(log_plugin()).set(window::plugin()))
+        .add_plugins(DefaultPlugins.set(app::log_plugin()).set(window::plugin()))
         .add_plugins(EguiPlugin::default())
         // Drives both layout settling and the registry persist.
         .add_plugins(DebouncedInputPlugin::<DebouncedInputEvent>::new(0.25))
@@ -71,19 +72,19 @@ fn main() {
         .add_systems(
             Startup,
             (
-                setup_camera,
+                app::setup_camera,
                 setup_window,
                 setup_resources,
                 bevy_gantz_egui::base::load
                     .after(setup_resources)
-                    .before(setup_open),
-                setup_open.after(setup_resources),
+                    .before(app::setup_open),
+                app::setup_open.after(setup_resources),
                 bevy_gantz_egui::prune_unused
                     .after(setup_resources)
-                    .after(setup_open),
+                    .after(app::setup_open),
             ),
         )
-        .add_systems(EguiPrimaryContextPass, load_egui_memory);
+        .add_systems(EguiPrimaryContextPass, app::load_egui_memory);
 
     // Added after `GantzEguiPlugin`, because the collab plugin's
     // payload-dispatcher overrides rely on last-registration-wins.
@@ -149,23 +150,6 @@ fn conf() -> gantz_cli::Conf {
         app: "gantz",
         build: BUILD,
     }
-}
-
-fn log_plugin() -> bevy::log::LogPlugin {
-    bevy::log::LogPlugin {
-        custom_layer: move |app| {
-            // `get_resource_or_init` shares the instance with
-            // `GantzEguiPlugin`'s `init_resource`, so plugin order does not
-            // matter.
-            let capture = app.world_mut().get_resource_or_init::<TraceCapture>();
-            Some(Box::new(capture.0.clone().layer()))
-        },
-        ..Default::default()
-    }
-}
-
-fn setup_camera(mut cmds: Commands) {
-    cmds.spawn(Camera2d);
 }
 
 /// Restore the persisted window size. No-op on web.
@@ -256,41 +240,4 @@ fn setup_collab_identity(mut storage: ResMut<Pkv>, mut cmds: Commands) {
     cmds.insert_resource(bevy_gantz_collab::CollabIdentity(identity));
     let synced = bevy_gantz_collab::storage::load_vault_synced(&*storage);
     cmds.insert_resource(bevy_gantz_collab::PersistedVaultSynced(synced));
-}
-
-fn setup_open(
-    storage: Res<Pkv>,
-    mut registry: ResMut<Registry>,
-    mut cmds: Commands,
-    mut tab_order: ResMut<HeadTabOrder>,
-    mut focused: ResMut<FocusedHead>,
-) {
-    let loaded = bevy_gantz_egui::storage::load_open(&*storage, &mut *registry, timestamp());
-    let focused_head = gantz_store::load_focused_head(&*storage);
-
-    // `OpenHead`'s required components cover the compile outcome. `GraphView`'s
-    // cover the rest of the per-head GUI state. `vm::sync` initializes the VMs
-    // on the first `Update`.
-    for (head, graph, head_view) in loaded {
-        let is_focused = focused_head.as_ref() == Some(&head);
-        let entity = cmds
-            .spawn((OpenHead, HeadRef(head), WorkingGraph(graph), head_view))
-            .id();
-
-        tab_order.push(entity);
-
-        if is_focused || (**focused).is_none() {
-            **focused = Some(entity);
-        }
-    }
-}
-
-/// Load egui memory from storage once on first frame.
-fn load_egui_memory(mut ctxs: EguiContexts, mut storage: ResMut<Pkv>, mut loaded: Local<bool>) {
-    if !*loaded {
-        if let Ok(ctx) = ctxs.ctx_mut() {
-            bevy_gantz_egui::storage::load_egui_memory(&mut *storage, ctx);
-            *loaded = true;
-        }
-    }
 }
