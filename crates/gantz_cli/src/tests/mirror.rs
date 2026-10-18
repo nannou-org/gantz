@@ -327,3 +327,20 @@ fn nested_refs_are_in_scope_and_served() {
         assert!(live.graphs.contains(ga));
     }
 }
+
+/// A file that places only some of a graph's nodes keeps the stored
+/// positions of the rest. It mints no layout commit and drops no position.
+#[test]
+fn a_layout_that_places_fewer_nodes_mints_no_commit() {
+    let mut registry = base_registry();
+    let mut file = FileState::default();
+    apply(&mut registry, &mut file, G1, 1);
+    let c1 = registry.head(&name("g")).unwrap();
+    let partial = G1.replace("\n  (e 100 50)", "");
+    let applied = apply(&mut registry, &mut file, &partial, 2);
+    assert!(applied.committed.is_empty());
+    assert!(applied.layout_only.is_empty());
+    assert_eq!(registry.head(&name("g")), Some(c1));
+    let view = gantz_edit::section::view(&registry, &c1).unwrap();
+    assert_eq!(view.layout.len(), 2, "{view:?}");
+}

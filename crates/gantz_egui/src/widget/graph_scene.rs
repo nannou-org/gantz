@@ -25,6 +25,12 @@ pub struct GraphSceneResponse {
     /// [`crate::NodeUi`]. Also set when the scene itself edited the graph
     /// structure.
     pub changed: bool,
+    /// Whether the user edited the node layout this pass. That is a drag that
+    /// moved nodes, an auto-layout or an align. Never set for an immutable
+    /// scene. The layout also shifts without an edit, for example when the
+    /// scene snaps positions to the grid, so a host commits a layout change
+    /// only after an edit.
+    pub layout_edited: bool,
     /// Dynamic payloads emitted within the scene, for the application to
     /// handle after the pass.
     pub responses: Vec<DynResponse>,
@@ -291,10 +297,12 @@ impl<'a> GraphScene<'a> {
         // One-shot align of the current selection. Only the selected nodes
         // move. Orientation is inferred from their spread. It needs at least
         // two nodes.
+        let mut layout_edited = do_layout;
         if let Some(by) = std::mem::take(&mut state.pending_align) {
             let target = &state.interaction.selection.nodes;
             if target.len() > 1 {
                 apply_align(self.id, ui.ctx(), view, target, by);
+                layout_edited = true;
             }
         }
         let mut node_responses = Vec::new();
@@ -479,6 +487,7 @@ impl<'a> GraphScene<'a> {
             scene: graph_response.response,
             nodes: node_responses,
             changed,
+            layout_edited: !self.immutable && (layout_edited || graph_response.nodes_moved),
             responses,
             reindex,
         }
@@ -1481,5 +1490,53 @@ mod tests {
         assert_eq!(diagnostic_node_at_level(&[3, 2], &[4]), None);
         assert_eq!(diagnostic_node_at_level(&[], &[]), None);
         assert_eq!(diagnostic_node_at_level(&[3], &[3]), None);
+    }
+
+    /// Only an auto-layout or an align request reports a layout edit, and an
+    /// immutable scene reports none.
+    #[test]
+    fn layout_edits_come_from_requests() {
+        use super::{GraphScene, GraphSceneState, NodeIndex};
+        let registry = gantz_ca::Registry::default();
+        let graphs = gantz_core::data::ReifiedGraphs::new();
+        let builtins = gantz_core::Builtins::default();
+        let ui_builtins = crate::node::UiBuiltins::default();
+        let codec = crate::test_node::codec();
+        let env = crate::Env {
+            registry: &registry,
+            builtins: &builtins,
+            codec: &codec,
+            graphs: &graphs,
+            instances: &ui_builtins,
+        };
+        let mut graph = gantz_ca::DataGraph::default();
+        graph.add_node(crate::test_node::expr("(+ 1 2)"));
+        graph.add_node(crate::test_node::expr("(+ 3 4)"));
+        let mut instances = crate::node::NodeInstances::default();
+        let mut vm = steel::steel_vm::engine::Engine::new_base();
+        let mut view = gantz_edit::SceneView::default();
+        let ctx = egui::Context::default();
+        let mut pass = |state: &mut GraphSceneState, immutable: bool| {
+            let mut edited = false;
+            let _ = ctx.run_ui(Default::default(), |ui| {
+                let scene = GraphScene::new(&env, &codec, &mut graph, &mut instances);
+                let response = scene
+                    .immutable(immutable)
+                    .show(&mut view, state, &mut vm, ui);
+                edited = response.layout_edited;
+            });
+            edited
+        };
+
+        let mut state = GraphSceneState::default();
+        assert!(!pass(&mut state, false), "a plain pass");
+        state.pending_auto_layout = true;
+        assert!(pass(&mut state, false), "an auto-layout");
+        state.pending_auto_layout = true;
+        assert!(!pass(&mut state, true), "an immutable auto-layout");
+        state.interaction.selection.nodes = [NodeIndex::new(0), NodeIndex::new(1)].into();
+        state.pending_align = Some(egui_graph::AlignBy::Center);
+        assert!(pass(&mut state, false), "an align");
+        assert!(!pass(&mut state, false), "a plain pass after the edits");
     }
 }

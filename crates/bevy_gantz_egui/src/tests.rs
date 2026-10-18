@@ -6,6 +6,7 @@ use bevy_gantz::{EntrypointSet, GantzPlugin, VmSet};
 mod app_response;
 mod await_;
 mod drop_unknown;
+mod layout_settle;
 mod load_bang;
 mod undo_resync;
 
