@@ -44,6 +44,10 @@ pub struct ImportStyleEvent;
 #[derive(Event)]
 pub struct ImportPaletteEvent(pub bevy_egui::egui::Theme);
 
+/// Event emitted when the user requests exporting a palette.
+#[derive(Event)]
+pub struct ExportPaletteEvent(pub gantz_egui::style::Palette);
+
 /// Event emitted when a `.gantz` file is dropped onto a pane.
 #[derive(Event)]
 pub struct ImportFileEvent {
@@ -147,6 +151,32 @@ pub fn on_export_style(_trigger: On<ExportStyleEvent>, gui_state: Res<GuiState>)
         .set_file_name(&format!("gantz-style.{ext}"))
         .add_filter("Gantz Style", &[ext]);
     spawn_save(dialog, text, "style");
+}
+
+/// Handle palette export events.
+///
+/// Writes the palette as a base16 scheme file chosen via an `rfd` file
+/// dialog. The file name suggests the palette's name.
+pub fn on_export_palette(trigger: On<ExportPaletteEvent>) {
+    let palette = &trigger.event().0;
+    let text = gantz_egui::style::base16::to_yaml(palette);
+    let stem: String = palette
+        .name
+        .chars()
+        .map(|c| match c.is_alphanumeric() {
+            true => c.to_ascii_lowercase(),
+            false => '-',
+        })
+        .collect();
+    let stem = match stem.trim_matches('-') {
+        "" => "palette",
+        stem => stem,
+    };
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_title("Export base16 Scheme")
+        .set_file_name(&format!("{stem}.yaml"))
+        .add_filter("base16 Scheme", &["yaml", "yml"]);
+    spawn_save(dialog, text, "palette");
 }
 
 /// Handle style import events by opening a file dialog.

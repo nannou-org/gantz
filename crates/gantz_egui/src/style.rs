@@ -44,12 +44,23 @@ pub struct StyleConfig {
     pub shape: Shape,
 }
 
-/// The palette of each theme.
+/// The palette of each theme, and the palettes the user saved.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct Palettes {
     pub dark: Palette,
     pub light: Palette,
+    /// The saved palettes, sorted by name. None shares a name with a preset.
+    pub saved: Vec<Palette>,
+}
+
+/// Why a palette cannot be saved under a name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum SaveError {
+    #[error("A saved palette needs a name.")]
+    NoName,
+    #[error("Presets cannot be changed. Choose another name.")]
+    Preset,
 }
 
 /// The style settings that are not colours.
@@ -92,6 +103,7 @@ impl Default for Palettes {
         Self {
             dark: Palette::dark(),
             light: Palette::light(),
+            saved: vec![],
         }
     }
 }
@@ -129,6 +141,48 @@ impl Palettes {
             egui::Theme::Dark => &mut self.dark,
             egui::Theme::Light => &mut self.light,
         }
+    }
+
+    /// The preset or saved palette called `name`.
+    ///
+    /// A palette in use keeps the name of the palette it was loaded from or
+    /// saved as. So this is the version that a reset restores, and that an
+    /// edited palette differs from.
+    pub fn named(&self, name: &str) -> Option<Palette> {
+        match base16::preset(name) {
+            Some(scheme) => Some(Palette::from(scheme)),
+            None => self.saved.iter().find(|p| p.name == name).cloned(),
+        }
+    }
+
+    /// Whether `name` may name a saved palette.
+    pub fn check_name(name: &str) -> Result<(), SaveError> {
+        if name.trim().is_empty() {
+            Err(SaveError::NoName)
+        } else if base16::preset(name.trim()).is_some() {
+            Err(SaveError::Preset)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// Name the palette of `theme` and save a copy of it. A saved palette of
+    /// the same name is replaced.
+    pub fn save(&mut self, theme: egui::Theme, name: &str) -> Result<(), SaveError> {
+        Self::check_name(name)?;
+        let palette = self.get_mut(theme);
+        palette.name = name.trim().to_string();
+        let palette = palette.clone();
+        match self.saved.binary_search_by(|p| p.name.cmp(&palette.name)) {
+            Ok(i) => self.saved[i] = palette,
+            Err(i) => self.saved.insert(i, palette),
+        }
+        Ok(())
+    }
+
+    /// Remove the saved palette called `name`. The palettes in use are kept.
+    pub fn delete(&mut self, name: &str) {
+        self.saved.retain(|p| p.name != name);
     }
 }
 
@@ -301,7 +355,7 @@ pub fn from_ron(s: &str) -> Result<StyleConfig, ron::de::SpannedError> {
 }
 
 /// The relative luminance of an opaque colour.
-fn luminance(color: egui::Color32) -> f32 {
+pub(crate) fn luminance(color: egui::Color32) -> f32 {
     let linear = egui::Rgba::from(color);
     0.2126 * linear.r() + 0.7152 * linear.g() + 0.0722 * linear.b()
 }
@@ -323,7 +377,10 @@ fn colors_id(theme: egui::Theme) -> egui::Id {
 
 #[cfg(test)]
 mod tests {
-    use super::{Role, StyleConfig, Swatch, apply, color_of, contrast, from_ron, style, to_ron};
+    use super::{
+        Palettes, Role, SaveError, StyleConfig, Swatch, apply, color_of, contrast, from_ron, style,
+        to_ron,
+    };
 
     /// A config with both palettes and a role customised.
     fn customised() -> StyleConfig {
@@ -333,6 +390,9 @@ mod tests {
         cfg.roles.text.swatch = Swatch::N6;
         cfg.roles.weak_text.opacity = 0.3;
         cfg.shape.separator_width = 5.0;
+        cfg.palettes
+            .save(egui::Theme::Dark, "Mine")
+            .expect("save a palette");
         cfg
     }
 
@@ -416,6 +476,48 @@ mod tests {
                 assert!(ratio >= role.min_contrast(), "{theme:?} {role:?} {ratio}");
             }
         }
+    }
+
+    /// Saving names the palette in use and keeps a copy, which a later save
+    /// under the same name replaces. Presets stay read-only.
+    #[test]
+    fn saved_palettes_track_their_name() {
+        let mut palettes = Palettes::default();
+        let preset = palettes.dark.clone();
+        assert_eq!(palettes.named(&preset.name), Some(preset));
+        assert_eq!(
+            palettes.save(egui::Theme::Dark, "  "),
+            Err(SaveError::NoName)
+        );
+        assert_eq!(
+            palettes.save(egui::Theme::Dark, "egui Light"),
+            Err(SaveError::Preset)
+        );
+
+        palettes.dark.accents[0] = egui::Color32::BLACK;
+        palettes
+            .save(egui::Theme::Dark, " Mine ")
+            .expect("save a palette");
+        assert_eq!(palettes.dark.name, "Mine");
+        assert_eq!(palettes.named("Mine").as_ref(), Some(&palettes.dark));
+
+        palettes.dark.accents[0] = egui::Color32::WHITE;
+        palettes
+            .save(egui::Theme::Dark, "Mine")
+            .expect("save it again");
+        palettes
+            .save(egui::Theme::Dark, "Another")
+            .expect("save another");
+        let names: Vec<_> = palettes.saved.iter().map(|p| p.name.as_str()).collect();
+        assert_eq!(names, ["Another", "Mine"]);
+        assert_eq!(
+            palettes.named("Mine").map(|p| p.accents[0]),
+            Some(egui::Color32::WHITE)
+        );
+
+        palettes.delete("Mine");
+        assert_eq!(palettes.named("Mine"), None);
+        assert_eq!(palettes.dark.name, "Another");
     }
 
     /// The default shape keeps egui's default spacing and text sizes.

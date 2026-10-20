@@ -1,7 +1,8 @@
 //! Palettes in the base16 layout. The built-in [`PRESETS`], and [`parse`]
 //! for scheme files from the base16 ecosystem.
 
-use super::palette::{ACCENTS, NEUTRALS, Palette, from_hex};
+use super::luminance;
+use super::palette::{ACCENTS, NEUTRALS, Palette, from_hex, to_hex};
 
 /// The number of colours in a base16 scheme.
 const BASES: usize = NEUTRALS + ACCENTS;
@@ -86,13 +87,31 @@ impl From<&Scheme> for Palette {
     }
 }
 
-/// The preset that `palette` started from, by name, and whether it still
-/// matches it.
-pub fn preset_of(palette: &Palette) -> Option<(&'static Scheme, bool)> {
-    let scheme = PRESETS.iter().find(|s| s.name == palette.name)?;
-    Some((scheme, Palette::from(scheme) == *palette))
+/// The preset called `name`.
+pub fn preset(name: &str) -> Option<&'static Scheme> {
+    PRESETS.iter().find(|s| s.name == name)
 }
 
+/// Write `palette` as a base16 scheme file, in the `palette:` layout that
+/// [`parse`] reads back.
+///
+/// The variant is dark when `n0` is darker than `n7`. Quotes are dropped
+/// from the name, since scheme files do not escape them.
+pub fn to_yaml(palette: &Palette) -> String {
+    let [n0, n7] = [palette.neutrals[0], palette.neutrals[NEUTRALS - 1]];
+    let variant = match luminance(n0) < luminance(n7) {
+        true => "dark",
+        false => "light",
+    };
+    let name: String = palette.name.chars().filter(|&c| c != '"').collect();
+    let mut yaml =
+        format!("system: \"base16\"\nname: \"{name}\"\nvariant: \"{variant}\"\npalette:\n");
+    let colors = palette.neutrals.iter().chain(&palette.accents);
+    for (i, &color) in colors.enumerate() {
+        yaml.push_str(&format!("  base{i:02X}: \"{}\"\n", to_hex(color)));
+    }
+    yaml
+}
 /// Parse a base16 or base24 scheme file in its YAML form.
 ///
 /// Both the classic layout, with `base00` to `base0F` at the top level, and
@@ -156,17 +175,26 @@ fn unquote(s: &str) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::{PRESETS, ParseError, parse, preset_of};
+    use super::{PRESETS, ParseError, parse, preset, to_yaml};
     use crate::style::Palette;
 
+    /// An exported palette parses back to itself, in either variant.
     #[test]
-    fn preset_of_tracks_edits() {
-        let mut palette = Palette::from(&PRESETS[2]);
-        assert!(matches!(preset_of(&palette), Some((_, true))));
-        palette.accents[0] = egui::Color32::BLACK;
-        assert!(matches!(preset_of(&palette), Some((_, false))));
-        palette.name = "Mine".to_string();
-        assert!(preset_of(&palette).is_none());
+    fn yaml_round_trips() {
+        for scheme in PRESETS {
+            let palette = Palette::from(scheme);
+            let yaml = to_yaml(&palette);
+            assert_eq!(parse(&yaml), Ok(palette), "{yaml}");
+        }
+        assert!(to_yaml(&Palette::dark()).contains("variant: \"dark\""));
+        assert!(to_yaml(&Palette::light()).contains("variant: \"light\""));
+    }
+
+    #[test]
+    fn presets_have_unique_names() {
+        for scheme in PRESETS {
+            assert_eq!(preset(scheme.name).map(|s| s.colors), Some(scheme.colors));
+        }
     }
 
     #[test]

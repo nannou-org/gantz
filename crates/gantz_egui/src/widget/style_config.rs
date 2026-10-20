@@ -1,9 +1,11 @@
 //! The "Style" settings subtab. The theme, palette and role mapping, plus the
 //! visual configuration of the graph scene. See [`crate::style`].
 //!
-//! The palette section edits the palette of the selected theme. Each role
-//! picks a palette swatch through a popup, so a style always draws from its
-//! palette. Hovering a swatch highlights the roles that use it.
+//! The palette section edits the palette of the selected theme. A palette
+//! keeps the name of the preset or saved palette it came from, and the resets
+//! restore that version. Each role picks a palette swatch through a popup, so
+//! a style always draws from its palette. Hovering a swatch highlights the
+//! roles that use it.
 //!
 //! The subtab also hosts the shape, dot-grid and edge controls. The
 //! grid step feeds snap-to-grid, so it stays editable even when the grid is
@@ -16,7 +18,7 @@ use super::{
 use crate::{
     StyleConfig,
     style::{
-        ColorRef, Group, Palette, Role, Roles, Shape, Swatch, base16,
+        ColorRef, Group, Palette, Palettes, Role, Roles, Shape, Swatch, base16,
         palette::{from_hex, to_hex},
     },
 };
@@ -24,12 +26,21 @@ use crate::{
 /// Response from [`style_config`].
 #[derive(Default)]
 pub struct StyleConfigResponse {
-    /// The "Export" button was clicked.
+    /// The "Export style" button was clicked.
     pub export: bool,
-    /// The "Import" button was clicked.
+    /// The "Import style" button was clicked.
     pub import: bool,
     /// The "Import base16" button was clicked for the palette of this theme.
     pub import_palette: Option<egui::Theme>,
+    /// The "Export base16" button was clicked for this palette.
+    pub export_palette: Option<Palette>,
+}
+
+/// A line about the palette's saved state.
+enum Status {
+    Info(String),
+    Edited(String),
+    Error(String),
 }
 
 /// The side of a palette swatch button, as a multiple of the interact height.
@@ -46,13 +57,13 @@ pub fn style_config(
     let mut res = StyleConfigResponse::default();
     section(ui, "Theme", |ui| {
         style.theme.radio_buttons(ui);
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             res.export = ui
-                .button("Export…")
+                .button("Export style…")
                 .on_hover_text("Save the palettes, roles and shape to a file.")
                 .clicked();
             res.import = ui
-                .button("Import…")
+                .button("Import style…")
                 .on_hover_text("Load the palettes, roles and shape from an exported file.")
                 .clicked();
         });
@@ -71,38 +82,7 @@ pub fn style_config(
         egui::Theme::Light => "Light palette",
     };
     let hovered = section(ui, title, |ui| {
-        let palette = style.palettes.get_mut(theme);
-        preset_picker(palette, ui);
-        let hovered = palette_editor(palette, ui);
-        ui.horizontal_wrapped(|ui| {
-            if ui
-                .button("Reset palette")
-                .on_hover_text(
-                    "Restore the preset this palette started from, or the default palette \
-                     of this theme.",
-                )
-                .clicked()
-            {
-                *palette = match base16::preset_of(palette) {
-                    Some((scheme, _)) => Palette::from(scheme),
-                    None => match theme {
-                        egui::Theme::Dark => Palette::dark(),
-                        egui::Theme::Light => Palette::light(),
-                    },
-                };
-            }
-            if ui
-                .button("Import base16…")
-                .on_hover_text(
-                    "Load this palette from a base16 or base24 scheme file. The neutrals \
-                     take base00 to base07 and the accents take base08 to base0F.",
-                )
-                .clicked()
-            {
-                res.import_palette = Some(theme);
-            }
-        });
-        hovered
+        palette_section(&mut style.palettes, theme, &mut res, ui)
     });
 
     section(ui, "Roles", |ui| {
@@ -162,12 +142,214 @@ pub fn style_config(
     res
 }
 
-/// The palette's name and swatches. Returns the swatch under the pointer.
-fn palette_editor(palette: &mut Palette, ui: &mut egui::Ui) -> Option<Swatch> {
-    ui.horizontal(|ui| {
-        ui.label("Name");
-        ui.text_edit_singleline(&mut palette.name);
+/// The palette of `theme`. Its menu, name, swatches and file actions. Returns
+/// the swatch under the pointer.
+fn palette_section(
+    palettes: &mut Palettes,
+    theme: egui::Theme,
+    res: &mut StyleConfigResponse,
+    ui: &mut egui::Ui,
+) -> Option<Swatch> {
+    palette_menu(palettes, theme, ui);
+    name_edit(palettes, theme, ui);
+    let name = palettes.get(theme).name.clone();
+    let origin = palettes.named(&name);
+    let hovered = swatches_editor(palettes.get_mut(theme), origin.as_ref(), ui);
+    ui.horizontal_wrapped(|ui| {
+        let reset_hover = match origin {
+            Some(_) => format!("Restore \"{name}\"."),
+            None => "Restore the default palette of this theme.".to_string(),
+        };
+        if ui
+            .button("Reset palette")
+            .on_hover_text(reset_hover)
+            .clicked()
+        {
+            *palettes.get_mut(theme) = origin.unwrap_or_else(|| match theme {
+                egui::Theme::Dark => Palette::dark(),
+                egui::Theme::Light => Palette::light(),
+            });
+        }
+        let saved = palettes.saved.iter().any(|p| p.name == name);
+        if ui
+            .add_enabled(saved, egui::Button::new("Delete"))
+            .on_hover_text(format!(
+                "Remove \"{name}\" from the saved palettes. The palette in use stays."
+            ))
+            .on_disabled_hover_text("Only a saved palette can be deleted.")
+            .clicked()
+        {
+            palettes.delete(&name);
+        }
+        if ui
+            .button("Import base16…")
+            .on_hover_text(
+                "Load this palette from a base16 or base24 scheme file. The neutrals \
+                 take base00 to base07 and the accents take base08 to base0F.",
+            )
+            .clicked()
+        {
+            res.import_palette = Some(theme);
+        }
+        if ui
+            .button("Export base16…")
+            .on_hover_text("Save this palette to a base16 scheme file.")
+            .clicked()
+        {
+            res.export_palette = Some(palettes.get(theme).clone());
+        }
     });
+    hovered
+}
+
+/// A menu of the presets and saved palettes. Picking one replaces the palette
+/// of `theme`. The selected text flags a palette that differs from the
+/// version it is named after.
+fn palette_menu(palettes: &mut Palettes, theme: egui::Theme, ui: &mut egui::Ui) {
+    let palette = palettes.get(theme);
+    let selected = match palettes.named(&palette.name) {
+        Some(origin) if origin != *palette => format!("{} (edited)", palette.name),
+        Some(_) => palette.name.clone(),
+        None => format!("{} (unsaved)", palette.name),
+    };
+    let mut pick = None;
+    egui::ComboBox::from_id_salt("style_palette_menu")
+        .selected_text(selected)
+        .width(ui.available_width())
+        .height(f32::INFINITY)
+        .show_ui(ui, |ui| {
+            let current = &palettes.get(theme).name;
+            if !palettes.saved.is_empty() {
+                ui.label(egui::RichText::new("Saved").small().weak());
+            }
+            for saved in &palettes.saved {
+                if ui
+                    .selectable_label(*current == saved.name, &saved.name)
+                    .clicked()
+                {
+                    pick = Some(saved.clone());
+                }
+            }
+            if !palettes.saved.is_empty() {
+                ui.separator();
+            }
+            ui.label(egui::RichText::new("Presets").small().weak());
+            for scheme in base16::PRESETS {
+                if ui
+                    .selectable_label(*current == scheme.name, scheme.name)
+                    .clicked()
+                {
+                    pick = Some(Palette::from(scheme));
+                }
+            }
+        })
+        .response
+        .on_hover_text("Load a preset or a saved palette.");
+    if let Some(palette) = pick {
+        *palettes.get_mut(theme) = palette;
+    }
+}
+
+/// The palette's name. Typing holds a draft name. Enter or "Save" saves the
+/// palette under it, and Escape drops it. A line below tells what a save
+/// would do, or why it cannot.
+fn name_edit(palettes: &mut Palettes, theme: egui::Theme, ui: &mut egui::Ui) {
+    let id = ui.id().with(("style_palette_name", theme));
+    let name = palettes.get(theme).name.clone();
+    let mut draft = ui
+        .data(|d| d.get_temp::<String>(id))
+        .unwrap_or_else(|| name.clone());
+    let (status, can_save) = save_status(palettes, theme, &draft);
+
+    let (edit, save) = ui
+        .horizontal(|ui| {
+            ui.label("Name");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                let save = ui
+                    .add_enabled(can_save, egui::Button::new("Save"))
+                    .on_hover_text("Save the palette under this name.");
+                let edit = ui.add(
+                    egui::TextEdit::singleline(&mut draft)
+                        .id(id.with("edit"))
+                        .desired_width(ui.available_width())
+                        .hint_text("Name to save as"),
+                );
+                (edit, save)
+            })
+            .inner
+        })
+        .inner;
+    let (enter, escape) = ui.input(|i| {
+        (
+            i.key_pressed(egui::Key::Enter),
+            i.key_pressed(egui::Key::Escape),
+        )
+    });
+    let mut keep = draft != name;
+    if edit.lost_focus() && escape {
+        keep = false;
+    } else if can_save && (save.clicked() || (edit.lost_focus() && enter)) {
+        keep = palettes.save(theme, &draft).is_err();
+    }
+    let status = match status {
+        Status::Info(text) => egui::RichText::new(text).weak(),
+        Status::Edited(text) => egui::RichText::new(text).color(ui.visuals().warn_fg_color),
+        Status::Error(text) => egui::RichText::new(text).color(ui.visuals().error_fg_color),
+    };
+    ui.label(status.small());
+    ui.data_mut(|d| {
+        if keep {
+            d.insert_temp(id, draft);
+        } else {
+            d.remove::<String>(id);
+        }
+    });
+}
+
+/// What saving the palette of `theme` as `draft` would do, and whether it
+/// may.
+fn save_status(palettes: &Palettes, theme: egui::Theme, draft: &str) -> (Status, bool) {
+    let palette = palettes.get(theme);
+    let target = draft.trim();
+    if target != palette.name {
+        return match Palettes::check_name(target) {
+            Err(e) => (Status::Error(e.to_string()), false),
+            Ok(()) if palettes.named(target).is_some() => (
+                Status::Edited(format!("Enter saves over \"{target}\".")),
+                true,
+            ),
+            Ok(()) => (Status::Info(format!("Enter saves as \"{target}\".")), true),
+        };
+    }
+    let preset = base16::preset(target).is_some();
+    match palettes.named(target) {
+        None => (
+            Status::Info("Not saved. Press Enter to save.".to_string()),
+            true,
+        ),
+        Some(origin) if origin == *palette => {
+            let text = if preset { "Preset." } else { "Saved." };
+            (Status::Info(text.to_string()), false)
+        }
+        Some(_) if preset => (
+            Status::Edited("Edited. Rename it to save the changes.".to_string()),
+            false,
+        ),
+        Some(_) => (
+            Status::Edited("Edited. Press Enter to save the changes.".to_string()),
+            true,
+        ),
+    }
+}
+
+/// The palette's swatches. `origin` is the version the palette is named
+/// after, which a swatch's context menu restores. Returns the swatch under
+/// the pointer.
+fn swatches_editor(
+    palette: &mut Palette,
+    origin: Option<&Palette>,
+    ui: &mut egui::Ui,
+) -> Option<Swatch> {
     // Shrink the swatches to keep each row of eight on one line.
     let gap = ui.spacing().item_spacing.x;
     let fit = (ui.available_width() - gap * 7.0) / 8.0;
@@ -180,7 +362,8 @@ fn palette_editor(palette: &mut Palette, ui: &mut egui::Ui) -> Option<Swatch> {
         ui.label(egui::RichText::new(label).small().weak());
         ui.horizontal_wrapped(|ui| {
             for &swatch in swatches {
-                let resp = swatch_edit(ui, swatch, side, palette.get_mut(swatch));
+                let origin = origin.map(|o| (o.name.as_str(), o.get(swatch)));
+                let resp = swatch_edit(ui, swatch, side, palette.get_mut(swatch), origin);
                 if resp.hovered() {
                     hovered = Some(swatch);
                 }
@@ -190,19 +373,45 @@ fn palette_editor(palette: &mut Palette, ui: &mut egui::Ui) -> Option<Swatch> {
     hovered
 }
 
-/// A swatch button that opens a colour picker for `color`.
+/// A swatch button that opens a colour picker for `color`. Its context menu
+/// restores the colour from `origin`, the named palette and its colour for
+/// this swatch.
 fn swatch_edit(
     ui: &mut egui::Ui,
     swatch: Swatch,
     side: f32,
     color: &mut egui::Color32,
+    origin: Option<(&str, egui::Color32)>,
 ) -> egui::Response {
     let resp = swatch_button(ui, *color, side, false).on_hover_text(format!(
-        "{} {}",
+        "{} {}\n\nRight-click to reset or copy.",
         swatch.label(),
         to_hex(*color)
     ));
+    resp.context_menu(|ui| {
+        match origin {
+            Some((name, original)) => {
+                let text = format!("Reset to {} from \"{name}\"", to_hex(original));
+                if ui
+                    .add_enabled(original != *color, egui::Button::new(text))
+                    .clicked()
+                {
+                    *color = original;
+                }
+            }
+            None => {
+                ui.add_enabled(false, egui::Button::new("Reset"))
+                    .on_disabled_hover_text(
+                        "The palette is not saved, so it has no colour to reset to.",
+                    );
+            }
+        }
+        if ui.button("Copy hex").clicked() {
+            ui.ctx().copy_text(to_hex(*color));
+        }
+    });
     egui::Popup::menu(&resp)
+        .id(resp.id.with("picker"))
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
             ui.spacing_mut().slider_width = 200.0;
@@ -313,16 +522,24 @@ fn role_row(
 /// A button showing `color_ref`, opening a popup to pick its swatch and
 /// opacity.
 fn color_ref_edit(ui: &mut egui::Ui, role: Role, color_ref: &mut ColorRef, palette: &Palette) {
-    let text = if color_ref.opacity < 1.0 {
-        let percent = color_ref.opacity * 100.0;
-        format!("{} {percent:.0}%", color_ref.swatch.label())
-    } else {
-        color_ref.swatch.label().to_string()
-    };
-    let resp = chip_button(ui, color_ref.resolve(palette), text)
-        .on_hover_text(format!("Pick the palette colour for {}.", role.label()));
+    let resp = chip_button(ui, color_ref.resolve(palette), color_ref_label(*color_ref))
+        .on_hover_text(format!(
+            "Pick the palette colour for {}.\n\nRight-click to reset.",
+            role.label()
+        ));
+    resp.context_menu(|ui| {
+        let default = Roles::default().get(role);
+        let text = format!("Reset to {}", color_ref_label(default));
+        if ui
+            .add_enabled(default != *color_ref, egui::Button::new(text))
+            .clicked()
+        {
+            *color_ref = default;
+        }
+    });
     let side = ui.spacing().interact_size.y * SWATCH_SCALE;
     egui::Popup::menu(&resp)
+        .id(resp.id.with("picker"))
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
             for swatches in [&Swatch::NEUTRALS[..], &Swatch::ACCENTS[..]] {
@@ -471,24 +688,14 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
         });
 }
 
-/// A menu of the built-in palettes. Picking one replaces `palette`.
-fn preset_picker(palette: &mut Palette, ui: &mut egui::Ui) {
-    let selected = match base16::preset_of(palette) {
-        Some((_, false)) => format!("{} (edited)", palette.name),
-        _ => palette.name.clone(),
-    };
-    ui.horizontal(|ui| {
-        ui.label("Preset");
-        egui::ComboBox::from_id_salt("style_palette_preset")
-            .selected_text(selected)
-            .show_ui(ui, |ui| {
-                for scheme in base16::PRESETS {
-                    let preset = Palette::from(scheme);
-                    let current = preset == *palette;
-                    if ui.selectable_label(current, scheme.name).clicked() {
-                        *palette = preset;
-                    }
-                }
-            });
-    });
+/// A role's swatch, and its opacity when below full.
+fn color_ref_label(color_ref: ColorRef) -> String {
+    match color_ref.opacity < 1.0 {
+        true => format!(
+            "{} {:.0}%",
+            color_ref.swatch.label(),
+            color_ref.opacity * 100.0
+        ),
+        false => color_ref.swatch.label().to_string(),
+    }
 }
