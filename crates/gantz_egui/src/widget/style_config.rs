@@ -5,7 +5,7 @@
 //! picks a palette swatch through a popup, so a style always draws from its
 //! palette. Hovering a swatch highlights the roles that use it.
 //!
-//! The subtab also hosts the dot-grid, edge and pane separator controls. The
+//! The subtab also hosts the shape, dot-grid and edge controls. The
 //! grid step feeds snap-to-grid, so it stays editable even when the grid is
 //! hidden.
 
@@ -16,7 +16,7 @@ use super::{
 use crate::{
     StyleConfig,
     style::{
-        ColorRef, Group, Palette, Role, Roles, Swatch,
+        ColorRef, Group, Palette, Role, Roles, Shape, Swatch,
         palette::{from_hex, to_hex},
     },
 };
@@ -100,6 +100,17 @@ pub fn style_config(
         }
     });
 
+    section(ui, "Shape", |ui| {
+        shape_editor(&mut style.shape, ui);
+        if ui
+            .button("Reset shape")
+            .on_hover_text("Restore the default shape.")
+            .clicked()
+        {
+            style.shape = Shape::default();
+        }
+    });
+
     section(ui, "Grid", |ui| {
         ui.checkbox(&mut grid.show, "Show grid")
             .on_hover_text("Draw the dot grid behind the graph.");
@@ -124,22 +135,6 @@ pub fn style_config(
             ui.add(egui::Slider::new(&mut edge.curvature, 0.0..=1.0))
                 .on_hover_text("How far each edge curves. 0 draws straight lines.");
             ui.label("Curvature");
-        });
-    });
-
-    section(ui, "Pane separator", |ui| {
-        ui.horizontal(|ui| {
-            ui.add(
-                egui::DragValue::new(&mut style.shape.separator_width)
-                    .speed(0.1)
-                    .range(0.5..=16.0)
-                    .suffix(" px"),
-            )
-            .on_hover_text(
-                "The border width. It is also the gap between panes. The Chrome \
-                 roles set its colours.",
-            );
-            ui.label("Width");
         });
     });
 
@@ -388,4 +383,69 @@ fn paint_chip(ui: &egui::Ui, rect: egui::Rect, color: egui::Color32, highlighted
         stroke,
         egui::StrokeKind::Inside,
     );
+}
+
+/// The corner, spacing, text and separator controls.
+fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
+    egui::Grid::new("style_shape")
+        .num_columns(2)
+        .show(ui, |ui| {
+            ui.label("Widget corners")
+                .on_hover_text("The corner radius of buttons and other widgets.");
+            ui.add(
+                egui::DragValue::new(&mut shape.widget_radius)
+                    .range(0..=12)
+                    .suffix(" px"),
+            );
+            ui.end_row();
+
+            ui.label("Window corners")
+                .on_hover_text("The corner radius of windows, menus and popups.");
+            ui.add(
+                egui::DragValue::new(&mut shape.window_radius)
+                    .range(0..=16)
+                    .suffix(" px"),
+            );
+            ui.end_row();
+
+            ui.label("Spacing")
+                .on_hover_text("A scale on the gaps and padding between and within widgets.");
+            let mut percent = shape.spacing * 100.0;
+            let drag = egui::DragValue::new(&mut percent)
+                .range(50.0..=200.0)
+                .speed(1.0)
+                .fixed_decimals(0)
+                .suffix("%");
+            if ui.add(drag).changed() {
+                shape.spacing = percent / 100.0;
+            }
+            ui.end_row();
+
+            ui.label("Text size")
+                .on_hover_text("The size of body text. Other text keeps its size relative to it.");
+            ui.add(
+                egui::DragValue::new(&mut shape.text_size)
+                    .range(8.0..=24.0)
+                    .speed(0.1)
+                    .fixed_decimals(1)
+                    .suffix(" pt"),
+            );
+            ui.end_row();
+
+            ui.label("Separator width").on_hover_text(
+                "The width of the border between panes. It is also the gap between them.",
+            );
+            ui.add(
+                egui::DragValue::new(&mut shape.separator_width)
+                    .speed(0.1)
+                    .range(0.5..=16.0)
+                    .suffix(" px"),
+            );
+            ui.end_row();
+
+            ui.label("Shadows")
+                .on_hover_text("Whether windows and popups cast a shadow.");
+            ui.checkbox(&mut shape.shadows, "");
+            ui.end_row();
+        });
 }
