@@ -95,8 +95,8 @@ impl<'a> PerfView<'a> {
 
         let line = egui_plot::Line::new(self.title, points)
             .color(text_color)
-            .fill(0.0)
-            .fill_alpha(0.3);
+            .fill(0.0f32)
+            .fill_alpha(0.3f32);
 
         let plot = egui_plot::Plot::new(self.id)
             .height(ui.available_height())

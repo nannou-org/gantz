@@ -263,7 +263,7 @@ impl Walk<'_> {
             Element::Error(err) => {
                 let color = ui.visuals().error_fg_color;
                 let r = egui::Frame::group(ui.style())
-                    .stroke(egui::Stroke::new(1.0, color))
+                    .stroke(egui::Stroke::new(1.0f32, color))
                     .show(ui, |ui| {
                         ui.add(
                             egui::Label::new(egui::RichText::new(err.reason.to_string()).weak())
