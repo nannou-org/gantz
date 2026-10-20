@@ -37,7 +37,7 @@ mkShell {
     binaryen
     wasm-bindgen-cli
   ];
-  env = lib.optionalAttrs stdenv.isLinux {
+  env = lib.optionalAttrs stdenv.hostPlatform.isLinux {
     # FIXME: Use the gantz-unwrapped LD_LIBRARY_PATH when #122 is resolved.
     # inherit (gantz-unwrapped) LD_LIBRARY_PATH;
     LD_LIBRARY_PATH = gantz-unwrapped.LD_LIBRARY_PATH + ":${libGL}/lib";
