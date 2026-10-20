@@ -77,8 +77,8 @@ impl LevelColors {
             error: visuals.error_fg_color,
             warn: visuals.warn_fg_color,
             info: visuals.widgets.hovered.fg_stroke.color,
-            debug: egui::Color32::GRAY,
-            trace: egui::Color32::DARK_GRAY,
+            debug: visuals.text_color(),
+            trace: visuals.weak_text_color(),
         }
     }
 }

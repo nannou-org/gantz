@@ -196,9 +196,12 @@ impl<'a> GraphSelect<'a> {
                         // A live session's dot beside the name, mirroring the
                         // graph tabs. Sessions outlive their tabs, so this is
                         // where a closed head's session stays visible.
-                        let status = collab
-                            .and_then(|c| c.sessions.get(name))
-                            .map(|d| (d.conn.color(), d.hover_text().into()));
+                        let status = collab.and_then(|c| c.sessions.get(name)).map(|d| {
+                            (
+                                crate::style::color(ui, d.conn.role()),
+                                d.hover_text().into(),
+                            )
+                        });
                         let mut res =
                             head_row(heads, &head, row_type, ca, focused_head, status, ui);
                         // Show the graph's description and socket docs on hover.
@@ -407,7 +410,7 @@ impl<'a> GraphSelect<'a> {
                 // The vault link's state, while this device is linked. A mark
                 // flags a link that only the user can fix.
                 if let Some(vault) = self.collab.and_then(|c| c.vault.as_ref()) {
-                    let color = vault.state.color();
+                    let color = crate::style::color(ui, vault.state.role());
                     let dot = crate::widget::status_dot(ui, color);
                     let dot = match vault.state.needs_action() {
                         true => dot | ui.label(egui::RichText::new("!").strong().color(color)),

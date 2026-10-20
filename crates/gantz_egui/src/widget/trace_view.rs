@@ -234,6 +234,7 @@ impl TraceView {
             .body(|mut body| {
                 let row_h = 18.0;
                 let text_color = body.ui_mut().style().visuals.text_color();
+                let strong = body.ui_mut().style().visuals.strong_text_color();
                 let level_colors =
                     crate::widget::LevelColors::from_visuals(&body.ui_mut().style().visuals);
                 // Messages wrap at their column width. Each row's galley sets
@@ -243,8 +244,7 @@ impl TraceView {
                 let rows: Vec<_> = entries
                     .iter()
                     .map(|entry| {
-                        let color =
-                            text_color.lerp_to_gamma(egui::Color32::WHITE, entry.freshness());
+                        let color = text_color.lerp_to_gamma(strong, entry.freshness());
                         let painter = body.ui_mut().painter();
                         let galley = crate::widget::message_galley(
                             painter,

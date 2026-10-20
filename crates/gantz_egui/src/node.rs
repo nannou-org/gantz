@@ -51,13 +51,3 @@ pub fn builtins() -> Vec<gantz_core::Builtin> {
         Builtin::new("plot", &Plot::default()),
     ]
 }
-
-/// The warning color used for outdated references.
-pub fn outdated_color() -> egui::Color32 {
-    egui::Color32::from_rgb(200, 150, 50)
-}
-
-/// The error color used for missing references.
-pub fn missing_color() -> egui::Color32 {
-    egui::Color32::from_rgb(200, 80, 80)
-}

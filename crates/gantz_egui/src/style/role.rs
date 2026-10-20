@@ -135,7 +135,19 @@ roles! {
     warning, Warning, Status, "Warning",
         "Warnings and outdated references.",
         c(Orange);
+    success, Success, Status, "Success",
+        "A live session or vault link.",
+        c(Green);
+    pending, Pending, Status, "Pending",
+        "A session or vault link while it connects.",
+        c(Yellow);
+    attention, Attention, Status, "Attention",
+        "A vault link that only the user can fix.",
+        c(Purple);
 
+    scrim, Scrim, Chrome, "Scrim",
+        "The dimming layer over a scene that is busy or awaits a drop.",
+        c(N0).with_opacity(0.5);
     separator, Separator, Chrome, "Separator",
         "The border between panes.",
         c(N0);
@@ -160,7 +172,9 @@ impl Role {
     pub fn backdrop(self) -> Option<Role> {
         match self {
             Self::Text | Self::WeakText | Self::StrongText | Self::Hyperlink => Some(Self::Panel),
-            Self::Error | Self::Warning => Some(Self::Panel),
+            Self::Error | Self::Warning | Self::Success | Self::Pending | Self::Attention => {
+                Some(Self::Panel)
+            }
             Self::WidgetText => Some(Self::WidgetFill),
             Self::HoverText => Some(Self::HoverFill),
             _ => None,

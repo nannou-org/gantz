@@ -111,7 +111,8 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> Responses {
                         let hover = vault
                             .map(|v| v.hover_text())
                             .unwrap_or_else(|| state.guidance().to_string());
-                        super::status_dot(ui, state.color()).on_hover_text(hover);
+                        super::status_dot(ui, crate::style::color(ui, state.role()))
+                            .on_hover_text(hover);
                         let id = vault.map(|v| v.vault.as_str()).unwrap_or_default();
                         ui.label(egui::RichText::new(id).weak());
                         let settled = matches!(state, VaultState::Connecting | VaultState::Live);
@@ -253,12 +254,13 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> Responses {
                 ui.vertical(|ui| {
                     for (url, connected) in relays {
                         ui.horizontal(|ui| {
-                            let (color, label) = if *connected {
-                                (SessionConn::Live.color(), "connected")
+                            let (role, label) = if *connected {
+                                (SessionConn::Live.role(), "connected")
                             } else {
-                                (SessionConn::Degraded.color(), "disconnected")
+                                (SessionConn::Degraded.role(), "disconnected")
                             };
-                            super::status_dot(ui, color).on_hover_text(label);
+                            super::status_dot(ui, crate::style::color(ui, role))
+                                .on_hover_text(label);
                             ui.label(egui::RichText::new(url).weak());
                         });
                     }

@@ -1,5 +1,4 @@
 use crate::node::gui::{GUI_REF_EXT_KEY, Gui, GuiDisplay, GuiRefExt, GuiRole};
-use crate::node::{missing_color, outdated_color};
 use crate::ui_tree::UiTree;
 use crate::{
     BranchNode, ContextMenuResponse, InspectorRowsResponse, InspectorUiResponse, NodeCtx, NodeUi,
@@ -88,9 +87,9 @@ impl NodeUi for NamedRef {
             // outdated.
             None => uictx.framed(|ui, _sockets| {
                 let name_text = if is_missing {
-                    egui::RichText::new(&name_str).color(missing_color())
+                    egui::RichText::new(&name_str).color(ui.visuals().error_fg_color)
                 } else if is_outdated {
-                    egui::RichText::new(&name_str).color(outdated_color())
+                    egui::RichText::new(&name_str).color(ui.visuals().warn_fg_color)
                 } else {
                     egui::RichText::new(&name_str)
                 };
@@ -225,7 +224,8 @@ impl NodeUi for NamedRef {
                     ui.label("status");
                 });
                 row.col(|ui| {
-                    let err_text = egui::RichText::new("missing").color(missing_color());
+                    let err_text =
+                        egui::RichText::new("missing").color(ui.visuals().error_fg_color);
                     ui.label(err_text);
                 });
             });
@@ -237,7 +237,8 @@ impl NodeUi for NamedRef {
                 });
                 row.col(|ui| {
                     ui.horizontal(|ui| {
-                        let warn_text = egui::RichText::new("outdated").color(outdated_color());
+                        let warn_text =
+                            egui::RichText::new("outdated").color(ui.visuals().warn_fg_color);
                         ui.label(warn_text);
                         match sync_fork_buttons(self, &path, ui, latest_ca) {
                             SyncForkAction::Synced => resp.mark_changed(),
