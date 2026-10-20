@@ -409,7 +409,7 @@ fn paint_peer_pointers(
             screen,
             4.0,
             pointer.color,
-            egui::Stroke::new(1.0, egui::Color32::from_black_alpha(160)),
+            egui::Stroke::new(1.0f32, egui::Color32::from_black_alpha(160)),
         );
         painter.text(
             screen + egui::vec2(8.0, 6.0),

@@ -1427,7 +1427,7 @@ pub fn paint_diagnostics(
         // corners grow from the node frame's radius so the arcs stay
         // concentric. See `egui_graph::node::default_frame`.
         let frame_radius = ui.visuals().window_corner_radius;
-        let rings = [(1.0f32, 1.5, 0.45), (3.0, 2.0, 0.16), (5.5, 2.5, 0.06)];
+        let rings = [(1.0f32, 1.5f32, 0.45), (3.0, 2.0, 0.16), (5.5, 2.5, 0.06)];
         for (expand, width, alpha) in rings {
             painter.add(
                 egui::epaint::RectShape::stroke(
@@ -1445,7 +1445,7 @@ pub fn paint_diagnostics(
         ui.painter().rect_stroke(
             response.scene.rect,
             0,
-            egui::Stroke::new(2.0, color.gamma_multiply(0.6)),
+            egui::Stroke::new(2.0f32, color.gamma_multiply(0.6)),
             egui::StrokeKind::Inside,
         );
     }

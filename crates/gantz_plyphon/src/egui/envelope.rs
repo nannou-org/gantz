@@ -128,7 +128,7 @@ pub fn envelope_editor(
         if view.y_range[0] < 0.0 {
             let zero = HLine::new("", 0.0)
                 .color(weak)
-                .width(0.5)
+                .width(0.5f32)
                 .allow_hover(false);
             plot_ui.hline(zero);
         }
@@ -141,7 +141,7 @@ pub fn envelope_editor(
         }
         let curve = Line::new("", PlotPoints::from(points))
             .color(line)
-            .width(1.5)
+            .width(1.5f32)
             .allow_hover(false);
         plot_ui.line(curve);
     });
@@ -180,7 +180,7 @@ pub fn envelope_editor(
         handle_dragged |= resp.dragged() && !resp.drag_stopped();
         let half = if hot { 3.5 } else { 2.5 };
         let square = egui::Rect::from_center_size(pos, egui::Vec2::splat(half * 2.0));
-        let stroke = egui::Stroke::new(1.0, if hot { active } else { weak });
+        let stroke = egui::Stroke::new(1.0f32, if hot { active } else { weak });
         painter.rect_stroke(square, 0.0, stroke, egui::StrokeKind::Middle);
         // The bend before any snap. It lives in temp memory for the drag, so
         // a drag can leave the snap zone.

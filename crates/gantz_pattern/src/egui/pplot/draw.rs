@@ -143,7 +143,7 @@ fn plot_channels(
             plot_ui.polygon(
                 egui_plot::Polygon::new("", pts)
                     .fill_color(b.color.gamma_multiply(0.2))
-                    .stroke(egui::Stroke::new(1.0, b.color.gamma_multiply(0.6)))
+                    .stroke(egui::Stroke::new(1.0f32, b.color.gamma_multiply(0.6)))
                     .allow_hover(false),
             );
         }
