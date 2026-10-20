@@ -62,40 +62,12 @@ pub struct ColorRef {
 impl Palette {
     /// The default dark palette. It is close to egui's own dark theme.
     pub fn dark() -> Self {
-        Self {
-            name: "egui Dark".to_string(),
-            neutrals: [10, 27, 60, 75, 140, 180, 230, 255].map(egui::Color32::from_gray),
-            accents: [
-                [224, 82, 82],
-                [240, 144, 42],
-                [212, 170, 58],
-                [92, 191, 92],
-                [76, 194, 194],
-                [90, 170, 255],
-                [176, 112, 224],
-                [224, 112, 184],
-            ]
-            .map(|[r, g, b]| egui::Color32::from_rgb(r, g, b)),
-        }
+        Self::from(&super::base16::EGUI_DARK)
     }
 
     /// The default light palette. It is close to egui's own light theme.
     pub fn light() -> Self {
-        Self {
-            name: "egui Light".to_string(),
-            neutrals: [255, 248, 218, 200, 80, 60, 20, 0].map(egui::Color32::from_gray),
-            accents: [
-                [200, 40, 40],
-                [176, 84, 0],
-                [140, 100, 0],
-                [30, 120, 30],
-                [10, 138, 138],
-                [10, 110, 209],
-                [128, 64, 192],
-                [176, 48, 128],
-            ]
-            .map(|[r, g, b]| egui::Color32::from_rgb(r, g, b)),
-        }
+        Self::from(&super::base16::EGUI_LIGHT)
     }
 
     /// The colour of `swatch`.

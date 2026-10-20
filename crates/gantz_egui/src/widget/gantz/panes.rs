@@ -6,8 +6,8 @@ use super::tiles::{NodeViewPane, Pane, ext_pane_entries};
 use super::{FileDrop, FileDropTarget, LogSource, NESTED_GRAPH_TYPE, NodeTyCmd, PaneCtx};
 use crate::{
     Action, CopyNodes, CreateNestedGraph, CreateNode, CutNodes, DuplicateNodes, Env,
-    ExportAllNamed, ExportHead, ExportStyle, HeadAccess, ImportStyle, Keymap, NodeCtx, NodeUi,
-    Paste, Redo, ReplaceHead, ReplaceNode, ResetTilesLayout, Undo,
+    ExportAllNamed, ExportHead, ExportStyle, HeadAccess, ImportPalette, ImportStyle, Keymap,
+    NodeCtx, NodeUi, Paste, Redo, ReplaceHead, ReplaceNode, ResetTilesLayout, Undo,
     node::NodeCodec,
     response::{DynResponse, Responses},
     widget::{self, GraphScene, graph_scene},
@@ -862,6 +862,9 @@ where
     }
     if res.inner.import_style {
         gantz_response.responses.push(None, ImportStyle);
+    }
+    if let Some(theme) = res.inner.import_palette {
+        gantz_response.responses.push(None, ImportPalette(theme));
     }
     let mut ext_responses = res.inner.responses;
     gantz_response

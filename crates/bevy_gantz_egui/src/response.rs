@@ -1,8 +1,8 @@
 //! The dispatch of the payloads a GUI pass emits, onto events and observers.
 
 use crate::{
-    ExportAllNamedEvent, ExportHeadEvent, ExportStyleEvent, ImportFileEvent, ImportStyleEvent,
-    ResetBaseGraphEvent,
+    ExportAllNamedEvent, ExportHeadEvent, ExportStyleEvent, ImportFileEvent, ImportPaletteEvent,
+    ImportStyleEvent, ResetBaseGraphEvent,
 };
 use bevy_app::prelude::*;
 use bevy_ecs::prelude::*;
@@ -196,6 +196,17 @@ pub(crate) fn dispatch_export_style(_: Option<Entity>, payload: DynResponse, cmd
 pub(crate) fn dispatch_import_style(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
     let gantz_egui::ImportStyle = downcast_payload(payload);
     cmds.trigger(ImportStyleEvent);
+}
+
+/// Dispatch a [`gantz_egui::ImportPalette`] payload as an
+/// [`ImportPaletteEvent`].
+pub(crate) fn dispatch_import_palette(
+    _: Option<Entity>,
+    payload: DynResponse,
+    cmds: &mut Commands,
+) {
+    let gantz_egui::ImportPalette(theme) = downcast_payload(payload);
+    cmds.trigger(ImportPaletteEvent(theme));
 }
 
 /// Dispatch a [`gantz_egui::CloseHead`] payload as a [`head::CloseEvent`].

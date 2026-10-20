@@ -16,7 +16,7 @@ use super::{
 use crate::{
     StyleConfig,
     style::{
-        ColorRef, Group, Palette, Role, Roles, Shape, Swatch,
+        ColorRef, Group, Palette, Role, Roles, Shape, Swatch, base16,
         palette::{from_hex, to_hex},
     },
 };
@@ -28,6 +28,8 @@ pub struct StyleConfigResponse {
     pub export: bool,
     /// The "Import" button was clicked.
     pub import: bool,
+    /// The "Import base16" button was clicked for the palette of this theme.
+    pub import_palette: Option<egui::Theme>,
 }
 
 /// The side of a palette swatch button, as a multiple of the interact height.
@@ -70,17 +72,36 @@ pub fn style_config(
     };
     let hovered = section(ui, title, |ui| {
         let palette = style.palettes.get_mut(theme);
+        preset_picker(palette, ui);
         let hovered = palette_editor(palette, ui);
-        if ui
-            .button("Reset palette")
-            .on_hover_text("Restore the default palette of this theme.")
-            .clicked()
-        {
-            *palette = match theme {
-                egui::Theme::Dark => Palette::dark(),
-                egui::Theme::Light => Palette::light(),
-            };
-        }
+        ui.horizontal_wrapped(|ui| {
+            if ui
+                .button("Reset palette")
+                .on_hover_text(
+                    "Restore the preset this palette started from, or the default palette \
+                     of this theme.",
+                )
+                .clicked()
+            {
+                *palette = match base16::preset_of(palette) {
+                    Some((scheme, _)) => Palette::from(scheme),
+                    None => match theme {
+                        egui::Theme::Dark => Palette::dark(),
+                        egui::Theme::Light => Palette::light(),
+                    },
+                };
+            }
+            if ui
+                .button("Import base16…")
+                .on_hover_text(
+                    "Load this palette from a base16 or base24 scheme file. The neutrals \
+                     take base00 to base07 and the accents take base08 to base0F.",
+                )
+                .clicked()
+            {
+                res.import_palette = Some(theme);
+            }
+        });
         hovered
     });
 
@@ -448,4 +469,26 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
             ui.checkbox(&mut shape.shadows, "");
             ui.end_row();
         });
+}
+
+/// A menu of the built-in palettes. Picking one replaces `palette`.
+fn preset_picker(palette: &mut Palette, ui: &mut egui::Ui) {
+    let selected = match base16::preset_of(palette) {
+        Some((_, false)) => format!("{} (edited)", palette.name),
+        _ => palette.name.clone(),
+    };
+    ui.horizontal(|ui| {
+        ui.label("Preset");
+        egui::ComboBox::from_id_salt("style_palette_preset")
+            .selected_text(selected)
+            .show_ui(ui, |ui| {
+                for scheme in base16::PRESETS {
+                    let preset = Palette::from(scheme);
+                    let current = preset == *palette;
+                    if ui.selectable_label(current, scheme.name).clicked() {
+                        *palette = preset;
+                    }
+                }
+            });
+    });
 }
