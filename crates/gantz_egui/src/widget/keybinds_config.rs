@@ -50,7 +50,7 @@ pub fn keybinds_config(keymap: &mut Keymap, ui: &mut egui::Ui) {
                 // a reset. It is applied after the row is built.
                 let mut reset = false;
 
-                ui.add(egui::Label::new(action.label()).sense(egui::Sense::click()))
+                ui.add(egui::Label::new(action.label().to_lowercase()).sense(egui::Sense::click()))
                     .on_hover_text(action.description())
                     .context_menu(|ui| {
                         if ui.button("reset to default").clicked() {
@@ -67,12 +67,12 @@ pub fn keybinds_config(keymap: &mut Keymap, ui: &mut egui::Ui) {
                         ui.weak("(unbound)");
                     }
                     for shortcut in bindings {
-                        let mut text = egui::RichText::new(ui.ctx().format_shortcut(&shortcut));
-                        if conflicts.contains_key(&shortcut) {
-                            text = text.color(ui.visuals().error_fg_color);
-                        }
-                        let chip = ui
-                            .button(text)
+                        let text = ui.ctx().format_shortcut(&shortcut).to_lowercase();
+                        let color = match conflicts.contains_key(&shortcut) {
+                            true => ui.visuals().error_fg_color,
+                            false => ui.visuals().strong_text_color(),
+                        };
+                        let chip = super::kit::keycap_button(ui, &text, color)
                             .on_hover_text("Click to remove. Right-click to reset.");
                         if chip.clicked() {
                             keymap.remove(action, shortcut);
@@ -116,7 +116,7 @@ pub fn keybinds_config(keymap: &mut Keymap, ui: &mut egui::Ui) {
         );
     }
     if ui
-        .button("Reset all keybinds")
+        .button("reset all keybinds")
         .on_hover_text("Reset every command shortcut to its default")
         .clicked()
     {

@@ -3,6 +3,7 @@
 //! extension subtabs. See [`SettingsTab`].
 
 use super::gantz::{FollowSelectionConfig, LayoutConfig, SceneConfig, ViewToggles};
+use super::kit;
 use crate::{Keymap, Responses, StyleConfig};
 
 /// An application-supplied settings subtab.
@@ -59,6 +60,16 @@ pub struct SettingsResponse {
     pub responses: Responses,
 }
 
+/// The width of a pane at which the sections move from a row of pills to a
+/// list down its left side.
+const WIDE: f32 = 420.0;
+
+/// The width of the section list down the side of a wide pane.
+const NAV_WIDTH: f32 = 110.0;
+
+/// The gap between the sections and the section shown.
+const NAV_GAP: f32 = 10.0;
+
 /// Render the Settings pane. A subtab selector over Global, Style, Keybinds
 /// and Panes plus any supplied extension subtabs.
 ///
@@ -87,40 +98,45 @@ pub fn settings(
         }
     }
 
-    // The subtab selector matches the shared tab widget. Plain labels with no
-    // box, the active tab in the strong text colour and the rest dim. A tab
-    // that does not fit moves whole onto a new row, since each label extends
-    // rather than wraps.
-    ui.horizontal_wrapped(|ui| {
-        let mut tab_label = |ui: &mut egui::Ui, this: SubTab, label: &str| {
-            let color = if tab == this {
-                ui.visuals().strong_text_color()
-            } else {
-                ui.visuals().weak_text_color()
-            };
-            let resp = ui
-                .add(
-                    egui::Label::new(egui::RichText::new(label).color(color))
-                        .sense(egui::Sense::click())
-                        .selectable(false)
-                        .extend(),
-                )
-                .on_hover_cursor(egui::CursorIcon::PointingHand);
-            if resp.clicked() {
-                tab = this;
+    // The sections. A wide pane lists them down its left side. A narrow one
+    // wraps them into a row of pills above the section.
+    let mut sections: Vec<(SubTab, String)> = vec![
+        (SubTab::Global, "global".to_string()),
+        (SubTab::Style, "style".to_string()),
+        (SubTab::Keybinds, "keybinds".to_string()),
+        (SubTab::Panes, "panes".to_string()),
+    ];
+    // Extension subtabs only exist while the app supplies them.
+    sections.extend(
+        ext_tabs
+            .iter()
+            .map(|t| (SubTab::Ext(t.title().to_string()), t.title().to_lowercase())),
+    );
+    let outer = ui;
+    let full = outer.available_rect_before_wrap();
+    let down = egui::Layout::top_down(egui::Align::Min);
+    let body_rect = if full.width() >= WIDE {
+        let nav = egui::Rect::from_min_size(full.min, egui::vec2(NAV_WIDTH, full.height()));
+        outer.scope_builder(egui::UiBuilder::new().max_rect(nav).layout(down), |ui| {
+            for (this, label) in &sections {
+                if kit::pill(ui, tab == *this, label.as_str()).clicked() {
+                    tab = this.clone();
+                }
             }
-        };
-        tab_label(ui, SubTab::Global, "Global");
-        tab_label(ui, SubTab::Style, "Style");
-        tab_label(ui, SubTab::Keybinds, "Keybinds");
-        tab_label(ui, SubTab::Panes, "Panes");
-        // Extension subtabs only exist while the app supplies them.
-        for t in ext_tabs.iter() {
-            let title = t.title();
-            tab_label(ui, SubTab::Ext(title.to_string()), title);
-        }
-    });
-    ui.separator();
+        });
+        full.with_min_x(full.min.x + NAV_WIDTH + NAV_GAP)
+    } else {
+        let row = outer.horizontal_wrapped(|ui| {
+            for (this, label) in &sections {
+                if kit::pill(ui, tab == *this, label.as_str()).clicked() {
+                    tab = this.clone();
+                }
+            }
+        });
+        full.with_min_y(row.response.rect.max.y + NAV_GAP)
+    };
+    let mut body = outer.new_child(egui::UiBuilder::new().max_rect(body_rect).layout(down));
+    let ui = &mut body;
 
     let mut res = SettingsResponse::default();
     match tab {
@@ -188,6 +204,7 @@ pub fn settings(
         }
     }
 
-    ui.data_mut(|d| d.insert_temp(id, tab));
+    outer.allocate_rect(full, egui::Sense::hover());
+    outer.data_mut(|d| d.insert_temp(id, tab));
     res
 }

@@ -12,6 +12,9 @@ pub const OUTLINE: f32 = 1.5;
 /// The size of a [`switch`], as multiples of the interact height.
 const SWITCH: egui::Vec2 = egui::vec2(1.65, 1.0);
 
+/// The room between a group of [`pills`] and its outline.
+const PILLS_MARGIN: i8 = 1;
+
 /// A group card: an optional title, optional context to its right, and
 /// `add_contents` below. [`Shape::cards`][crate::style::Shape::cards] chooses whether it is shaded or
 /// outlined.
@@ -80,7 +83,7 @@ pub fn pills<T: Copy + PartialEq>(
     let inner = egui::Frame::new()
         .stroke(stroke)
         .corner_radius(shape.widget_corner(height + 4.0))
-        .inner_margin(egui::Margin::same(1))
+        .inner_margin(egui::Margin::same(PILLS_MARGIN))
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             ui.horizontal(|ui| {
@@ -104,6 +107,24 @@ pub fn pills<T: Copy + PartialEq>(
     }
 }
 
+/// A row with `label` and then [`pills`]. The label centres on the pills'
+/// height.
+pub fn pill_row<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    label: &str,
+    value: &mut T,
+    options: &[(T, &str)],
+) -> egui::Response {
+    ui.horizontal(|ui| {
+        // The row is only as high as the widgets so far, so it takes the
+        // pills' height before the label centres in it.
+        ui.set_min_height(pill_height(ui) + 2.0 * (f32::from(PILLS_MARGIN) + OUTLINE));
+        ui.label(label);
+        pills(ui, value, options)
+    })
+    .inner
+}
+
 /// One pill: a label that is filled in the strong text colour while
 /// `selected`, and weak otherwise.
 pub fn pill(
@@ -111,17 +132,14 @@ pub fn pill(
     selected: bool,
     text: impl Into<egui::WidgetText>,
 ) -> egui::Response {
-    let pad = egui::vec2(ui.spacing().button_padding.x + 2.0, 2.0);
+    let pad_x = ui.spacing().button_padding.x + 2.0;
     let galley = text.into().into_galley(
         ui,
         Some(egui::TextWrapMode::Extend),
         f32::INFINITY,
         egui::TextStyle::Button,
     );
-    let size = egui::vec2(
-        galley.size().x + pad.x * 2.0,
-        (galley.size().y + pad.y * 2.0).max(ui.spacing().interact_size.y - 2.0),
-    );
+    let size = egui::vec2(galley.size().x + pad_x * 2.0, pill_height(ui));
     let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
     if ui.is_rect_visible(rect) {
         let shape = style::shape(ui.ctx());
@@ -157,7 +175,7 @@ pub fn switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
         let radius = rect.height() / 2.0;
         let track = match *on {
             true => visuals.strong_text_color(),
-            false => visuals.widgets.inactive.weak_bg_fill,
+            false => visuals.widgets.noninteractive.bg_stroke.color,
         };
         let knob = match *on {
             true => style::color(ui, Role::Panel),
@@ -191,36 +209,47 @@ pub fn switch_row(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Respon
 
 /// A key or key combination drawn as a keycap, such as "ctrl c".
 pub fn keycap(ui: &mut egui::Ui, text: &str, strong: bool) -> egui::Response {
-    let font = egui::FontId::monospace(ui.style().text_styles[&egui::TextStyle::Body].size * 0.88);
-    let visuals = ui.visuals();
     let color = match strong {
-        true => visuals.strong_text_color(),
-        false => visuals.weak_text_color(),
+        true => ui.visuals().strong_text_color(),
+        false => ui.visuals().weak_text_color(),
     };
-    let stroke = egui::Stroke::new(OUTLINE, visuals.widgets.noninteractive.bg_stroke.color);
+    keycap_in(ui, text, color, egui::Sense::hover())
+}
+
+/// A keycap in `color` that responds to clicks, for a binding the user can
+/// edit.
+pub fn keycap_button(ui: &mut egui::Ui, text: &str, color: egui::Color32) -> egui::Response {
+    let resp = keycap_in(ui, text, color, egui::Sense::click());
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+}
+
+fn keycap_in(
+    ui: &mut egui::Ui,
+    text: &str,
+    color: egui::Color32,
+    sense: egui::Sense,
+) -> egui::Response {
+    let font = egui::FontId::monospace(ui.style().text_styles[&egui::TextStyle::Body].size * 0.88);
     let galley = ui.painter().layout_no_wrap(text.to_string(), font, color);
     let pad = egui::vec2(6.0, 1.0);
     let size = galley.size() + pad * 2.0;
-    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let (rect, resp) = ui.allocate_exact_size(size, sense);
     if ui.is_rect_visible(rect) {
-        let shape = style::shape(ui.ctx());
+        let visuals = ui.visuals();
+        let line = match resp.hovered() && sense.senses_click() {
+            true => visuals.widgets.hovered.bg_stroke.color,
+            false => visuals.widgets.noninteractive.bg_stroke.color,
+        };
+        let radius = style::shape(ui.ctx()).widget_corner(rect.height()) * 0.7;
         ui.painter().rect_stroke(
             rect,
-            shape.widget_corner(rect.height()) * 0.7,
-            stroke,
+            radius,
+            egui::Stroke::new(OUTLINE, line),
             egui::StrokeKind::Inside,
         );
         ui.painter().galley(rect.min + pad, galley, color);
     }
     resp
-}
-
-/// The keycaps of every binding in `chords`, side by side.
-pub fn keycaps(ui: &mut egui::Ui, chords: &[String]) {
-    ui.spacing_mut().item_spacing.x = 3.0;
-    for chord in chords {
-        keycap(ui, chord, false);
-    }
 }
 
 /// A dark inset that holds a node's value, code or plot, so that every node
@@ -255,4 +284,10 @@ pub fn danger_item(ui: &mut egui::Ui, label: &str, shortcut: Option<String>) -> 
 /// acts on.
 pub fn menu_heading(ui: &mut egui::Ui, text: &str) {
     ui.label(egui::RichText::new(text).small().weak());
+}
+
+/// The height of a [`pill`]: a line of button text with a little room.
+fn pill_height(ui: &egui::Ui) -> f32 {
+    let text = ui.text_style_height(&egui::TextStyle::Button);
+    (text + 4.0).max(ui.spacing().interact_size.y - 2.0)
 }
