@@ -68,11 +68,11 @@ where
         style: &egui::Style,
         resize_state: egui_tiles::ResizeState,
     ) -> egui::Stroke {
-        separator_stroke(self.cx.state.style.separator, style, resize_state)
+        separator_stroke(&self.cx.state.style, style, resize_state)
     }
 
     fn gap_width(&self, _style: &egui::Style) -> f32 {
-        self.cx.state.style.separator.width
+        self.cx.state.style.shape.separator_width
     }
 
     fn tab_bar_height(&self, _style: &egui::Style) -> f32 {

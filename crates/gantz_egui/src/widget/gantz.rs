@@ -2,7 +2,7 @@ use crate::{
     Env, HeadAccess, OpenLogs, OpenNodePalette, OpenNodeView, OpenReplacePalette, ResetTilesLayout,
     node::NodeCodec,
     response::Responses,
-    style::SeparatorConfig,
+    style::{self, Role, StyleConfig},
     widget::{self, graph_scene},
 };
 use std::collections::{HashMap, HashSet};
@@ -127,17 +127,18 @@ enum LogSource {
 
 /// The `egui_tiles::Behavior::resize_stroke` shared by both tile trees.
 fn separator_stroke(
-    cfg: SeparatorConfig,
+    cfg: &StyleConfig,
     style: &egui::Style,
     resize_state: egui_tiles::ResizeState,
 ) -> egui::Stroke {
-    let color = match resize_state {
-        egui_tiles::ResizeState::Idle => cfg.color,
+    let role = match resize_state {
+        egui_tiles::ResizeState::Idle => Role::Separator,
         egui_tiles::ResizeState::Hovering | egui_tiles::ResizeState::Dragging => {
-            cfg.hover.unwrap_or(cfg.color)
+            Role::SeparatorHover
         }
     };
-    egui::Stroke::new(cfg.width, color.resolve(&style.visuals))
+    let theme = style::theme_of(&style.visuals);
+    egui::Stroke::new(cfg.shape.separator_width, cfg.resolve(theme, role))
 }
 
 /// The data a single pane needs to render, independent of where the pane lives.
@@ -430,7 +431,7 @@ impl<'a> Gantz<'a> {
             ui.ctx().memory_mut(|m| m.data.clear());
         }
 
-        crate::style::apply(ui.ctx(), &state.style);
+        style::apply(ui.ctx(), &state.style);
 
         // The persisted outer tree. The version suffix invalidates any tree
         // persisted before the latest default-layout change, forcing a
@@ -462,7 +463,7 @@ impl<'a> Gantz<'a> {
         let widget_area = ui.available_rect_before_wrap();
         // Raise any pane below its minimum before the fixed sizes are imposed,
         // so a clamped minimum is not captured as a shrunken sidebar or tray.
-        impose_min_sizes(&mut tree, state.style.separator.width, widget_area);
+        impose_min_sizes(&mut tree, state.style.shape.separator_width, widget_area);
         // Maintain a fixed sidebar width and tray height across window resizes
         // by imposing the stored pixel sizes on the share splits before layout.
         impose_fixed_sizes(&mut tree, state, widget_area);
@@ -635,7 +636,7 @@ impl<'a> Gantz<'a> {
         's: 'a,
         Access: HeadAccess,
     {
-        crate::style::apply(ui.ctx(), &state.style);
+        style::apply(ui.ctx(), &state.style);
         let mut response = GantzResponse::new(focused_head);
         let mut cx = PaneCtx {
             gantz: &mut self,
@@ -780,11 +781,11 @@ where
         style: &egui::Style,
         resize_state: egui_tiles::ResizeState,
     ) -> egui::Stroke {
-        separator_stroke(self.cx.state.style.separator, style, resize_state)
+        separator_stroke(&self.cx.state.style, style, resize_state)
     }
 
     fn gap_width(&self, _style: &egui::Style) -> f32 {
-        self.cx.state.style.separator.width
+        self.cx.state.style.shape.separator_width
     }
 
     fn tab_outline_stroke(

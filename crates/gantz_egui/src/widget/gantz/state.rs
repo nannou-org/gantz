@@ -34,7 +34,7 @@ pub struct GantzState {
     /// Settings Global subtab.
     #[serde(default)]
     pub follow_selection: FollowSelectionConfig,
-    /// The egui theme preference and per-theme style overrides, applied to
+    /// The theme preference, palettes, roles and shape, applied to
     /// every gantz context. See [`crate::style`]. Edited in the Settings
     /// Style subtab.
     #[serde(default)]
