@@ -16,6 +16,7 @@
 pub use palette::{ColorRef, Palette, Swatch};
 pub use role::{Group, Role, Roles};
 
+pub mod base16;
 pub mod palette;
 pub mod role;
 

@@ -15,6 +15,11 @@ pub struct ImportTask(bevy_tasks::Task<Option<Vec<u8>>>);
 #[derive(Resource)]
 pub struct StyleImportTask(bevy_tasks::Task<Option<Vec<u8>>>);
 
+/// In-flight base16 palette import file dialog task, with the theme whose
+/// palette the picked file replaces.
+#[derive(Resource)]
+pub struct PaletteImportTask(bevy_tasks::Task<Option<Vec<u8>>>, bevy_egui::egui::Theme);
+
 /// Event emitted when the user requests exporting a head.
 #[derive(Event)]
 pub struct ExportHeadEvent {
@@ -33,6 +38,11 @@ pub struct ExportStyleEvent;
 /// Event emitted when the user requests importing a GUI style.
 #[derive(Event)]
 pub struct ImportStyleEvent;
+
+/// Event emitted when the user requests importing a base16 palette for a
+/// theme.
+#[derive(Event)]
+pub struct ImportPaletteEvent(pub bevy_egui::egui::Theme);
 
 /// Event emitted when a `.gantz` file is dropped onto a pane.
 #[derive(Event)]
@@ -157,6 +167,26 @@ pub fn on_import_style(
         .set_title("Import Style")
         .add_filter("Gantz Style", &[ext]);
     cmds.insert_resource(StyleImportTask(spawn_pick(dialog)));
+}
+
+/// Handle base16 palette import events by opening a file dialog.
+///
+/// The chosen file's bytes return to the main world via
+/// [`PaletteImportTask`], polled by `poll_palette_import_task`.
+pub fn on_import_palette(
+    trigger: On<ImportPaletteEvent>,
+    task: Option<Res<PaletteImportTask>>,
+    mut cmds: Commands,
+) {
+    // Only one dialog at a time.
+    if task.is_some() {
+        return;
+    }
+    let dialog = rfd::AsyncFileDialog::new()
+        .set_title("Import base16 Scheme")
+        .add_filter("base16 Scheme", &["yaml", "yml"]);
+    let theme = trigger.event().0;
+    cmds.insert_resource(PaletteImportTask(spawn_pick(dialog), theme));
 }
 
 /// Handle import file events for dropped `.gantz` files.
@@ -303,6 +333,32 @@ pub(crate) fn poll_style_import_task(
         }
         Ok(Err(e)) => log::error!("ImportStyle: failed to parse: {e}"),
         Err(e) => log::error!("ImportStyle: invalid UTF-8: {e}"),
+    }
+}
+
+/// Poll the in-flight base16 palette import file dialog task.
+///
+/// When the task completes with file bytes, replaces the palette of the
+/// task's theme. The resource is removed regardless of whether a file was
+/// selected.
+pub(crate) fn poll_palette_import_task(
+    task: Option<ResMut<PaletteImportTask>>,
+    mut gui_state: ResMut<GuiState>,
+    mut cmds: Commands,
+) {
+    let Some(mut task) = task else { return };
+    let Some(result) = bevy_tasks::futures::check_ready(&mut task.0) else {
+        return;
+    };
+    cmds.remove_resource::<PaletteImportTask>();
+    let Some(bytes) = result else { return };
+    match std::str::from_utf8(&bytes).map(gantz_egui::style::base16::parse) {
+        Ok(Ok(palette)) => {
+            log::info!("Imported palette {}", palette.name);
+            *gui_state.style.palettes.get_mut(task.1) = palette;
+        }
+        Ok(Err(e)) => log::error!("ImportPalette: {e}"),
+        Err(e) => log::error!("ImportPalette: invalid UTF-8: {e}"),
     }
 }
 

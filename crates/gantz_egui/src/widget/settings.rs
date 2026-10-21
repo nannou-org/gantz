@@ -47,6 +47,9 @@ pub struct SettingsResponse {
     pub export_style: bool,
     /// The "Import" button on the Style subtab was clicked.
     pub import_style: bool,
+    /// The "Import base16" button on the Style subtab was clicked for the
+    /// palette of this theme.
+    pub import_palette: Option<egui::Theme>,
     /// The "reset all" layout button on the Panes subtab was clicked.
     pub reset_layout: bool,
     /// Payloads emitted by extension subtabs.
@@ -145,6 +148,7 @@ pub fn settings(
                 .inner;
             res.export_style = s.export;
             res.import_style = s.import;
+            res.import_palette = s.import_palette;
         }
         SubTab::Keybinds => {
             egui::ScrollArea::vertical()

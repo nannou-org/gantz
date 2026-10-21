@@ -534,6 +534,12 @@ pub struct ExportStyle;
 #[derive(Clone, Copy, Debug)]
 pub struct ImportStyle;
 
+/// Replace the palette of the given theme with one loaded from a base16
+/// scheme file. See [`style::base16::parse`]. Emitted without an associated
+/// head.
+#[derive(Clone, Copy, Debug)]
+pub struct ImportPalette(pub egui::Theme);
+
 /// Insert an inspect node on the given edge at the given position.
 #[derive(Clone, Debug)]
 pub struct InspectEdge {
