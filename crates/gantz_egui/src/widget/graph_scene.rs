@@ -1088,17 +1088,32 @@ fn lock_badge(ui: &egui::Ui, node: &egui::Response, lost: &[String]) {
     let mut painter = ui.ctx().layer_painter(node.layer_id);
     // Node layers are transformed, so their clip is layer-local.
     painter.set_clip_rect(node.rect.expand(32.0));
-    let font = egui::TextStyle::Body.resolve(ui.style());
-    let pos = node.rect.right_top() + egui::vec2(2.0, -2.0);
-    let color = ui.visuals().warn_fg_color;
-    painter.text(
-        pos,
-        egui::Align2::LEFT_BOTTOM,
-        super::LOCK_GLYPH,
-        font,
-        color,
+    let size = ui.text_style_height(&egui::TextStyle::Body) * 0.8;
+    let rect = egui::Rect::from_min_size(
+        node.rect.right_top() + egui::vec2(3.0, -size - 1.0),
+        egui::Vec2::splat(size),
     );
+    paint_padlock(&painter, rect, ui.visuals().warn_fg_color);
     node.clone().on_hover_text(super::locked_text(lost));
+}
+
+/// Paint a padlock that fills `rect`: a rounded body under a shackle.
+fn paint_padlock(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let body = egui::Rect::from_min_max(
+        egui::pos2(rect.left(), rect.top() + rect.height() * 0.45),
+        rect.max,
+    );
+    painter.rect_filled(body, rect.height() * 0.12, color);
+    let radius = rect.width() * 0.3;
+    let center = egui::pos2(rect.center().x, body.top() - rect.height() * 0.05);
+    let points: Vec<egui::Pos2> = (0..=12)
+        .map(|i| {
+            let angle = std::f32::consts::PI * (1.0 + i as f32 / 12.0);
+            center + radius * egui::vec2(angle.cos(), angle.sin())
+        })
+        .collect();
+    let stroke = egui::Stroke::new(rect.width() * 0.14, color);
+    painter.add(egui::Shape::line(points, stroke));
 }
 
 /// Render the opaque placeholder for a node whose tag is unknown to the
