@@ -1,13 +1,13 @@
 //! Rendering of each pane, and the helpers the panes share.
 
-use super::graph_tabs::{GraphPane, GraphTreeBehaviour, create_empty_graph_tree, sync_graph_panes};
+use super::graph_tabs::{head_scene, tab_strip};
 use super::state::{OpenHeadState, SceneConfig, ViewToggles};
 use super::tiles::{NodeViewPane, Pane, ext_pane_entries};
 use super::{FileDrop, FileDropTarget, LogSource, NESTED_GRAPH_TYPE, NodeTyCmd, PaneCtx};
 use crate::{
     Action, CopyNodes, CreateNestedGraph, CreateNode, CutNodes, DuplicateNodes, Env,
     ExportAllNamed, ExportHead, ExportPalette, ExportStyle, HeadAccess, ImportPalette, ImportStyle,
-    Keymap, NodeCtx, NodeUi, Paste, Redo, ReplaceHead, ReplaceNode, ResetTilesLayout, Undo,
+    Keymap, NodeCtx, NodeUi, Paste, Redo, ReplaceNode, ResetTilesLayout, Undo,
     node::NodeCodec,
     response::{DynResponse, Responses},
     widget::{self, GraphScene, graph_scene},
@@ -34,6 +34,7 @@ pub(super) fn render_pane<Access>(
         Pane::Ext(key) => render_ext(cx, ui, key),
         Pane::GraphConfig => render_graph_config(cx, ui),
         Pane::GraphScene => render_graph_scene(cx, ui),
+        Pane::Graph(id) => render_graph_pane(cx, ui, *id),
         Pane::Graphs => render_graphs(cx, ui),
         Pane::GuiPerf => {
             if let Some(ref mut capture) = cx.gantz.perf_gui {
@@ -241,34 +242,28 @@ where
 {
     paint_gantz_file_hover_overlay(ui);
 
-    // The rect positions the floating sidebar toggle.
+    // The rect positions the floating tab strip and sidebar toggle.
     let rect = ui.available_rect_before_wrap();
 
     // Extension-pane toggle entries for the graph-area context menu.
     let ext_panes = ext_pane_entries(cx.gantz);
 
-    // The tabs render through `cx`, so the tree comes out of the state for
-    // the pass.
-    let empty = create_empty_graph_tree();
-    let mut graph_tree = std::mem::replace(&mut cx.state.graph_tabs, empty);
-
-    sync_graph_panes(&mut graph_tree, cx.access.heads());
-
-    // Activate the tab corresponding to the focused head.
-    if let Some(fh) = cx.access.heads().get(cx.focused_head) {
-        let fh = fh.clone();
-        graph_tree.make_active(|_, tile| match tile {
-            egui_tiles::Tile::Pane(GraphPane(head)) => *head == fh,
-            _ => false,
-        });
+    // The main graph fills the scene. The tab strip floats over it.
+    let main = cx
+        .state
+        .graphs
+        .resolve_main(cx.access.heads(), cx.focused_head);
+    if let Some(main) = &main {
+        let id = egui::Id::new("gantz-main-scene");
+        head_scene(cx, ui, main, id, &ext_panes);
     }
-
-    let mut graph_behaviour = GraphTreeBehaviour {
-        cx: &mut *cx,
-        ext_panes: &ext_panes,
-    };
-    graph_tree.ui(&mut graph_behaviour, ui);
-    cx.state.graph_tabs = graph_tree;
+    let margin = scene_overlay_margin(ui.style());
+    let strip_height = tab_strip(
+        cx,
+        ui,
+        rect.left_top() + egui::vec2(margin, margin),
+        main.as_ref(),
+    );
 
     let PaneCtx {
         gantz,
@@ -391,12 +386,34 @@ where
         }
     }
 
-    // Floating hamburger over the top-left corner of the graph
-    // scene, just below the graph tabs, that opens and closes the
-    // sidebar.
-    let margin = scene_overlay_margin(ui.style());
-    let anchor = rect.left_top() + egui::vec2(margin, margin + GRAPH_TAB_BAR_HEIGHT);
+    // Floating hamburger over the top-left corner of the graph scene, just
+    // below the tab strip, that opens and closes the sidebar.
+    let anchor = rect.left_top() + egui::vec2(margin, margin * 2.0 + strip_height);
     sidebar_toggle(ui.ctx(), anchor, &mut state.view_toggles.sidebar_open);
+}
+
+/// Render a graph pane: its graph's scene, inset in the pane. See
+/// [`render_pane`].
+fn render_graph_pane<Access>(cx: &mut PaneCtx<'_, '_, Access>, ui: &mut egui::Ui, id: u64)
+where
+    Access: HeadAccess,
+{
+    let head = cx.state.graphs.panes.get(&id).cloned();
+    let Some(head) = head.filter(|h| cx.access.heads().contains(h)) else {
+        ui.centered_and_justified(|ui| ui.weak("this graph is closed"));
+        return;
+    };
+    let ext_panes = ext_pane_entries(cx.gantz);
+    // The pane's chrome paints the inset's rounded ground, so the scene
+    // draws no fill of its own.
+    let rect = ui.max_rect().shrink(super::chrome::GRAPH_INSET);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        let widgets = &mut ui.style_mut().visuals.widgets.noninteractive;
+        widgets.bg_fill = egui::Color32::TRANSPARENT;
+        widgets.weak_bg_fill = egui::Color32::TRANSPARENT;
+        let scene_id = egui::Id::new(("gantz-graph-pane", id));
+        head_scene(cx, ui, &head, scene_id, &ext_panes);
+    });
 }
 
 /// Render the graphs pane. See [`render_pane`].
@@ -1221,11 +1238,6 @@ fn scene_overlay_margin(style: &egui::Style) -> f32 {
     style.interaction.interact_radius * 2.0
 }
 
-/// The height of the tab strip above the graph scene. It pins the
-/// `egui_tiles` default so the floating sidebar toggle can clear the graph
-/// tabs when anchored to the scene's top-left corner.
-pub(super) const GRAPH_TAB_BAR_HEIGHT: f32 = 24.0;
-
 /// The size of the floating sidebar toggle glyph.
 const SIDEBAR_TOGGLE_ICON_SIZE: f32 = 18.0;
 
@@ -1426,74 +1438,6 @@ pub(super) fn graph_scene(
     graph_scene::paint_diagnostics(diagnostics, &[], &response, ui);
 
     Some(response)
-}
-
-/// Floating name breadcrumb over the bottom-left corner of the scene, shown
-/// when viewing a nested `parent:child` graph. Each crumb is a `:`-separated
-/// name segment. The prefix it represents is the head it navigates to.
-///
-/// Returns the [`ReplaceHead`] payloads emitted by clicked crumbs, which
-/// navigate the focused tab to an ancestor level in place.
-pub(super) fn name_breadcrumb(
-    scene_rect: egui::Rect,
-    head: &gantz_ca::Head,
-    ui: &mut egui::Ui,
-) -> Vec<DynResponse> {
-    let mut responses = Vec::new();
-    let gantz_ca::Head::Branch(name) = head else {
-        return responses;
-    };
-    if !name.is_nested() {
-        return responses; // a root graph has no ancestor levels
-    }
-    let segs: Vec<&str> = name.segments().iter().map(|s| s.as_str()).collect();
-    let sep_str = gantz_ca::name::SEP.to_string();
-    // Own the scene's bottom-left corner. The sidebar toggle moved to the
-    // scene's top-left, so nothing else occupies this corner.
-    let margin = scene_overlay_margin(ui.style());
-    // Each graph pane draws its own breadcrumb, so the window id comes from the
-    // pane rather than its title.
-    egui::Window::new("breadcrumb_window")
-        .id(ui.id().with("breadcrumb_window"))
-        .pivot(egui::Align2::LEFT_BOTTOM)
-        .fixed_pos(scene_rect.left_bottom() + egui::vec2(margin, -margin))
-        .title_bar(false)
-        .resizable(false)
-        .collapsible(false)
-        .frame(egui::Frame::NONE)
-        .show(ui.ctx(), |ui| {
-            fn button(s: &str) -> widget::LabelButton {
-                let text = egui::RichText::new(s).size(24.0);
-                widget::LabelButton::new(text)
-            }
-            let col_w = ui.style().interaction.interact_radius * 4.0;
-            egui::Grid::new("breadcrumb")
-                .min_col_width(col_w)
-                .max_col_width(col_w)
-                .show(ui, |ui| {
-                    for (i, seg) in segs.iter().enumerate() {
-                        let is_current = i + 1 == segs.len();
-                        let prefix = segs[..=i].join(&sep_str);
-                        // The crumbs are tiny. The root is `R` since its name
-                        // is too big to fit, and each nested level is its
-                        // short leaf.
-                        let (label, hover) = if i == 0 {
-                            ("R".to_string(), format!("navigate to {seg} root"))
-                        } else {
-                            (seg.to_string(), format!("navigate to {prefix}"))
-                        };
-                        ui.vertical_centered_justified(|ui| {
-                            let resp = ui.add(button(&label)).on_hover_text(hover);
-                            if resp.clicked() && !is_current {
-                                responses.push(DynResponse::new(ReplaceHead(
-                                    gantz_ca::Head::Branch(prefix.parse().expect("infallible")),
-                                )));
-                            }
-                        });
-                    }
-                })
-        });
-    responses
 }
 
 /// A node choice made in the node palette.

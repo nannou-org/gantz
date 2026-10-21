@@ -1,6 +1,5 @@
 //! The widget's persistent state and configuration, and its egui memory persistence.
 
-use super::graph_tabs;
 use crate::{
     Keymap,
     widget::{self, GraphSceneState, graph_scene},
@@ -75,10 +74,23 @@ pub struct GantzState {
     /// [`pane_key`]: super::pane_key
     #[serde(default)]
     pub windowed_geometry: HashMap<String, PaneWindowGeometry>,
-    /// The graph scene's tab tree, one pane per open head. Its tiles
-    /// serialize in the hash order of `egui_tiles`.
-    #[serde(default = "graph_tabs::create_empty_graph_tree")]
-    pub(super) graph_tabs: egui_tiles::Tree<graph_tabs::GraphPane>,
+    /// The main graph on the scene and the graphs open in graph panes.
+    #[serde(default)]
+    pub graphs: GraphPlacement,
+}
+
+/// Where the open graphs show. The main graph fills the scene, and any graph
+/// may also open in a graph pane. A graph in a pane is never the main graph.
+#[derive(Clone, Debug, Default, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(default)]
+pub struct GraphPlacement {
+    /// The graph on the scene. See [`Self::resolve_main`].
+    pub main: Option<gantz_ca::Head>,
+    /// The graph of each graph pane, keyed by the id its
+    /// [`Pane::Graph`][super::Pane::Graph] carries.
+    pub panes: BTreeMap<u64, gantz_ca::Head>,
+    /// The id the next graph pane takes.
+    next_pane: u64,
 }
 
 /// The persisted geometry of a pane's pop-out window, in logical pixels.
@@ -504,13 +516,13 @@ impl GantzState {
             sidebar_width: default_sidebar_width(),
             tray_height: default_tray_height(),
             windowed_geometry: HashMap::new(),
-            graph_tabs: graph_tabs::create_empty_graph_tree(),
+            graphs: GraphPlacement::default(),
         }
     }
 
     /// Migrate GUI state when a head's identity changes.
     ///
-    /// Moves the `open_heads` entry and the graph tab from the old to the new
+    /// Moves the `open_heads` entry and the graph's placement from the old to the new
     /// head. When `clear_redo` is true, removes redo stacks for both keys,
     /// since a new edit commit invalidates them. Otherwise migrates the redo
     /// stack to the new key. Hosts call this for every change of a head's
@@ -521,7 +533,71 @@ impl GantzState {
         }
         migrate_or_clear(&mut self.redo_stacks, old, new, clear_redo);
         migrate_or_clear(&mut self.undo_cursors, old, new, clear_redo);
-        graph_tabs::migrate_graph_pane(&mut self.graph_tabs, old, new);
+        self.graphs.migrate(old, new);
+    }
+}
+
+impl GraphPlacement {
+    /// Open `head` in a new graph pane. Returns the pane's id.
+    pub fn open_pane(&mut self, head: gantz_ca::Head) -> u64 {
+        let id = self.next_pane;
+        self.next_pane += 1;
+        if self.main.as_ref() == Some(&head) {
+            self.main = None;
+        }
+        self.panes.insert(id, head);
+        id
+    }
+
+    /// Whether `head` shows in a graph pane.
+    pub fn in_pane(&self, head: &gantz_ca::Head) -> bool {
+        self.panes.values().any(|h| h == head)
+    }
+
+    /// The main graph: the focused head unless it is in a pane, otherwise the
+    /// kept main graph while it is open, otherwise the first open head not in
+    /// a pane. So focusing a graph pane leaves the scene as it is. `None`
+    /// while every open head is in a pane.
+    pub fn resolve_main(
+        &mut self,
+        heads: &[gantz_ca::Head],
+        focused: usize,
+    ) -> Option<gantz_ca::Head> {
+        let main = {
+            let free = |h: &&gantz_ca::Head| !self.in_pane(h);
+            heads
+                .get(focused)
+                .filter(free)
+                .or_else(|| {
+                    self.main
+                        .as_ref()
+                        .filter(|h| heads.contains(h))
+                        .filter(free)
+                })
+                .or_else(|| heads.iter().find(free))
+                .cloned()
+        };
+        self.main = main.clone();
+        main
+    }
+
+    /// Drop the panes whose graph is no longer open, and those that `keep`
+    /// rejects by id.
+    pub fn retain(&mut self, heads: &[gantz_ca::Head], mut keep: impl FnMut(u64) -> bool) {
+        self.panes
+            .retain(|&id, head| heads.contains(head) && keep(id));
+    }
+
+    /// Follow a graph to its new identity. See [`GantzState::migrate_head`].
+    fn migrate(&mut self, old: &gantz_ca::Head, new: &gantz_ca::Head) {
+        if self.main.as_ref() == Some(old) {
+            self.main = Some(new.clone());
+        }
+        for head in self.panes.values_mut() {
+            if head == old {
+                *head = new.clone();
+            }
+        }
     }
 }
 
@@ -552,44 +628,53 @@ impl Default for GantzState {
 mod tests {
     use super::*;
 
-    fn tab_heads(state: &GantzState) -> Vec<gantz_ca::Head> {
-        let tree = &state.graph_tabs;
-        let Some(egui_tiles::Tile::Container(root)) = tree.root().and_then(|r| tree.tiles.get(r))
-        else {
-            panic!("a root container");
-        };
-        root.children()
-            .map(|&id| match tree.tiles.get(id) {
-                Some(egui_tiles::Tile::Pane(graph_tabs::GraphPane(head))) => head.clone(),
-                _ => panic!("a graph pane"),
-            })
-            .collect()
+    fn head(name: &str) -> gantz_ca::Head {
+        gantz_ca::Head::Branch(name.parse().unwrap())
     }
 
-    // A head's tab follows it to its new identity and keeps its place.
+    // The main graph and a graph pane follow their heads to new identities,
+    // and persist with the state.
     #[test]
-    fn migrate_head_keeps_the_graph_tab_in_place() {
-        let head = |name: &str| gantz_ca::Head::Branch(name.parse().unwrap());
-        let (a, b, c) = (head("a"), head("b"), head("c"));
+    fn migrate_head_keeps_the_graph_placement() {
+        let (a, b, c, d) = (head("a"), head("b"), head("c"), head("d"));
         let mut state = GantzState::new();
-        graph_tabs::sync_graph_panes(&mut state.graph_tabs, &[a.clone(), b.clone()]);
+        state.graphs.main = Some(a.clone());
+        let pane = state.graphs.open_pane(b.clone());
         state.migrate_head(&a, &c, false);
-        assert_eq!(tab_heads(&state), [c.clone(), b.clone()]);
-        // The sync after the migration keeps the order, since no pane is new.
-        graph_tabs::sync_graph_panes(&mut state.graph_tabs, &[c.clone(), b.clone()]);
-        assert_eq!(tab_heads(&state), [c.clone(), b.clone()]);
-        // The tabs persist with the state.
+        state.migrate_head(&b, &d, false);
+        assert_eq!(state.graphs.main, Some(c.clone()));
+        assert_eq!(state.graphs.panes.get(&pane), Some(&d));
         let state: GantzState = ron::from_str(&ron::to_string(&state).unwrap()).unwrap();
-        assert_eq!(tab_heads(&state), [c, b]);
+        assert_eq!(state.graphs.main, Some(c));
+        assert_eq!(state.graphs.panes.get(&pane), Some(&d));
     }
 
-    // State persisted before the graph tabs joined it still loads.
+    // The main graph follows the focused head, but is never one shown in a
+    // pane. Then it keeps the last main graph, or any open head not in a pane.
     #[test]
-    fn state_without_graph_tabs_loads() {
+    fn main_graph_avoids_panes() {
+        let (a, b, c) = (head("a"), head("b"), head("c"));
+        let heads = [a.clone(), b.clone(), c.clone()];
+        let mut graphs = GraphPlacement::default();
+        assert_eq!(graphs.resolve_main(&heads, 1), Some(b.clone()));
+        graphs.open_pane(b.clone());
+        assert_eq!(graphs.resolve_main(&heads, 1), Some(a.clone()));
+        // Focusing the pane's graph keeps the main graph.
+        assert_eq!(graphs.resolve_main(&heads, 1), Some(a.clone()));
+        graphs.open_pane(a.clone());
+        assert_eq!(graphs.resolve_main(&heads, 0), Some(c.clone()));
+        graphs.retain(&heads[1..], |_| true);
+        assert!(!graphs.in_pane(&a));
+        assert!(graphs.in_pane(&b));
+    }
+
+    // State persisted before the graph placement joined it still loads.
+    #[test]
+    fn state_without_graph_placement_loads() {
         let ron = ron::to_string(&GantzState::new()).unwrap();
-        let start = ron.find(",graph_tabs:").expect("the field");
+        let start = ron.rfind(",graphs:").expect("the field");
         let ron = format!("{})", &ron[..start]);
         let state: GantzState = ron::from_str(&ron).unwrap();
-        assert!(state.graph_tabs.root().is_none());
+        assert_eq!(state.graphs, GraphPlacement::default());
     }
 }

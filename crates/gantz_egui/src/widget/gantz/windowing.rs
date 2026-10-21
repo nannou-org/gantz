@@ -1,7 +1,7 @@
 //! Panes popped out into windows.
 
 use super::state::{ViewToggles, load_ron, store_ron};
-use super::tiles::{Pane, add_node_view_pane, set_pane_visible};
+use super::tiles::{Pane, add_graph_pane, add_node_view_pane, set_pane_visible};
 
 /// A stable identity for a pane, used to key its window and to dedupe the
 /// windowed set. Singletons key on their variant. A node view keys on its
@@ -15,6 +15,7 @@ pub fn pane_key(pane: &Pane) -> String {
         Pane::Ext(key) => format!("ext:{key}"),
         Pane::GraphConfig => "graph-config".to_string(),
         Pane::GraphScene => "graph-scene".to_string(),
+        Pane::Graph(id) => format!("graph-pane:{id}"),
         Pane::Graphs => "graphs".to_string(),
         Pane::GuiPreview => "gui-preview".to_string(),
         Pane::GuiTree => "gui-tree".to_string(),
@@ -110,7 +111,7 @@ pub(super) fn detach_pane(
     pane: &Pane,
 ) {
     match pane {
-        Pane::NodeView(_) => {
+        Pane::Graph(_) | Pane::NodeView(_) => {
             tiles.remove(tile_id);
         }
         _ => set_pane_visible(view, pane, false),
@@ -124,6 +125,7 @@ pub(super) fn detach_pane(
 pub(super) fn redock_pane(view: &mut ViewToggles, tree: &mut egui_tiles::Tree<Pane>, pane: Pane) {
     match pane {
         Pane::NodeView(p) => add_node_view_pane(tree, p.head, p.path, p.ty_name),
+        Pane::Graph(id) => add_graph_pane(tree, id),
         pane => set_pane_visible(view, &pane, true),
     }
 }

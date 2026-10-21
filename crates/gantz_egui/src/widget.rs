@@ -8,9 +8,10 @@ pub use collab_config::{CollabSettings, CollabSettingsTab, collab_config};
 pub use edge_style::{EdgeStyle, EdgeStyleCtx, EdgeStyling};
 pub use ext_pane::{ExtPane, ExtPaneCtx, ExtPaneEntry};
 pub use gantz::{
-    AlignConfig, BaseSourcesCtx, EdgeConfig, FollowSelectionConfig, Gantz, GantzState, GridConfig,
-    LayoutConfig, NodeViewPane, Pane, PaneWindowGeometry, PaneWindowMode, SceneConfig, SnapConfig,
-    SnapMode, WindowedPane, close_windowed_pane, pane_key, redock_windowed_pane,
+    AlignConfig, BaseSourcesCtx, EdgeConfig, FollowSelectionConfig, Gantz, GantzState,
+    GraphPlacement, GridConfig, LayoutConfig, NodeViewPane, Pane, PaneWindowGeometry,
+    PaneWindowMode, SceneConfig, SnapConfig, SnapMode, WindowedPane, close_windowed_pane, pane_key,
+    redock_windowed_pane,
 };
 pub use global_config::{GlobalConfigResponse, global_config};
 pub use graph_config::{GraphConfig, GraphConfigResponse};

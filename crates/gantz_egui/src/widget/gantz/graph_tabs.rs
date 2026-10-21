@@ -1,390 +1,338 @@
-//! The graph scene's tabs, one per open head.
+//! The graphs on the scene and in graph panes, and the tab strip that floats
+//! over the scene.
+//!
+//! The main graph fills the scene. Any other open graph may show in a graph
+//! pane beside it. The tab strip lists every open graph. A click shows a
+//! graph on the scene, or focuses its pane.
 
-use super::panes::{GRAPH_TAB_BAR_HEIGHT, graph_scene, head_immutable, name_breadcrumb};
-use super::{PaneCtx, separator_stroke};
+use super::PaneCtx;
+use super::panes::{graph_scene, head_immutable};
 use crate::{
-    HeadAccess,
-    style::Role,
-    widget::{self},
+    HeadAccess, OpenGraphPane, ReplaceHead,
+    response::DynResponse,
+    style::{self, Role},
+    widget,
 };
 
-/// A pane within the inner graph tree. Contains the head that this pane
-/// displays.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
-pub(super) struct GraphPane(pub(super) gantz_ca::Head);
+/// The id under which the tab strip keeps a rename in progress.
+const RENAME_ID: &str = "gantz-tab-rename";
 
-/// Point the graph pane of `old` at `new`, so the tab keeps its place.
-pub(super) fn migrate_graph_pane(
-    tree: &mut egui_tiles::Tree<GraphPane>,
-    old: &gantz_ca::Head,
-    new: &gantz_ca::Head,
-) {
-    let pane = tree.tiles.iter_mut().find_map(|(_, tile)| match tile {
-        egui_tiles::Tile::Pane(GraphPane(head)) if head == old => Some(head),
-        _ => None,
-    });
-    if let Some(head) = pane {
-        *head = new.clone();
-    }
-}
-
-/// State for editing a tab name via double-click.
+/// A rename of a graph from its tab.
 #[derive(Clone, Default)]
-struct TabEditState {
-    /// The tile currently being edited, if any.
-    editing_tile_id: Option<egui_tiles::TileId>,
+struct Rename {
+    /// The graph being renamed, if any.
+    head: Option<gantz_ca::Head>,
     /// The text being edited.
-    edit_text: String,
+    text: String,
     /// Whether to request focus on the next frame.
     request_focus: bool,
 }
 
-/// The context passed to the inner graph `egui_tiles::Tree` widget. It renders
-/// each graph tab through the shared pane context.
-pub(super) struct GraphTreeBehaviour<'a, 'c, 's, Access>
-where
+/// Draw `head`'s graph scene into `ui`. Interacting with the scene focuses
+/// the head. `id` keeps the scene's state apart from other scenes.
+pub(super) fn head_scene<Access>(
+    cx: &mut PaneCtx<'_, '_, Access>,
+    ui: &mut egui::Ui,
+    head: &gantz_ca::Head,
+    id: egui::Id,
+    ext_panes: &[widget::ExtPaneEntry],
+) where
     Access: HeadAccess,
 {
-    pub(super) cx: &'a mut PaneCtx<'c, 's, Access>,
-    /// Extension-pane toggle entries for the scene's "Panes" context submenu.
-    /// See [`ext_pane_entries`].
-    pub(super) ext_panes: &'a [widget::ExtPaneEntry],
-}
+    let Some(ix) = cx.access.heads().iter().position(|h| h == head) else {
+        return;
+    };
+    let immutable = head_immutable(head, cx.gantz.base_immutable, cx.gantz.base_names);
+    let diagnostics = cx.access.diagnostics(head).to_vec();
 
-impl<Access> egui_tiles::Behavior<GraphPane> for GraphTreeBehaviour<'_, '_, '_, Access>
-where
-    Access: HeadAccess,
-{
-    fn tab_title_for_pane(&mut self, pane: &GraphPane) -> egui::WidgetText {
-        let GraphPane(head) = pane;
-        head.to_string().into()
-    }
+    // Global layout params combined with this head's flow.
+    let layout_config = cx.state.layout_config;
+    // Global grid, snap and align options, applied to every head.
+    let scene_config = cx.state.scene_config;
+    let head_state = cx.state.open_heads.entry(head.clone()).or_default();
+    let layout_params = layout_config.to_params(head_state.layout_flow);
+    // Disjoint borrows of sibling fields for the scene's context menu and
+    // its select-all shortcut.
+    let view_toggles = &mut cx.state.view_toggles;
+    let keymap = &cx.state.keymap;
 
-    fn tab_bar_color(&self, visuals: &egui::Visuals) -> egui::Color32 {
-        visuals.panel_fill
-    }
+    // The rect positions the overlays.
+    let rect = ui.available_rect_before_wrap();
 
-    fn resize_stroke(
-        &self,
-        style: &egui::Style,
-        resize_state: egui_tiles::ResizeState,
-    ) -> egui::Stroke {
-        separator_stroke(&self.cx.state.style, style, resize_state)
-    }
-
-    fn gap_width(&self, _style: &egui::Style) -> f32 {
-        self.cx.state.style.shape.separator_width
-    }
-
-    fn tab_bar_height(&self, _style: &egui::Style) -> f32 {
-        GRAPH_TAB_BAR_HEIGHT
-    }
-
-    fn tab_outline_stroke(
-        &self,
-        _visuals: &egui::Visuals,
-        _tiles: &egui_tiles::Tiles<GraphPane>,
-        _tile_id: egui_tiles::TileId,
-        _state: &egui_tiles::TabState,
-    ) -> egui::Stroke {
-        egui::Stroke::NONE
-    }
-
-    fn simplification_options(&self) -> egui_tiles::SimplificationOptions {
-        egui_tiles::SimplificationOptions {
-            all_panes_must_have_tabs: true,
-            ..Default::default()
-        }
-    }
-
-    fn is_tab_closable(
-        &self,
-        _tiles: &egui_tiles::Tiles<GraphPane>,
-        _tile_id: egui_tiles::TileId,
-    ) -> bool {
-        // Allow closing tabs if there is more than one head open.
-        self.cx.access.heads().len() > 1
-    }
-
-    fn on_tab_close(
-        &mut self,
-        tiles: &mut egui_tiles::Tiles<GraphPane>,
-        tile_id: egui_tiles::TileId,
-    ) -> bool {
-        if let Some(GraphPane(head)) = tiles.get_pane(&tile_id).cloned() {
-            self.cx
-                .response
-                .responses
-                .push(None, crate::CloseHead(head));
-        }
-        // Return true to allow egui_tiles to remove the tile.
-        true
-    }
-
-    fn tab_ui(
-        &mut self,
-        tiles: &mut egui_tiles::Tiles<GraphPane>,
-        ui: &mut egui::Ui,
-        id: egui::Id,
-        tile_id: egui_tiles::TileId,
-        state: &egui_tiles::TabState,
-    ) -> egui::Response {
-        let edit_state_id = egui::Id::new("tab_edit_state");
-        let mut edit_state: TabEditState = ui
-            .memory_mut(|m| m.data.get_temp(edit_state_id))
-            .unwrap_or_default();
-
-        let is_editing = edit_state.editing_tile_id == Some(tile_id);
-
-        let response = if is_editing {
-            let head = tiles.get_pane(&tile_id).map(|GraphPane(h)| h.clone());
-            let names = crate::reg::names(self.cx.gantz.env.registry);
-
-            let name_res = head.as_ref().map(|h| {
-                ui.scope(|ui| {
-                    ui.set_max_width(ui.available_width().min(150.0));
-                    widget::head_name_edit(h, &mut edit_state.edit_text, &names, ui)
-                })
-                .inner
-            });
-
-            let Some(name_res) = name_res else {
-                edit_state.editing_tile_id = None;
-                edit_state.edit_text.clear();
-                ui.memory_mut(|m| m.data.insert_temp(edit_state_id, edit_state));
-                return ui.label("");
-            };
-
-            // Request focus on the first frame after entering edit mode.
-            if edit_state.request_focus {
-                name_res.response.request_focus();
-                edit_state.request_focus = false;
-            }
-
-            // head_name_edit resets the text on commit or cancel, so detect
-            // focus loss or escape to clear the tab editing state.
-            let editing_ended =
-                name_res.response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Escape));
-            if editing_ended {
-                if let Some((original, new_name)) = name_res.new_branch {
-                    let branch = crate::BranchHead { original, new_name };
-                    self.cx.response.responses.push(None, branch);
-                }
-                edit_state.editing_tile_id = None;
-                edit_state.edit_text.clear();
-            }
-
-            name_res.response
-        } else {
-            // Append a filled circle if this head is focused.
-            let mut title = self.tab_title_for_tile(tiles, tile_id).text().to_string();
-            let mut session = None;
-            let mut audio = None;
-            if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
-                let heads = self.cx.access.heads();
-                if crate::head_is_focused(heads, self.cx.focused_head, head) {
-                    title.push_str(" ⚫");
-                }
-                // The head's collab session, when shared.
-                if let (Some(collab), gantz_ca::Head::Branch(name)) = (self.cx.gantz.collab, head) {
-                    session = collab.sessions.get(name);
-                }
-                if self
-                    .cx
-                    .gantz
-                    .audio_heads
-                    .is_some_and(|heads| heads.contains(head))
-                {
-                    audio = Some(self.cx.state.open_heads.get(head).is_some_and(|s| s.muted));
-                }
-            }
-            let mut tab = widget::Tab::new(title, id)
-                .active(state.active)
-                .closable(state.closable)
-                .hint("double-click to rename");
-            if let Some(display) = session {
-                let color = crate::style::color(ui, display.conn.role());
-                tab = tab.status_dot(color, display.hover_text());
-            }
-            if let Some(muted) = audio {
-                tab = tab.audio(muted);
-            }
-            let res = tab.show(ui);
-
-            if res.audio.as_ref().is_some_and(|r| r.clicked()) {
-                if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
-                    let head_state = self.cx.state.open_heads.entry(head.clone()).or_default();
-                    head_state.muted = !head_state.muted;
-                }
-            }
-
-            // Handle double-click to enter edit mode.
-            if res.tab.double_clicked() {
-                if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
-                    let initial_text = match head {
-                        gantz_ca::Head::Branch(name) => name.to_string(),
-                        gantz_ca::Head::Commit(_) => String::new(),
-                    };
-                    edit_state.editing_tile_id = Some(tile_id);
-                    edit_state.edit_text = initial_text;
-                    edit_state.request_focus = true;
-                }
-            }
-
-            // Update focused_head when this tab is clicked.
-            if res.tab.clicked() {
-                if let Some(GraphPane(head)) = tiles.get_pane(&tile_id) {
-                    if let Some(ix) = self.cx.access.heads().iter().position(|h| h == head) {
-                        self.cx.focused_head = ix;
-                    }
-                }
-            }
-
-            // Handle close button click directly, like egui_tiles default does.
-            if res.close.is_some_and(|r| r.clicked()) {
-                if self.on_tab_close(tiles, tile_id) {
-                    tiles.remove(tile_id);
-                }
-            }
-
-            res.tab
-        };
-
-        ui.memory_mut(|m| m.data.insert_temp(edit_state_id, edit_state));
-
-        response
-    }
-
-    fn pane_ui(
-        &mut self,
-        ui: &mut egui::Ui,
-        tile_id: egui_tiles::TileId,
-        pane: &mut GraphPane,
-    ) -> egui_tiles::UiResponse {
-        let GraphPane(pane_head) = pane;
-
-        // Find the index of this head, for updating `focused_head`.
-        let ix = self
-            .cx
-            .access
-            .heads()
-            .iter()
-            .position(|h| h == pane_head)
-            .expect("pane head not found in heads");
-
-        let immutable = head_immutable(
-            pane_head,
-            self.cx.gantz.base_immutable,
-            self.cx.gantz.base_names,
+    // The camera rides out for overlays that map graph-space positions to
+    // the scene, such as peer pointers.
+    let (graph_response, camera) = match cx.access.with_head_mut(head, |data| {
+        let camera = data.view.camera;
+        let res = graph_scene(
+            id,
+            cx.gantz.env,
+            cx.gantz.codec,
+            data.graph,
+            data.instances,
+            head,
+            head_state,
+            view_toggles,
+            ext_panes,
+            cx.gantz.edge_styles,
+            data.view,
+            layout_params,
+            scene_config,
+            immutable,
+            cx.gantz.validates_change_tracking(),
+            keymap,
+            &diagnostics,
+            data.vm,
+            ui,
         );
-        let diagnostics = self.cx.access.diagnostics(pane_head).to_vec();
+        (res, camera)
+    }) {
+        Some((res, camera)) => (res, Some(camera)),
+        None => (None, None),
+    };
 
-        // Global layout params combined with this head's flow.
-        let layout_config = self.cx.state.layout_config;
-        // Global grid, snap and align options, applied to every head.
-        let scene_config = self.cx.state.scene_config;
-        let head_state = self
-            .cx
-            .state
-            .open_heads
-            .entry(pane_head.clone())
-            .or_default();
-        let layout_params = layout_config.to_params(head_state.layout_flow);
-        // Disjoint borrow of a sibling field of `open_heads` for the graph
-        // scene's "Panes" context submenu.
-        let view_toggles = &mut self.cx.state.view_toggles;
-        // Disjoint borrow for the scene-level Select-all shortcut.
-        let keymap = &self.cx.state.keymap;
-
-        // The rect positions the floating breadcrumb window.
-        let rect = ui.available_rect_before_wrap();
-
-        // Get mutable access to this head's data and render the graph scene.
-        // The camera rides out for overlays that map graph-space positions to
-        // the pane, such as peer pointers.
-        let (graph_response, camera) = match self.cx.access.with_head_mut(pane_head, |data| {
-            let camera = data.view.camera;
-            let res = graph_scene(
-                egui::Id::new(("graph-scene", tile_id)),
-                self.cx.gantz.env,
-                self.cx.gantz.codec,
-                data.graph,
-                data.instances,
-                pane_head,
-                head_state,
-                view_toggles,
-                self.ext_panes,
-                self.cx.gantz.edge_styles,
-                data.view,
-                layout_params,
-                scene_config,
-                immutable,
-                self.cx.gantz.validates_change_tracking(),
-                keymap,
-                &diagnostics,
-                data.vm,
-                ui,
-            );
-            (res, camera)
-        }) {
-            Some((res, camera)) => (res, Some(camera)),
-            None => (None, None),
-        };
-
-        if let Some(response) = graph_response {
-            // Focus this head when clicking on the graph or any of its nodes.
-            if response.scene.clicked() || response.any_node_interacted() {
-                self.cx.focused_head = ix;
-            }
-            // Record a CA-affecting edit so the app can commit just this head.
-            if response.changed {
-                self.cx.response.changed_heads.push(pane_head.clone());
-            }
-            if response.layout_edited {
-                self.cx.response.layout_edited_heads.push(pane_head.clone());
-            }
-            // Collect this frame's deletions. `Gantz::show` migrates the
-            // top-level tree's node-view paths past them after layout, since
-            // the live top-level tree is not reachable here mid-traversal.
-            if !response.reindex.is_empty() {
-                self.cx
-                    .response
-                    .node_view_reindexes
-                    .push((pane_head.clone(), response.reindex));
-            }
-            // Tag the scene's emissions with this head.
-            self.cx
-                .response
-                .responses
-                .extend(Some(&*pane_head), response.responses);
+    if let Some(response) = graph_response {
+        if response.scene.clicked() || response.any_node_interacted() {
+            cx.focused_head = ix;
         }
+        // Record a CA-affecting edit so the app can commit just this head.
+        if response.changed {
+            cx.response.changed_heads.push(head.clone());
+        }
+        if response.layout_edited {
+            cx.response.layout_edited_heads.push(head.clone());
+        }
+        // `Gantz::show` migrates the node-view paths past this frame's
+        // deletions after layout, since the live tree is not reachable here.
+        if !response.reindex.is_empty() {
+            cx.response
+                .node_view_reindexes
+                .push((head.clone(), response.reindex));
+        }
+        cx.response.responses.extend(Some(head), response.responses);
+    }
 
-        // Floating name breadcrumb for nested graphs.
-        let crumbs = name_breadcrumb(rect, pane_head, ui);
-        self.cx.response.responses.extend(Some(&*pane_head), crumbs);
-
-        // A collab-session overlay. While a join is still connecting or has
-        // failed, the pane's graph is only a placeholder, so dim the scene and
-        // say what is happening. Peers' live pointers paint beneath it.
-        if let (Some(collab), gantz_ca::Head::Branch(name)) = (self.cx.gantz.collab, &*pane_head) {
-            if let Some(display) = collab.sessions.get(name) {
-                if self.cx.state.collab.show_pointers && !display.pointers.is_empty() {
-                    if let Some(camera) = camera {
-                        paint_peer_pointers(rect, camera, &display.pointers, ui);
-                        // Cursors move between this peer's frames.
-                        ui.ctx()
-                            .request_repaint_after(std::time::Duration::from_millis(100));
-                    }
+    // While a join is still connecting or has failed, the graph is only a
+    // placeholder, so dim the scene and say what is happening. Peers' live
+    // pointers paint beneath it.
+    if let (Some(collab), gantz_ca::Head::Branch(name)) = (cx.gantz.collab, head) {
+        if let Some(display) = collab.sessions.get(name) {
+            if cx.state.collab.show_pointers && !display.pointers.is_empty() {
+                if let Some(camera) = camera {
+                    paint_peer_pointers(rect, camera, &display.pointers, ui);
+                    // Cursors move between this peer's frames.
+                    ui.ctx()
+                        .request_repaint_after(std::time::Duration::from_millis(100));
                 }
-                paint_session_overlay(rect, display, ui);
             }
+            paint_session_overlay(rect, display, ui);
         }
-
-        egui_tiles::UiResponse::None
     }
 }
 
-/// Paint session peers' live pointers over the pane.
+/// The tab strip: a pill floating over the top-left of the scene, with a tab
+/// per open graph and a button for a new one. The main graph's tab is filled.
+/// A nested main graph shows its ancestors before its tab, each a step up.
+///
+/// Returns the height of the strip, so other overlays can clear it.
+pub(super) fn tab_strip<Access>(
+    cx: &mut PaneCtx<'_, '_, Access>,
+    ui: &egui::Ui,
+    anchor: egui::Pos2,
+    main: Option<&gantz_ca::Head>,
+) -> f32
+where
+    Access: HeadAccess,
+{
+    let rename_id = egui::Id::new(RENAME_ID);
+    let mut rename: Rename = ui.data(|d| d.get_temp(rename_id)).unwrap_or_default();
+    let heads: Vec<gantz_ca::Head> = cx.access.heads().to_vec();
+    let shape = style::shape(ui.ctx());
+    let frame = egui::Frame::new()
+        .fill(style::color(ui, Role::Panel))
+        .corner_radius(shape.window_corner())
+        .inner_margin(egui::Margin::same(4));
+    let area = egui::Area::new(egui::Id::new("gantz-tab-strip"))
+        .order(egui::Order::Middle)
+        .fixed_pos(anchor)
+        .show(ui.ctx(), |ui| {
+            frame.show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 2.0;
+                    if let Some(main) = main {
+                        let crumbs = breadcrumb(main, ui);
+                        cx.response.responses.extend(Some(main), crumbs);
+                    }
+                    let closable = heads.len() > 1;
+                    for (ix, head) in heads.iter().enumerate() {
+                        if rename.head.as_ref() == Some(head) {
+                            rename_tab(cx, ui, head, &mut rename);
+                        } else {
+                            graph_tab(cx, ui, head, ix, main, closable, &mut rename);
+                        }
+                    }
+                    let new = widget::kit::pill(ui, false, "+").on_hover_text("new graph");
+                    if new.clicked() {
+                        cx.response.responses.push(None, crate::NewGraph);
+                    }
+                });
+            });
+        });
+    ui.data_mut(|d| d.insert_temp(rename_id, rename));
+    area.response.rect.height()
+}
+
+/// One graph's tab. A click shows the graph on the scene, or focuses its
+/// pane. A double-click renames it. A right-click offers the rest.
+fn graph_tab<Access>(
+    cx: &mut PaneCtx<'_, '_, Access>,
+    ui: &mut egui::Ui,
+    head: &gantz_ca::Head,
+    ix: usize,
+    main: Option<&gantz_ca::Head>,
+    closable: bool,
+    rename: &mut Rename,
+) where
+    Access: HeadAccess,
+{
+    let id = ui.id().with(("tab", ix));
+    let in_pane = cx.state.graphs.in_pane(head);
+    let title = match (main, head) {
+        // A nested main graph's ancestors lead the strip, so its tab names
+        // only its own level.
+        (Some(m), gantz_ca::Head::Branch(name)) if m == head && name.is_nested() => name
+            .segments()
+            .last()
+            .map(|s| s.as_str().to_string())
+            .unwrap_or_else(|| head.to_string()),
+        _ => head.to_string(),
+    };
+    let mut tab = widget::Tab::new(title, id)
+        .look(widget::tab::TabLook::Pill)
+        .active(main == Some(head))
+        .closable(closable)
+        .hint("double-click to rename. right-click for more");
+    if let (Some(collab), gantz_ca::Head::Branch(name)) = (cx.gantz.collab, head) {
+        if let Some(display) = collab.sessions.get(name) {
+            let color = style::color(ui, display.conn.role());
+            tab = tab.status_dot(color, display.hover_text());
+        }
+    }
+    if cx.gantz.audio_heads.is_some_and(|a| a.contains(head)) {
+        let muted = cx.state.open_heads.get(head).is_some_and(|s| s.muted);
+        tab = tab.audio(muted);
+    }
+    let res = tab.show(ui);
+    if res.audio.as_ref().is_some_and(|r| r.clicked()) {
+        let head_state = cx.state.open_heads.entry(head.clone()).or_default();
+        head_state.muted = !head_state.muted;
+    }
+    if res.close.as_ref().is_some_and(|r| r.clicked()) {
+        cx.response
+            .responses
+            .push(None, crate::CloseHead(head.clone()));
+    }
+    if res.tab.clicked() {
+        cx.focused_head = ix;
+        if !in_pane {
+            cx.state.graphs.main = Some(head.clone());
+        }
+    }
+    if res.tab.double_clicked() {
+        start_rename(head, rename);
+    }
+    res.tab.context_menu(|ui| {
+        if in_pane {
+            if ui.button("show on the scene").clicked() {
+                cx.state.graphs.panes.retain(|_, h| h != head);
+                cx.state.graphs.main = Some(head.clone());
+                cx.focused_head = ix;
+                ui.close();
+            }
+        } else if ui.button("open in a pane").clicked() {
+            cx.response
+                .responses
+                .push(None, OpenGraphPane(head.clone()));
+            ui.close();
+        }
+        if ui.button("rename").clicked() {
+            start_rename(head, rename);
+            ui.close();
+        }
+        if closable && ui.button("close").clicked() {
+            cx.response
+                .responses
+                .push(None, crate::CloseHead(head.clone()));
+            ui.close();
+        }
+    });
+}
+
+/// A tab while its graph is renamed: a name field that commits on Enter or
+/// focus loss and cancels on Escape.
+fn rename_tab<Access>(
+    cx: &mut PaneCtx<'_, '_, Access>,
+    ui: &mut egui::Ui,
+    head: &gantz_ca::Head,
+    rename: &mut Rename,
+) where
+    Access: HeadAccess,
+{
+    let names = crate::reg::names(cx.gantz.env.registry);
+    let res = ui
+        .scope(|ui| {
+            ui.set_max_width(160.0);
+            widget::head_name_edit(head, &mut rename.text, &names, ui)
+        })
+        .inner;
+    if rename.request_focus {
+        res.response.request_focus();
+        rename.request_focus = false;
+    }
+    let ended = res.response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Escape));
+    if ended {
+        if let Some((original, new_name)) = res.new_branch {
+            let branch = crate::BranchHead { original, new_name };
+            cx.response.responses.push(None, branch);
+        }
+        *rename = Rename::default();
+    }
+}
+
+fn start_rename(head: &gantz_ca::Head, rename: &mut Rename) {
+    rename.head = Some(head.clone());
+    rename.text = match head {
+        gantz_ca::Head::Branch(name) => name.to_string(),
+        gantz_ca::Head::Commit(_) => String::new(),
+    };
+    rename.request_focus = true;
+}
+
+/// The ancestors of a nested graph, each a weak label that steps up to it,
+/// with a separator after each. A root graph has none.
+fn breadcrumb(head: &gantz_ca::Head, ui: &mut egui::Ui) -> Vec<DynResponse> {
+    let mut responses = vec![];
+    let gantz_ca::Head::Branch(name) = head else {
+        return responses;
+    };
+    if !name.is_nested() {
+        return responses;
+    }
+    let segs: Vec<&str> = name.segments().iter().map(|s| s.as_str()).collect();
+    let sep = gantz_ca::name::SEP.to_string();
+    for i in 0..segs.len() - 1 {
+        let prefix = segs[..=i].join(&sep);
+        let resp =
+            widget::kit::pill(ui, false, segs[i]).on_hover_text(format!("go up to {prefix}"));
+        if resp.clicked() {
+            let parent = gantz_ca::Head::Branch(prefix.parse().expect("a valid prefix"));
+            responses.push(DynResponse::new(ReplaceHead(parent)));
+        }
+        ui.weak("/");
+    }
+    responses
+}
+
+/// Paint session peers' live pointers over the scene.
 ///
 /// Positions arrive in graph-space coordinates. The head's camera maps them
 /// to screen space, so cursors land on the right nodes regardless of either
@@ -411,7 +359,7 @@ fn paint_peer_pointers(
             screen,
             4.0,
             pointer.color,
-            egui::Stroke::new(1.0f32, crate::style::color(ui, Role::Scrim)),
+            egui::Stroke::new(1.0f32, style::color(ui, Role::Scrim)),
         );
         painter.text(
             screen + egui::vec2(8.0, 6.0),
@@ -439,7 +387,7 @@ fn paint_session_overlay(rect: egui::Rect, display: &crate::collab::SessionDispl
         (
             "Failed to connect".to_string(),
             Some(error.clone()),
-            crate::style::color(ui, SessionConn::Degraded.role()),
+            style::color(ui, SessionConn::Degraded.role()),
         )
     } else {
         // Animated ellipsis while waiting.
@@ -459,7 +407,7 @@ fn paint_session_overlay(rect: egui::Rect, display: &crate::collab::SessionDispl
     let layer = egui::LayerId::new(egui::Order::Foreground, ui.id().with("session_overlay"));
     let mut painter = ui.ctx().layer_painter(layer);
     painter.set_clip_rect(rect);
-    painter.rect_filled(rect, 0.0, crate::style::color(ui, Role::Scrim));
+    painter.rect_filled(rect, 0.0, style::color(ui, Role::Scrim));
     painter.text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
@@ -475,52 +423,5 @@ fn paint_session_overlay(rect: egui::Rect, display: &crate::collab::SessionDispl
             egui::FontId::proportional(14.0),
             ui.visuals().weak_text_color(),
         );
-    }
-}
-
-/// Create an empty graph tree. Panes will be added by `sync_graph_panes`.
-pub(super) fn create_empty_graph_tree() -> egui_tiles::Tree<GraphPane> {
-    egui_tiles::Tree::empty("graph-tiles")
-}
-
-/// Sync the graph tree panes with the current heads.
-///
-/// Adds missing panes for new heads and removes panes for heads that no longer exist.
-pub(super) fn sync_graph_panes(tree: &mut egui_tiles::Tree<GraphPane>, heads: &[gantz_ca::Head]) {
-    use std::collections::HashSet;
-
-    let existing: HashSet<gantz_ca::Head> = tree
-        .tiles
-        .iter()
-        .filter_map(|(_, tile)| match tile {
-            egui_tiles::Tile::Pane(GraphPane(head)) => Some(head.clone()),
-            _ => None,
-        })
-        .collect();
-
-    let current: HashSet<gantz_ca::Head> = heads.iter().cloned().collect();
-
-    for head in heads {
-        if !existing.contains(head) {
-            let pane_id = tree.tiles.insert_pane(GraphPane(head.clone()));
-            if let Some(root_id) = tree.root() {
-                tree.move_tile_to_container(pane_id, root_id, usize::MAX, true);
-            } else {
-                let root = tree.tiles.insert_tab_tile(vec![pane_id]);
-                tree.root = Some(root);
-            }
-        }
-    }
-
-    let orphaned: Vec<egui_tiles::TileId> = tree
-        .tiles
-        .iter()
-        .filter_map(|(id, tile)| match tile {
-            egui_tiles::Tile::Pane(GraphPane(head)) if !current.contains(head) => Some(*id),
-            _ => None,
-        })
-        .collect();
-    for id in orphaned {
-        tree.tiles.remove(id);
     }
 }

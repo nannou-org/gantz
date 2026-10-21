@@ -18,7 +18,8 @@ use super::{
 use crate::{
     StyleConfig,
     style::{
-        CardStyle, ColorRef, Group, Palette, Palettes, Role, Roles, Shape, Swatch, base16,
+        CardStyle, ColorRef, GraphPaneStyle, Group, Palette, Palettes, Role, Roles, Shape, Swatch,
+        base16,
         palette::{from_hex, to_hex},
     },
 };
@@ -641,6 +642,20 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
                 &[
                     (CardStyle::Nested, "Nested"),
                     (CardStyle::Outline, "Outline"),
+                ],
+            );
+            ui.end_row();
+
+            ui.label("Graph panes").on_hover_text(
+                "How a graph pane frames its graph. Open runs the graph up under the \
+                 pane's title. Framed keeps it below the title, as in other panes.",
+            );
+            super::kit::pills(
+                ui,
+                &mut shape.graph_panes,
+                &[
+                    (GraphPaneStyle::Open, "Open"),
+                    (GraphPaneStyle::Framed, "Framed"),
                 ],
             );
             ui.end_row();

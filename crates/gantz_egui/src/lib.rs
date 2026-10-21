@@ -586,6 +586,11 @@ pub struct OpenNodeView {
     pub ty_name: String,
 }
 
+/// Open a graph in a graph pane beside the main graph. The graph must already
+/// be open. Handled by `Gantz::show`.
+#[derive(Clone, Debug)]
+pub struct OpenGraphPane(pub gantz_ca::Head);
+
 /// Open a named or commit head as a new tab.
 #[derive(Clone, Debug)]
 pub struct OpenHead(pub gantz_ca::Head);

@@ -1,5 +1,6 @@
 use crate::{
-    Env, HeadAccess, OpenLogs, OpenNodePalette, OpenNodeView, OpenReplacePalette, ResetTilesLayout,
+    Env, HeadAccess, OpenGraphPane, OpenLogs, OpenNodePalette, OpenNodeView, OpenReplacePalette,
+    ResetTilesLayout,
     node::NodeCodec,
     response::Responses,
     style::{self, Role, StyleConfig},
@@ -16,9 +17,9 @@ mod windowing;
 
 use panes::{collect_gantz_file_drops, gui_role_badge, render_pane, set_gui_role};
 pub use state::{
-    AlignConfig, EdgeConfig, FollowSelectionConfig, GantzState, GridConfig, LayoutConfig,
-    OpenHeadState, OpenHeadStates, PaneWindowGeometry, SceneConfig, SnapConfig, SnapMode,
-    ViewToggles, request_clear_egui_memory,
+    AlignConfig, EdgeConfig, FollowSelectionConfig, GantzState, GraphPlacement, GridConfig,
+    LayoutConfig, OpenHeadState, OpenHeadStates, PaneWindowGeometry, SceneConfig, SnapConfig,
+    SnapMode, ViewToggles, request_clear_egui_memory,
 };
 use state::{
     clear_egui_memory_id, default_sidebar_width, default_tray_height, load_ron, load_tree,
@@ -26,9 +27,9 @@ use state::{
 };
 pub use tiles::{NodeViewPane, Pane};
 use tiles::{
-    add_node_view_pane, capture_fixed_sizes, create_tree, impose_fixed_sizes, impose_min_sizes,
-    migrate_node_view_paths, pane_is_hideable, pane_is_poppable, pane_is_visible, pane_label,
-    pane_min_size, pane_title, set_pane_visible, set_tile_visibility, simplify_tree,
+    add_graph_pane, add_node_view_pane, capture_fixed_sizes, create_tree, impose_fixed_sizes,
+    impose_min_sizes, migrate_node_view_paths, pane_is_hideable, pane_is_poppable, pane_is_visible,
+    pane_label, pane_min_size, pane_title, set_pane_visible, set_tile_visibility, simplify_tree,
     sync_ext_panes, sync_singleton_pane,
 };
 pub use windowing::{close_windowed_pane, pane_key, redock_windowed_pane};
@@ -519,6 +520,24 @@ impl<'a> Gantz<'a> {
                     let view = &mut state.view_toggles;
                     detach_pane(view, &mut windowed, &mut tree.tiles, tile_id, &pane);
                 }
+                chrome::PaneAction::ShowOnScene(tile_id, id) => {
+                    // The pane's graph moves to the scene. The scene's graph
+                    // takes its place in the pane, or the pane closes.
+                    let Some(head) = state.graphs.panes.remove(&id) else {
+                        continue;
+                    };
+                    match state.graphs.main.replace(head.clone()) {
+                        Some(old) => {
+                            state.graphs.panes.insert(id, old);
+                        }
+                        None => {
+                            tree.tiles.remove(tile_id);
+                        }
+                    }
+                    if let Some(ix) = access.heads().iter().position(|h| *h == head) {
+                        response.focused_head = ix;
+                    }
+                }
             }
         }
 
@@ -561,6 +580,12 @@ impl<'a> Gantz<'a> {
         for _ in response.responses.take::<OpenLogs>() {
             state.view_toggles.logs = true;
         }
+        for (_, OpenGraphPane(head)) in response.responses.take() {
+            if access.heads().contains(&head) && !state.graphs.in_pane(&head) {
+                let id = state.graphs.open_pane(head);
+                add_graph_pane(&mut tree, id);
+            }
+        }
         // Migrate node-view tiles past this frame's node deletions. They were
         // collected during traversal, since the live top-level tree was not
         // reachable then.
@@ -585,8 +610,10 @@ impl<'a> Gantz<'a> {
         // Reconcile the windowed set. A singleton whose toggle was turned back
         // on re-docks, so drop it here. Node views stay windowed until their
         // window is closed.
-        windowed
-            .retain(|p| matches!(p, Pane::NodeView(_)) || !pane_is_visible(&state.view_toggles, p));
+        windowed.retain(|p| {
+            matches!(p, Pane::Graph(_) | Pane::NodeView(_))
+                || !pane_is_visible(&state.view_toggles, p)
+        });
 
         // Redock and close intents queued by a native host between frames.
         // Its OS-window buttons call `redock_windowed_pane` and
@@ -599,7 +626,7 @@ impl<'a> Gantz<'a> {
         // tree. Under `HostNative` the host draws them as OS windows instead.
         if self.pane_window_mode == PaneWindowMode::EguiWindow {
             for pane in &mut windowed {
-                let title = pane_title(&self, &*access, focused_head, pane);
+                let title = pane_title(&self, &*access, &state.graphs, focused_head, pane);
                 let mut open = true;
                 let min = pane_min_size(pane);
                 egui::Window::new(title)
@@ -636,7 +663,7 @@ impl<'a> Gantz<'a> {
         for pane in close {
             let key = pane_key(&pane);
             windowed.retain(|p| pane_key(p) != key);
-            if !matches!(pane, Pane::NodeView(_)) {
+            if !matches!(pane, Pane::Graph(_) | Pane::NodeView(_)) {
                 redock_pane(&mut state.view_toggles, &mut tree, pane);
             }
         }
@@ -646,9 +673,40 @@ impl<'a> Gantz<'a> {
             .iter()
             .map(|pane| WindowedPane {
                 pane: pane.clone(),
-                title: pane_title(&self, &*access, focused_head, pane),
+                title: pane_title(&self, &*access, &state.graphs, focused_head, pane),
             })
             .collect();
+
+        // Keep the graph panes and their placement in step. A pane closes with
+        // its graph, and a placement goes with its pane.
+        let docked: HashSet<u64> = tree
+            .tiles
+            .tiles()
+            .filter_map(|tile| match tile {
+                egui_tiles::Tile::Pane(Pane::Graph(id)) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        let shown =
+            |id: u64| docked.contains(&id) || windowed.iter().any(|p| *p == Pane::Graph(id));
+        state.graphs.retain(access.heads(), shown);
+        let orphans: Vec<egui_tiles::TileId> = tree
+            .tiles
+            .iter()
+            .filter_map(|(tile_id, tile)| match tile {
+                egui_tiles::Tile::Pane(Pane::Graph(id)) if !state.graphs.panes.contains_key(id) => {
+                    Some(*tile_id)
+                }
+                _ => None,
+            })
+            .collect();
+        for tile_id in orphans {
+            tree.tiles.remove(tile_id);
+        }
+        windowed.retain(|p| match p {
+            Pane::Graph(id) => state.graphs.panes.contains_key(id),
+            _ => true,
+        });
 
         store_tree(ui.ctx(), tree_id, &tree);
         store_ron(ui.ctx(), windowed_panes_id(), &windowed);
@@ -693,7 +751,8 @@ where
     Access: HeadAccess,
 {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
-        pane_title(self.cx.gantz, self.cx.access, self.cx.focused_head, pane).into()
+        let cx = &self.cx;
+        pane_title(cx.gantz, cx.access, &cx.state.graphs, cx.focused_head, pane).into()
     }
 
     fn on_tab_button(
@@ -740,7 +799,14 @@ where
         // are toggled via the Panes settings or the tab right-click menu.
         matches!(
             tiles.get_pane(&tile_id),
-            Some(Pane::Logs | Pane::Steel | Pane::GuiPreview | Pane::GuiTree | Pane::NodeView(_))
+            Some(
+                Pane::Logs
+                    | Pane::Steel
+                    | Pane::GuiPreview
+                    | Pane::GuiTree
+                    | Pane::Graph(_)
+                    | Pane::NodeView(_)
+            )
         )
     }
 
@@ -751,7 +817,7 @@ where
     ) -> bool {
         match tiles.get_pane(&tile_id) {
             // Node views are user-created tiles. Closing removes them entirely.
-            Some(Pane::NodeView(_)) => true,
+            Some(Pane::Graph(_) | Pane::NodeView(_)) => true,
             // Hide other panes via their toggle so they can be reopened, rather
             // than letting egui_tiles remove the tile from the tree.
             Some(pane) => {
@@ -778,7 +844,10 @@ where
             ui.add_space(chrome::HEADER_INSET);
         }
         let (title, sub) = match tiles.get_pane(&tile_id) {
-            Some(pane) => pane_label(self.cx.gantz, self.cx.access, self.cx.focused_head, pane),
+            Some(pane) => {
+                let cx = &self.cx;
+                pane_label(cx.gantz, cx.access, &cx.state.graphs, cx.focused_head, pane)
+            }
             None => (
                 self.tab_title_for_tile(tiles, tile_id).text().to_string(),
                 None,
@@ -867,6 +936,13 @@ where
         {
             self.actions
                 .push(chrome::PaneAction::PopOut(active, pane.clone()));
+        }
+        if let Pane::Graph(id) = pane {
+            let hint = "show on the scene, in place of the graph there";
+            if chrome::icon_button(ui, chrome::Icon::Scene, hint).clicked() {
+                self.actions
+                    .push(chrome::PaneAction::ShowOnScene(active, *id));
+            }
         }
     }
 

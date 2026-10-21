@@ -7,13 +7,16 @@
 //! dragging a header moves its pane.
 
 use super::Pane;
-use crate::style::{self, Role, StyleConfig};
+use crate::style::{self, GraphPaneStyle, Role, StyleConfig};
 
 /// The height of a pane's header, where its tabs or its title sit.
 pub(super) const HEADER_HEIGHT: f32 = 34.0;
 
 /// The space before the first tab or title of a pane header.
 pub(super) const HEADER_INSET: f32 = 8.0;
+
+/// The margin between a graph pane's edge and the scene inset in it.
+pub(super) const GRAPH_INSET: f32 = 6.0;
 
 /// The id under which the focused pane's tile is kept.
 const FOCUS_ID: &str = "gantz-pane-focus";
@@ -22,6 +25,8 @@ const FOCUS_ID: &str = "gantz-pane-focus";
 pub(super) enum PaneAction {
     Hide(Pane),
     PopOut(egui_tiles::TileId, Pane),
+    /// Show a graph pane's graph on the scene. See [`Icon::Scene`].
+    ShowOnScene(egui_tiles::TileId, u64),
 }
 
 /// A painted icon for a header button.
@@ -31,6 +36,8 @@ pub(super) enum Icon {
     PopOut,
     /// Hide the pane.
     Hide,
+    /// Show a graph pane's graph on the scene, in place of the graph there.
+    Scene,
 }
 
 /// The tiles drawn as panes: each visible tabs container, and each pane that
@@ -76,8 +83,41 @@ pub(super) fn ground_shapes(
             stroke,
             egui::StrokeKind::Inside,
         )));
+        if let Some(inset) = graph_inset(tree, id, rect, cfg.shape.graph_panes) {
+            let inset_radius = (radius - GRAPH_INSET).max(0.0);
+            shapes.push(egui::Shape::rect_filled(inset, inset_radius, scene));
+        }
     }
     shapes
+}
+
+/// The scene inset of a ground whose active pane is a graph pane. A framed
+/// pane insets the scene below its header. An open pane runs the scene up
+/// under its header.
+fn graph_inset(
+    tree: &egui_tiles::Tree<Pane>,
+    id: egui_tiles::TileId,
+    rect: egui::Rect,
+    style: GraphPaneStyle,
+) -> Option<egui::Rect> {
+    let pane_id = match tree.tiles.get(id)? {
+        egui_tiles::Tile::Pane(Pane::Graph(_)) => id,
+        egui_tiles::Tile::Container(egui_tiles::Container::Tabs(tabs)) => {
+            let active = tabs.active?;
+            let graph = matches!(
+                tree.tiles.get(active)?,
+                egui_tiles::Tile::Pane(Pane::Graph(_))
+            );
+            graph.then_some(active)?
+        }
+        _ => return None,
+    };
+    let body = tree.tiles.rect(pane_id)?;
+    let inset = match style {
+        GraphPaneStyle::Framed => body,
+        GraphPaneStyle::Open => body.with_min_y(rect.top()),
+    };
+    Some(inset.shrink(GRAPH_INSET))
 }
 
 /// The focused pane's tile. A press inside a pane focuses it, and a press on
@@ -168,6 +208,12 @@ pub(super) fn paint_icon(
                 [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
                 stroke,
             );
+        }
+        Icon::Scene => {
+            // A frame around a filled core: the graph fills the scene.
+            let radius = rect.width() * 0.25;
+            painter.rect_stroke(rect, radius, stroke, egui::StrokeKind::Middle);
+            painter.rect_filled(rect.shrink(rect.width() * 0.3), radius * 0.4, color);
         }
     }
 }

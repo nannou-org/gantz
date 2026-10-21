@@ -83,6 +83,8 @@ pub struct Shape {
     /// The width of the outline around each pane. 0 draws none. An outline
     /// suits a palette whose panes share the scene's colour.
     pub pane_outline: f32,
+    /// How a graph pane frames its graph's scene.
+    pub graph_panes: GraphPaneStyle,
     /// A scale on the gaps and padding between and within widgets.
     pub spacing: f32,
     /// The size of body text in points. The other text styles keep their
@@ -100,6 +102,16 @@ pub enum CardStyle {
     Nested,
     /// An outlined card on the pane's own fill.
     Outline,
+}
+
+/// How a graph pane frames its graph's scene.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub enum GraphPaneStyle {
+    /// The scene runs up under the pane's title, inside the pane's frame.
+    #[default]
+    Open,
+    /// The scene sits below the pane's title, as in other panes.
+    Framed,
 }
 
 /// Every role's colour in one theme, as last applied to a context.
@@ -136,6 +148,7 @@ impl Default for Shape {
             roundness: 0.0,
             cards: CardStyle::Nested,
             pane_outline: 0.0,
+            graph_panes: GraphPaneStyle::Open,
             spacing: 1.0,
             text_size: 13.0,
             shadows: true,
