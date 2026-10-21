@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/nannou-org/gantz/compare/gantz-v0.6.0...gantz-v0.7.0) - 2026-10-21
+
+### Added
+
+- *(gantz_pattern)* [**breaking**] rename pmini and pplot to pat.mini and pat.plot
+- [**breaking**] move base graphs into dot namespaces
+- [**breaking**] rename old base graph names on load and import
+
+### Other
+
+- [**breaking**] move the format, export and base modules to gantz_edit
+- *(gantz_edit)* [**breaking**] make the node codec generic over the node type
+- *(gantz_ca)* [**breaking**] tidy the registry API
+- *(gantz)* share setup and persistence between the binaries
+
 ## [0.6.0](https://github.com/nannou-org/gantz/compare/gantz-v0.5.0...gantz-v0.6.0) - 2026-10-17
 
 ### Added

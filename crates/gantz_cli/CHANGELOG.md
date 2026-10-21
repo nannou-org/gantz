@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_cli-v0.3.0...gantz_cli-v0.4.0) - 2026-10-21
+
+### Added
+
+- [**breaking**] move base graphs into dot namespaces
+- [**breaking**] rename old base graph names on load and import
+
+### Fixed
+
+- *(gantz_cli)* compare mirrored layouts over the stored layout
+
+### Other
+
+- [**breaking**] move the format, export and base modules to gantz_edit
+- *(gantz_edit)* [**breaking**] make the node codec generic over the node type
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_cli-v0.2.0...gantz_cli-v0.3.0) - 2026-10-17
 
 ### Added

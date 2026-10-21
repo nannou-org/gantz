@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.6.0...bevy_gantz_plyphon-v0.7.0) - 2026-10-21
+
+### Added
+
+- [**breaking**] move base graphs into dot namespaces
+- [**breaking**] rename old base graph names on load and import
+
+### Other
+
+- [**breaking**] move the format, export and base modules to gantz_edit
+
 ## [0.6.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.5.0...bevy_gantz_plyphon-v0.6.0) - 2026-10-17
 
 ### Other

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/nannou-org/gantz/compare/gantz_plyphon-v0.6.0...gantz_plyphon-v0.7.0) - 2026-10-21
+
+### Added
+
+- [**breaking**] move base graphs into dot namespaces
+
+### Other
+
+- *(nix)* bump nixpkgs
+
 ## [0.6.0](https://github.com/nannou-org/gantz/compare/gantz_plyphon-v0.5.0...gantz_plyphon-v0.6.0) - 2026-10-17
 
 ### Other

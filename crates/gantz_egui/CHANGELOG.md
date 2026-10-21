@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.10.0...gantz_egui-v0.11.0) - 2026-10-21
+
+### Added
+
+- *(gantz_egui)* save, reset and export palettes
+- *(gantz_egui)* add palette presets and base16 import
+- *(gantz_egui)* add shape settings to the style
+- *(gantz_egui)* derive the style from a palette and roles
+- [**breaking**] move base graphs into dot namespaces
+- [**breaking**] rename old base graph names on load and import
+
+### Fixed
+
+- *(gantz_egui)* key the graph scene id on its tab
+- *(gantz_egui)* report layout edits from the graph scene
+
+### Other
+
+- *(gantz_egui)* take the remaining UI colours from style roles
+- *(nix)* bump nixpkgs
+- [**breaking**] move the format, export and base modules to gantz_edit
+- *(gantz_edit)* [**breaking**] make the node codec generic over the node type
+
 ## [0.10.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.9.0...gantz_egui-v0.10.0) - 2026-10-17
 
 ### Added
