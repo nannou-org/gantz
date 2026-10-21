@@ -448,6 +448,7 @@ impl<'a> Gantz<'a> {
         }
 
         style::apply(ui.ctx(), &state.style);
+        state.keymap.publish(ui.ctx());
 
         // The persisted outer tree. The version suffix invalidates any tree
         // persisted before the latest default-layout change, forcing a
@@ -733,6 +734,7 @@ impl<'a> Gantz<'a> {
         Access: HeadAccess,
     {
         style::apply(ui.ctx(), &state.style);
+        state.keymap.publish(ui.ctx());
         let mut response = GantzResponse::new(focused_head);
         let mut cx = PaneCtx {
             gantz: &mut self,
@@ -996,6 +998,24 @@ impl widget::node_palette::Command for NodeTyCmd<'_> {
 
     fn info_ui(&self, ui: &mut egui::Ui) {
         crate::node_info_ui(&self.env.command_info(self.name), ui);
+    }
+
+    fn group(&self) -> Option<std::borrow::Cow<'static, str>> {
+        let name = self.name;
+        let group = if name == NESTED_GRAPH_TYPE {
+            "new graph"
+        } else if name.starts_with('~') {
+            "signal"
+        } else if name.starts_with("pat.") {
+            "pattern"
+        } else if name.starts_with("ui.") {
+            "gui"
+        } else if name.starts_with("demo.") {
+            "demos"
+        } else {
+            "nodes"
+        };
+        Some(group.into())
     }
 }
 

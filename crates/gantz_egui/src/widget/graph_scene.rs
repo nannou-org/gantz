@@ -1,3 +1,4 @@
+use super::kit;
 use crate::{
     CopyNodes, Env, InspectEdge, NestNodes, NodeUi, OpenHead, OpenNodePalette, OpenNodeView,
     OpenReplacePalette, Paste, PastePos, ResetTilesLayout, SocketDoc,
@@ -415,11 +416,14 @@ impl<'a> GraphScene<'a> {
                     // user clicked. Convert that to graph space for paste
                     // positioning.
                     let menu_screen_pos = ui.min_rect().left_top();
-                    if ui.button("add node").clicked() {
+                    let ctx = ui.ctx().clone();
+                    let keys = |action| crate::keybind::shortcut_text(&ctx, action);
+                    let palette = keys(crate::Action::ToggleNodePalette);
+                    if kit::menu_item(ui, "add node", palette).clicked() {
                         responses.push(DynResponse::new(OpenNodePalette));
                         ui.close();
                     }
-                    if ui.button("paste").clicked() {
+                    if kit::menu_item(ui, "paste", keys(crate::Action::Paste)).clicked() {
                         let graph_pos = ui
                             .ctx()
                             .layer_transform_from_global(layer_id)
@@ -429,6 +433,7 @@ impl<'a> GraphScene<'a> {
                         responses.push(DynResponse::new(Paste { text: None, pos }));
                         ui.close();
                     }
+                    ui.separator();
                     if ui
                         .button("auto-layout")
                         .on_hover_text(
@@ -440,13 +445,14 @@ impl<'a> GraphScene<'a> {
                         ui.close();
                     }
                     if ui
-                        .button("center-view")
+                        .button("center view")
                         .on_hover_text("frame the whole graph in the view")
                         .clicked()
                     {
                         request_center = true;
                         ui.close();
                     }
+                    ui.separator();
                 }
                 if let Some(view) = view_toggles {
                     ui.menu_button("panes", |ui| {
@@ -838,14 +844,19 @@ fn nodes(
             // Whether the action target is a multi-node selection. Captured
             // before `target` may be moved.
             let multi = target.len() > 1;
-            if ui.button("copy").clicked() {
-                responses.push(DynResponse::new(CopyNodes(target.clone())));
-                ui.close();
-            }
+            let ctx = ui.ctx().clone();
+            let keys = |action| crate::keybind::shortcut_text(&ctx, action);
+            // The menu leads with what it acts on, then groups its items by
+            // what they do: view, edit and state. Delete comes last.
             if let Some(entry) = &instance {
+                let heading = match multi {
+                    true => format!("{} nodes", target.len()),
+                    false => entry.inst.node.name(registry).to_string(),
+                };
+                kit::menu_heading(ui, &heading);
                 // Demo graph, if the node has one.
                 let demo_name = entry.inst.node.demo_graph(registry);
-                let demo_btn = ui.add_enabled(demo_name.is_some(), egui::Button::new("demo"));
+                let demo_btn = ui.add_enabled(demo_name.is_some(), egui::Button::new("open demo"));
                 if let Some(name) = demo_name {
                     if demo_btn.on_hover_text(format!("opens {name}")).clicked() {
                         responses.push(DynResponse::new(OpenHead(gantz_ca::Head::Branch(
@@ -856,10 +867,10 @@ fn nodes(
                 } else {
                     demo_btn.on_disabled_hover_text("no associated demo");
                 }
-                // "open in new tab" for nodes that reference a named graph.
+                // "open graph" for nodes that reference a named graph.
                 if let Some(head) = entry.inst.node.nav_head(registry) {
                     if ui
-                        .button("open tab")
+                        .button("open graph")
                         .on_hover_text("open the referenced graph in a new tab")
                         .clicked()
                     {
@@ -867,13 +878,12 @@ fn nodes(
                         ui.close();
                     }
                 }
-                // Detach the right-clicked node's UI into a tile in the Node
-                // Views pane as a live mirror sharing VM state. Always
-                // available, even for immutable graphs, since it only observes
-                // the node.
+                // Detach the right-clicked node's UI into a pane of its own as
+                // a live mirror sharing VM state. Always available, even for
+                // immutable graphs, since it only observes the node.
                 if ui
                     .button("open view")
-                    .on_hover_text("open this node's view in the Node Views pane")
+                    .on_hover_text("open this node's view in a pane of its own")
                     .clicked()
                 {
                     let ty_name = entry.inst.node.name(registry).to_string();
@@ -883,8 +893,18 @@ fn nodes(
                     }));
                     ui.close();
                 }
+                ui.separator();
+            }
+            if kit::menu_item(ui, "copy", keys(crate::Action::Copy)).clicked() {
+                responses.push(DynResponse::new(CopyNodes(target.clone())));
+                ui.close();
             }
             if !immutable {
+                let duplicate = kit::menu_item(ui, "duplicate", keys(crate::Action::Duplicate));
+                if duplicate.clicked() {
+                    responses.push(DynResponse::new(crate::DuplicateNodes(target.clone())));
+                    ui.close();
+                }
                 // Nest the selected nodes into a new nested graph. Only
                 // meaningful for a multi-node selection.
                 if multi
@@ -896,35 +916,6 @@ fn nodes(
                     responses.push(DynResponse::new(NestNodes(target.clone())));
                     ui.close();
                 }
-                // The reset target may include other selected nodes. Peek each
-                // one's cached instance to ask whether any is stateful. A miss
-                // reifies transiently. This node's own entry always misses,
-                // since it is taken out for the duration of the iteration.
-                let stateful = target.iter().any(|&n| {
-                    graph
-                        .node_weight(n)
-                        .is_some_and(|w| match instances_ref.peek(n.index(), w) {
-                            Some(inst) => inst.node.stateful(meta_ctx),
-                            None => codec
-                                .reify(w)
-                                .is_ok_and(|inst| inst.node.stateful(meta_ctx)),
-                        })
-                });
-                let reset_btn = ui.add_enabled(stateful, egui::Button::new("reset"));
-                if reset_btn
-                    .on_hover_text("reset the node to its default state")
-                    .on_disabled_hover_text("no state to reset")
-                    .clicked()
-                {
-                    nodes_to_reset.extend(target.iter().copied());
-                    ui.close();
-                }
-                // Drop the settings of a locked node that this build does not
-                // recognise. See `InstanceEntry::lost`.
-                if locked && super::discard_button(ui) {
-                    responses.push(DynResponse::new(crate::DropUnknownData { node: n_id }));
-                    ui.close();
-                }
                 // Replace the right-clicked node via the node palette. Only
                 // for a single node.
                 if !multi
@@ -934,10 +925,6 @@ fn nodes(
                         .clicked()
                 {
                     responses.push(DynResponse::new(OpenReplacePalette(n_id)));
-                    ui.close();
-                }
-                if ui.button("delete").clicked() {
-                    nodes_to_delete.extend(target);
                     ui.close();
                 }
                 // Auto-layout the selection. Only meaningful for more than one
@@ -981,6 +968,38 @@ fn nodes(
                         );
                     });
                 }
+                // The reset target may include other selected nodes. Peek each
+                // one's cached instance to ask whether any is stateful. A miss
+                // reifies transiently. This node's own entry always misses,
+                // since it is taken out for the duration of the iteration.
+                let stateful = target.iter().any(|&n| {
+                    graph
+                        .node_weight(n)
+                        .is_some_and(|w| match instances_ref.peek(n.index(), w) {
+                            Some(inst) => inst.node.stateful(meta_ctx),
+                            None => codec
+                                .reify(w)
+                                .is_ok_and(|inst| inst.node.stateful(meta_ctx)),
+                        })
+                });
+                if stateful || locked {
+                    ui.separator();
+                }
+                if stateful
+                    && ui
+                        .button("reset state")
+                        .on_hover_text("reset the node to its default state")
+                        .clicked()
+                {
+                    nodes_to_reset.extend(target.iter().copied());
+                    ui.close();
+                }
+                // Drop the settings of a locked node that this build does not
+                // recognise. See `InstanceEntry::lost`.
+                if locked && super::discard_button(ui) {
+                    responses.push(DynResponse::new(crate::DropUnknownData { node: n_id }));
+                    ui.close();
+                }
             }
             // Node-specific items, for example the log node's "open logs".
             if let Some(entry) = instance.as_mut() {
@@ -999,6 +1018,13 @@ fn nodes(
                 let cm = entry.inst.node.context_menu(&mut node_ctx, ui);
                 node_changed |= cm.changed;
                 responses.extend(cm.payloads);
+            }
+            if !immutable {
+                ui.separator();
+                if kit::danger_item(ui, "delete", Some("del".to_string())).clicked() {
+                    nodes_to_delete.extend(target);
+                    ui.close();
+                }
             }
         });
 

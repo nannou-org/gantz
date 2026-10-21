@@ -132,15 +132,14 @@ pub(super) fn head_scene<Access>(
 /// The tab strip: a pill floating over the top-left of the scene, with a tab
 /// per open graph and a button for a new one. The main graph's tab is filled.
 /// A nested main graph shows its ancestors before its tab, each a step up.
-///
-/// Returns the height of the strip, so other overlays can clear it.
+/// The gantz mark leads the strip and opens the app menu.
 pub(super) fn tab_strip<Access>(
     cx: &mut PaneCtx<'_, '_, Access>,
     ui: &egui::Ui,
     anchor: egui::Pos2,
     main: Option<&gantz_ca::Head>,
-) -> f32
-where
+    ext_panes: &[widget::ExtPaneEntry],
+) where
     Access: HeadAccess,
 {
     let rename_id = egui::Id::new(RENAME_ID);
@@ -151,13 +150,14 @@ where
         .fill(style::color(ui, Role::Panel))
         .corner_radius(shape.window_corner())
         .inner_margin(egui::Margin::same(4));
-    let area = egui::Area::new(egui::Id::new("gantz-tab-strip"))
+    egui::Area::new(egui::Id::new("gantz-tab-strip"))
         .order(egui::Order::Middle)
         .fixed_pos(anchor)
         .show(ui.ctx(), |ui| {
             frame.show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
+                    app_menu(cx, ui, ext_panes);
                     if let Some(main) = main {
                         let crumbs = breadcrumb(main, ui);
                         cx.response.responses.extend(Some(main), crumbs);
@@ -178,7 +178,63 @@ where
             });
         });
     ui.data_mut(|d| d.insert_temp(rename_id, rename));
-    area.response.rect.height()
+}
+
+/// The gantz mark, which opens the app menu: a new graph, the sidebar, the
+/// panes and the settings. The menu leads with the wordmark.
+fn app_menu<Access>(
+    cx: &mut PaneCtx<'_, '_, Access>,
+    ui: &mut egui::Ui,
+    ext_panes: &[widget::ExtPaneEntry],
+) where
+    Access: HeadAccess,
+{
+    let height = ui.spacing().interact_size.y;
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(height + 8.0, height), egui::Sense::click());
+    let visuals = ui.visuals();
+    let color = match resp.hovered() {
+        true => visuals.strong_text_color(),
+        false => visuals.text_color(),
+    };
+    if resp.hovered() {
+        let radius = style::shape(ui.ctx()).widget_corner(height);
+        ui.painter()
+            .rect_filled(rect, radius, visuals.widgets.hovered.weak_bg_fill);
+    }
+    let mark = crate::logo::mark(height * 0.7, color);
+    mark.paint_at(
+        ui,
+        egui::Rect::from_center_size(rect.center(), egui::vec2(height * 0.6, height * 0.7)),
+    );
+    let resp = resp.on_hover_text("menu");
+    egui::Popup::menu(&resp).show(|ui| {
+        let strong = ui.visuals().strong_text_color();
+        ui.add(crate::logo::wordmark(14.0, strong));
+        ui.add_space(4.0);
+        let ctx = ui.ctx().clone();
+        let keys = |action| crate::keybind::shortcut_text(&ctx, action);
+        if widget::kit::menu_item(ui, "new graph", keys(crate::Action::NewGraph)).clicked() {
+            cx.response.responses.push(None, crate::NewGraph);
+            ui.close();
+        }
+        ui.separator();
+        let view = &mut cx.state.view_toggles;
+        ui.checkbox(&mut view.sidebar_open, "sidebar");
+        ui.menu_button("panes", |ui| {
+            widget::panes_config(view, ext_panes, ui);
+            ui.separator();
+            if widget::reset_layout_button(ui) {
+                cx.response.responses.push(None, crate::ResetTilesLayout);
+                ui.close();
+            }
+        });
+        if ui.button("settings").clicked() {
+            view.settings = true;
+            view.sidebar_open = true;
+            ui.close();
+        }
+    });
 }
 
 /// One graph's tab. A click shows the graph on the scene, or focuses its

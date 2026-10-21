@@ -55,6 +55,13 @@ pub struct Keymap {
     overrides: BTreeMap<Action, Vec<KeyboardShortcut>>,
 }
 
+/// Each action's shortcut as menu text. See [`Keymap::publish`].
+#[derive(Clone, Default)]
+struct ShortcutTexts(HashMap<Action, String>);
+
+/// The id under which a context keeps the [`ShortcutTexts`].
+const SHORTCUTS_ID: &str = "gantz-shortcut-texts";
+
 /// `Cmd` on macOS, `Ctrl` elsewhere. See [`Modifiers::command`].
 const CMD: Modifiers = Modifiers {
     alt: false,
@@ -239,6 +246,26 @@ impl Keymap {
         by_shortcut.retain(|_, actions| actions.len() > 1);
         by_shortcut
     }
+
+    /// Record each action's first binding as text in `ctx`, for menus to show
+    /// beside their items. See [`shortcut_text`].
+    pub fn publish(&self, ctx: &egui::Context) {
+        let texts: HashMap<Action, String> = Action::ALL
+            .iter()
+            .filter_map(|&action| {
+                let shortcut = self.bindings(action).first()?;
+                Some((action, ctx.format_shortcut(shortcut).to_lowercase()))
+            })
+            .collect();
+        ctx.data_mut(|d| d.insert_temp(egui::Id::new(SHORTCUTS_ID), ShortcutTexts(texts)));
+    }
+}
+
+/// The shortcut text of `action`, as [`Keymap::publish`] last recorded it in
+/// `ctx`. `None` for an unbound action.
+pub fn shortcut_text(ctx: &egui::Context, action: Action) -> Option<String> {
+    ctx.data(|d| d.get_temp::<ShortcutTexts>(egui::Id::new(SHORTCUTS_ID)))
+        .and_then(|ShortcutTexts(texts)| texts.get(&action).cloned())
 }
 
 #[cfg(test)]

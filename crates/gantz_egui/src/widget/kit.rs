@@ -235,3 +235,24 @@ pub fn well<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R)
         .show(ui, add_contents)
         .inner
 }
+
+/// A menu item with `shortcut`, if any, right-aligned in the weak text
+/// colour.
+pub fn menu_item(ui: &mut egui::Ui, label: &str, shortcut: Option<String>) -> egui::Response {
+    let button = egui::Button::new(label).shortcut_text(shortcut.unwrap_or_default());
+    ui.add(button)
+}
+
+/// A menu item for an action that removes or resets something, in the
+/// error colour.
+pub fn danger_item(ui: &mut egui::Ui, label: &str, shortcut: Option<String>) -> egui::Response {
+    let text = egui::RichText::new(label).color(ui.visuals().error_fg_color);
+    let button = egui::Button::new(text).shortcut_text(shortcut.unwrap_or_default());
+    ui.add(button)
+}
+
+/// A quiet heading at the top of a menu, such as the name of the node it
+/// acts on.
+pub fn menu_heading(ui: &mut egui::Ui, text: &str) {
+    ui.label(egui::RichText::new(text).small().weak());
+}
