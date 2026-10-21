@@ -96,6 +96,11 @@ impl Logger {
         self.entries.lock().unwrap().iter().cloned().collect()
     }
 
+    /// Call `f` with the entries, oldest first, without cloning them.
+    pub fn with_entries<R>(&self, f: impl FnOnce(&VecDeque<LogEntry>) -> R) -> R {
+        f(&self.entries.lock().unwrap())
+    }
+
     pub fn clear(&self) {
         self.entries.lock().unwrap().clear();
     }

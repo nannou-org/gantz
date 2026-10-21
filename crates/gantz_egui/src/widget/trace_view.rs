@@ -52,6 +52,9 @@ pub struct TraceCaptureLayer<S> {
 #[derive(Default)]
 struct MessageVisitor {
     message: String,
+    /// The target of an event bridged from the `log` crate. The bridge gives
+    /// every such event the target "log" and records the real one here.
+    log_target: Option<String>,
 }
 
 impl TraceEntry {
@@ -83,6 +86,11 @@ impl TraceCapture {
 
     pub fn get_entries(&self) -> Vec<TraceEntry> {
         self.entries.lock().unwrap().iter().cloned().collect()
+    }
+
+    /// Call `f` with the entries, oldest first, without cloning them.
+    pub fn with_entries<R>(&self, f: impl FnOnce(&VecDeque<TraceEntry>) -> R) -> R {
+        f(&self.entries.lock().unwrap())
     }
 
     pub fn clear(&self) {
@@ -344,7 +352,9 @@ where
         let entry = TraceEntry {
             level: *metadata.level(),
             message: visitor.message,
-            target: metadata.target().to_string(),
+            target: visitor
+                .log_target
+                .unwrap_or_else(|| metadata.target().to_string()),
             timestamp: SystemTime::now(),
             count: 1,
         };
@@ -364,11 +374,15 @@ impl tracing::field::Visit for MessageVisitor {
     }
 
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        if field.name() == "message" {
-            if !self.message.is_empty() {
-                self.message.push(' ');
+        match field.name() {
+            "message" => {
+                if !self.message.is_empty() {
+                    self.message.push(' ');
+                }
+                self.message.push_str(value);
             }
-            self.message.push_str(value);
+            "log.target" => self.log_target = Some(value.to_string()),
+            _ => (),
         }
     }
 }
