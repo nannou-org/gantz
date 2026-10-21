@@ -1079,7 +1079,7 @@ fn placeholder_ui(
     const MAX_READOUT: usize = 48;
     nui_ctx.framed(|ui, _sockets| {
         ui.vertical(|ui| {
-            ui.colored_label(crate::node::missing_color(), &weight.tag)
+            ui.colored_label(ui.visuals().error_fg_color, &weight.tag)
                 .on_hover_text(
                     "this node's type is unknown to this application \
                      (e.g. from a domain that is not compiled in); its data is \

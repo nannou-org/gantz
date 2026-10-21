@@ -344,7 +344,7 @@ impl<'a> GraphConfig<'a> {
                             }
                             Some(display) => {
                                 let conn = display.conn;
-                                super::status_dot(ui, conn.color())
+                                super::status_dot(ui, crate::style::color(ui, conn.role()))
                                     .on_hover_text(conn.label());
                                 let n = display.peers.len();
                                 let label = format!(
@@ -503,7 +503,7 @@ fn merge_select(
                 // Conflicts offer an explicit opt-in that applies the selected
                 // resolutions. Blockers do not.
                 let preview = preview.expect("`!clean` requires a preview");
-                let warn = crate::node::outdated_color();
+                let warn = ui.visuals().warn_fg_color;
                 ui.horizontal(|ui| {
                     let text = egui::RichText::new(format!("{} !", candidate.name)).color(warn);
                     ui.add_enabled(false, egui::Button::selectable(false, text))
@@ -515,7 +515,7 @@ fn merge_select(
                             }
                             for blocker in &preview.blockers {
                                 ui.colored_label(
-                                    crate::node::missing_color(),
+                                    ui.visuals().error_fg_color,
                                     format!("\u{2715} {blocker}"),
                                 );
                             }

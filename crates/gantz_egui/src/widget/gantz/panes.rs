@@ -890,13 +890,17 @@ fn paint_gantz_file_hover_overlay(ui: &mut egui::Ui) {
 
     if has_hovered && pointer_over {
         let painter = ui.painter();
-        painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(100));
+        painter.rect_filled(
+            rect,
+            0.0,
+            crate::style::color(ui, crate::style::Role::Scrim),
+        );
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
             "Drop to import",
             egui::FontId::proportional(24.0),
-            egui::Color32::WHITE,
+            ui.visuals().strong_text_color(),
         );
     }
 }

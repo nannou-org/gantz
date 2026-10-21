@@ -31,7 +31,7 @@ pub fn head_name_edit(
     let is_invalid = is_empty || (!is_current_name && (name_exists || has_separator));
 
     let text_color = if is_invalid && !is_current_name {
-        egui::Color32::RED
+        ui.visuals().error_fg_color
     } else {
         ui.visuals().text_color()
     };

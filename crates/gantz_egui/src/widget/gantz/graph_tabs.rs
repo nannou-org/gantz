@@ -4,6 +4,7 @@ use super::panes::{GRAPH_TAB_BAR_HEIGHT, graph_scene, head_immutable, name_bread
 use super::{PaneCtx, separator_stroke};
 use crate::{
     HeadAccess,
+    style::Role,
     widget::{self},
 };
 
@@ -202,7 +203,8 @@ where
                 .closable(state.closable)
                 .hint("double-click to rename");
             if let Some(display) = session {
-                tab = tab.status_dot(display.conn.color(), display.hover_text());
+                let color = crate::style::color(ui, display.conn.role());
+                tab = tab.status_dot(color, display.hover_text());
             }
             if let Some(muted) = audio {
                 tab = tab.audio(muted);
@@ -409,7 +411,7 @@ fn paint_peer_pointers(
             screen,
             4.0,
             pointer.color,
-            egui::Stroke::new(1.0f32, egui::Color32::from_black_alpha(160)),
+            egui::Stroke::new(1.0f32, crate::style::color(ui, Role::Scrim)),
         );
         painter.text(
             screen + egui::vec2(8.0, 6.0),
@@ -437,7 +439,7 @@ fn paint_session_overlay(rect: egui::Rect, display: &crate::collab::SessionDispl
         (
             "Failed to connect".to_string(),
             Some(error.clone()),
-            SessionConn::Degraded.color(),
+            crate::style::color(ui, SessionConn::Degraded.role()),
         )
     } else {
         // Animated ellipsis while waiting.
@@ -457,7 +459,7 @@ fn paint_session_overlay(rect: egui::Rect, display: &crate::collab::SessionDispl
     let layer = egui::LayerId::new(egui::Order::Foreground, ui.id().with("session_overlay"));
     let mut painter = ui.ctx().layer_painter(layer);
     painter.set_clip_rect(rect);
-    painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(120));
+    painter.rect_filled(rect, 0.0, crate::style::color(ui, Role::Scrim));
     painter.text(
         rect.center(),
         egui::Align2::CENTER_CENTER,

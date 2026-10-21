@@ -5,6 +5,7 @@
 //! network types leak in here, which keeps this crate framework-agnostic and
 //! transport-agnostic.
 
+use crate::style::Role;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -260,14 +261,14 @@ impl VaultDisplay {
 }
 
 impl VaultState {
-    /// The indicator glyph colour for this state. States that only the user
-    /// can fix share one colour.
-    pub fn color(&self) -> egui::Color32 {
+    /// The style role of the indicator glyph for this state. States that only
+    /// the user can fix share one role.
+    pub fn role(&self) -> Role {
         match self {
-            Self::Connecting => SessionConn::Connecting.color(),
-            Self::Live => SessionConn::Live.color(),
-            Self::Offline(_) => SessionConn::Degraded.color(),
-            _ => egui::Color32::from_rgb(0xb0, 0x70, 0xe0),
+            Self::Connecting => SessionConn::Connecting.role(),
+            Self::Live => SessionConn::Live.role(),
+            Self::Offline(_) => SessionConn::Degraded.role(),
+            _ => Role::Attention,
         }
     }
 
@@ -311,12 +312,12 @@ impl VaultState {
 }
 
 impl SessionConn {
-    /// The indicator glyph colour for this state.
-    pub fn color(&self) -> egui::Color32 {
+    /// The style role of the indicator glyph for this state.
+    pub fn role(&self) -> Role {
         match self {
-            Self::Connecting => egui::Color32::from_rgb(0xd0, 0xa0, 0x30),
-            Self::Live => egui::Color32::from_rgb(0x50, 0xc0, 0x50),
-            Self::Degraded => egui::Color32::from_rgb(0xc0, 0x50, 0x50),
+            Self::Connecting => Role::Pending,
+            Self::Live => Role::Success,
+            Self::Degraded => Role::Error,
         }
     }
 
@@ -363,7 +364,7 @@ mod tests {
         assert!(denied.needs_action());
         assert!(VaultState::VaultOutdated.needs_action());
         assert!(VaultState::DeviceOutdated.needs_action());
-        assert_ne!(offline.color(), denied.color());
-        assert_eq!(denied.color(), VaultState::VaultOutdated.color());
+        assert_ne!(offline.role(), denied.role());
+        assert_eq!(denied.role(), VaultState::VaultOutdated.role());
     }
 }

@@ -1,6 +1,5 @@
 //! `Fn<NamedRef>` type alias and NodeUi implementation.
 
-use super::{missing_color, outdated_color};
 use crate::{
     Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind,
     widget::node_inspector,
@@ -50,9 +49,9 @@ impl NodeUi for FnNamedRef {
             ui.horizontal(|ui| {
                 let fn_res = ui.add(egui::Label::new("λ").selectable(false));
                 let name_text = if is_missing {
-                    egui::RichText::new(&name_str).color(missing_color())
+                    egui::RichText::new(&name_str).color(ui.visuals().error_fg_color)
                 } else if is_outdated {
-                    egui::RichText::new(&name_str).color(outdated_color())
+                    egui::RichText::new(&name_str).color(ui.visuals().warn_fg_color)
                 } else {
                     egui::RichText::new(&name_str)
                 };
