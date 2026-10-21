@@ -164,12 +164,18 @@ impl NodeUi for Comment {
                 // Render the TextEdit against the buffered string. With
                 // auto-height the box always fits its text, so no scroll
                 // area is needed. The TextEdit reports its wrapped height.
+                let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap: f32| {
+                    let mut job = text_job(ui, buf.as_str());
+                    job.wrap.max_width = wrap;
+                    ui.fonts_mut(|fonts| fonts.layout_job(job))
+                };
                 let response = ui.add(
                     egui::TextEdit::multiline(&mut state.text)
                         .desired_rows(1)
                         .hint_text("Add comment...")
                         .frame(egui::Frame::NONE)
-                        .desired_width(f32::INFINITY),
+                        .desired_width(f32::INFINITY)
+                        .layouter(&mut layouter),
                 );
 
                 let time = ui.input(|i| i.time);
@@ -258,9 +264,57 @@ impl NodeUi for Comment {
     }
 }
 
+/// The layout of a comment's `text`. A span between backticks is inline code,
+/// set in the monospace font on a well. The backticks stay, faint, so the
+/// text edits as typed.
+fn text_job(ui: &egui::Ui, text: &str) -> egui::text::LayoutJob {
+    let visuals = ui.visuals();
+    let body = egui::TextStyle::Body.resolve(ui.style());
+    let mono = egui::FontId::monospace(body.size);
+    let plain = egui::TextFormat::simple(body, visuals.text_color());
+    let tick = egui::TextFormat::simple(mono.clone(), visuals.weak_text_color());
+    let code = egui::TextFormat {
+        font_id: mono,
+        color: visuals.strong_text_color(),
+        background: visuals.extreme_bg_color,
+        ..Default::default()
+    };
+    let mut job = egui::text::LayoutJob::default();
+    for (span, is_code) in code_spans(text) {
+        match is_code {
+            true => {
+                job.append("`", 0.0, tick.clone());
+                job.append(span, 0.0, code.clone());
+                job.append("`", 0.0, tick.clone());
+            }
+            false => job.append(span, 0.0, plain.clone()),
+        }
+    }
+    job
+}
+
+/// Split `text` into plain spans and the code spans between backtick pairs,
+/// in order. A code span excludes its backticks. A backtick without a pair
+/// stays in its plain span.
+fn code_spans(text: &str) -> Vec<(&str, bool)> {
+    let mut spans = vec![];
+    let mut rest = text;
+    while let Some(open) = rest.find('`') {
+        let Some(len) = rest[open + 1..].find('`') else {
+            break;
+        };
+        spans.push((&rest[..open], false));
+        spans.push((&rest[open + 1..open + 1 + len], true));
+        rest = &rest[open + 1 + len + 1..];
+    }
+    spans.push((rest, false));
+    spans.retain(|(span, is_code)| *is_code || !span.is_empty());
+    spans
+}
+
 #[cfg(test)]
 mod tests {
-    use super::Comment;
+    use super::{Comment, code_spans};
 
     /// The node's erased (data-layer) content address.
     fn content_addr(c: &Comment) -> gantz_ca::ContentAddr {
@@ -286,5 +340,21 @@ mod tests {
         for (case, b, equal) in cases {
             assert_eq!(a == content_addr(&b), equal, "{case}");
         }
+    }
+
+    #[test]
+    fn code_spans_pair_backticks() {
+        assert_eq!(code_spans("no code"), vec![("no code", false)]);
+        assert_eq!(
+            code_spans("press `!` to run"),
+            vec![("press ", false), ("!", true), (" to run", false)]
+        );
+        assert_eq!(code_spans("`a``b`"), vec![("a", true), ("b", true)]);
+        assert_eq!(code_spans("``"), vec![("", true)]);
+        assert_eq!(code_spans("odd ` tick"), vec![("odd ` tick", false)]);
+        assert_eq!(
+            code_spans("`a` and ` b"),
+            vec![("a", true), (" and ` b", false)]
+        );
     }
 }

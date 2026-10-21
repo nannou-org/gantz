@@ -1,6 +1,8 @@
 //! An Inspect node for viewing SteelVals flowing through the graph.
 
-use crate::{Env, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind, ui_tree::UiTree};
+use crate::{
+    Env, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind, ui_tree::UiTree, widget::kit,
+};
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
@@ -42,16 +44,17 @@ impl NodeUi for Inspect {
     }
 
     fn ui(&mut self, mut ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
-        let mut frame = egui_graph::node::default_frame(uictx.style(), uictx.interaction());
-        frame.fill = uictx.style().visuals.extreme_bg_color;
         let (&id, prefix) = ctx.path().split_last().expect("a node path is never empty");
         let tree = fragment(id);
         let root_id = uictx.egui_id().with("gui");
-        let framed = uictx.framed_with(frame, |ui, _sockets| {
-            let r = UiTree::new(root_id)
-                .instance_prefix(prefix)
-                .show(&tree, &mut ctx, ui);
-            r.inner.unwrap_or_else(|| ui.response())
+        // The value sits in a well.
+        let framed = uictx.framed(|ui, _sockets| {
+            kit::well(ui, |ui| {
+                let r = UiTree::new(root_id)
+                    .instance_prefix(prefix)
+                    .show(&tree, &mut ctx, ui);
+                r.inner.unwrap_or_else(|| ui.response())
+            })
         });
         NodeUiResponse::new(framed)
     }

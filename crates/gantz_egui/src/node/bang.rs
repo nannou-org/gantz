@@ -49,6 +49,7 @@ impl NodeUi for Bang {
         let root_id = uictx.egui_id().with("gui");
         let mut payloads = Vec::new();
         let framed = uictx.framed(|ui, _sockets| {
+            ball(ui);
             let r = UiTree::new(root_id)
                 .instance_prefix(prefix)
                 .n_outputs(&|_: &[node::Id]| Some(1))
@@ -82,6 +83,20 @@ fn fragment(id: node::Id) -> gantz_ui::Element {
         label: Some(" ! ".to_string()),
         key: None,
     })
+}
+
+/// Round the bang's button into a ball.
+fn ball(ui: &mut egui::Ui) {
+    let pad = ui.spacing().button_padding.y + 2.0;
+    ui.spacing_mut().button_padding = egui::Vec2::splat(pad);
+    let widgets = &mut ui.visuals_mut().widgets;
+    for w in [
+        &mut widgets.inactive,
+        &mut widgets.hovered,
+        &mut widgets.active,
+    ] {
+        w.corner_radius = egui::CornerRadius::same(u8::MAX);
+    }
 }
 
 #[cfg(test)]
