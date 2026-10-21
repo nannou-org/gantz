@@ -581,7 +581,7 @@ fn render_node_view<Access>(
                 })
         })
         .unwrap_or(false);
-    let mut frame = egui::Frame::central_panel(ui.style());
+    let mut frame = pane_frame(ui.style());
     if no_margin {
         frame.inner_margin = egui::Margin::ZERO;
     }
@@ -1197,7 +1197,22 @@ pub(super) fn pane_ui<R>(
     ui: &mut egui::Ui,
     pane: impl FnOnce(&mut egui::Ui) -> R,
 ) -> egui::InnerResponse<R> {
-    egui::CentralPanel::default().show_inside(ui, |ui| pane(ui))
+    egui::CentralPanel::default()
+        .frame(pane_frame(ui.style()))
+        .show_inside(ui, pane)
+}
+
+/// The frame of a pane's body. It has no fill, since the pane's rounded
+/// ground is painted beneath the tree. See `chrome`.
+pub(super) fn pane_frame(style: &egui::Style) -> egui::Frame {
+    egui::Frame::central_panel(style)
+        .fill(egui::Color32::TRANSPARENT)
+        .inner_margin(egui::Margin {
+            left: 10,
+            right: 10,
+            top: 0,
+            bottom: 10,
+        })
 }
 
 /// The margin between the scene's edges and its floating overlays, e.g. the

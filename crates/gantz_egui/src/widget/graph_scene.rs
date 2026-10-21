@@ -260,6 +260,15 @@ impl<'a> GraphScene<'a> {
         vm: &mut Engine,
         ui: &mut egui::Ui,
     ) -> GraphSceneResponse {
+        // egui_graph rounds each node with the window corner radius and takes
+        // twice that from a node's minimum size. Keep the scene's radius small
+        // so a small node keeps a positive size.
+        let node_radius = crate::style::shape(ui.ctx())
+            .widget_corner(ui.spacing().interact_size.y)
+            .min(MAX_NODE_RADIUS);
+        ui.style_mut().visuals.window_corner_radius =
+            egui::CornerRadius::same(node_radius.round() as u8);
+
         // Materialise the viewport-dependent `egui_graph::View` from the
         // viewport-independent camera. The viewport must match the size
         // `egui_graph` reads from `available_rect_before_wrap` so the fit
@@ -1243,6 +1252,9 @@ fn edges(
 /// stripes overlay them so they read as a thick bound bundle rather than
 /// ever-thinner strands. The exact count is left to the hover tooltip.
 const STRAND_CAP: usize = 4;
+
+/// The largest node corner radius. See the note in [`GraphScene::show`].
+const MAX_NODE_RADIUS: f32 = 8.0;
 
 /// Extra width the notch overlay adds over the base stroke so its opaque core
 /// swallows the base line's anti-aliased edge. See [`EdgeStyling::notch`].

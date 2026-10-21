@@ -7,6 +7,7 @@ use crate::{
 };
 use std::collections::{HashMap, HashSet};
 
+mod chrome;
 mod graph_tabs;
 mod panes;
 mod state;
@@ -26,9 +27,9 @@ use state::{
 pub use tiles::{NodeViewPane, Pane};
 use tiles::{
     add_node_view_pane, capture_fixed_sizes, create_tree, impose_fixed_sizes, impose_min_sizes,
-    migrate_node_view_paths, pane_is_hideable, pane_is_poppable, pane_is_visible, pane_min_size,
-    pane_title, set_pane_visible, set_tile_visibility, simplify_tree, sync_ext_panes,
-    sync_singleton_pane,
+    migrate_node_view_paths, pane_is_hideable, pane_is_poppable, pane_is_visible, pane_label,
+    pane_min_size, pane_title, set_pane_visible, set_tile_visibility, simplify_tree,
+    sync_ext_panes, sync_singleton_pane,
 };
 pub use windowing::{close_windowed_pane, pane_key, redock_windowed_pane};
 use windowing::{
@@ -126,19 +127,25 @@ enum LogSource {
 }
 
 /// The `egui_tiles::Behavior::resize_stroke` shared by both tile trees.
+///
+/// An idle gap shows the scene in the separator colour. A hovered or dragged
+/// gap draws a thin line down its middle, to show it resizes.
 fn separator_stroke(
     cfg: &StyleConfig,
     style: &egui::Style,
     resize_state: egui_tiles::ResizeState,
 ) -> egui::Stroke {
-    let role = match resize_state {
-        egui_tiles::ResizeState::Idle => Role::Separator,
-        egui_tiles::ResizeState::Hovering | egui_tiles::ResizeState::Dragging => {
-            Role::SeparatorHover
-        }
-    };
     let theme = style::theme_of(&style.visuals);
-    egui::Stroke::new(cfg.shape.separator_width, cfg.resolve(theme, role))
+    match resize_state {
+        egui_tiles::ResizeState::Idle => egui::Stroke::new(
+            cfg.shape.separator_width,
+            cfg.resolve(theme, Role::Separator),
+        ),
+        egui_tiles::ResizeState::Hovering | egui_tiles::ResizeState::Dragging => egui::Stroke::new(
+            (cfg.shape.separator_width * 0.25).max(1.5),
+            cfg.resolve(theme, Role::SeparatorHover),
+        ),
+    }
 }
 
 /// The data a single pane needs to render, independent of where the pane lives.
@@ -166,6 +173,14 @@ where
     /// Panes detached into windows. The tab context menu pushes to this when a
     /// pane is popped out.
     windowed: &'a mut Vec<Pane>,
+    /// Actions from the pane headers' buttons, applied after the tree is
+    /// drawn.
+    actions: Vec<chrome::PaneAction>,
+    /// The focused pane, whose header shows its buttons.
+    focus: Option<egui_tiles::TileId>,
+    /// Each tabbed pane's header tab count and whether it leads. See
+    /// [`chrome::headers`].
+    headers: HashMap<egui_tiles::TileId, (usize, bool)>,
 }
 
 /// Response from the top-level gantz widget.
@@ -479,10 +494,33 @@ impl<'a> Gantz<'a> {
                 response: &mut response,
             },
             windowed: &mut windowed,
+            actions: vec![],
+            focus: chrome::update_focus(ui.ctx(), &tree, widget_area),
+            headers: chrome::headers(&tree.tiles),
         };
+        // Reserve the bottom layer for the scene colour and the pane
+        // grounds. They are painted once the tree has laid out its rects.
+        let grounds = ui.painter().add(egui::Shape::Noop);
         tree.ui(&mut behaviour, ui);
 
-        response.focused_head = behaviour.cx.focused_head;
+        let focused_head = behaviour.cx.focused_head;
+        let actions = std::mem::take(&mut behaviour.actions);
+        let focus = behaviour.focus;
+        response.focused_head = focused_head;
+        let theme = style::theme_of(ui.visuals());
+        let shapes = chrome::ground_shapes(&tree, &state.style, theme, widget_area, focus);
+        ui.painter().set(grounds, egui::Shape::Vec(shapes));
+        for action in actions {
+            match action {
+                chrome::PaneAction::Hide(pane) => {
+                    set_pane_visible(&mut state.view_toggles, &pane, false);
+                }
+                chrome::PaneAction::PopOut(tile_id, pane) => {
+                    let view = &mut state.view_toggles;
+                    detach_pane(view, &mut windowed, &mut tree.tiles, tile_id, &pane);
+                }
+            }
+        }
 
         // Capture the sidebar width and tray height from the laid-out tree,
         // which reflects any manual divider drag, to re-impose next frame.
@@ -733,10 +771,26 @@ where
         tile_id: egui_tiles::TileId,
         state: &egui_tiles::TabState,
     ) -> egui::Response {
-        // Render with the shared `Tab` widget so the sidebar and tray tabs and
-        // their small close button match the graph tabs.
-        let title = self.tab_title_for_tile(tiles, tile_id);
+        // A pane alone in its header shows its title. Panes that share a
+        // header show pills, the active one filled.
+        let (count, first) = self.headers.get(&tile_id).copied().unwrap_or((1, true));
+        if first {
+            ui.add_space(chrome::HEADER_INSET);
+        }
+        let (title, sub) = match tiles.get_pane(&tile_id) {
+            Some(pane) => pane_label(self.cx.gantz, self.cx.access, self.cx.focused_head, pane),
+            None => (
+                self.tab_title_for_tile(tiles, tile_id).text().to_string(),
+                None,
+            ),
+        };
+        let (look, sub) = match count > 1 {
+            true => (widget::tab::TabLook::Pill, None),
+            false => (widget::tab::TabLook::Title, sub),
+        };
         let mut tab = widget::Tab::new(title, id)
+            .look(look)
+            .sub(sub)
             .active(state.active)
             .closable(state.closable);
         // The GUI panes pick the `gui` role they show from a badge on their
@@ -770,10 +824,50 @@ where
         self.on_tab_button(tiles, tile_id, res.tab)
     }
 
-    fn tab_bar_color(&self, visuals: &egui::Visuals) -> egui::Color32 {
-        // This matches the `CentralPanel` fill so that the color looks
-        // continuous.
-        visuals.panel_fill
+    fn tab_bar_color(&self, _visuals: &egui::Visuals) -> egui::Color32 {
+        // The header sits on the pane's rounded ground. See `chrome`.
+        egui::Color32::TRANSPARENT
+    }
+
+    fn tab_bar_height(&self, _style: &egui::Style) -> f32 {
+        chrome::HEADER_HEIGHT
+    }
+
+    fn tab_bar_hline_stroke(&self, _visuals: &egui::Visuals) -> egui::Stroke {
+        egui::Stroke::NONE
+    }
+
+    fn top_bar_right_ui(
+        &mut self,
+        tiles: &egui_tiles::Tiles<Pane>,
+        ui: &mut egui::Ui,
+        tile_id: egui_tiles::TileId,
+        tabs: &egui_tiles::Tabs,
+        _scroll_offset: &mut f32,
+    ) {
+        // The active pane's actions show while its pane is hovered or
+        // focused, so a quiet header stays quiet.
+        let Some(active) = tabs.active else { return };
+        let Some(pane) = tiles.get_pane(&active) else {
+            return;
+        };
+        let hovered = tiles
+            .rect(tile_id)
+            .zip(ui.ctx().pointer_hover_pos())
+            .is_some_and(|(rect, pos)| rect.contains(pos));
+        if !hovered && self.focus != Some(tile_id) {
+            return;
+        }
+        ui.add_space(chrome::HEADER_INSET - 2.0);
+        if pane_is_hideable(pane) && chrome::icon_button(ui, chrome::Icon::Hide, "hide").clicked() {
+            self.actions.push(chrome::PaneAction::Hide(pane.clone()));
+        }
+        if pane_is_poppable(pane)
+            && chrome::icon_button(ui, chrome::Icon::PopOut, "pop out to a window").clicked()
+        {
+            self.actions
+                .push(chrome::PaneAction::PopOut(active, pane.clone()));
+        }
     }
 
     fn resize_stroke(

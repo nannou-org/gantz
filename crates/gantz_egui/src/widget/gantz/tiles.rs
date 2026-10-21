@@ -1,7 +1,7 @@
 //! The panes and the tile tree that lays them out, including its sizing.
 
+use super::Gantz;
 use super::state::{GantzState, ViewToggles};
-use super::{Gantz, LogSource};
 use crate::{
     HeadAccess,
     widget::{self},
@@ -118,9 +118,9 @@ fn node_view_title(pane: &NodeViewPane) -> String {
     s
 }
 
-/// The display title for a pane, shared by the tab bar, floating windows and
-/// the `windowed_panes` report. Panes tied to the focused head suffix it,
-/// for example `Steel - main`.
+/// The display title for a pane, shared by floating windows and the
+/// `windowed_panes` report. Panes tied to the focused head follow it with the
+/// head, for example `steel · main`. See [`pane_label`].
 pub(super) fn pane_title<Access>(
     gantz: &Gantz<'_>,
     access: &Access,
@@ -130,33 +130,47 @@ pub(super) fn pane_title<Access>(
 where
     Access: HeadAccess,
 {
-    let with_head = |label: &str| match access.heads().get(focused_head) {
-        Some(head) => format!("{label} - {head}"),
-        None => label.to_string(),
-    };
+    match pane_label(gantz, access, focused_head, pane) {
+        (title, Some(sub)) => format!("{title} · {sub}"),
+        (title, None) => title,
+    }
+}
+
+/// A pane's title, and the focused head's name for a pane tied to it. A tab
+/// shows the head as quieter text after the title.
+pub(super) fn pane_label<Access>(
+    gantz: &Gantz<'_>,
+    access: &Access,
+    focused_head: usize,
+    pane: &Pane,
+) -> (String, Option<String>)
+where
+    Access: HeadAccess,
+{
+    let head = access.heads().get(focused_head).map(|h| h.to_string());
+    let with_head = |label: &str| (label.to_string(), head.clone());
+    let plain = |label: &str| (label.to_string(), None);
     match pane {
         Pane::Ext(key) => match gantz.ext_panes.iter().find(|p| p.key() == *key) {
-            Some(p) => with_head(p.title()),
-            None => key.clone(),
+            Some(p) => with_head(&p.title().to_lowercase()),
+            None => plain(key),
         },
-        Pane::GraphConfig => with_head("Graph"),
-        Pane::GraphScene => "Graphs".to_string(),
-        Pane::Graphs => "Graphs".to_string(),
-        Pane::GuiPerf => "GUI Perf".to_string(),
-        Pane::History => "History".to_string(),
-        Pane::Settings => "Settings".to_string(),
+        Pane::GraphConfig => with_head("graph"),
+        Pane::GraphScene => plain("scene"),
+        Pane::Graphs => plain("graphs"),
+        Pane::GuiPerf => plain("gui perf"),
+        Pane::History => plain("history"),
+        Pane::Settings => plain("settings"),
         Pane::Logs => match gantz.log_source {
-            None => "Logs (No Source)".to_string(),
-            Some(LogSource::Logger(_)) => "Logs".to_string(),
-            #[cfg(feature = "tracing")]
-            Some(LogSource::TraceCapture(..)) => "Tracing".to_string(),
+            None => ("logs".to_string(), Some("no source".to_string())),
+            Some(_) => plain("logs"),
         },
-        Pane::NodeInspector => with_head("Node Inspector"),
-        Pane::NodeView(p) => node_view_title(p),
-        Pane::Steel => with_head("Steel"),
-        Pane::GuiPreview => with_head("GUI Preview"),
-        Pane::GuiTree => with_head("GUI Tree"),
-        Pane::VmPerf => with_head("VM Perf"),
+        Pane::NodeInspector => with_head("inspector"),
+        Pane::NodeView(p) => plain(&node_view_title(p)),
+        Pane::Steel => with_head("steel"),
+        Pane::GuiPreview => with_head("gui preview"),
+        Pane::GuiTree => with_head("gui tree"),
+        Pane::VmPerf => with_head("vm perf"),
     }
 }
 
