@@ -5,7 +5,6 @@ use crate::{
     node::{NodeCodec, NodeInstances},
     response::DynResponse,
 };
-use egui::emath::GuiRounding;
 use egui_graph::{self, SocketKind, node::EdgeEvent};
 use gantz_ca::{DataGraph, NodeData};
 use gantz_core::{Edge, Node, node};
@@ -1415,77 +1414,84 @@ fn diagnostic_node_at_level(diag_path: &[node::Id], level: &[node::Id]) -> Optio
     diag_path.strip_prefix(level)?.first().copied()
 }
 
-/// Paint a glow and hover message over the nodes implicated by diagnostics,
-/// and tint the scene border when any diagnostic cannot be attributed to a
-/// node visible at this level, for example a whole-graph error.
+/// Mark the nodes implicated by diagnostics with an outline in the error
+/// colour and a tag under the node with the first message. Hovering the node
+/// shows every message. A diagnostic that no node visible at this level can
+/// take, for example a whole-graph error, becomes a toast.
 pub fn paint_diagnostics(
     diagnostics: &[gantz_core::Diagnostic],
     level: &[node::Id],
     response: &GraphSceneResponse,
     ui: &egui::Ui,
 ) {
-    if diagnostics.is_empty() {
-        return;
-    }
-    let color = ui.visuals().error_fg_color;
-    let mut unattributed = false;
+    let mut flagged: Vec<(&NodeResponse, Vec<&str>)> = vec![];
+    let mut unattributed = vec![];
     for diag in diagnostics {
-        let flagged = diagnostic_node_at_level(&diag.path, level).and_then(|flag| {
-            let ix = response
-                .nodes
-                .iter()
-                .position(|(ix, _)| ix.index() == flag)?;
-            Some(&response.nodes[ix].1)
+        let node_response = diagnostic_node_at_level(&diag.path, level).and_then(|flag| {
+            let (_, node) = response.nodes.iter().find(|(ix, _)| ix.index() == flag)?;
+            Some(node)
         });
-        let Some(node_response) = flagged else {
-            unattributed = true;
+        let Some(node_response) = node_response else {
+            unattributed.push(diag.message.as_str());
             continue;
         };
-        // Paint on the node's own layer so the scene transform applies.
-        // Everything the painter receives must be in layer-local
-        // coordinates. egui maps a transformed layer's clip rects through
-        // its transform at tessellation, so the pane's global clip is
-        // mapped into local space rather than intersected as-is.
-        let to_global = ui
-            .ctx()
-            .layer_transform_to_global(node_response.layer_id)
-            .unwrap_or(egui::emath::TSTransform::IDENTITY);
-        let inv = to_global.inverse();
-        // The tessellator's `round_rects_to_pixels` snaps each rect to
-        // physical pixels independently. At fractional transforms the rings
-        // can land one pixel off the frame's own snapped edges. Snap the frame
-        // rect the same way the frame's shape will be, derive the rings from
-        // it, and disable their re-rounding so the gap stays even.
-        let ppp = ui.ctx().pixels_per_point();
-        let frame = inv.mul_rect(to_global.mul_rect(node_response.rect).round_to_pixels(ppp));
-        let mut painter = ui.ctx().layer_painter(node_response.layer_id);
-        let local_clip = inv.mul_rect(ui.clip_rect());
-        painter.set_clip_rect(local_clip.intersect(frame.expand(16.0)));
-        // A soft glow of thin rings hugging the frame and fading quickly. Ring
-        // corners grow from the node frame's radius so the arcs stay
-        // concentric. See `egui_graph::node::default_frame`.
-        let frame_radius = ui.visuals().window_corner_radius;
-        let rings = [(1.0f32, 1.5f32, 0.45), (3.0, 2.0, 0.16), (5.5, 2.5, 0.06)];
-        for (expand, width, alpha) in rings {
-            painter.add(
-                egui::epaint::RectShape::stroke(
-                    frame.expand(expand),
-                    frame_radius + expand.round() as u8,
-                    egui::Stroke::new(width, color.gamma_multiply(alpha)),
-                    egui::StrokeKind::Outside,
-                )
-                .with_round_to_pixels(false),
-            );
+        match flagged.iter_mut().find(|(n, _)| n.id == node_response.id) {
+            Some((_, messages)) => messages.push(&diag.message),
+            None => flagged.push((node_response, vec![&diag.message])),
         }
-        (**node_response).clone().on_hover_text(&diag.message);
     }
-    if unattributed {
-        ui.painter().rect_stroke(
-            response.scene.rect,
-            0,
-            egui::Stroke::new(2.0f32, color.gamma_multiply(0.6)),
-            egui::StrokeKind::Inside,
-        );
+    for (node_response, messages) in flagged {
+        error_tag(ui, node_response, &messages);
+        (**node_response)
+            .clone()
+            .on_hover_text(messages.join("\n\n"));
+    }
+    toast_unattributed(ui.ctx(), response.scene.id, &unattributed);
+}
+
+/// The outline and tag of a node with errors. See [`paint_diagnostics`].
+fn error_tag(ui: &egui::Ui, node: &egui::Response, messages: &[&str]) {
+    let color = ui.visuals().error_fg_color;
+    // Paint on the node's own layer so the scene transform applies.
+    // Everything the painter receives must be in layer-local coordinates.
+    // egui maps a transformed layer's clip rects through its transform at
+    // tessellation, so the pane's global clip is mapped into local space
+    // rather than intersected as-is.
+    let to_global = ui
+        .ctx()
+        .layer_transform_to_global(node.layer_id)
+        .unwrap_or(egui::emath::TSTransform::IDENTITY);
+    let inv = to_global.inverse();
+    let mut painter = ui.ctx().layer_painter(node.layer_id);
+    painter.set_clip_rect(inv.mul_rect(ui.clip_rect()));
+    let frame = node.rect;
+    let radius = ui.visuals().window_corner_radius;
+    painter.rect_stroke(
+        frame,
+        radius,
+        egui::Stroke::new(kit::OUTLINE, color),
+        egui::StrokeKind::Outside,
+    );
+    let mut text = kit::elide(messages.first().copied().unwrap_or(""), kit::TAG_CHARS);
+    if messages.len() > 1 {
+        text.push_str(&format!(" +{}", messages.len() - 1));
+    }
+    let text_color = crate::style::color(ui, crate::style::Role::Panel);
+    let pos = frame.left_bottom() + egui::vec2(0.0, kit::TAG_GAP);
+    kit::paint_tag(&painter, ui.style(), pos, &text, color, text_color);
+}
+
+/// Toast each diagnostic of the scene `id` that no node takes, once per
+/// change of the set. See [`paint_diagnostics`].
+fn toast_unattributed(ctx: &egui::Context, id: egui::Id, messages: &[&str]) {
+    let id = id.with("unattributed-diagnostics");
+    let hash = egui::util::hash(messages);
+    if ctx.data(|d| d.get_temp::<u64>(id)) == Some(hash) {
+        return;
+    }
+    ctx.data_mut(|d| d.insert_temp(id, hash));
+    for message in messages {
+        super::toast::push(ctx, super::toast::Severity::Error, *message);
     }
 }
 

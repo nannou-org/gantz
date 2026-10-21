@@ -15,6 +15,12 @@ const SWITCH: egui::Vec2 = egui::vec2(1.65, 1.0);
 /// The room between a group of [`pills`] and its outline.
 const PILLS_MARGIN: i8 = 1;
 
+/// The gap between a node and a tag that hangs under it. See [`paint_tag`].
+pub const TAG_GAP: f32 = 8.0;
+
+/// The most chars of a message that a tag shows. See [`elide`].
+pub const TAG_CHARS: usize = 40;
+
 /// A group card: an optional title, optional context to its right, and
 /// `add_contents` below. [`Shape::cards`][crate::style::Shape::cards] chooses whether it is shaded or
 /// outlined.
@@ -284,6 +290,36 @@ pub fn danger_item(ui: &mut egui::Ui, label: &str, shortcut: Option<String>) -> 
 /// acts on.
 pub fn menu_heading(ui: &mut egui::Ui, text: &str) {
     ui.label(egui::RichText::new(text).small().weak());
+}
+
+/// Paint a small tag of `text` in `text_color` on `fill`, with its top-left
+/// corner at `pos`. A node's error hangs under it on one. Returns the tag's
+/// rect.
+pub fn paint_tag(
+    painter: &egui::Painter,
+    style: &egui::Style,
+    pos: egui::Pos2,
+    text: &str,
+    fill: egui::Color32,
+    text_color: egui::Color32,
+) -> egui::Rect {
+    let font = egui::TextStyle::Small.resolve(style);
+    let galley = painter.layout_no_wrap(text.to_string(), font, text_color);
+    let pad = egui::vec2(6.0, 2.0);
+    let rect = egui::Rect::from_min_size(pos, galley.size() + pad * 2.0);
+    let radius = style::shape(painter.ctx()).widget_corner(rect.height());
+    painter.rect_filled(rect, radius, fill);
+    painter.galley(rect.min + pad, galley, text_color);
+    rect
+}
+
+/// The first line of `text`, cut to at most `max` chars with an ellipsis.
+pub fn elide(text: &str, max: usize) -> String {
+    let line = text.lines().next().unwrap_or("");
+    match line.char_indices().nth(max) {
+        Some((end, _)) => format!("{}…", &line[..end]),
+        None => line.to_string(),
+    }
 }
 
 /// The height of a [`pill`]: a line of button text with a little room.
