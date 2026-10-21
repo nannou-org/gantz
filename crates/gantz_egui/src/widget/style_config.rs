@@ -18,7 +18,7 @@ use super::{
 use crate::{
     StyleConfig,
     style::{
-        ColorRef, Group, Palette, Palettes, Role, Roles, Shape, Swatch, base16,
+        CardStyle, ColorRef, Group, Palette, Palettes, Role, Roles, Shape, Swatch, base16,
         palette::{from_hex, to_hex},
     },
 };
@@ -474,11 +474,7 @@ fn role_row(
     hovered: Option<Swatch>,
     ui: &mut egui::Ui,
 ) {
-    let contrast = role.backdrop().map(|backdrop| {
-        let fg = roles.resolve(role, palette);
-        let bg = roles.resolve(backdrop, palette);
-        (crate::style::contrast(fg, bg), backdrop)
-    });
+    let contrast = crate::style::role_contrast(roles, role, palette);
     let min = role.min_contrast();
     let mut label = egui::RichText::new(role.label());
     if hovered == Some(roles.get(role).swatch) {
@@ -628,6 +624,27 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
     egui::Grid::new("style_shape")
         .num_columns(2)
         .show(ui, |ui| {
+            ui.label("Roundness").on_hover_text(
+                "How round corners are. 0 keeps the corner radii below. 1 makes buttons and \
+                 tabs full capsules.",
+            );
+            ui.add(egui::Slider::new(&mut shape.roundness, 0.0..=1.0).fixed_decimals(2));
+            ui.end_row();
+
+            ui.label("Group cards").on_hover_text(
+                "How a group of settings, or a node in the inspector, stands apart from its \
+                 pane. Nested shades it. Outline draws its edge.",
+            );
+            super::kit::pills(
+                ui,
+                &mut shape.cards,
+                &[
+                    (CardStyle::Nested, "Nested"),
+                    (CardStyle::Outline, "Outline"),
+                ],
+            );
+            ui.end_row();
+
             ui.label("Widget corners")
                 .on_hover_text("The corner radius of buttons and other widgets.");
             ui.add(
@@ -670,13 +687,26 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
             );
             ui.end_row();
 
-            ui.label("Separator width").on_hover_text(
-                "The width of the border between panes. It is also the gap between them.",
+            ui.label("Pane gap").on_hover_text(
+                "The gap between panes, where the scene shows through. Drag it to resize \
+                 the panes on either side.",
             );
             ui.add(
                 egui::DragValue::new(&mut shape.separator_width)
                     .speed(0.1)
-                    .range(0.5..=16.0)
+                    .range(1.0..=24.0)
+                    .suffix(" px"),
+            );
+            ui.end_row();
+
+            ui.label("Pane outline").on_hover_text(
+                "The width of the outline around each pane. 0 draws none. Inked palettes \
+                 need one, since their panes share the scene's colour.",
+            );
+            ui.add(
+                egui::DragValue::new(&mut shape.pane_outline)
+                    .speed(0.1)
+                    .range(0.0..=4.0)
                     .suffix(" px"),
             );
             ui.end_row();

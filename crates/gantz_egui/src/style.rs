@@ -17,6 +17,7 @@ pub use palette::{ColorRef, Palette, Swatch};
 pub use role::{Group, Role, Roles};
 
 pub mod base16;
+pub mod font;
 pub mod palette;
 pub mod role;
 
@@ -67,13 +68,21 @@ pub enum SaveError {
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct Shape {
-    /// The width of the border between panes. It is also the gap between
-    /// them.
+    /// The gap between panes, where the scene shows through. Dragging it
+    /// resizes the panes on either side.
     pub separator_width: f32,
     /// The corner radius of buttons and other widgets.
     pub widget_radius: u8,
-    /// The corner radius of windows, menus and popups.
+    /// The corner radius of panes, windows, menus and popups.
     pub window_radius: u8,
+    /// How round corners are, from the radii above at 0 to full capsules at 1.
+    pub roundness: f32,
+    /// How a group of settings, or a node's entry in the inspector, stands
+    /// apart from the pane around it.
+    pub cards: CardStyle,
+    /// The width of the outline around each pane. 0 draws none. An outline
+    /// suits a palette whose panes share the scene's colour.
+    pub pane_outline: f32,
     /// A scale on the gaps and padding between and within widgets.
     pub spacing: f32,
     /// The size of body text in points. The other text styles keep their
@@ -81,6 +90,16 @@ pub struct Shape {
     pub text_size: f32,
     /// Whether windows and popups cast a shadow.
     pub shadows: bool,
+}
+
+/// How a group card stands apart from the pane around it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub enum CardStyle {
+    /// A shaded card, one step from the pane.
+    #[default]
+    Nested,
+    /// An outlined card on the pane's own fill.
+    Outline,
 }
 
 /// Every role's colour in one theme, as last applied to a context.
@@ -111,13 +130,35 @@ impl Default for Palettes {
 impl Default for Shape {
     fn default() -> Self {
         Self {
-            separator_width: 2.0,
-            widget_radius: 2,
-            window_radius: 6,
+            separator_width: 8.0,
+            widget_radius: 6,
+            window_radius: 14,
+            roundness: 0.0,
+            cards: CardStyle::Nested,
+            pane_outline: 0.0,
             spacing: 1.0,
             text_size: 13.0,
             shadows: true,
         }
+    }
+}
+
+impl Shape {
+    /// The corner radius of a widget `height` points tall. It runs from
+    /// [`Self::widget_radius`] to a full capsule as [`Self::roundness`] rises.
+    pub fn widget_corner(&self, height: f32) -> f32 {
+        round(f32::from(self.widget_radius), height / 2.0, self.roundness)
+    }
+
+    /// The corner radius of panes, windows, menus and popups.
+    pub fn window_corner(&self) -> f32 {
+        let base = f32::from(self.window_radius);
+        round(base, base + 10.0, self.roundness)
+    }
+
+    /// The corner radius of a group card inside a pane.
+    pub fn card_corner(&self) -> f32 {
+        (self.window_corner() - 4.0).max(0.0)
     }
 }
 
@@ -209,6 +250,9 @@ pub fn style(cfg: &StyleConfig, theme: egui::Theme) -> egui::Style {
 
 /// `style` with the corners, spacing, text size and shadows of `shape`.
 fn shaped(mut style: egui::Style, shape: &Shape) -> egui::Style {
+    let k = shape.spacing;
+    let widget = corner(shape.widget_corner(style.spacing.interact_size.y * k));
+    let window = corner(shape.window_corner());
     let v = &mut style.visuals;
     let w = &mut v.widgets;
     for w in [
@@ -218,16 +262,15 @@ fn shaped(mut style: egui::Style, shape: &Shape) -> egui::Style {
         &mut w.active,
         &mut w.open,
     ] {
-        w.corner_radius = egui::CornerRadius::same(shape.widget_radius);
+        w.corner_radius = widget;
     }
-    v.window_corner_radius = egui::CornerRadius::same(shape.window_radius);
-    v.menu_corner_radius = egui::CornerRadius::same(shape.window_radius);
+    v.window_corner_radius = window;
+    v.menu_corner_radius = window;
     if !shape.shadows {
         v.window_shadow = egui::Shadow::NONE;
         v.popup_shadow = egui::Shadow::NONE;
     }
 
-    let k = shape.spacing;
     let s = &mut style.spacing;
     s.item_spacing *= k;
     s.button_padding *= k;
@@ -277,7 +320,8 @@ pub fn visuals(palette: &Palette, roles: &Roles, theme: egui::Theme) -> egui::Vi
         w.weak_bg_fill = fill;
     };
     let w = &mut v.widgets;
-    fills(&mut w.noninteractive, c(Panel));
+    // egui_graph fills the scene with the noninteractive fill.
+    fills(&mut w.noninteractive, c(Scene));
     w.noninteractive.bg_stroke.color = c(Border);
     w.noninteractive.fg_stroke.color = c(Text);
     fills(&mut w.inactive, c(WidgetFill));
@@ -307,6 +351,7 @@ pub fn theme_of(visuals: &egui::Visuals) -> egui::Theme {
 /// on its next frame. A freshly spawned pop-out window is one example. The
 /// primary context after a wholesale `Memory` restore is another.
 pub fn apply(ctx: &egui::Context, cfg: &StyleConfig) {
+    font::install(ctx);
     let id = egui::Id::new(APPLIED_ID);
     if ctx.data(|d| d.get_temp::<StyleConfig>(id)).as_ref() == Some(cfg) {
         return;
@@ -317,9 +362,17 @@ pub fn apply(ctx: &egui::Context, cfg: &StyleConfig) {
         let colors = Colors(std::array::from_fn(|i| cfg.resolve(theme, Role::ALL[i])));
         ctx.data_mut(|d| d.insert_temp(colors_id(theme), colors));
     }
+    ctx.data_mut(|d| d.insert_temp(shape_id(), cfg.shape));
     ctx.data_mut(|d| d.insert_temp(id, cfg.clone()));
     // The `Ui`s built so far this pass carry the old style.
     ctx.request_repaint();
+}
+
+/// The shape last applied to `ctx`, or the default shape before any is
+/// applied.
+pub fn shape(ctx: &egui::Context) -> Shape {
+    ctx.data(|d| d.get_temp::<Shape>(shape_id()))
+        .unwrap_or_default()
 }
 
 /// The colour of `role` in the style of `ui`.
@@ -342,6 +395,17 @@ pub fn color_of(ctx: &egui::Context, theme: egui::Theme, role: Role) -> egui::Co
 pub fn contrast(fg: egui::Color32, bg: egui::Color32) -> f32 {
     let (a, b) = (luminance(over(fg, bg)), luminance(bg));
     (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+
+/// The contrast of `role` over its [`Role::backdrop`], with the backdrop it
+/// was measured over. A translucent backdrop, such as a widget fill, is first
+/// composited over the pane it usually sits on.
+pub fn role_contrast(roles: &Roles, role: Role, palette: &Palette) -> Option<(f32, Role)> {
+    let backdrop = role.backdrop()?;
+    let fg = roles.resolve(role, palette);
+    let pane = roles.resolve(Role::Panel, palette);
+    let bg = over(roles.resolve(backdrop, palette), pane);
+    Some((contrast(fg, bg), backdrop))
 }
 
 /// Serialize a config as the text of an exported style file.
@@ -371,6 +435,21 @@ fn over(fg: egui::Color32, bg: egui::Color32) -> egui::Color32 {
     )
 }
 
+/// The radius `t` of the way from `base` to `full`, with `t` clamped to
+/// `0..=1`.
+fn round(base: f32, full: f32, t: f32) -> f32 {
+    base + (full - base).max(0.0) * t.clamp(0.0, 1.0)
+}
+
+/// A uniform corner radius, rounded to the whole points egui stores.
+fn corner(radius: f32) -> egui::CornerRadius {
+    egui::CornerRadius::same(radius.round().clamp(0.0, 255.0) as u8)
+}
+
+fn shape_id() -> egui::Id {
+    egui::Id::new(APPLIED_ID).with("shape")
+}
+
 fn colors_id(theme: egui::Theme) -> egui::Id {
     egui::Id::new(APPLIED_ID).with(theme)
 }
@@ -378,8 +457,8 @@ fn colors_id(theme: egui::Theme) -> egui::Id {
 #[cfg(test)]
 mod tests {
     use super::{
-        Palettes, Role, SaveError, StyleConfig, Swatch, apply, color_of, contrast, from_ron, style,
-        to_ron,
+        Palettes, Role, SaveError, StyleConfig, Swatch, apply, color_of, contrast, from_ron,
+        role_contrast, style, to_ron,
     };
 
     /// A config with both palettes and a role customised.
@@ -466,13 +545,11 @@ mod tests {
     fn default_style_is_readable() {
         let cfg = StyleConfig::default();
         for theme in [egui::Theme::Dark, egui::Theme::Light] {
+            let palette = cfg.palettes.get(theme);
             for &role in Role::ALL {
-                let Some(backdrop) = role.backdrop() else {
+                let Some((ratio, _)) = role_contrast(&cfg.roles, role, palette) else {
                     continue;
                 };
-                let fg = cfg.resolve(theme, role);
-                let bg = cfg.resolve(theme, backdrop);
-                let ratio = contrast(fg, bg);
                 assert!(ratio >= role.min_contrast(), "{theme:?} {role:?} {ratio}");
             }
         }

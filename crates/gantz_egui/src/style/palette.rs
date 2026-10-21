@@ -60,14 +60,14 @@ pub struct ColorRef {
 }
 
 impl Palette {
-    /// The default dark palette. It is close to egui's own dark theme.
+    /// The default dark palette, "gantz Dark".
     pub fn dark() -> Self {
-        Self::from(&super::base16::EGUI_DARK)
+        Self::from(&super::base16::GANTZ_DARK)
     }
 
-    /// The default light palette. It is close to egui's own light theme.
+    /// The default light palette, "gantz Light".
     pub fn light() -> Self {
-        Self::from(&super::base16::EGUI_LIGHT)
+        Self::from(&super::base16::GANTZ_LIGHT)
     }
 
     /// The colour of `swatch`.

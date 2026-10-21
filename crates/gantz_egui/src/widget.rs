@@ -47,6 +47,7 @@ pub mod head_name_edit;
 pub mod head_row;
 pub mod history_view;
 pub mod keybinds_config;
+pub mod kit;
 pub mod label_button;
 pub mod label_toggle;
 pub mod log_view;
@@ -189,18 +190,14 @@ pub(crate) fn push_entry<T: RunEntry>(entries: &mut VecDeque<T>, max_entries: us
     }
 }
 
-/// A titled, full-width group. Settings tabs use it to separate sections.
+/// A titled, full-width group card. Settings tabs use it to separate
+/// sections. See [`kit::card`].
 pub fn section<R>(
     ui: &mut egui::Ui,
     title: &str,
     add_contents: impl FnOnce(&mut egui::Ui) -> R,
 ) -> R {
-    ui.group(|ui| {
-        ui.set_min_width(ui.available_width());
-        ui.strong(title);
-        add_contents(ui)
-    })
-    .inner
+    kit::card(ui, Some(title), None, add_contents)
 }
 
 #[cfg(test)]

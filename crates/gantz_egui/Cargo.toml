@@ -15,7 +15,7 @@ tracing = ["dep:tracing", "dep:tracing-subscriber"]
 [dependencies]
 blake3.workspace = true
 egui.workspace = true
-egui_extras.workspace = true
+egui_extras = { workspace = true, features = ["svg"] }
 egui_graph.workspace = true
 egui_plot.workspace = true
 egui_tiles.workspace = true

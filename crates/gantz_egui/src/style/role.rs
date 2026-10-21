@@ -71,14 +71,20 @@ macro_rules! roles {
 }
 
 roles! {
+    scene, Scene, Surface, "Scene",
+        "The ground under the panes: the graph and the gaps between panes.",
+        c(N0);
     canvas, Canvas, Surface, "Canvas",
         "The background of text fields, plots and inspect views.",
         c(N0);
-    panel, Panel, Surface, "Panel",
-        "The background of panes, tab bars and the graph.",
+    panel, Panel, Surface, "Pane",
+        "The background of panes and tab bars.",
         c(N1);
+    card, Card, Surface, "Card",
+        "The background of a group card, when group cards are nested.",
+        c(N2);
     window, Window, Surface, "Window",
-        "The background of windows, menus and popups.",
+        "The background of windows, menus, popups and nodes.",
         c(N1);
     faint, Faint, Surface, "Faint",
         "A barely visible tint, for striped rows.",
@@ -87,44 +93,44 @@ roles! {
         "The background of inline code.",
         c(N2);
     border, Border, Surface, "Border",
-        "Separator lines and the outlines of windows and frames.",
-        c(N2);
+        "Outlines of cards, fields, windows and nodes.",
+        c(N3);
 
     text, Text, Text, "Text",
         "Labels and other plain text.",
-        c(N4);
+        c(N5);
     weak_text, WeakText, Text, "Weak text",
         "Hints, inactive tabs and other secondary text.",
-        c(N4).with_opacity(0.7);
+        c(N4);
     strong_text, StrongText, Text, "Strong text",
         "Headings, the active tab, and widgets while pressed.",
         c(N7);
 
     widget_fill, WidgetFill, Widget, "Widget fill",
-        "The background of buttons, sliders and checkboxes.",
-        c(N2);
+        "The background of buttons, dials and checkboxes.",
+        c(N7).with_opacity(0.07);
     widget_text, WidgetText, Widget, "Widget text",
-        "The text and marks of buttons, sliders and checkboxes.",
-        c(N5);
+        "The text and marks of buttons, dials and checkboxes.",
+        c(N6);
     hover_fill, HoverFill, Widget, "Hovered fill",
         "The background of a widget under the pointer.",
-        c(N3);
+        c(N7).with_opacity(0.12);
     hover_stroke, HoverStroke, Widget, "Hovered outline",
         "The outline of a widget under the pointer.",
         c(N4);
     hover_text, HoverText, Widget, "Hovered text",
         "The text of a widget under the pointer or with an open menu.",
-        c(N6);
+        c(N7);
     active_fill, ActiveFill, Widget, "Pressed fill",
         "The background of a widget while pressed, or with an open menu.",
-        c(N2);
+        c(N7).with_opacity(0.18);
 
     selection, Selection, Accent, "Selection",
         "The background of selected text and selected items.",
-        c(Blue).with_opacity(0.4);
+        c(N7).with_opacity(0.14);
     selection_stroke, SelectionStroke, Accent, "Selection outline",
         "The outline of selected nodes and items, and the text cursor.",
-        c(Blue);
+        c(N7);
     hyperlink, Hyperlink, Accent, "Link",
         "Hyperlinks.",
         c(Blue);
@@ -149,11 +155,11 @@ roles! {
         "The dimming layer over a scene that is busy or awaits a drop.",
         c(N0).with_opacity(0.5);
     separator, Separator, Chrome, "Separator",
-        "The border between panes.",
+        "The gap between panes. Match the scene so panes float on it.",
         c(N0);
     separator_hover, SeparatorHover, Chrome, "Hovered separator",
-        "The border between panes while hovered or dragged.",
-        c(N3);
+        "The gap between panes while hovered or dragged.",
+        c(N4);
 }
 
 /// A heading under which the style editor lists roles.

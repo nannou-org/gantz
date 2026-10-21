@@ -13,6 +13,7 @@ pub mod action;
 pub mod collab;
 mod impls;
 pub mod keybind;
+pub mod logo;
 pub mod merge;
 pub mod node;
 pub mod ops;
