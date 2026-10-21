@@ -58,6 +58,17 @@ pub struct Shape {
     /// The width of the border between panes. It is also the gap between
     /// them.
     pub separator_width: f32,
+    /// The corner radius of buttons and other widgets.
+    pub widget_radius: u8,
+    /// The corner radius of windows, menus and popups.
+    pub window_radius: u8,
+    /// A scale on the gaps and padding between and within widgets.
+    pub spacing: f32,
+    /// The size of body text in points. The other text styles keep their
+    /// size relative to it.
+    pub text_size: f32,
+    /// Whether windows and popups cast a shadow.
+    pub shadows: bool,
 }
 
 /// Every role's colour in one theme, as last applied to a context.
@@ -88,6 +99,11 @@ impl Default for Shape {
     fn default() -> Self {
         Self {
             separator_width: 2.0,
+            widget_radius: 2,
+            window_radius: 6,
+            spacing: 1.0,
+            text_size: 13.0,
+            shadows: true,
         }
     }
 }
@@ -129,10 +145,51 @@ fn default_theme() -> egui::ThemePreference {
 /// Settings that the config does not cover keep egui's defaults for the
 /// theme.
 pub fn style(cfg: &StyleConfig, theme: egui::Theme) -> egui::Style {
-    egui::Style {
+    let style = egui::Style {
         visuals: visuals(cfg.palettes.get(theme), &cfg.roles, theme),
         ..theme.default_style()
+    };
+    shaped(style, &cfg.shape)
+}
+
+/// `style` with the corners, spacing, text size and shadows of `shape`.
+fn shaped(mut style: egui::Style, shape: &Shape) -> egui::Style {
+    let v = &mut style.visuals;
+    let w = &mut v.widgets;
+    for w in [
+        &mut w.noninteractive,
+        &mut w.inactive,
+        &mut w.hovered,
+        &mut w.active,
+        &mut w.open,
+    ] {
+        w.corner_radius = egui::CornerRadius::same(shape.widget_radius);
     }
+    v.window_corner_radius = egui::CornerRadius::same(shape.window_radius);
+    v.menu_corner_radius = egui::CornerRadius::same(shape.window_radius);
+    if !shape.shadows {
+        v.window_shadow = egui::Shadow::NONE;
+        v.popup_shadow = egui::Shadow::NONE;
+    }
+
+    let k = shape.spacing;
+    let s = &mut style.spacing;
+    s.item_spacing *= k;
+    s.button_padding *= k;
+    s.interact_size *= k;
+    s.indent *= k;
+    s.icon_spacing *= k;
+    s.menu_spacing *= k;
+    s.window_margin = s.window_margin * k;
+    s.menu_margin = s.menu_margin * k;
+
+    if let Some(body) = style.text_styles.get(&egui::TextStyle::Body) {
+        let k = shape.text_size / body.size;
+        for font in style.text_styles.values_mut() {
+            font.size *= k;
+        }
+    }
+    style
 }
 
 /// The egui visuals for `theme`, with every colour selected from `palette`
@@ -358,6 +415,40 @@ mod tests {
                 assert!(ratio >= role.min_contrast(), "{theme:?} {role:?} {ratio}");
             }
         }
+    }
+
+    /// The default shape keeps egui's default spacing and text sizes.
+    #[test]
+    fn default_shape_keeps_egui_metrics() {
+        let cfg = StyleConfig::default();
+        for theme in [egui::Theme::Dark, egui::Theme::Light] {
+            let (ours, egui) = (style(&cfg, theme), theme.default_style());
+            assert_eq!(ours.spacing, egui.spacing);
+            assert_eq!(ours.text_styles, egui.text_styles);
+            assert_eq!(ours.visuals.window_shadow, egui.visuals.window_shadow);
+        }
+    }
+
+    /// The shape scales spacing and every text style, rounds corners and can
+    /// drop shadows.
+    #[test]
+    fn shape_applies_to_the_style() {
+        let mut cfg = StyleConfig::default();
+        cfg.shape.spacing = 2.0;
+        cfg.shape.text_size = 26.0;
+        cfg.shape.widget_radius = 5;
+        cfg.shape.window_radius = 9;
+        cfg.shape.shadows = false;
+        let base = egui::Theme::Dark.default_style();
+        let shaped = style(&cfg, egui::Theme::Dark);
+        assert_eq!(shaped.spacing.item_spacing, base.spacing.item_spacing * 2.0);
+        for (text_style, font) in &shaped.text_styles {
+            assert_eq!(font.size, base.text_styles[text_style].size * 2.0);
+        }
+        let v = &shaped.visuals;
+        assert_eq!(v.widgets.hovered.corner_radius, egui::CornerRadius::same(5));
+        assert_eq!(v.window_corner_radius, egui::CornerRadius::same(9));
+        assert_eq!(v.popup_shadow, egui::Shadow::NONE);
     }
 
     /// Re-applying an unchanged config is a no-op, so the per-frame call costs
