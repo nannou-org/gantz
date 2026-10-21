@@ -53,10 +53,10 @@ pub use hooks::{
     on_head_committed, on_head_committed_resync, on_head_opened,
 };
 pub use io::{
-    ExportAllNamedEvent, ExportHeadEvent, ExportStyleEvent, ImportFileEvent, ImportPaletteEvent,
-    ImportStyleEvent, ImportTask, PaletteImportTask, ResetBaseGraphEvent, StyleImportTask,
-    on_export_all_named, on_export_head, on_export_style, on_import_file, on_import_palette,
-    on_import_style, on_reset_base_graph,
+    ExportAllNamedEvent, ExportHeadEvent, ExportPaletteEvent, ExportStyleEvent, ImportFileEvent,
+    ImportPaletteEvent, ImportStyleEvent, ImportTask, PaletteImportTask, ResetBaseGraphEvent,
+    StyleImportTask, on_export_all_named, on_export_head, on_export_palette, on_export_style,
+    on_import_file, on_import_palette, on_import_style, on_reset_base_graph,
 };
 use io::{
     on_import, on_reset_all_demos, on_set_base_source, poll_import_task, poll_palette_import_task,
@@ -74,9 +74,9 @@ pub use response::{
 };
 use response::{
     dispatch_branch_head, dispatch_close_head, dispatch_eval_entry, dispatch_export_all_named,
-    dispatch_export_head, dispatch_export_style, dispatch_file_drop, dispatch_import_palette,
-    dispatch_import_style, dispatch_open_head, dispatch_replace_head, dispatch_reset_base_graph,
-    dispatch_state_written,
+    dispatch_export_head, dispatch_export_palette, dispatch_export_style, dispatch_file_drop,
+    dispatch_import_palette, dispatch_import_style, dispatch_open_head, dispatch_replace_head,
+    dispatch_reset_base_graph, dispatch_state_written,
 };
 use settings::{on_compile_config, on_validate_change_tracking};
 pub use sugar::BevySugar;
@@ -169,6 +169,7 @@ impl Plugin for GantzEguiPlugin {
             .register_response_with::<gantz_egui::ExportStyle>(dispatch_export_style)
             .register_response_with::<gantz_egui::ImportStyle>(dispatch_import_style)
             .register_response_with::<gantz_egui::ImportPalette>(dispatch_import_palette)
+            .register_response_with::<gantz_egui::ExportPalette>(dispatch_export_palette)
             .register_app_response::<gantz_egui::NewGraph>()
             .register_app_response::<gantz_egui::RemoveName>()
             .register_app_response::<gantz_egui::Import>()
@@ -230,6 +231,7 @@ impl Plugin for GantzEguiPlugin {
             .add_observer(on_export_style)
             .add_observer(on_import_style)
             .add_observer(on_import_palette)
+            .add_observer(on_export_palette)
             .add_observer(on_import_file)
             .add_observer(on_reset_base_graph)
             .add_observer(on_new_graph)
