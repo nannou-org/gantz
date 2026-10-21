@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.10.0...bevy_gantz_egui-v0.11.0) - 2026-10-21
+
+### Added
+
+- *(gantz_egui)* save, reset and export palettes
+- *(gantz_egui)* add palette presets and base16 import
+- [**breaking**] move base graphs into dot namespaces
+- [**breaking**] rename old base graph names on load and import
+
+### Fixed
+
+- *(bevy_gantz_egui)* commit layouts only after a layout edit
+
+### Other
+
+- [**breaking**] move the format, export and base modules to gantz_edit
+- *(gantz_edit)* [**breaking**] make the node codec generic over the node type
+- *(bevy_gantz_egui)* index driven nodes per graph
+- *(gantz_ca)* [**breaking**] tidy the registry API
+- *(bevy_gantz_egui)* share the file dialog tasks
+
 ## [0.10.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.9.0...bevy_gantz_egui-v0.10.0) - 2026-10-17
 
 ### Added
