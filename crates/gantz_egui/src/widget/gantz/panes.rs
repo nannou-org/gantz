@@ -257,14 +257,13 @@ where
         let id = egui::Id::new("gantz-main-scene");
         head_scene(cx, ui, main, id, &ext_panes);
     }
-    let margin = scene_overlay_margin(ui.style());
-    tab_strip(
-        cx,
-        ui,
-        rect.left_top() + egui::vec2(margin, margin),
-        main.as_ref(),
-        &ext_panes,
-    );
+    // Patch-only shows the graphs alone. `Gantz::show` draws a mark in the
+    // tab strip's place.
+    if !cx.state.view_toggles.patch_only {
+        let margin = scene_overlay_margin(ui.style());
+        let anchor = rect.left_top() + egui::vec2(margin, margin);
+        tab_strip(cx, ui, anchor, main.as_ref(), &ext_panes);
+    }
 
     let PaneCtx {
         gantz,

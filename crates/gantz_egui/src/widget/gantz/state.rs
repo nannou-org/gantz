@@ -460,6 +460,9 @@ pub struct ViewToggles {
     pub graph_config: bool,
     /// Where the status line shows.
     pub status: StatusStyle,
+    /// Whether only the graphs show. Every pane with a toggle hides, along
+    /// with the tab strip and the status line, until patch-only ends.
+    pub patch_only: bool,
     /// Per-[`Pane::Ext`] visibility, keyed by the provider key. A missing
     /// entry means hidden, matching the tray panes' default. Keys of
     /// long-gone providers linger harmlessly.
@@ -488,6 +491,7 @@ impl Default for ViewToggles {
             gui_tree: false,
             graph_config: true,
             status: StatusStyle::default(),
+            patch_only: false,
             ext: BTreeMap::new(),
         }
     }

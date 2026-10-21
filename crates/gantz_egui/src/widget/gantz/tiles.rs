@@ -970,28 +970,31 @@ pub(super) fn pane_is_poppable(pane: &Pane) -> bool {
 /// Ensure the view toggles match the pane visibility.
 pub(super) fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &ViewToggles) {
     let ids: Vec<_> = tree.tiles.tile_ids().collect();
-    let open = view.sidebar_open;
+    // Patch-only hides every pane that has a toggle.
+    let tools = !view.patch_only;
+    let open = tools && view.sidebar_open;
     // Sidebar panes are gated by both the sidebar being open and their
     // individual toggle. The tray panes are independent of the sidebar.
     for &id in &ids {
         if let Some(pane) = tree.tiles.get_pane(&id) {
-            match pane {
-                Pane::GraphScene => (),
-                Pane::Ext(key) => tree.set_visible(id, view.ext.get(key).copied().unwrap_or(false)),
-                Pane::Settings => tree.set_visible(id, open && view.settings),
-                Pane::GraphConfig => tree.set_visible(id, open && view.graph_config),
-                Pane::Graphs => tree.set_visible(id, open && view.graphs),
-                Pane::GuiPerf => tree.set_visible(id, open && view.perf_gui),
-                Pane::History => tree.set_visible(id, open && view.history),
-                Pane::NodeInspector => tree.set_visible(id, open && view.node_inspector),
-                Pane::VmPerf => tree.set_visible(id, open && view.perf_vm),
-                Pane::Logs => tree.set_visible(id, view.logs),
-                Pane::Steel => tree.set_visible(id, view.steel),
-                Pane::GuiPreview => tree.set_visible(id, view.gui_preview),
-                Pane::GuiTree => tree.set_visible(id, view.gui_tree),
+            let visible = match pane {
+                Pane::GraphScene => continue,
+                Pane::Ext(key) => tools && view.ext.get(key).copied().unwrap_or(false),
+                Pane::Settings => open && view.settings,
+                Pane::GraphConfig => open && view.graph_config,
+                Pane::Graphs => open && view.graphs,
+                Pane::GuiPerf => open && view.perf_gui,
+                Pane::History => open && view.history,
+                Pane::NodeInspector => open && view.node_inspector,
+                Pane::VmPerf => open && view.perf_vm,
+                Pane::Logs => tools && view.logs,
+                Pane::Steel => tools && view.steel,
+                Pane::GuiPreview => tools && view.gui_preview,
+                Pane::GuiTree => tools && view.gui_tree,
                 // Always visible. A node view is removed by closing, not hiding.
-                Pane::Graph(_) | Pane::NodeView(_) => tree.set_visible(id, true),
-            }
+                Pane::Graph(_) | Pane::NodeView(_) => true,
+            };
+            tree.set_visible(id, visible);
         }
     }
     // A container is visible when any child is.
@@ -1006,6 +1009,33 @@ pub(super) fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &View
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn patch_only_hides_every_toggled_pane() {
+        let mut tree = create_tree();
+        let mut state = GantzState::new();
+        state.view_toggles.sidebar_open = true;
+        state.view_toggles.logs = true;
+        state.view_toggles.patch_only = true;
+        let id = state
+            .graphs
+            .open_pane(gantz_ca::Head::Branch("pane".parse().unwrap()));
+        add_graph_pane(&mut tree, id);
+        set_tile_visibility(&mut tree, &state.view_toggles);
+        let visible = |pane: &Pane| {
+            let id = tree.tiles.find_pane(pane).unwrap();
+            tree.is_visible(id)
+        };
+        assert!(visible(&Pane::GraphScene));
+        assert!(visible(&Pane::Graph(id)));
+        assert!(!visible(&Pane::Graphs));
+        assert!(!visible(&Pane::Logs));
+        // Ending patch-only brings the toggled panes back.
+        state.view_toggles.patch_only = false;
+        set_tile_visibility(&mut tree, &state.view_toggles);
+        assert!(tree.is_visible(tree.tiles.find_pane(&Pane::Graphs).unwrap()));
+        assert!(tree.is_visible(tree.tiles.find_pane(&Pane::Logs).unwrap()));
+    }
 
     /// The fixed sidebar width must be imposed on the sidebar, not the main
     /// area. The anchors must identify the sidebar as the column that does

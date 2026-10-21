@@ -43,6 +43,9 @@ pub enum Action {
     Cut,
     /// Duplicate the selected nodes in place.
     Duplicate,
+    /// Hide or show every pane but the graphs. See
+    /// [`ViewToggles::patch_only`][crate::widget::gantz::ViewToggles::patch_only].
+    TogglePatchOnly,
 }
 
 /// The keymap from action to bindings. It holds only user overrides. See the
@@ -95,6 +98,7 @@ const TOGGLE_NODE_PALETTE: &[KeyboardShortcut] =
 const SELECT_ALL: &[KeyboardShortcut] = &[KeyboardShortcut::new(CMD, Key::A)];
 const CUT: &[KeyboardShortcut] = &[KeyboardShortcut::new(CMD, Key::X)];
 const DUPLICATE: &[KeyboardShortcut] = &[KeyboardShortcut::new(CMD, Key::D)];
+const TOGGLE_PATCH_ONLY: &[KeyboardShortcut] = &[KeyboardShortcut::new(Modifiers::NONE, Key::Tab)];
 
 impl Action {
     /// Every action, in the order the keybinds panel lists them.
@@ -108,6 +112,7 @@ impl Action {
         Action::SelectAll,
         Action::Cut,
         Action::Duplicate,
+        Action::TogglePatchOnly,
     ];
 
     /// A short human-readable name for the panel.
@@ -122,6 +127,7 @@ impl Action {
             Action::SelectAll => "Select all",
             Action::Cut => "Cut",
             Action::Duplicate => "Duplicate",
+            Action::TogglePatchOnly => "Patch only",
         }
     }
 
@@ -137,6 +143,10 @@ impl Action {
             Action::SelectAll => "Select every node in the focused graph.",
             Action::Cut => "Copy the selected nodes to the clipboard, then remove them.",
             Action::Duplicate => "Duplicate the selected nodes in place.",
+            Action::TogglePatchOnly => {
+                "Hide or show every pane but the graphs. Tab moves the keyboard focus instead \
+                 while a widget has it."
+            }
         }
     }
 
@@ -157,6 +167,7 @@ impl Action {
             Action::SelectAll => SELECT_ALL,
             Action::Cut => CUT,
             Action::Duplicate => DUPLICATE,
+            Action::TogglePatchOnly => TOGGLE_PATCH_ONLY,
         }
     }
 }

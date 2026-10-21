@@ -452,6 +452,21 @@ impl<'a> Gantz<'a> {
         style::apply(ui.ctx(), &state.style);
         state.keymap.publish(ui.ctx());
 
+        // Toggle patch-only. While a widget has the keyboard focus, its
+        // binding (Tab by default) moves the focus on instead.
+        let focused = ui.ctx().memory(|m| m.focused().is_some());
+        if !focused && state.keymap.consume(ui, crate::Action::TogglePatchOnly) {
+            state.view_toggles.patch_only = !state.view_toggles.patch_only;
+            // egui reads Tab as a focus move before any widget runs.
+            ui.ctx()
+                .memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+        }
+        let patch_only = state.view_toggles.patch_only;
+        let status_style = match patch_only {
+            true => StatusStyle::Hidden,
+            false => state.view_toggles.status,
+        };
+
         // The persisted outer tree. The version suffix invalidates any tree
         // persisted before the latest default-layout change, forcing a
         // rebuild via `create_tree`.
@@ -482,7 +497,7 @@ impl<'a> Gantz<'a> {
         let widget_area = ui.available_rect_before_wrap();
         // The status gutter takes the bottom of the area and the panes the
         // rest.
-        let tree_area = match state.view_toggles.status {
+        let tree_area = match status_style {
             StatusStyle::Gutter => {
                 let mut rect = widget_area;
                 rect.max.y = (rect.max.y - status::GUTTER_HEIGHT).max(rect.min.y);
@@ -544,7 +559,7 @@ impl<'a> Gantz<'a> {
             problems: status::scan_log(ui.ctx(), self.log_source.as_ref()),
         };
         let inset = chrome::HEADER_INSET;
-        let open_logs = match state.view_toggles.status {
+        let open_logs = match status_style {
             StatusStyle::Gutter => {
                 let gap = state.style.shape.separator_width;
                 let rect = egui::Rect::from_min_max(
@@ -562,7 +577,19 @@ impl<'a> Gantz<'a> {
         if open_logs {
             state.view_toggles.logs = true;
         }
-        let toast_margin = match state.view_toggles.status {
+        if patch_only {
+            let visuals = ui.visuals();
+            let problem = match status.problems {
+                p if p.errors > 0 => Some(visuals.error_fg_color),
+                p if p.warnings > 0 => Some(visuals.warn_fg_color),
+                _ => None,
+            };
+            let pos = scene_rect.min + egui::Vec2::splat(inset * 1.5);
+            if chrome::patch_mark(ui.ctx(), pos, problem) {
+                state.view_toggles.patch_only = false;
+            }
+        }
+        let toast_margin = match status_style {
             StatusStyle::Pill => inset * 2.0 + ui.spacing().interact_size.y,
             StatusStyle::Gutter | StatusStyle::Hidden => inset * 2.0,
         };

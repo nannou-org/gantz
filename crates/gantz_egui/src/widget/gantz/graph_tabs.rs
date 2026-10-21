@@ -61,8 +61,9 @@ pub(super) fn head_scene<Access>(
 
     // The camera rides out for overlays that map graph-space positions to
     // the scene, such as peer pointers.
-    let (graph_response, camera) = match cx.access.with_head_mut(head, |data| {
+    let (graph_response, camera, empty) = match cx.access.with_head_mut(head, |data| {
         let camera = data.view.camera;
+        let empty = data.graph.node_count() == 0;
         let res = graph_scene(
             id,
             cx.gantz.env,
@@ -84,10 +85,10 @@ pub(super) fn head_scene<Access>(
             data.vm,
             ui,
         );
-        (res, camera)
+        (res, camera, empty)
     }) {
-        Some((res, camera)) => (res, Some(camera)),
-        None => (None, None),
+        Some((res, camera, empty)) => (res, Some(camera), empty),
+        None => (None, None, false),
     };
 
     if let Some(response) = graph_response {
@@ -109,6 +110,18 @@ pub(super) fn head_scene<Access>(
                 .push((head.clone(), response.reindex));
         }
         cx.response.responses.extend(Some(head), response.responses);
+    }
+
+    // An empty graph shows how to start, unless a join is still filling it.
+    let awaiting = match (cx.gantz.collab, head) {
+        (Some(collab), gantz_ca::Head::Branch(name)) => collab
+            .sessions
+            .get(name)
+            .is_some_and(|d| d.awaiting_snapshot),
+        _ => false,
+    };
+    if empty && !awaiting {
+        empty_hint(ui, rect, cx.state.view_toggles.patch_only);
     }
 
     // While a join is still connecting or has failed, the graph is only a
@@ -221,6 +234,11 @@ fn app_menu<Access>(
         ui.separator();
         let view = &mut cx.state.view_toggles;
         ui.checkbox(&mut view.sidebar_open, "sidebar");
+        let patch_only = keys(crate::Action::TogglePatchOnly);
+        if widget::kit::menu_item(ui, "patch only", patch_only).clicked() {
+            view.patch_only = true;
+            ui.close();
+        }
         ui.menu_button("panes", |ui| {
             widget::panes_config(view, ext_panes, ui);
             ui.separator();
@@ -425,6 +443,56 @@ fn paint_peer_pointers(
             pointer.color,
         );
     }
+}
+
+/// A quiet hint over an empty graph in `rect`: the outline mark, and the keys
+/// that add a node and that show or hide the panes. Each key sits left of the
+/// centre line and its meaning right of it.
+fn empty_hint(ui: &mut egui::Ui, rect: egui::Rect, patch_only: bool) {
+    // egui_graph draws the scene in a sublayer of this pane's layer, so the
+    // hint takes a later sublayer. Windows over the pane still cover it.
+    let parent = ui.layer_id();
+    let layer = egui::LayerId::new(parent.order, ui.id().with("empty_hint"));
+    ui.ctx().set_sublayer(parent, layer);
+    let builder = egui::UiBuilder::new().layer_id(layer).max_rect(rect);
+    ui.scope_builder(builder, |ui| {
+        let ctx = ui.ctx().clone();
+        let faint = ui.visuals().weak_text_color().gamma_multiply(0.35);
+        let mark_height = (rect.height() * 0.18).clamp(48.0, 120.0);
+        let mark = crate::logo::mark_outline(mark_height, faint);
+        let size = mark.size().unwrap_or(egui::Vec2::splat(mark_height));
+        let center = rect.center() - egui::vec2(0.0, mark_height * 0.5);
+        mark.paint_at(ui, egui::Rect::from_center_size(center, size));
+        let panes = match patch_only {
+            true => "show the panes",
+            false => "hide the panes",
+        };
+        let hints = [
+            (crate::Action::ToggleNodePalette, "add a node"),
+            (crate::Action::TogglePatchOnly, panes),
+        ];
+        let row = ui.spacing().interact_size.y + 4.0;
+        let gap = 6.0;
+        let mut y = center.y + size.y / 2.0 + 20.0;
+        for (action, text) in hints {
+            let Some(keys) = crate::keybind::shortcut_text(&ctx, action) else {
+                continue;
+            };
+            let key_rect =
+                egui::Rect::from_x_y_ranges(rect.left()..=rect.center().x - gap, y..=y + row);
+            let key_ui = egui::UiBuilder::new()
+                .max_rect(key_rect)
+                .layout(egui::Layout::right_to_left(egui::Align::Center));
+            ui.scope_builder(key_ui, |ui| widget::kit::keycap(ui, &keys, false));
+            let text_rect =
+                egui::Rect::from_x_y_ranges(rect.center().x + gap..=rect.right(), y..=y + row);
+            let text_ui = egui::UiBuilder::new()
+                .max_rect(text_rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center));
+            ui.scope_builder(text_ui, |ui| ui.weak(text));
+            y += row;
+        }
+    });
 }
 
 /// Dim a joining session's still-empty scene with its sync progress, or the
