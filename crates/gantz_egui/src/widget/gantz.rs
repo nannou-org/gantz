@@ -495,16 +495,13 @@ impl<'a> Gantz<'a> {
 
         // `available_rect_before_wrap` matches the root rect `Tree::ui` uses.
         let widget_area = ui.available_rect_before_wrap();
-        // The status gutter takes the bottom of the area and the panes the
-        // rest.
-        let tree_area = match status_style {
-            StatusStyle::Gutter => {
-                let mut rect = widget_area;
-                rect.max.y = (rect.max.y - status::GUTTER_HEIGHT).max(rect.min.y);
-                rect
-            }
-            StatusStyle::Pill | StatusStyle::Hidden => widget_area,
-        };
+        // The panes sit inside the window margin. The status gutter takes the
+        // bottom margin's place.
+        let margin = state.style.shape.window_margin;
+        let mut tree_area = widget_area.shrink(margin);
+        if status_style == StatusStyle::Gutter {
+            tree_area.max.y = (widget_area.max.y - status::GUTTER_HEIGHT).max(tree_area.min.y);
+        }
         // Raise any pane below its minimum before the fixed sizes are imposed,
         // so a clamped minimum is not captured as a shrunken sidebar or tray.
         impose_min_sizes(&mut tree, state.style.shape.separator_width, tree_area);
@@ -529,6 +526,7 @@ impl<'a> Gantz<'a> {
         };
         // Reserve the bottom layer for the scene colour and the pane
         // grounds. They are painted once the tree has laid out its rects.
+        chrome::set_bounds(ui.ctx(), tree_area, widget_area);
         let grounds = ui.painter().add(egui::Shape::Noop);
         let tree_ui = egui::UiBuilder::new().max_rect(tree_area);
         ui.scope_builder(tree_ui, |ui| tree.ui(&mut behaviour, ui));
@@ -538,7 +536,8 @@ impl<'a> Gantz<'a> {
         let focus = behaviour.focus;
         response.focused_head = focused_head;
         let theme = style::theme_of(ui.visuals());
-        let shapes = chrome::ground_shapes(&tree, &state.style, theme, widget_area, focus);
+        let shapes =
+            chrome::ground_shapes(ui.ctx(), &tree, &state.style, theme, widget_area, focus);
         ui.painter().set(grounds, egui::Shape::Vec(shapes));
 
         // The status line, and the toasts over the scene.
@@ -561,10 +560,9 @@ impl<'a> Gantz<'a> {
         let inset = chrome::HEADER_INSET;
         let open_logs = match status_style {
             StatusStyle::Gutter => {
-                let gap = state.style.shape.separator_width;
                 let rect = egui::Rect::from_min_max(
-                    egui::pos2(widget_area.min.x + gap + inset, tree_area.max.y),
-                    egui::pos2(widget_area.max.x - gap - inset, widget_area.max.y),
+                    egui::pos2(tree_area.min.x + inset, tree_area.max.y),
+                    egui::pos2(tree_area.max.x - inset, widget_area.max.y),
                 );
                 status::gutter(ui, rect, &status)
             }

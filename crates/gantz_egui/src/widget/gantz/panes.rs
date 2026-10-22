@@ -254,8 +254,12 @@ where
         .graphs
         .resolve_main(cx.access.heads(), cx.focused_head);
     if let Some(main) = &main {
-        let id = egui::Id::new("gantz-main-scene");
-        head_scene(cx, ui, main, id, &ext_panes);
+        let id = super::chrome::main_scene_id();
+        let bounds = super::chrome::reach_window(ui.ctx(), rect);
+        ui.scope_builder(egui::UiBuilder::new().max_rect(bounds), |ui| {
+            ui.set_clip_rect(bounds);
+            head_scene(cx, ui, main, id, &ext_panes);
+        });
     }
     // Patch-only shows the graphs alone. `Gantz::show` draws a mark in the
     // tab strip's place.
@@ -399,14 +403,10 @@ where
         return;
     };
     let ext_panes = ext_pane_entries(cx.gantz);
-    // The pane's chrome paints the inset's rounded ground, so the scene
-    // draws no fill of its own.
+    // The pane's chrome paints the inset's rounded ground.
     let rect = ui.max_rect().shrink(super::chrome::GRAPH_INSET);
     ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-        let widgets = &mut ui.style_mut().visuals.widgets.noninteractive;
-        widgets.bg_fill = egui::Color32::TRANSPARENT;
-        widgets.weak_bg_fill = egui::Color32::TRANSPARENT;
-        let scene_id = egui::Id::new(("gantz-graph-pane", id));
+        let scene_id = super::chrome::graph_pane_scene_id(id);
         head_scene(cx, ui, &head, scene_id, &ext_panes);
     });
 }
@@ -1303,12 +1303,7 @@ fn push_graph_select(responses: &mut Responses, res: widget::graph_select::Graph
 }
 
 fn perf_view(title: &str, capture: &mut widget::PerfCapture, ui: &mut egui::Ui) {
-    // Use Frame::NONE to fill the entire pane with no padding.
-    egui::CentralPanel::default()
-        .frame(egui::Frame::NONE)
-        .show_inside(ui, |ui| {
-            widget::PerfView::new(title, capture).show(ui);
-        });
+    pane_ui(ui, |ui| widget::PerfView::new(title, capture).show(ui));
 }
 
 /// Returns the response from the graph scene if it was shown.

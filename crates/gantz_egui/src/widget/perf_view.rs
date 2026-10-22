@@ -113,8 +113,8 @@ impl<'a> PerfView<'a> {
         ui.scope(|ui| {
             // Remove the 1px border around the plot background.
             ui.style_mut().visuals.widgets.noninteractive.bg_stroke = egui::Stroke::NONE;
-            // Make the plot background blend-in with the pane background.
-            ui.style_mut().visuals.extreme_bg_color = ui.style().visuals.window_fill;
+            // Let the pane show through the plot background.
+            ui.style_mut().visuals.extreme_bg_color = egui::Color32::TRANSPARENT;
 
             let plot_response = plot.show(ui, |plot_ui| {
                 plot_ui.line(line);
