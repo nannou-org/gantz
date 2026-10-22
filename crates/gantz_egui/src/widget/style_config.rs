@@ -20,6 +20,7 @@ use crate::{
     style::{
         CardStyle, ColorRef, GraphPaneStyle, Group, Palette, Palettes, Role, Roles, Shape, Swatch,
         base16,
+        font::Font,
         palette::{from_hex, to_hex},
     },
 };
@@ -620,65 +621,51 @@ fn paint_chip(ui: &egui::Ui, rect: egui::Rect, color: egui::Color32, highlighted
     );
 }
 
-/// The corner, spacing, text and separator controls.
+/// The corner, spacing, text and pane controls.
 fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
+    let radius = |ui: &mut egui::Ui, value: &mut u8, max: u8| {
+        ui.add(egui::Slider::new(value, 0..=max).suffix(" px"));
+    };
+    let px = |ui: &mut egui::Ui, value: &mut f32, range: std::ops::RangeInclusive<f32>| {
+        ui.add(
+            egui::DragValue::new(value)
+                .speed(0.1)
+                .range(range)
+                .fixed_decimals(1)
+                .suffix(" px"),
+        );
+    };
+    let heading = |ui: &mut egui::Ui, text: &str| {
+        ui.label(egui::RichText::new(text).small().weak());
+        ui.end_row();
+    };
     egui::Grid::new("style_shape")
         .num_columns(2)
         .show(ui, |ui| {
-            ui.label("Roundness").on_hover_text(
-                "How round corners are. 0 keeps the corner radii below. 1 makes buttons and \
-                 tabs full capsules.",
+            heading(ui, "corners");
+            ui.label("panes")
+                .on_hover_text("The corner radius of panes, windows, menus and popups.");
+            radius(ui, &mut shape.pane_radius, 32);
+            ui.end_row();
+            ui.label("cards")
+                .on_hover_text("The corner radius of group cards inside panes.");
+            radius(ui, &mut shape.card_radius, 24);
+            ui.end_row();
+            ui.label("controls").on_hover_text(
+                "The corner radius of buttons, fields, pills and other controls. A control \
+                 is never rounder than a capsule.",
             );
-            ui.add(egui::Slider::new(&mut shape.roundness, 0.0..=1.0).fixed_decimals(2));
+            radius(ui, &mut shape.control_radius, 16);
+            ui.end_row();
+            ui.label("nodes").on_hover_text(
+                "The corner radius of nodes. A node is never rounder than half its \
+                 smallest height.",
+            );
+            radius(ui, &mut shape.node_radius, 16);
             ui.end_row();
 
-            ui.label("Group cards").on_hover_text(
-                "How a group of settings, or a node in the inspector, stands apart from its \
-                 pane. Nested shades it. Outline draws its edge.",
-            );
-            super::kit::pills(
-                ui,
-                &mut shape.cards,
-                &[
-                    (CardStyle::Nested, "Nested"),
-                    (CardStyle::Outline, "Outline"),
-                ],
-            );
-            ui.end_row();
-
-            ui.label("Graph panes").on_hover_text(
-                "How a graph pane frames its graph. Open runs the graph up under the \
-                 pane's title. Framed keeps it below the title, as in other panes.",
-            );
-            super::kit::pills(
-                ui,
-                &mut shape.graph_panes,
-                &[
-                    (GraphPaneStyle::Open, "Open"),
-                    (GraphPaneStyle::Framed, "Framed"),
-                ],
-            );
-            ui.end_row();
-
-            ui.label("Widget corners")
-                .on_hover_text("The corner radius of buttons and other widgets.");
-            ui.add(
-                egui::DragValue::new(&mut shape.widget_radius)
-                    .range(0..=12)
-                    .suffix(" px"),
-            );
-            ui.end_row();
-
-            ui.label("Window corners")
-                .on_hover_text("The corner radius of windows, menus and popups.");
-            ui.add(
-                egui::DragValue::new(&mut shape.window_radius)
-                    .range(0..=16)
-                    .suffix(" px"),
-            );
-            ui.end_row();
-
-            ui.label("Spacing")
+            heading(ui, "spacing");
+            ui.label("spacing")
                 .on_hover_text("A scale on the gaps and padding between and within widgets.");
             let mut percent = shape.spacing * 100.0;
             let drag = egui::DragValue::new(&mut percent)
@@ -690,8 +677,36 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
                 shape.spacing = percent / 100.0;
             }
             ui.end_row();
+            ui.label("button padding")
+                .on_hover_text("The space between a button's edge and its text, across and down.");
+            ui.horizontal(|ui| {
+                px(ui, &mut shape.button_padding.x, 0.0..=24.0);
+                px(ui, &mut shape.button_padding.y, 0.0..=12.0);
+            });
+            ui.end_row();
+            ui.label("pane gap").on_hover_text(
+                "The gap between panes, where the scene shows through. Drag it to resize \
+                 the panes on either side.",
+            );
+            px(ui, &mut shape.separator_width, 1.0..=24.0);
+            ui.end_row();
+            ui.label("window margin")
+                .on_hover_text("The margin between the outer panes and the edge of the window.");
+            px(ui, &mut shape.window_margin, 0.0..=48.0);
+            ui.end_row();
 
-            ui.label("Text size")
+            heading(ui, "text");
+            ui.label("font").on_hover_text(
+                "The font of all text. Plex mono sets text and code alike. egui sets text in \
+                 a proportional face and code in a monospace face.",
+            );
+            super::kit::pills(
+                ui,
+                &mut shape.font,
+                &[(Font::PlexMono, "plex mono"), (Font::Egui, "egui")],
+            );
+            ui.end_row();
+            ui.label("text size")
                 .on_hover_text("The size of body text. Other text keeps its size relative to it.");
             ui.add(
                 egui::DragValue::new(&mut shape.text_size)
@@ -702,33 +717,42 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
             );
             ui.end_row();
 
-            ui.label("Pane gap").on_hover_text(
-                "The gap between panes, where the scene shows through. Drag it to resize \
-                 the panes on either side.",
+            heading(ui, "panes");
+            ui.label("group cards").on_hover_text(
+                "How a group of settings, or a node in the inspector, stands apart from its \
+                 pane. Nested shades it. Outline draws its edge.",
             );
-            ui.add(
-                egui::DragValue::new(&mut shape.separator_width)
-                    .speed(0.1)
-                    .range(1.0..=24.0)
-                    .suffix(" px"),
+            super::kit::pills(
+                ui,
+                &mut shape.cards,
+                &[
+                    (CardStyle::Nested, "nested"),
+                    (CardStyle::Outline, "outline"),
+                ],
             );
             ui.end_row();
-
-            ui.label("Pane outline").on_hover_text(
+            ui.label("graph panes").on_hover_text(
+                "How a graph pane frames its graph. Open runs the graph up under the \
+                 pane's title. Framed keeps it below the title, as in other panes.",
+            );
+            super::kit::pills(
+                ui,
+                &mut shape.graph_panes,
+                &[
+                    (GraphPaneStyle::Open, "open"),
+                    (GraphPaneStyle::Framed, "framed"),
+                ],
+            );
+            ui.end_row();
+            ui.label("pane outline").on_hover_text(
                 "The width of the outline around each pane. 0 draws none. Inked palettes \
                  need one, since their panes share the scene's colour.",
             );
-            ui.add(
-                egui::DragValue::new(&mut shape.pane_outline)
-                    .speed(0.1)
-                    .range(0.0..=4.0)
-                    .suffix(" px"),
-            );
+            px(ui, &mut shape.pane_outline, 0.0..=4.0);
             ui.end_row();
-
-            ui.label("Shadows")
+            ui.label("shadows")
                 .on_hover_text("Whether windows and popups cast a shadow.");
-            ui.checkbox(&mut shape.shadows, "");
+            super::kit::switch(ui, &mut shape.shadows);
             ui.end_row();
         });
 }

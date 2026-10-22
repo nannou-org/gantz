@@ -84,7 +84,7 @@ roles! {
         "The background of a group card, when group cards are nested.",
         c(N2);
     window, Window, Surface, "Window",
-        "The background of windows, menus, popups and nodes.",
+        "The background of windows, menus and popups.",
         c(N1);
     faint, Faint, Surface, "Faint",
         "A barely visible tint, for striped rows.",
@@ -93,8 +93,17 @@ roles! {
         "The background of inline code.",
         c(N2);
     border, Border, Surface, "Border",
-        "Outlines of cards, fields, windows and nodes.",
+        "Outlines of cards, fields and windows.",
         c(N3);
+    node, Node, Surface, "Node",
+        "The background of nodes, a step from the scene toward the panes.",
+        c(N1).with_opacity(0.6);
+    node_border, NodeBorder, Surface, "Node outline",
+        "The outline of nodes that are not selected.",
+        c(N4).with_opacity(0.55);
+    dot, Dot, Surface, "Dot",
+        "The dots of the scene grid.",
+        c(N7).with_opacity(0.14);
 
     text, Text, Text, "Text",
         "Labels and other plain text.",

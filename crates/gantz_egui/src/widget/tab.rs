@@ -161,7 +161,7 @@ impl Tab {
         let badge_galley = badge.map(|b| b.into_galley(ui, wrap, f32::INFINITY, font_id));
 
         let x_margin = match look {
-            TabLook::Pill => ui.spacing().button_padding.x + 2.0,
+            TabLook::Pill => ui.spacing().button_padding.x,
             TabLook::Text | TabLook::Title => ui.spacing().button_padding.x,
         };
         let close_btn_width = if closable {

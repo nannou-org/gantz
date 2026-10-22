@@ -71,12 +71,20 @@ pub struct Shape {
     /// The gap between panes, where the scene shows through. Dragging it
     /// resizes the panes on either side.
     pub separator_width: f32,
-    /// The corner radius of buttons and other widgets.
-    pub widget_radius: u8,
+    /// The margin between the outer panes and the edge of the window.
+    pub window_margin: f32,
     /// The corner radius of panes, windows, menus and popups.
-    pub window_radius: u8,
-    /// How round corners are, from the radii above at 0 to full capsules at 1.
-    pub roundness: f32,
+    pub pane_radius: u8,
+    /// The corner radius of group cards inside panes.
+    pub card_radius: u8,
+    /// The corner radius of buttons, fields, pills and other controls. A
+    /// control is never rounder than a capsule.
+    pub control_radius: u8,
+    /// The corner radius of nodes in the graph. A node is never rounder than
+    /// half its smallest height.
+    pub node_radius: u8,
+    /// The space between a button's edge and its text, across and down.
+    pub button_padding: egui::Vec2,
     /// How a group of settings, or a node's entry in the inspector, stands
     /// apart from the pane around it.
     pub cards: CardStyle,
@@ -87,6 +95,8 @@ pub struct Shape {
     pub graph_panes: GraphPaneStyle,
     /// A scale on the gaps and padding between and within widgets.
     pub spacing: f32,
+    /// The font of all text.
+    pub font: font::Font,
     /// The size of body text in points. The other text styles keep their
     /// size relative to it.
     pub text_size: f32,
@@ -143,13 +153,17 @@ impl Default for Shape {
     fn default() -> Self {
         Self {
             separator_width: 8.0,
-            widget_radius: 6,
-            window_radius: 14,
-            roundness: 0.0,
+            window_margin: 8.0,
+            pane_radius: 16,
+            card_radius: 10,
+            control_radius: 8,
+            node_radius: 10,
+            button_padding: egui::vec2(8.0, 2.0),
             cards: CardStyle::Nested,
             pane_outline: 0.0,
             graph_panes: GraphPaneStyle::Open,
             spacing: 1.0,
+            font: font::Font::PlexMono,
             text_size: 13.0,
             shadows: true,
         }
@@ -157,21 +171,25 @@ impl Default for Shape {
 }
 
 impl Shape {
-    /// The corner radius of a widget `height` points tall. It runs from
-    /// [`Self::widget_radius`] to a full capsule as [`Self::roundness`] rises.
+    /// The corner radius of a control `height` points tall: the control
+    /// radius, but never rounder than a capsule.
     pub fn widget_corner(&self, height: f32) -> f32 {
-        round(f32::from(self.widget_radius), height / 2.0, self.roundness)
+        f32::from(self.control_radius).min(height / 2.0)
     }
 
     /// The corner radius of panes, windows, menus and popups.
     pub fn window_corner(&self) -> f32 {
-        let base = f32::from(self.window_radius);
-        round(base, base + 10.0, self.roundness)
+        f32::from(self.pane_radius)
     }
 
     /// The corner radius of a group card inside a pane.
     pub fn card_corner(&self) -> f32 {
-        (self.window_corner() - 4.0).max(0.0)
+        f32::from(self.card_radius)
+    }
+
+    /// The corner radius of a node whose smallest height is `min_height`.
+    pub fn node_corner(&self, min_height: f32) -> f32 {
+        f32::from(self.node_radius).min(min_height / 2.0)
     }
 }
 
@@ -286,7 +304,7 @@ fn shaped(mut style: egui::Style, shape: &Shape) -> egui::Style {
 
     let s = &mut style.spacing;
     s.item_spacing *= k;
-    s.button_padding *= k;
+    s.button_padding = shape.button_padding * k;
     s.interact_size *= k;
     s.indent *= k;
     s.icon_spacing *= k;
@@ -364,7 +382,7 @@ pub fn theme_of(visuals: &egui::Visuals) -> egui::Theme {
 /// on its next frame. A freshly spawned pop-out window is one example. The
 /// primary context after a wholesale `Memory` restore is another.
 pub fn apply(ctx: &egui::Context, cfg: &StyleConfig) {
-    font::install(ctx);
+    font::install(ctx, cfg.shape.font);
     let id = egui::Id::new(APPLIED_ID);
     if ctx.data(|d| d.get_temp::<StyleConfig>(id)).as_ref() == Some(cfg) {
         return;
@@ -438,7 +456,7 @@ pub(crate) fn luminance(color: egui::Color32) -> f32 {
 }
 
 /// The premultiplied `fg` composited over the opaque `bg`.
-fn over(fg: egui::Color32, bg: egui::Color32) -> egui::Color32 {
+pub fn over(fg: egui::Color32, bg: egui::Color32) -> egui::Color32 {
     let a = f32::from(fg.a()) / 255.0;
     let mix = |f: u8, b: u8| (f32::from(f) + f32::from(b) * (1.0 - a)).round().min(255.0) as u8;
     egui::Color32::from_rgb(
@@ -446,12 +464,6 @@ fn over(fg: egui::Color32, bg: egui::Color32) -> egui::Color32 {
         mix(fg.g(), bg.g()),
         mix(fg.b(), bg.b()),
     )
-}
-
-/// The radius `t` of the way from `base` to `full`, with `t` clamped to
-/// `0..=1`.
-fn round(base: f32, full: f32, t: f32) -> f32 {
-    base + (full - base).max(0.0) * t.clamp(0.0, 1.0)
 }
 
 /// A uniform corner radius, rounded to the whole points egui stores.
@@ -610,12 +622,14 @@ mod tests {
         assert_eq!(palettes.dark.name, "Another");
     }
 
-    /// The default shape keeps egui's default spacing and text sizes.
+    /// The default shape keeps egui's default spacing, but for the button
+    /// padding, and its text sizes.
     #[test]
     fn default_shape_keeps_egui_metrics() {
         let cfg = StyleConfig::default();
         for theme in [egui::Theme::Dark, egui::Theme::Light] {
-            let (ours, egui) = (style(&cfg, theme), theme.default_style());
+            let (ours, mut egui) = (style(&cfg, theme), theme.default_style());
+            egui.spacing.button_padding = cfg.shape.button_padding;
             assert_eq!(ours.spacing, egui.spacing);
             assert_eq!(ours.text_styles, egui.text_styles);
             assert_eq!(ours.visuals.window_shadow, egui.visuals.window_shadow);
@@ -629,8 +643,8 @@ mod tests {
         let mut cfg = StyleConfig::default();
         cfg.shape.spacing = 2.0;
         cfg.shape.text_size = 26.0;
-        cfg.shape.widget_radius = 5;
-        cfg.shape.window_radius = 9;
+        cfg.shape.control_radius = 5;
+        cfg.shape.pane_radius = 9;
         cfg.shape.shadows = false;
         let base = egui::Theme::Dark.default_style();
         let shaped = style(&cfg, egui::Theme::Dark);
