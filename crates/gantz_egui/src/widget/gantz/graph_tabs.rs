@@ -73,6 +73,12 @@ pub(super) fn head_scene<Access>(
     widgets.bg_fill = egui::Color32::TRANSPARENT;
     widgets.weak_bg_fill = egui::Color32::TRANSPARENT;
     let head_state = cx.state.open_heads.entry(head.clone()).or_default();
+    // A scene that comes to show another head places its nodes at once.
+    let shown_id = id.with("shown-head");
+    if ui.data(|d| d.get_temp::<gantz_ca::Head>(shown_id)).as_ref() != Some(head) {
+        head_state.scene.pending_jump = true;
+        ui.data_mut(|d| d.insert_temp(shown_id, head.clone()));
+    }
     let layout_params = layout_config.to_params(head_state.layout_flow);
     // Disjoint borrows of sibling fields for the scene's context menu and
     // its select-all shortcut.
