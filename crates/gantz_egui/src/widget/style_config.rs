@@ -142,7 +142,7 @@ pub fn style_config(
         let label = super::kit::text_width(ui, "curvature");
         super::kit::fit_sliders(ui, label + ui.spacing().item_spacing.x, "0.00");
         ui.horizontal(|ui| {
-            ui.add(egui::Slider::new(&mut edge.curvature, 0.0..=1.0).trailing_fill(true))
+            ui.add(egui::Slider::new(&mut edge.curvature, 0.0..=1.0))
                 .on_hover_text("How far each edge curves. 0 draws straight lines.");
             ui.label("curvature");
         });
@@ -635,11 +635,7 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
     let labels = super::kit::text_width(ui, "controls") + ui.spacing().item_spacing.x;
     super::kit::fit_sliders(ui, labels, "00 px");
     let radius = |ui: &mut egui::Ui, value: &mut u8, max: u8| {
-        ui.add(
-            egui::Slider::new(value, 0..=max)
-                .suffix(" px")
-                .trailing_fill(true),
-        );
+        ui.add(egui::Slider::new(value, 0..=max).suffix(" px"));
     };
     let px = |ui: &mut egui::Ui, value: &mut f32, range: std::ops::RangeInclusive<f32>| {
         ui.add(
@@ -682,17 +678,19 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
     egui::Grid::new("style_shape_spacing")
         .num_columns(2)
         .show(ui, |ui| {
-            ui.label("spacing")
-                .on_hover_text("A scale on the gaps and padding between and within widgets.");
-            let mut percent = shape.spacing * 100.0;
-            let drag = egui::DragValue::new(&mut percent)
-                .range(50.0..=200.0)
-                .speed(1.0)
-                .fixed_decimals(0)
-                .suffix("%");
-            if ui.add(drag).changed() {
-                shape.spacing = percent / 100.0;
-            }
+            ui.label("gap across")
+                .on_hover_text("The gap between widgets side by side.");
+            px(ui, &mut shape.item_spacing.x, 0.0..=24.0);
+            ui.end_row();
+            ui.label("gap down")
+                .on_hover_text("The gap between widgets one above the other.");
+            px(ui, &mut shape.item_spacing.y, 0.0..=24.0);
+            ui.end_row();
+            ui.label("control height").on_hover_text(
+                "The least height of a button, field or slider. A node's smallest height \
+                 follows it too.",
+            );
+            px(ui, &mut shape.control_height, 12.0..=40.0);
             ui.end_row();
             ui.label("padding across")
                 .on_hover_text("The space between a button's sides and its text.");

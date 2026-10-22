@@ -93,8 +93,11 @@ pub struct Shape {
     pub pane_outline: f32,
     /// How a graph pane frames its graph's scene.
     pub graph_panes: GraphPaneStyle,
-    /// A scale on the gaps and padding between and within widgets.
-    pub spacing: f32,
+    /// The gap between neighbouring widgets, across and down.
+    pub item_spacing: egui::Vec2,
+    /// The least height of a control, such as a button, field or slider. A
+    /// node's smallest height follows it too.
+    pub control_height: f32,
     /// The font of all text.
     pub font: font::Font,
     /// The size of body text in points. The other text styles keep their
@@ -162,7 +165,8 @@ impl Default for Shape {
             cards: CardStyle::Nested,
             pane_outline: 0.0,
             graph_panes: GraphPaneStyle::Open,
-            spacing: 1.0,
+            item_spacing: egui::vec2(8.0, 3.0),
+            control_height: 18.0,
             font: font::Font::PlexMono,
             text_size: 13.0,
             shadows: true,
@@ -281,8 +285,7 @@ pub fn style(cfg: &StyleConfig, theme: egui::Theme) -> egui::Style {
 
 /// `style` with the corners, spacing, text size and shadows of `shape`.
 fn shaped(mut style: egui::Style, shape: &Shape) -> egui::Style {
-    let k = shape.spacing;
-    let widget = corner(shape.widget_corner(style.spacing.interact_size.y * k));
+    let widget = corner(shape.widget_corner(shape.control_height));
     let window = corner(shape.window_corner());
     let v = &mut style.visuals;
     let w = &mut v.widgets;
@@ -303,14 +306,9 @@ fn shaped(mut style: egui::Style, shape: &Shape) -> egui::Style {
     }
 
     let s = &mut style.spacing;
-    s.item_spacing *= k;
-    s.button_padding = shape.button_padding * k;
-    s.interact_size *= k;
-    s.indent *= k;
-    s.icon_spacing *= k;
-    s.menu_spacing *= k;
-    s.window_margin = s.window_margin * k;
-    s.menu_margin = s.menu_margin * k;
+    s.item_spacing = shape.item_spacing;
+    s.button_padding = shape.button_padding;
+    s.interact_size.y = shape.control_height;
     // A scroll fade paints the pane's colour over the cards in a pane, which
     // reads as a shadow, so scroll areas end crisply instead.
     s.scroll.fade.strength = 0.0;
@@ -640,19 +638,21 @@ mod tests {
         }
     }
 
-    /// The shape scales spacing and every text style, rounds corners and can
-    /// drop shadows.
+    /// The shape sets the spacing, scales every text style, rounds corners and
+    /// can drop shadows.
     #[test]
     fn shape_applies_to_the_style() {
         let mut cfg = StyleConfig::default();
-        cfg.shape.spacing = 2.0;
+        cfg.shape.item_spacing = egui::vec2(16.0, 6.0);
+        cfg.shape.control_height = 24.0;
         cfg.shape.text_size = 26.0;
         cfg.shape.control_radius = 5;
         cfg.shape.pane_radius = 9;
         cfg.shape.shadows = false;
         let base = egui::Theme::Dark.default_style();
         let shaped = style(&cfg, egui::Theme::Dark);
-        assert_eq!(shaped.spacing.item_spacing, base.spacing.item_spacing * 2.0);
+        assert_eq!(shaped.spacing.item_spacing, egui::vec2(16.0, 6.0));
+        assert_eq!(shaped.spacing.interact_size.y, 24.0);
         for (text_style, font) in &shaped.text_styles {
             assert_eq!(font.size, base.text_styles[text_style].size * 2.0);
         }

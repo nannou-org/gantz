@@ -36,6 +36,9 @@ struct LogViewState {
     show_time: bool,
     show_level: bool,
     show_target: bool,
+    /// Whether a long message wraps within its column, rather than end in an
+    /// ellipsis.
+    wrap_messages: bool,
 }
 
 #[derive(Clone)]
@@ -161,6 +164,7 @@ impl<'a> LogView<'a> {
                 show_time: true,
                 show_level: true,
                 show_target: false,
+                wrap_messages: false,
             });
 
         // A text filter, with an options button on the right that opens a popup
@@ -193,6 +197,7 @@ impl<'a> LogView<'a> {
                             }
                         });
                         ui.checkbox(&mut state.auto_scroll, "auto-scroll");
+                        ui.checkbox(&mut state.wrap_messages, "wrap messages");
                         ui.separator();
                         ui.label("columns");
                         ui.checkbox(&mut state.show_time, "time");
@@ -253,8 +258,8 @@ impl<'a> LogView<'a> {
                 let strong = body.ui_mut().style().visuals.strong_text_color();
                 let level_colors =
                     crate::widget::LevelColors::from_visuals(&body.ui_mut().style().visuals);
-                // Each message takes one line, cut at its column's width. Its
-                // galley is rendered as-is.
+                // Each message takes one line cut at its column's width, or wraps
+                // within it. Its galley sets the row's height.
                 let msg_w = body.widths().last().copied().unwrap_or(0.0);
                 let font = egui::TextStyle::Body.resolve(body.ui_mut().style());
                 let rows: Vec<_> = entries
@@ -266,6 +271,7 @@ impl<'a> LogView<'a> {
                             painter,
                             &font,
                             msg_w,
+                            state.wrap_messages,
                             color,
                             entry.count,
                             &entry.message,
@@ -328,7 +334,9 @@ impl<'a> LogView<'a> {
                     }
 
                     row.col(|ui| {
-                        let res = ui.add(egui::Label::new(galley.clone()));
+                        let label =
+                            egui::Label::new(galley.clone()).show_tooltip_when_elided(false);
+                        let res = ui.add(label);
                         res.on_hover_text(match count > 1 {
                             true => format!("{}\n\n{count} in a row", entry.message),
                             false => entry.message.clone(),

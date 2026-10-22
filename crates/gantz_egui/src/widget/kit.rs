@@ -352,7 +352,10 @@ pub fn text_width(ui: &egui::Ui, text: &str) -> f32 {
 /// Size the sliders of `ui` to fill the rest of a row, once `beside` points
 /// of other widgets and each slider's value box, as wide as `widest`, have
 /// their room. A wider slider would push its card past the pane's margin.
+/// Their rails take the opaque outline colour, so that they read on a card.
 pub fn fit_sliders(ui: &mut egui::Ui, beside: f32, widest: &str) {
+    let rail = ui.visuals().widgets.noninteractive.bg_stroke.color;
+    ui.visuals_mut().widgets.inactive.bg_fill = rail;
     let value = text_width(ui, widest) + 2.0 * ui.spacing().button_padding.x;
     let gaps = ui.spacing().item_spacing.x;
     ui.spacing_mut().slider_width = (ui.available_width() - beside - value - gaps).max(32.0);

@@ -145,19 +145,24 @@ pub(crate) fn format_local_time(system_time: std::time::SystemTime) -> String {
     format_local(system_time, "[hour]:[minute]:[second]")
 }
 
-/// A log row's message galley on one line, cut with an ellipsis at `width`.
-/// A count above one is prefixed as a dim `×count`.
+/// A log row's message galley, wrapped at `width` when `wrap` is set, else on
+/// one line cut with an ellipsis at `width`. A count above one is prefixed as
+/// a dim `×count`.
 pub(crate) fn message_galley(
     painter: &egui::Painter,
     font: &egui::FontId,
     width: f32,
+    wrap: bool,
     color: egui::Color32,
     count: usize,
     message: &str,
 ) -> std::sync::Arc<egui::Galley> {
     use egui::text::{LayoutJob, TextFormat};
     let mut job = LayoutJob::default();
-    job.wrap = egui::text::TextWrapping::truncate_at_width(width);
+    job.wrap = match wrap {
+        true => egui::text::TextWrapping::wrap_at_width(width),
+        false => egui::text::TextWrapping::truncate_at_width(width),
+    };
     if count > 1 {
         let format = TextFormat::simple(font.clone(), color.gamma_multiply(0.7));
         job.append(&format!("×{count} "), 0.0, format);

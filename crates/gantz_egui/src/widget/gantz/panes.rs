@@ -268,9 +268,9 @@ where
     // Patch-only shows the graphs alone. `Gantz::show` draws a mark in the
     // tab strip's place.
     if !cx.state.view_toggles.patch_only {
-        let margin = scene_overlay_margin(ui.style());
-        let anchor = rect.left_top() + egui::vec2(margin, margin);
-        tab_strip(cx, ui, anchor, main.as_ref(), &ext_panes);
+        // The strip sits at the scene tile's corner, so its top meets the side
+        // panes' tops and the pane gap sits between them.
+        tab_strip(cx, ui, rect.left_top(), main.as_ref(), &ext_panes);
     }
 
     let PaneCtx {
@@ -599,7 +599,9 @@ fn render_node_view<Access>(
         .unwrap_or(false);
     let mut frame = pane_frame(ui.style());
     if no_margin {
-        frame.inner_margin = egui::Margin::ZERO;
+        // An edge-to-edge view still keeps clear of the pane's rounded corners.
+        let inset = super::chrome::corner_inset(ui.ctx()) as i8;
+        frame.inner_margin = egui::Margin::same(inset);
     }
     egui::CentralPanel::default()
         .frame(frame)
@@ -893,6 +895,9 @@ where
 
 /// The egui ID used to store the Graphs pane rect for file drop targeting.
 const GRAPHS_PANE_RECT_ID: &str = "gantz-graphs-pane-rect";
+
+/// How far past its margin a pane's content may paint. See [`pane_ui`].
+const CLIP_BLEED: f32 = 2.0;
 
 /// Paint a hover overlay when `.gantz` files are being dragged over this pane.
 ///
@@ -1215,7 +1220,13 @@ pub(super) fn pane_ui<R>(
 ) -> egui::InnerResponse<R> {
     egui::CentralPanel::default()
         .frame(pane_frame(ui.style()))
-        .show_inside(ui, pane)
+        .show_inside(ui, |ui| {
+            // Content keeps to the pane's margin. The small bleed leaves room
+            // for the outline of a field that fills the width.
+            let clip = ui.max_rect().expand(CLIP_BLEED).intersect(ui.clip_rect());
+            ui.set_clip_rect(clip);
+            pane(ui)
+        })
 }
 
 /// The frame of a pane's body. It has no fill, since the pane's rounded
@@ -1229,12 +1240,6 @@ pub(super) fn pane_frame(style: &egui::Style) -> egui::Frame {
             top: 0,
             bottom: 10,
         })
-}
-
-/// The margin between the scene's edges and its floating overlays, e.g. the
-/// sidebar toggle and the nested-graph breadcrumb.
-fn scene_overlay_margin(style: &egui::Style) -> f32 {
-    style.interaction.interact_radius * 2.0
 }
 
 fn graph_select(

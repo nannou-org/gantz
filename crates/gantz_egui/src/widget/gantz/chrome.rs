@@ -443,3 +443,10 @@ pub(super) fn reach_window(ctx: &egui::Context, tile: egui::Rect) -> egui::Rect 
         ),
     )
 }
+
+/// The least inset that keeps a square view inside a pane's rounded corners:
+/// the corner of a square inset this far touches the corner's curve.
+pub(super) fn corner_inset(ctx: &egui::Context) -> f32 {
+    let radius = style::shape(ctx).window_corner();
+    (radius * (1.0 - std::f32::consts::FRAC_1_SQRT_2)).ceil()
+}
