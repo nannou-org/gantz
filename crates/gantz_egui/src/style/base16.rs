@@ -79,6 +79,28 @@ pub const EGUI_LIGHT: Scheme = Scheme {
     ],
 };
 
+/// GNOME's dark style, after libadwaita. The scene takes the content view's
+/// colour and panes take the sidebars', with cards and borders tinted as
+/// libadwaita tints them. The accents are GNOME's palette at tints that read
+/// on the panes.
+pub const GNOME_DARK: Scheme = Scheme {
+    name: "GNOME Dark",
+    colors: [
+        0x1d1d20, 0x2e2e32, 0x3a3a3e, 0x4d4d51, 0xa1a1a3, 0xe8e8ea, 0xf2f2f4, 0xffffff, 0xff7b63,
+        0xffa348, 0xf8e45c, 0x8ff0a4, 0x62c9d6, 0x78aeed, 0xdc8add, 0xf08cbf,
+    ],
+};
+
+/// GNOME's light style, after libadwaita. The light counterpart of
+/// [`GNOME_DARK`]. Cards are white on the grey panes, as libadwaita's are.
+pub const GNOME_LIGHT: Scheme = Scheme {
+    name: "GNOME Light",
+    colors: [
+        0xfafafb, 0xebebed, 0xffffff, 0xc9c9cc, 0x7b7b80, 0x333338, 0x222226, 0x000006, 0xc01c28,
+        0xc64600, 0x9c6e03, 0x1b8553, 0x1a7486, 0x1c71d8, 0x813d9c, 0xa8306f,
+    ],
+};
+
 /// The built-in palettes.
 pub const PRESETS: &[Scheme] = &[
     GANTZ_DARK,
@@ -87,6 +109,8 @@ pub const PRESETS: &[Scheme] = &[
     GANTZ_INKED_LIGHT,
     EGUI_DARK,
     EGUI_LIGHT,
+    GNOME_DARK,
+    GNOME_LIGHT,
     Scheme {
         name: "Gruvbox Dark",
         colors: [
