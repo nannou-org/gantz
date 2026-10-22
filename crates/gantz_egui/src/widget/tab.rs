@@ -160,10 +160,8 @@ impl Tab {
         let galley = ui.painter().layout_job(job);
         let badge_galley = badge.map(|b| b.into_galley(ui, wrap, f32::INFINITY, font_id));
 
-        let x_margin = match look {
-            TabLook::Pill => ui.spacing().button_padding.x,
-            TabLook::Text | TabLook::Title => ui.spacing().button_padding.x,
-        };
+        // Tabs sit tighter than buttons, so a narrow pane's header fits them.
+        let x_margin = (ui.spacing().button_padding.x * 0.75).round();
         let close_btn_width = if closable {
             ui.spacing().icon_width
         } else {

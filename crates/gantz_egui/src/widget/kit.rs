@@ -327,3 +327,13 @@ fn pill_height(ui: &egui::Ui) -> f32 {
     let text = ui.text_style_height(&egui::TextStyle::Button);
     (text + 4.0).max(ui.spacing().interact_size.y - 2.0)
 }
+
+/// The width of `text` in the body font.
+pub fn text_width(ui: &egui::Ui, text: &str) -> f32 {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let color = ui.visuals().text_color();
+    ui.painter()
+        .layout_no_wrap(text.to_string(), font, color)
+        .size()
+        .x
+}

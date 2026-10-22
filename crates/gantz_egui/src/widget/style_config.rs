@@ -57,15 +57,20 @@ pub fn style_config(
     ui: &mut egui::Ui,
 ) -> StyleConfigResponse {
     let mut res = StyleConfigResponse::default();
-    section(ui, "Theme", |ui| {
-        style.theme.radio_buttons(ui);
+    section(ui, "theme", |ui| {
+        let themes = [
+            (egui::ThemePreference::System, "system"),
+            (egui::ThemePreference::Dark, "dark"),
+            (egui::ThemePreference::Light, "light"),
+        ];
+        super::kit::pills(ui, &mut style.theme, &themes);
         ui.horizontal_wrapped(|ui| {
             res.export = ui
-                .button("Export style…")
+                .button("export style…")
                 .on_hover_text("Save the palettes, roles and shape to a file.")
                 .clicked();
             res.import = ui
-                .button("Import style…")
+                .button("import style…")
                 .on_hover_text("Load the palettes, roles and shape from an exported file.")
                 .clicked();
         });
@@ -80,14 +85,14 @@ pub fn style_config(
         egui::ThemePreference::System => ui.ctx().theme(),
     };
     let title = match theme {
-        egui::Theme::Dark => "Dark palette",
-        egui::Theme::Light => "Light palette",
+        egui::Theme::Dark => "dark palette",
+        egui::Theme::Light => "light palette",
     };
     let hovered = section(ui, title, |ui| {
         palette_section(&mut style.palettes, theme, &mut res, ui)
     });
 
-    section(ui, "Roles", |ui| {
+    section(ui, "roles", |ui| {
         ui.label(
             egui::RichText::new("Each role selects its colour from the palette.")
                 .small()
@@ -95,7 +100,7 @@ pub fn style_config(
         );
         roles_editor(&mut style.roles, style.palettes.get(theme), hovered, ui);
         if ui
-            .button("Reset roles")
+            .button("reset roles")
             .on_hover_text("Restore the default palette colour of every role.")
             .clicked()
         {
@@ -103,10 +108,10 @@ pub fn style_config(
         }
     });
 
-    section(ui, "Shape", |ui| {
+    section(ui, "shape", |ui| {
         shape_editor(&mut style.shape, ui);
         if ui
-            .button("Reset shape")
+            .button("reset shape")
             .on_hover_text("Restore the default shape.")
             .clicked()
         {
@@ -114,8 +119,8 @@ pub fn style_config(
         }
     });
 
-    section(ui, "Grid", |ui| {
-        ui.checkbox(&mut grid.show, "Show grid")
+    section(ui, "grid", |ui| {
+        ui.checkbox(&mut grid.show, "show grid")
             .on_hover_text("Draw the dot grid behind the graph.");
         ui.horizontal(|ui| {
             ui.add(
@@ -129,15 +134,15 @@ pub fn style_config(
                  uses a fraction of this (see Global > Snap), so it applies even \
                  when the grid is hidden.",
             );
-            ui.label("Grid step");
+            ui.label("grid step");
         });
     });
 
-    section(ui, "Edges", |ui| {
+    section(ui, "edges", |ui| {
         ui.horizontal(|ui| {
             ui.add(egui::Slider::new(&mut edge.curvature, 0.0..=1.0))
                 .on_hover_text("How far each edge curves. 0 draws straight lines.");
-            ui.label("Curvature");
+            ui.label("curvature");
         });
     });
 
@@ -163,7 +168,7 @@ fn palette_section(
             None => "Restore the default palette of this theme.".to_string(),
         };
         if ui
-            .button("Reset palette")
+            .button("reset palette")
             .on_hover_text(reset_hover)
             .clicked()
         {
@@ -174,7 +179,7 @@ fn palette_section(
         }
         let saved = palettes.saved.iter().any(|p| p.name == name);
         if ui
-            .add_enabled(saved, egui::Button::new("Delete"))
+            .add_enabled(saved, egui::Button::new("delete"))
             .on_hover_text(format!(
                 "Remove \"{name}\" from the saved palettes. The palette in use stays."
             ))
@@ -184,7 +189,7 @@ fn palette_section(
             palettes.delete(&name);
         }
         if ui
-            .button("Import base16…")
+            .button("import base16…")
             .on_hover_text(
                 "Load this palette from a base16 or base24 scheme file. The neutrals \
                  take base00 to base07 and the accents take base08 to base0F.",
@@ -194,7 +199,7 @@ fn palette_section(
             res.import_palette = Some(theme);
         }
         if ui
-            .button("Export base16…")
+            .button("export base16…")
             .on_hover_text("Save this palette to a base16 scheme file.")
             .clicked()
         {
@@ -222,7 +227,7 @@ fn palette_menu(palettes: &mut Palettes, theme: egui::Theme, ui: &mut egui::Ui) 
         .show_ui(ui, |ui| {
             let current = &palettes.get(theme).name;
             if !palettes.saved.is_empty() {
-                ui.label(egui::RichText::new("Saved").small().weak());
+                ui.label(egui::RichText::new("saved").small().weak());
             }
             for saved in &palettes.saved {
                 if ui
@@ -235,7 +240,7 @@ fn palette_menu(palettes: &mut Palettes, theme: egui::Theme, ui: &mut egui::Ui) 
             if !palettes.saved.is_empty() {
                 ui.separator();
             }
-            ui.label(egui::RichText::new("Presets").small().weak());
+            ui.label(egui::RichText::new("presets").small().weak());
             for scheme in base16::PRESETS {
                 if ui
                     .selectable_label(*current == scheme.name, scheme.name)
@@ -265,10 +270,10 @@ fn name_edit(palettes: &mut Palettes, theme: egui::Theme, ui: &mut egui::Ui) {
 
     let (edit, save) = ui
         .horizontal(|ui| {
-            ui.label("Name");
+            ui.label("name");
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let save = ui
-                    .add_enabled(can_save, egui::Button::new("Save"))
+                    .add_enabled(can_save, egui::Button::new("save"))
                     .on_hover_text("Save the palette under this name.");
                 let edit = ui.add(
                     egui::TextEdit::singleline(&mut draft)
@@ -358,8 +363,8 @@ fn swatches_editor(
     let side = fit.min(ui.spacing().interact_size.y * SWATCH_SCALE);
     let mut hovered = None;
     for (label, swatches) in [
-        ("Neutrals", &Swatch::NEUTRALS[..]),
-        ("Accents", &Swatch::ACCENTS[..]),
+        ("neutrals", &Swatch::NEUTRALS[..]),
+        ("accents", &Swatch::ACCENTS[..]),
     ] {
         ui.label(egui::RichText::new(label).small().weak());
         ui.horizontal_wrapped(|ui| {
@@ -623,6 +628,13 @@ fn paint_chip(ui: &egui::Ui, rect: egui::Rect, color: egui::Color32, highlighted
 
 /// The corner, spacing, text and pane controls.
 fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
+    // The sliders take the room that the labels and values leave, so that
+    // they fit a narrow pane.
+    let labels = super::kit::text_width(ui, "padding across");
+    let value = super::kit::text_width(ui, "16 px");
+    let gaps = 3.0 * ui.spacing().item_spacing.x;
+    ui.spacing_mut().slider_width =
+        (ui.available_width() - labels - value - gaps).clamp(40.0, 160.0);
     let radius = |ui: &mut egui::Ui, value: &mut u8, max: u8| {
         ui.add(egui::Slider::new(value, 0..=max).suffix(" px"));
     };
@@ -677,12 +689,13 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
                 shape.spacing = percent / 100.0;
             }
             ui.end_row();
-            ui.label("button padding")
-                .on_hover_text("The space between a button's edge and its text, across and down.");
-            ui.horizontal(|ui| {
-                px(ui, &mut shape.button_padding.x, 0.0..=24.0);
-                px(ui, &mut shape.button_padding.y, 0.0..=12.0);
-            });
+            ui.label("padding across")
+                .on_hover_text("The space between a button's sides and its text.");
+            px(ui, &mut shape.button_padding.x, 0.0..=24.0);
+            ui.end_row();
+            ui.label("padding down")
+                .on_hover_text("The space between a button's top and bottom and its text.");
+            px(ui, &mut shape.button_padding.y, 0.0..=12.0);
             ui.end_row();
             ui.label("pane gap").on_hover_text(
                 "The gap between panes, where the scene shows through. Drag it to resize \
@@ -696,16 +709,6 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
             ui.end_row();
 
             heading(ui, "text");
-            ui.label("font").on_hover_text(
-                "The font of all text. Plex mono sets text and code alike. egui sets text in \
-                 a proportional face and code in a monospace face.",
-            );
-            super::kit::pills(
-                ui,
-                &mut shape.font,
-                &[(Font::PlexMono, "plex mono"), (Font::Egui, "egui")],
-            );
-            ui.end_row();
             ui.label("text size")
                 .on_hover_text("The size of body text. Other text keeps its size relative to it.");
             ui.add(
@@ -718,32 +721,6 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
             ui.end_row();
 
             heading(ui, "panes");
-            ui.label("group cards").on_hover_text(
-                "How a group of settings, or a node in the inspector, stands apart from its \
-                 pane. Nested shades it. Outline draws its edge.",
-            );
-            super::kit::pills(
-                ui,
-                &mut shape.cards,
-                &[
-                    (CardStyle::Nested, "nested"),
-                    (CardStyle::Outline, "outline"),
-                ],
-            );
-            ui.end_row();
-            ui.label("graph panes").on_hover_text(
-                "How a graph pane frames its graph. Open runs the graph up under the \
-                 pane's title. Framed keeps it below the title, as in other panes.",
-            );
-            super::kit::pills(
-                ui,
-                &mut shape.graph_panes,
-                &[
-                    (GraphPaneStyle::Open, "open"),
-                    (GraphPaneStyle::Framed, "framed"),
-                ],
-            );
-            ui.end_row();
             ui.label("pane outline").on_hover_text(
                 "The width of the outline around each pane. 0 draws none. Inked palettes \
                  need one, since their panes share the scene's colour.",
@@ -755,6 +732,50 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
             super::kit::switch(ui, &mut shape.shadows);
             ui.end_row();
         });
+    // A choice sets its pills under its label, so that it fits a narrow pane.
+    let choice = |ui: &mut egui::Ui, label: &str, hover: &str| {
+        ui.add_space(4.0);
+        ui.label(label).on_hover_text(hover);
+    };
+    choice(
+        ui,
+        "font",
+        "The font of all text. Plex mono sets text and code alike. egui sets text in a \
+         proportional face and code in a monospace face.",
+    );
+    super::kit::pills(
+        ui,
+        &mut shape.font,
+        &[(Font::PlexMono, "plex mono"), (Font::Egui, "egui")],
+    );
+    choice(
+        ui,
+        "group cards",
+        "How a group of settings, or a node in the inspector, stands apart from its pane. \
+         Nested shades it. Outline draws its edge.",
+    );
+    super::kit::pills(
+        ui,
+        &mut shape.cards,
+        &[
+            (CardStyle::Nested, "nested"),
+            (CardStyle::Outline, "outline"),
+        ],
+    );
+    choice(
+        ui,
+        "graph panes",
+        "How a graph pane frames its graph. Open runs the graph up under the pane's title. \
+         Framed keeps it below the title, as in other panes.",
+    );
+    super::kit::pills(
+        ui,
+        &mut shape.graph_panes,
+        &[
+            (GraphPaneStyle::Open, "open"),
+            (GraphPaneStyle::Framed, "framed"),
+        ],
+    );
 }
 
 /// A role's swatch, and its opacity when below full.
