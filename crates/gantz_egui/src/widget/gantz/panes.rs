@@ -1526,11 +1526,8 @@ pub(super) fn node_inspector<'a>(
                 // drain per node into `StateWritten` payloads.
                 let mut writes = Vec::new();
                 for id in ids {
-                    let mut frame = egui::Frame::group(ui.style());
                     let is_selected = head_state.scene.interaction.selection.nodes.contains(&id);
-                    if is_selected {
-                        frame.stroke.color = ui.visuals().selection.stroke.color;
-                    }
+                    let frame = widget::kit::card_frame(ui, is_selected);
                     // Each node gets its own id scope, so its table, grids and
                     // popups keep their state apart from the other nodes.
                     let frame_resp = ui

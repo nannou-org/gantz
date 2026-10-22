@@ -169,9 +169,11 @@ pub fn table(
     };
 
     let label_response = ui.add(
-        egui::Label::new(egui::RichText::new(name).strong())
-            .selectable(false)
-            .sense(egui::Sense::click()),
+        egui::Label::new(
+            crate::style::font::strong_text(ui, name).color(ui.visuals().strong_text_color()),
+        )
+        .selectable(false)
+        .sense(egui::Sense::click()),
     );
     ui.add_space(ui.spacing().item_spacing.y);
     let row_h = table_row_h(ui);
@@ -203,7 +205,7 @@ pub fn table(
     let mut rows_resp = InspectorRowsResponse::default();
     let scroll_area_output = TableBuilder::new(ui)
         .vscroll(false)
-        .column(Column::auto().at_least(50.0).resizable(true))
+        .column(Column::auto().at_least(50.0))
         .column(Column::remainder().at_least(120.0))
         .body(|mut body| {
             body.row(row_h, |mut row| {

@@ -155,29 +155,27 @@ impl TraceView {
                     .show(|ui| {
                         // The level is fixed at startup by the `RUST_LOG` filter.
                         #[allow(unused_variables)]
-                        let level_response = ui.label(format!("Level: {}", self.level));
+                        let level_response = ui.label(format!("level {}", self.level));
                         #[cfg(not(target_arch = "wasm32"))]
                         level_response.on_hover_text("adjust with RUST_LOG env var at startup");
-                        ui.checkbox(&mut state.auto_scroll, "Auto-scroll");
+                        ui.checkbox(&mut state.auto_scroll, "auto-scroll");
                         ui.separator();
-                        ui.label("Columns:");
-                        ui.checkbox(&mut state.show_time, "Time");
-                        ui.checkbox(&mut state.show_level, "Level");
-                        ui.checkbox(&mut state.show_target, "Target");
+                        ui.label("columns");
+                        ui.checkbox(&mut state.show_time, "time");
+                        ui.checkbox(&mut state.show_level, "level");
+                        ui.checkbox(&mut state.show_target, "target");
                         ui.separator();
-                        if ui.button("Clear").clicked() {
+                        if ui.button("clear").clicked() {
                             self.capture.clear();
                         }
                     });
                 // The filter fills the remaining width.
                 egui::TextEdit::singleline(&mut state.text_filter)
                     .desired_width(ui.available_width())
-                    .hint_text("🔎 Filter")
+                    .hint_text("filter logs")
                     .show(ui);
             });
         });
-
-        ui.separator();
 
         let mut entries = self.capture.get_entries();
 
@@ -205,8 +203,9 @@ impl TraceView {
         // the trailing remainder column.
         let (show_time, show_level, show_target) =
             (state.show_time, state.show_level, state.show_target);
+        ui.spacing_mut().item_spacing.x = 14.0;
         let mut table = TableBuilder::new(ui)
-            .resizable(true)
+            .resizable(false)
             .cell_layout(egui::Layout::left_to_right(egui::Align::TOP));
         if show_time {
             table = table.column(Column::auto()); // Timestamp
@@ -219,34 +218,14 @@ impl TraceView {
         }
         table
             .column(Column::remainder().at_least(100.0).clip(true)) // Message
-            .header(20.0, |mut header| {
-                if show_time {
-                    header.col(|ui| {
-                        ui.strong("Time");
-                    });
-                }
-                if show_level {
-                    header.col(|ui| {
-                        ui.strong("Level");
-                    });
-                }
-                if show_target {
-                    header.col(|ui| {
-                        ui.strong("Target");
-                    });
-                }
-                header.col(|ui| {
-                    ui.strong("Message");
-                });
-            })
             .body(|mut body| {
                 let row_h = 18.0;
                 let text_color = body.ui_mut().style().visuals.text_color();
                 let strong = body.ui_mut().style().visuals.strong_text_color();
                 let level_colors =
                     crate::widget::LevelColors::from_visuals(&body.ui_mut().style().visuals);
-                // Messages wrap at their column width. Each row's galley sets
-                // its height and is rendered as-is.
+                // Each message takes one line, cut at its column's width. Its
+                // galley is rendered as-is.
                 let msg_w = body.widths().last().copied().unwrap_or(0.0);
                 let font = egui::TextStyle::Body.resolve(body.ui_mut().style());
                 let rows: Vec<_> = entries
@@ -275,7 +254,7 @@ impl TraceView {
                     if show_time {
                         row.col(|ui| {
                             let t = entry.system_time();
-                            ui.colored_label(text_color, crate::widget::format_local_time(t))
+                            ui.weak(crate::widget::format_local_time(t))
                                 .on_hover_text(crate::widget::format_local_datetime(t));
                         });
                     }
@@ -283,11 +262,11 @@ impl TraceView {
                     if show_level {
                         row.col(|ui| {
                             let (color, text) = match entry.level {
-                                Level::ERROR => (level_colors.error, "ERROR"),
-                                Level::WARN => (level_colors.warn, "WARN"),
-                                Level::INFO => (level_colors.info, "INFO"),
-                                Level::DEBUG => (level_colors.debug, "DEBUG"),
-                                Level::TRACE => (level_colors.trace, "TRACE"),
+                                Level::ERROR => (level_colors.error, "error"),
+                                Level::WARN => (level_colors.warn, "warn"),
+                                Level::INFO => (level_colors.info, "info"),
+                                Level::DEBUG => (level_colors.debug, "debug"),
+                                Level::TRACE => (level_colors.trace, "trace"),
                             };
                             ui.colored_label(color, text);
                         });
@@ -301,9 +280,10 @@ impl TraceView {
 
                     row.col(|ui| {
                         let res = ui.add(egui::Label::new(galley.clone()));
-                        if count > 1 {
-                            res.on_hover_text("occurrences collapsed (repeated log)");
-                        }
+                        res.on_hover_text(match count > 1 {
+                            true => format!("{}\n\n{count} in a row", entry.message),
+                            false => entry.message.clone(),
+                        });
                     });
 
                     if entry.freshness() > 0.0 {

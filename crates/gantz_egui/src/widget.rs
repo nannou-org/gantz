@@ -79,8 +79,8 @@ impl LevelColors {
         Self {
             error: visuals.error_fg_color,
             warn: visuals.warn_fg_color,
-            info: visuals.widgets.hovered.fg_stroke.color,
-            debug: visuals.text_color(),
+            info: visuals.text_color(),
+            debug: visuals.weak_text_color(),
             trace: visuals.weak_text_color(),
         }
     }
@@ -145,8 +145,8 @@ pub(crate) fn format_local_time(system_time: std::time::SystemTime) -> String {
     format_local(system_time, "[hour]:[minute]:[second]")
 }
 
-/// A log row's message galley, wrapped at `width`. A count above one is
-/// prefixed as a dim `×count`.
+/// A log row's message galley on one line, cut with an ellipsis at `width`.
+/// A count above one is prefixed as a dim `×count`.
 pub(crate) fn message_galley(
     painter: &egui::Painter,
     font: &egui::FontId,
@@ -157,7 +157,7 @@ pub(crate) fn message_galley(
 ) -> std::sync::Arc<egui::Galley> {
     use egui::text::{LayoutJob, TextFormat};
     let mut job = LayoutJob::default();
-    job.wrap.max_width = width;
+    job.wrap = egui::text::TextWrapping::truncate_at_width(width);
     if count > 1 {
         let format = TextFormat::simple(font.clone(), color.gamma_multiply(0.7));
         job.append(&format!("×{count} "), 0.0, format);
