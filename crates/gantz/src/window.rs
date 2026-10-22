@@ -154,6 +154,7 @@ fn on_window_action(
     decorated: Res<bevy_gantz_egui::DecoratedWindow>,
     mut windows: Query<(Entity, &mut Window), With<bevy::window::PrimaryWindow>>,
     mut close: MessageWriter<bevy::window::WindowCloseRequested>,
+    mut buttons: MessageWriter<bevy::input::mouse::MouseButtonInput>,
 ) {
     use gantz_egui::widget::WindowAction;
     let Ok((entity, mut window)) = windows.single_mut() else {
@@ -167,6 +168,15 @@ fn on_window_action(
         }
         WindowAction::Drag => window.start_drag_move(),
         WindowAction::Resize(edge) => window.start_drag_resize(octant(edge)),
+    }
+    // The system keeps the press that ends a move or resize, so the app never
+    // sees the button go up and the GUI stays mid-drag. Release it here.
+    if let WindowAction::Drag | WindowAction::Resize(_) = trigger.event().0 {
+        buttons.write(bevy::input::mouse::MouseButtonInput {
+            button: MouseButton::Left,
+            state: bevy::input::ButtonState::Released,
+            window: entity,
+        });
     }
 }
 

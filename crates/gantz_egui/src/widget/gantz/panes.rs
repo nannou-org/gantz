@@ -290,7 +290,8 @@ where
     };
     // The scene's top-right corner holds the window's controls when no pane
     // does, and the wordmark sits left of them. The header holds both when
-    // it shows. `right` is the left edge of what the top-right corner holds.
+    // it shows, and patch-only hides the wordmark. `right` is the left edge of
+    // what the top-right corner holds.
     let mut right = rect.right_top();
     if let Some(w) = controls.filter(|_| at(rect.right_top(), tree.right_top())) {
         let (shown, action) = super::decor::floating_controls(ui.ctx(), right, w);
@@ -299,7 +300,7 @@ where
         }
         right.x = shown.left();
     }
-    if !header {
+    if !header && !patch_only {
         let version = cx.gantz.version;
         let (shown, action) = super::decor::wordmark(ui.ctx(), right, version, strip.drag);
         if let Some(action) = action {

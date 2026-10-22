@@ -358,7 +358,7 @@ impl Walk<'_> {
                     let slot = ui.painter().add(egui::Shape::Noop);
                     let r = drag_value(ui, val);
                     if let Some(t) = range_fraction(d, val) {
-                        ui.painter().set(slot, range_fill(ui, r.rect, t));
+                        paint_range_fill(ui, slot, r.rect, t);
                     }
                     r
                 };
@@ -735,22 +735,19 @@ fn range_fraction(d: &Dialer, val: &SteelVal) -> Option<f32> {
     (span.is_finite() && span > 0.0).then(|| ((v - lo) / span).clamp(0.0, 1.0) as f32)
 }
 
-/// The fill of a bounded dialer in `rect`, from its left edge to the
-/// fraction `t` of its width.
-fn range_fill(ui: &egui::Ui, rect: egui::Rect, t: f32) -> egui::Shape {
-    let mut fill = rect;
-    fill.set_width(rect.width() * t);
+/// Fill `slot` with the fill of a bounded dialer in `rect`, from its left
+/// edge to the fraction `t` of its width. The fill takes the dialer's
+/// rounded shape, cut square at `t`.
+fn paint_range_fill(ui: &egui::Ui, slot: egui::layers::ShapeIdx, rect: egui::Rect, t: f32) {
+    let width = rect.width() * t;
+    // A fill thinner than a point would draw as a hairline.
+    if width < 1.0 {
+        return;
+    }
     let radius = ui.visuals().widgets.inactive.corner_radius;
-    // The fill ends square, unless it reaches the dialer's rounded end.
-    let radius = match t < 1.0 {
-        true => egui::CornerRadius {
-            ne: 0,
-            se: 0,
-            ..radius
-        },
-        false => radius,
-    };
-    egui::Shape::rect_filled(fill, radius, ui.visuals().selection.bg_fill)
+    let fill = egui::Shape::rect_filled(rect, radius, ui.visuals().selection.bg_fill);
+    let cut = rect.with_max_x(rect.left() + width);
+    ui.painter().with_clip_rect(cut).set(slot, fill);
 }
 
 fn unbound_chip(ui: &mut egui::Ui, tag: &str) -> egui::Response {

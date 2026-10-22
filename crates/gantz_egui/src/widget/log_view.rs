@@ -238,6 +238,7 @@ impl<'a> LogView<'a> {
         let (show_time, show_level, show_target) =
             (state.show_time, state.show_level, state.show_target);
         ui.spacing_mut().item_spacing.x = 14.0;
+        let table_w = crate::widget::table_width(ui);
         let mut table = TableBuilder::new(ui)
             .resizable(false)
             .cell_layout(egui::Layout::left_to_right(egui::Align::TOP));
@@ -251,7 +252,11 @@ impl<'a> LogView<'a> {
             table = table.column(Column::auto().at_least(80.0)); // Target
         }
         table
-            .column(Column::remainder().at_least(100.0).clip(true)) // Message
+            .column(
+                Column::remainder()
+                    .at_least(crate::widget::MESSAGE_MIN_WIDTH)
+                    .clip(true),
+            ) // Message
             .body(|mut body| {
                 let row_h = 18.0;
                 let text_color = body.ui_mut().style().visuals.text_color();
@@ -260,7 +265,8 @@ impl<'a> LogView<'a> {
                     crate::widget::LevelColors::from_visuals(&body.ui_mut().style().visuals);
                 // Each message takes one line cut at its column's width, or wraps
                 // within it. Its galley sets the row's height.
-                let msg_w = body.widths().last().copied().unwrap_or(0.0);
+                let spacing = body.ui_mut().spacing().item_spacing.x;
+                let msg_w = crate::widget::message_width(table_w, body.widths(), spacing);
                 let font = egui::TextStyle::Body.resolve(body.ui_mut().style());
                 let rows: Vec<_> = entries
                     .iter()

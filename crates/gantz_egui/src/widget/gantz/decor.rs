@@ -354,12 +354,12 @@ fn header_ui(
     action
 }
 
-/// The window action of a press on a drag area: a drag moves the window and
-/// a double-click maximises it.
+/// The window action of a press on a drag area: a primary drag moves the
+/// window and a double-click maximises it.
 pub(super) fn drag_action(response: &egui::Response) -> Option<WindowAction> {
     if response.double_clicked() {
         Some(WindowAction::ToggleMaximize)
-    } else if response.drag_started() {
+    } else if response.drag_started_by(egui::PointerButton::Primary) {
         Some(WindowAction::Drag)
     } else {
         None
@@ -383,7 +383,7 @@ pub(super) fn resize_edges(
             .fixed_pos(band.min)
             .show(ctx, |ui| {
                 let (_, response) = ui.allocate_exact_size(band.size(), egui::Sense::drag());
-                if response.drag_started() {
+                if response.drag_started_by(egui::PointerButton::Primary) {
                     action = Some(WindowAction::Resize(edge));
                 }
                 response.on_hover_cursor(edge.cursor());
