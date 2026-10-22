@@ -195,6 +195,7 @@ impl Plugin for GantzEguiPlugin {
             .init_resource::<RefExtUis>()
             .init_resource::<EdgeStyles>()
             .init_resource::<AudioHeads>()
+            .init_resource::<StatusItems>()
             // GUI state observers
             .add_observer(on_head_opened)
             .add_observer(on_head_changed)
@@ -309,12 +310,14 @@ fn clear_ui_providers(
     mut ref_ext_uis: ResMut<RefExtUis>,
     mut edge_styles: ResMut<EdgeStyles>,
     mut audio_heads: ResMut<AudioHeads>,
+    mut status_items: ResMut<StatusItems>,
 ) {
     tabs.0.clear();
     ext_panes.0.clear();
     ref_ext_uis.0.clear();
     edge_styles.0.clear();
     audio_heads.0.clear();
+    status_items.0.clear();
 }
 
 /// The live view of a head's graph, its camera and node layout.
@@ -450,6 +453,11 @@ pub struct EdgeStyles(pub Vec<Box<dyn gantz_egui::widget::EdgeStyle + Send + Syn
 /// toggle. Same contract as [`SettingsTabs`].
 #[derive(Default, Resource)]
 pub struct AudioHeads(pub HashSet<ca::Head>);
+
+/// The host's items for the status line, such as the audio device's rate
+/// and load. Same contract as [`SettingsTabs`].
+#[derive(Default, Resource)]
+pub struct StatusItems(pub Vec<gantz_egui::widget::StatusItem>);
 
 impl Deref for GuiState {
     type Target = gantz_egui::widget::GantzState;

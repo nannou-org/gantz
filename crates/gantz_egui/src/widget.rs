@@ -10,8 +10,8 @@ pub use ext_pane::{ExtPane, ExtPaneCtx, ExtPaneEntry};
 pub use gantz::{
     AlignConfig, BaseSourcesCtx, EdgeConfig, FollowSelectionConfig, Gantz, GantzState,
     GraphPlacement, GridConfig, LayoutConfig, NodeViewPane, Pane, PaneWindowGeometry,
-    PaneWindowMode, SceneConfig, SnapConfig, SnapMode, StatusStyle, WindowedPane,
-    close_windowed_pane, pane_key, redock_windowed_pane,
+    PaneWindowMode, SceneConfig, SnapConfig, SnapMode, StatusAction, StatusIcon, StatusItem,
+    StatusStyle, WindowedPane, close_windowed_pane, pane_key, redock_windowed_pane,
 };
 pub use global_config::{GlobalConfigResponse, global_config};
 pub use graph_config::{GraphConfig, GraphConfigResponse};

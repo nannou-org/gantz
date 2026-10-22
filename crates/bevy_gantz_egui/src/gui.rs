@@ -3,8 +3,8 @@
 use crate::{
     AudioHeads, BaseImmutable, BaseNames, BuiltinNodes, CollabUi, EdgeStyles, ExtPanes, GraphCache,
     GuiState, HeadAccess, HostNativePaneWindows, NodeCodecRes, OpenHeadViews, PerfGui, PerfVm,
-    RefExtUis, ResponseDispatchers, SettingsTabs, TraceCapture, WindowedPanesRequested, base, env,
-    refresh_cache,
+    RefExtUis, ResponseDispatchers, SettingsTabs, StatusItems, TraceCapture,
+    WindowedPanesRequested, base, env, refresh_cache,
 };
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
@@ -38,6 +38,7 @@ pub struct GantzInputs<'w, 's> {
     ref_ext_uis: Res<'w, RefExtUis>,
     edge_styles: Res<'w, EdgeStyles>,
     audio_heads: Res<'w, AudioHeads>,
+    status_items: Res<'w, StatusItems>,
     host_native: Option<Res<'w, HostNativePaneWindows>>,
     export_paths: Option<Res<'w, base::ExportPaths>>,
     base_sources: Res<'w, base::BaseSources>,
@@ -167,6 +168,7 @@ pub(crate) fn show_gantz(
         ref_ext_uis,
         edge_styles,
         audio_heads,
+        status_items,
         host_native,
         export_paths,
         base_sources,
@@ -231,6 +233,7 @@ pub(crate) fn show_gantz(
         .ref_ext_uis(&exts)
         .edge_styles(&stylers)
         .audio_heads(&audio_heads.0)
+        .status_items(&status_items.0)
         .clipboard(&read_clipboard);
     // Base-source authoring context. Present only where the per-source
     // write-back runs, since `update-base` inserts ExportPaths. The main app

@@ -26,7 +26,7 @@ use state::{
     clear_egui_memory_id, default_sidebar_width, default_tray_height, load_ron, load_tree,
     store_ron, store_tree,
 };
-pub use status::StatusStyle;
+pub use status::{StatusAction, StatusIcon, StatusItem, StatusStyle};
 pub use tiles::{NodeViewPane, Pane};
 use tiles::{
     add_graph_pane, add_node_view_pane, capture_fixed_sizes, create_tree, impose_fixed_sizes,
@@ -90,6 +90,8 @@ pub struct Gantz<'a> {
     /// egui alone cannot read the clipboard. `None` hides them.
     clipboard: Option<&'a dyn Fn() -> Option<String>>,
     audio_heads: Option<&'a HashSet<gantz_ca::Head>>,
+    /// The host's items for the status line.
+    status_items: &'a [StatusItem],
 }
 
 /// Base-source authoring context for the graph config pane's "source"
@@ -278,6 +280,7 @@ impl<'a> Gantz<'a> {
             collab: None,
             clipboard: None,
             audio_heads: None,
+            status_items: &[],
         }
     }
 
@@ -285,6 +288,14 @@ impl<'a> Gantz<'a> {
     /// speaker that toggles [`OpenHeadState::muted`].
     pub fn audio_heads(mut self, heads: &'a HashSet<gantz_ca::Head>) -> Self {
         self.audio_heads = Some(heads);
+        self
+    }
+
+    /// Add the host's items to the status line, such as the audio device's
+    /// rate and load. They sit after the focused graph's link and before the
+    /// VM time.
+    pub fn status_items(mut self, items: &'a [StatusItem]) -> Self {
+        self.status_items = items;
         self
     }
 
@@ -546,34 +557,64 @@ impl<'a> Gantz<'a> {
             .find_pane(&Pane::GraphScene)
             .and_then(|id| tree.tiles.rect(id))
             .unwrap_or(tree_area);
-        let head = access.heads().get(focused_head);
-        let session = match (self.collab, head) {
+        let head = access.heads().get(focused_head).cloned();
+        let session = match (self.collab, &head) {
             (Some(collab), Some(gantz_ca::Head::Branch(name))) => collab.sessions.get(name),
             _ => None,
         };
+        let vault = self.collab.and_then(|c| c.vault.as_ref());
+        let link = match (session, vault) {
+            (Some(session), _) => Some(status::Link::Session(session)),
+            (None, Some(vault)) => Some(status::Link::Vault(vault)),
+            (None, None) => None,
+        };
+        let saved = head
+            .as_ref()
+            .and_then(|h| self.env.registry.head_commit(h))
+            .and_then(|commit| status::since(commit.timestamp));
+        let muted = head
+            .as_ref()
+            .and_then(|h| state.open_heads.get(h))
+            .is_some_and(|s| s.muted);
         let status = status::Status {
-            graph: head.map(ToString::to_string),
-            session,
-            vm: self.perf_vm.as_deref().and_then(status::vm_mean),
+            graph: head.as_ref().map(ToString::to_string),
+            saved,
+            link,
+            items: self.status_items,
+            muted,
+            vm: self
+                .perf_vm
+                .as_deref()
+                .map(status::vm_recent)
+                .unwrap_or_default(),
             problems: status::scan_log(ui.ctx(), self.log_source.as_ref()),
         };
+        if saved.is_some() {
+            // "saved 2m ago" counts up by itself.
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs(30));
+        }
         let inset = chrome::HEADER_INSET;
-        let open_logs = match status_style {
+        let status_res = match status_style {
             StatusStyle::Gutter => {
                 let rect = egui::Rect::from_min_max(
                     egui::pos2(tree_area.min.x + inset, tree_area.max.y),
                     egui::pos2(tree_area.max.x - inset, widget_area.max.y),
                 );
-                status::gutter(ui, rect, &status)
+                status::gutter(ui.ctx(), rect, &status)
             }
             StatusStyle::Pill => {
                 let anchor = scene_rect.right_bottom() - egui::Vec2::splat(inset);
                 status::pill(ui.ctx(), anchor, &status)
             }
-            StatusStyle::Hidden => false,
+            StatusStyle::Hidden => status::StatusResponse::default(),
         };
-        if open_logs {
+        if status_res.open_logs {
             state.view_toggles.logs = true;
+        }
+        if let (true, Some(head)) = (status_res.toggle_mute, &head) {
+            let head_state = state.open_heads.entry(head.clone()).or_default();
+            head_state.muted = !head_state.muted;
         }
         if patch_only {
             let visuals = ui.visuals();
