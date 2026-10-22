@@ -133,8 +133,8 @@ enum LogSource {
 
 /// The `egui_tiles::Behavior::resize_stroke` shared by both tile trees.
 ///
-/// An idle gap shows the scene in the separator colour. A hovered or dragged
-/// gap draws a thin line down its middle, to show it resizes.
+/// An idle gap draws nothing, so the scene shows through it. A hovered or
+/// dragged gap draws a thin line down its middle, to show it resizes.
 fn separator_stroke(
     cfg: &StyleConfig,
     style: &egui::Style,
@@ -142,10 +142,7 @@ fn separator_stroke(
 ) -> egui::Stroke {
     let theme = style::theme_of(&style.visuals);
     match resize_state {
-        egui_tiles::ResizeState::Idle => egui::Stroke::new(
-            cfg.shape.separator_width,
-            cfg.resolve(theme, Role::Separator),
-        ),
+        egui_tiles::ResizeState::Idle => egui::Stroke::NONE,
         egui_tiles::ResizeState::Hovering | egui_tiles::ResizeState::Dragging => egui::Stroke::new(
             (cfg.shape.separator_width * 0.25).max(1.5),
             cfg.resolve(theme, Role::SeparatorHover),

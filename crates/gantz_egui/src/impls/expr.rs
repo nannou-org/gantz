@@ -68,17 +68,34 @@ impl<'a> egui::Widget for ExprEdit<'a> {
             )
         };
 
-        let response = ui.add(
-            egui::TextEdit::multiline(&mut state.code)
-                .id(id)
-                .code_editor()
-                .font(font_id)
-                .margin(margin)
-                .desired_rows(desired_rows)
-                .desired_width(desired_width)
-                .hint_text("(+ $l $r)")
-                .layouter(&mut layouter),
-        );
+        // The field keeps one outline width and no expansion in every state, so
+        // that hover and focus only recolour its outline and never move its
+        // text.
+        let response = ui
+            .scope(|ui| {
+                let width = ui.visuals().selection.stroke.width;
+                let widgets = &mut ui.visuals_mut().widgets;
+                for w in [
+                    &mut widgets.inactive,
+                    &mut widgets.hovered,
+                    &mut widgets.active,
+                ] {
+                    w.bg_stroke.width = width;
+                    w.expansion = 0.0;
+                }
+                ui.add(
+                    egui::TextEdit::multiline(&mut state.code)
+                        .id(id)
+                        .code_editor()
+                        .font(font_id)
+                        .margin(margin)
+                        .desired_rows(desired_rows)
+                        .desired_width(desired_width)
+                        .hint_text("(+ $l $r)")
+                        .layouter(&mut layouter),
+                )
+            })
+            .inner;
         if response.changed() {
             match gantz_core::node::expr(&state.code) {
                 Ok(new_expr) => {

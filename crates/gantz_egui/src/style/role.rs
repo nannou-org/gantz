@@ -163,9 +163,6 @@ roles! {
     scrim, Scrim, Chrome, "scrim",
         "The dimming layer over a scene that is busy or awaits a drop.",
         c(N0).with_opacity(0.5);
-    separator, Separator, Chrome, "separator",
-        "The gap between panes. Match the scene so panes float on it.",
-        c(N0);
     separator_hover, SeparatorHover, Chrome, "hovered separator",
         "The gap between panes while hovered or dragged.",
         c(N4);

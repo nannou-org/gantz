@@ -186,7 +186,10 @@ impl Tab {
                 + badge_width
                 + dot_width
                 + close_btn_width,
-            ui.available_height(),
+            match look {
+                TabLook::Pill => ui.available_height().max(super::kit::pill_height(ui)),
+                TabLook::Text | TabLook::Title => ui.available_height(),
+            },
         );
 
         let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
@@ -213,7 +216,7 @@ impl Tab {
                 _ => visuals.weak_text_color(),
             };
             if look == TabLook::Pill && (active || hovered) {
-                let height = ui.spacing().interact_size.y.min(rect.height());
+                let height = super::kit::pill_height(ui).min(rect.height());
                 let pill =
                     egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width(), height));
                 let radius = crate::style::shape(ui.ctx()).widget_corner(height);

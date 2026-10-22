@@ -280,6 +280,8 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> Responses {
             if !relays.is_empty() {
                 ui.label("");
                 ui.vertical(|ui| {
+                    // A long url ends in an ellipsis inside the pane.
+                    ui.set_max_width(control_w);
                     for (url, connected) in relays {
                         ui.horizontal(|ui| {
                             let (role, label) = if *connected {
@@ -289,7 +291,8 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> Responses {
                             };
                             super::status_dot(ui, crate::style::color(ui, role))
                                 .on_hover_text(label);
-                            ui.label(egui::RichText::new(url).weak());
+                            ui.add(egui::Label::new(egui::RichText::new(url).weak()).truncate())
+                                .on_hover_text(url);
                         });
                     }
                 });

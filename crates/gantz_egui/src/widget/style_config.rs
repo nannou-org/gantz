@@ -120,7 +120,7 @@ pub fn style_config(
     });
 
     section(ui, "grid", |ui| {
-        ui.checkbox(&mut grid.show, "show grid")
+        super::kit::switch_row(ui, &mut grid.show, "show grid")
             .on_hover_text("Draw the dot grid behind the graph.");
         ui.horizontal(|ui| {
             ui.add(
@@ -139,8 +139,10 @@ pub fn style_config(
     });
 
     section(ui, "edges", |ui| {
+        let label = super::kit::text_width(ui, "curvature");
+        super::kit::fit_sliders(ui, label + ui.spacing().item_spacing.x, "0.00");
         ui.horizontal(|ui| {
-            ui.add(egui::Slider::new(&mut edge.curvature, 0.0..=1.0))
+            ui.add(egui::Slider::new(&mut edge.curvature, 0.0..=1.0).trailing_fill(true))
                 .on_hover_text("How far each edge curves. 0 draws straight lines.");
             ui.label("curvature");
         });
@@ -628,15 +630,16 @@ fn paint_chip(ui: &egui::Ui, rect: egui::Rect, color: egui::Color32, highlighted
 
 /// The corner, spacing, text and pane controls.
 fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
-    // The sliders take the room that the labels and values leave, so that
-    // they fit a narrow pane.
-    let labels = super::kit::text_width(ui, "padding across");
-    let value = super::kit::text_width(ui, "16 px");
-    let gaps = 3.0 * ui.spacing().item_spacing.x;
-    ui.spacing_mut().slider_width =
-        (ui.available_width() - labels - value - gaps).clamp(40.0, 160.0);
+    // Each group is a grid of its own, so that the corners' short labels
+    // leave their sliders room.
+    let labels = super::kit::text_width(ui, "controls") + ui.spacing().item_spacing.x;
+    super::kit::fit_sliders(ui, labels, "00 px");
     let radius = |ui: &mut egui::Ui, value: &mut u8, max: u8| {
-        ui.add(egui::Slider::new(value, 0..=max).suffix(" px"));
+        ui.add(
+            egui::Slider::new(value, 0..=max)
+                .suffix(" px")
+                .trailing_fill(true),
+        );
     };
     let px = |ui: &mut egui::Ui, value: &mut f32, range: std::ops::RangeInclusive<f32>| {
         ui.add(
@@ -649,12 +652,11 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
     };
     let heading = |ui: &mut egui::Ui, text: &str| {
         ui.label(egui::RichText::new(text).small().weak());
-        ui.end_row();
     };
-    egui::Grid::new("style_shape")
+    heading(ui, "corners");
+    egui::Grid::new("style_shape_corners")
         .num_columns(2)
         .show(ui, |ui| {
-            heading(ui, "corners");
             ui.label("panes")
                 .on_hover_text("The corner radius of panes, windows, menus and popups.");
             radius(ui, &mut shape.pane_radius, 32);
@@ -675,8 +677,11 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
             );
             radius(ui, &mut shape.node_radius, 16);
             ui.end_row();
-
-            heading(ui, "spacing");
+        });
+    heading(ui, "spacing");
+    egui::Grid::new("style_shape_spacing")
+        .num_columns(2)
+        .show(ui, |ui| {
             ui.label("spacing")
                 .on_hover_text("A scale on the gaps and padding between and within widgets.");
             let mut percent = shape.spacing * 100.0;
@@ -707,8 +712,11 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
                 .on_hover_text("The margin between the outer panes and the edge of the window.");
             px(ui, &mut shape.window_margin, 0.0..=48.0);
             ui.end_row();
-
-            heading(ui, "text");
+        });
+    heading(ui, "text");
+    egui::Grid::new("style_shape_text")
+        .num_columns(2)
+        .show(ui, |ui| {
             ui.label("text size")
                 .on_hover_text("The size of body text. Other text keeps its size relative to it.");
             ui.add(
@@ -719,8 +727,11 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
                     .suffix(" pt"),
             );
             ui.end_row();
-
-            heading(ui, "panes");
+        });
+    heading(ui, "panes");
+    egui::Grid::new("style_shape_panes")
+        .num_columns(2)
+        .show(ui, |ui| {
             ui.label("pane outline").on_hover_text(
                 "The width of the outline around each pane. 0 draws none. Inked palettes \
                  need one, since their panes share the scene's colour.",

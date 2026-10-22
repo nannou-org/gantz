@@ -205,7 +205,7 @@ pub fn table(
     let mut rows_resp = InspectorRowsResponse::default();
     let scroll_area_output = TableBuilder::new(ui)
         .vscroll(false)
-        .column(Column::auto().at_least(50.0))
+        .column(Column::auto().at_least(64.0))
         .column(Column::remainder().at_least(120.0))
         .body(|mut body| {
             body.row(row_h, |mut row| {

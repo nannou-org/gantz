@@ -39,8 +39,14 @@ pub fn head_name_edit(
     let text_edit = egui::TextEdit::singleline(name)
         .desired_width(ui.available_width())
         .text_color(text_color)
-        .hint_text("name");
-    let mut response = ui.add(text_edit);
+        .hint_text("name")
+        .margin(super::kit::FIELD_MARGIN);
+    let mut response = ui
+        .scope(|ui| {
+            super::kit::field_visuals(ui);
+            ui.add(text_edit)
+        })
+        .inner;
     if has_separator && !is_current_name {
         response = response.on_hover_text(format!(
             "'{}' is reserved for nested graphs; use a plain name",

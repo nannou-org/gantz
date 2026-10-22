@@ -185,7 +185,11 @@ where
                 if let Some(session) = session {
                     config = config.collab(session);
                 }
-                config.show(ui)
+                // A short pane scrolls rather than cut off its last rows.
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| config.show(ui))
+                    .inner
             });
             if let Some((original, new_name)) = res.inner.new_branch {
                 let branch = crate::BranchHead { original, new_name };

@@ -182,9 +182,11 @@ impl<'a> GraphConfig<'a> {
                     // growing from a single row.
                     description_changed = ui
                         .add_enabled_ui(!self.immutable, |ui| {
+                            super::kit::field_visuals(ui);
                             super::buffered_edit(ui, id, current, |desc| {
                                 egui::TextEdit::multiline(desc)
-                                    .hint_text("Description")
+                                    .hint_text("description")
+                                    .margin(super::kit::FIELD_MARGIN)
                                     .desired_rows(1)
                                     .desired_width(control_w)
                             })

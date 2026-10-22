@@ -137,9 +137,11 @@ impl<'a> GraphSelect<'a> {
                             .on_hover_text("show demos");
                     });
                 // The name filter fills the remaining width.
+                super::kit::field_visuals(ui);
                 egui::TextEdit::singleline(&mut state.name_filter)
                     .desired_width(ui.available_width())
-                    .hint_text("🔎 Name Filter")
+                    .hint_text("filter graphs")
+                    .margin(super::kit::FIELD_MARGIN)
                     .show(ui);
             });
         });

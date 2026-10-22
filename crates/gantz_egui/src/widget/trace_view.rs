@@ -170,9 +170,11 @@ impl TraceView {
                         }
                     });
                 // The filter fills the remaining width.
+                super::kit::field_visuals(ui);
                 egui::TextEdit::singleline(&mut state.text_filter)
                     .desired_width(ui.available_width())
                     .hint_text("filter logs")
+                    .margin(super::kit::FIELD_MARGIN)
                     .show(ui);
             });
         });
@@ -211,7 +213,7 @@ impl TraceView {
             table = table.column(Column::auto()); // Timestamp
         }
         if show_level {
-            table = table.column(Column::auto().at_least(50.0)); // Level
+            table = table.column(Column::auto()); // Level
         }
         if show_target {
             table = table.column(Column::auto().at_least(80.0)); // Target

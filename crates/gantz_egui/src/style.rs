@@ -311,6 +311,9 @@ fn shaped(mut style: egui::Style, shape: &Shape) -> egui::Style {
     s.menu_spacing *= k;
     s.window_margin = s.window_margin * k;
     s.menu_margin = s.menu_margin * k;
+    // A scroll fade paints the pane's colour over the cards in a pane, which
+    // reads as a shadow, so scroll areas end crisply instead.
+    s.scroll.fade.strength = 0.0;
 
     if let Some(body) = style.text_styles.get(&egui::TextStyle::Body) {
         let k = shape.text_size / body.size;
@@ -623,13 +626,14 @@ mod tests {
     }
 
     /// The default shape keeps egui's default spacing, but for the button
-    /// padding, and its text sizes.
+    /// padding and the scroll fade, and its text sizes.
     #[test]
     fn default_shape_keeps_egui_metrics() {
         let cfg = StyleConfig::default();
         for theme in [egui::Theme::Dark, egui::Theme::Light] {
             let (ours, mut egui) = (style(&cfg, theme), theme.default_style());
             egui.spacing.button_padding = cfg.shape.button_padding;
+            egui.spacing.scroll.fade = ours.spacing.scroll.fade;
             assert_eq!(ours.spacing, egui.spacing);
             assert_eq!(ours.text_styles, egui.text_styles);
             assert_eq!(ours.visuals.window_shadow, egui.visuals.window_shadow);
