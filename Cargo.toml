@@ -14,6 +14,7 @@ repository = "https://github.com/nannou-org/gantz"
 # explicit per-crate license avoids silently mis-licensing a newly added crate.
 
 [workspace.dependencies]
+ashpd = { version = "0.11", default-features = false }
 async-channel = "2.5"
 base64 = "0.22"
 bincode = "1"

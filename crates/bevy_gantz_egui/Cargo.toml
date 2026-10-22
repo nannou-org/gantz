@@ -41,5 +41,10 @@ web-time.workspace = true
 bevy_camera.workspace = true
 bevy_window.workspace = true
 
+# The desktop's settings portal, for its light or dark preference (see
+# `theme`). winit does not read it on Linux.
+[target.'cfg(target_os = "linux")'.dependencies]
+ashpd = { workspace = true, features = ["async-std"] }
+
 [dev-dependencies]
 petgraph.workspace = true

@@ -34,6 +34,8 @@ pub mod storage;
 pub mod sugar;
 #[cfg(test)]
 mod tests;
+#[cfg(not(target_arch = "wasm32"))]
+mod theme;
 mod view;
 pub mod vm;
 
@@ -80,6 +82,8 @@ use response::{
 };
 use settings::{on_compile_config, on_validate_change_tracking};
 pub use sugar::BevySugar;
+#[cfg(not(target_arch = "wasm32"))]
+pub use theme::SystemTheme;
 pub use view::{
     LayoutCommittedEvent, LayoutEdited, ViewPersistSet, persist_camera_and_seed, settle_layout,
 };
@@ -121,6 +125,10 @@ impl GantzEguiPlugin {
 
 impl Plugin for GantzEguiPlugin {
     fn build(&self, app: &mut App) {
+        // Follow the system's light or dark preference.
+        #[cfg(not(target_arch = "wasm32"))]
+        theme::build(app);
+
         // Push the entrypoint providers. See `vm::EntrypointFns`.
         app.world_mut()
             .get_resource_or_init::<vm::EntrypointFns>()
