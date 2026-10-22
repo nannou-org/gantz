@@ -18,11 +18,12 @@ pub enum WindowStyle {
     /// The system's own title bar and frame.
     Native,
     /// No title bar. The window's controls sit over the scene's top-right
-    /// corner, or in the header of the pane there.
+    /// corner, or in the header of the pane there. It pairs with the default
+    /// status pill.
+    #[default]
     Controls,
     /// A slim header on the scene with the logo, the graph's name and the
-    /// window's controls. It pairs with the default status line.
-    #[default]
+    /// window's controls. It pairs with the status line.
     Header,
 }
 
@@ -65,6 +66,22 @@ pub enum WindowEdge {
 /// The width of the band along the window's edges that resizes it.
 const EDGE: f32 = 5.0;
 
+/// The least side of the squares at the window's corners that resize it
+/// from a corner. A rounder window's corners grow with its radius.
+const CORNER: f32 = 16.0;
+
+/// The side of a window button, in the style of the system's buttons.
+const BUTTON: f32 = 24.0;
+
+/// The gap between the window's buttons.
+const BUTTON_GAP: f32 = 8.0;
+
+/// The side of the icon in a window button.
+const BUTTON_ICON: f32 = 10.0;
+
+/// The height of the wordmark over the scene.
+const WORDMARK: f32 = 11.0;
+
 /// The id under which the context records whether the widget decorates the
 /// window. See [`decorates`].
 const DECORATES_ID: &str = "gantz-window-decorates";
@@ -92,19 +109,21 @@ impl WindowEdge {
         WindowEdge::NorthWest,
     ];
 
-    /// The band of `window` that resizes it from this edge.
-    fn band(self, window: egui::Rect) -> egui::Rect {
+    /// The band of `window` that resizes it from this edge. The corners take
+    /// squares of side `corner`, and the edges run between them.
+    fn band(self, window: egui::Rect, corner: f32) -> egui::Rect {
         let (l, r, t, b) = (window.left(), window.right(), window.top(), window.bottom());
+        let (e, c) = (EDGE, corner);
         let x = |lo: f32, hi: f32| egui::Rangef::new(lo, hi);
         let (xs, ys) = match self {
-            WindowEdge::North => (x(l + EDGE, r - EDGE), x(t, t + EDGE)),
-            WindowEdge::South => (x(l + EDGE, r - EDGE), x(b - EDGE, b)),
-            WindowEdge::West => (x(l, l + EDGE), x(t + EDGE, b - EDGE)),
-            WindowEdge::East => (x(r - EDGE, r), x(t + EDGE, b - EDGE)),
-            WindowEdge::NorthWest => (x(l, l + EDGE), x(t, t + EDGE)),
-            WindowEdge::NorthEast => (x(r - EDGE, r), x(t, t + EDGE)),
-            WindowEdge::SouthWest => (x(l, l + EDGE), x(b - EDGE, b)),
-            WindowEdge::SouthEast => (x(r - EDGE, r), x(b - EDGE, b)),
+            WindowEdge::North => (x(l + c, r - c), x(t, t + e)),
+            WindowEdge::South => (x(l + c, r - c), x(b - e, b)),
+            WindowEdge::West => (x(l, l + e), x(t + c, b - c)),
+            WindowEdge::East => (x(r - e, r), x(t + c, b - c)),
+            WindowEdge::NorthWest => (x(l, l + c), x(t, t + c)),
+            WindowEdge::NorthEast => (x(r - c, r), x(t, t + c)),
+            WindowEdge::SouthWest => (x(l, l + c), x(b - c, b)),
+            WindowEdge::SouthEast => (x(r - c, r), x(b - c, b)),
         };
         egui::Rect::from_x_y_ranges(xs, ys)
     }
@@ -128,56 +147,143 @@ impl WindowEdge {
 /// Returns the action of the button clicked.
 pub(super) fn controls(ui: &mut egui::Ui, window: NativeWindow) -> Option<WindowAction> {
     let mut action = None;
-    let side = ui.spacing().interact_size.y;
-    let gap = 2.0;
-    let size = egui::vec2(3.0 * side + 2.0 * gap, side);
+    let size = egui::vec2(3.0 * BUTTON + 2.0 * BUTTON_GAP, BUTTON);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let row = egui::UiBuilder::new()
         .max_rect(rect)
         .layout(egui::Layout::left_to_right(egui::Align::Center));
     ui.scope_builder(row, |ui| {
-        ui.spacing_mut().item_spacing.x = gap;
-        if chrome::icon_button(ui, Icon::Minimize, "minimise").clicked() {
+        ui.spacing_mut().item_spacing.x = BUTTON_GAP;
+        if button(ui, Icon::Minimize, "minimise").clicked() {
             action = Some(WindowAction::Minimize);
         }
         let (icon, hint) = match window.maximized {
             true => (Icon::Restore, "restore"),
             false => (Icon::Maximize, "maximise"),
         };
-        if chrome::icon_button(ui, icon, hint).clicked() {
+        if button(ui, icon, hint).clicked() {
             action = Some(WindowAction::ToggleMaximize);
         }
-        if chrome::icon_button(ui, Icon::Close, "close").clicked() {
+        if button(ui, Icon::Close, "close").clicked() {
             action = Some(WindowAction::Close);
         }
     });
     action
 }
 
+/// One of the window's buttons: a round icon button that shows a fill only
+/// while hovered.
+fn button(ui: &mut egui::Ui, icon: Icon, hint: &str) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::Vec2::splat(BUTTON), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.visuals();
+        let color = match response.hovered() {
+            true => visuals.strong_text_color(),
+            false => visuals.text_color(),
+        };
+        if response.hovered() {
+            let fill = visuals.widgets.hovered.weak_bg_fill;
+            ui.painter()
+                .circle_filled(rect.center(), BUTTON / 2.0, fill);
+        }
+        let icon_rect = egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(BUTTON_ICON));
+        chrome::paint_icon(ui.painter(), icon_rect, icon, color);
+    }
+    response.on_hover_text(hint)
+}
+
 /// The window's controls over the scene, with their top-right corner at
-/// `pos`. Returns the action of the button clicked.
+/// `pos`. Returns their rect and the action of the button clicked.
 pub(super) fn floating_controls(
     ctx: &egui::Context,
     pos: egui::Pos2,
     window: NativeWindow,
-) -> Option<WindowAction> {
-    egui::Area::new(egui::Id::new("gantz-window-controls"))
+) -> (egui::Rect, Option<WindowAction>) {
+    let shown = scene_row(ctx, "gantz-window-controls", pos, |ui| controls(ui, window));
+    (shown.response.rect, shown.inner)
+}
+
+/// The gantz wordmark over the scene, with its top-right corner at `pos`.
+/// Hovering shows `version`. When `drag`, a drag on it moves the window and a
+/// double-click maximises it. Returns its rect and the window action.
+pub(super) fn wordmark(
+    ctx: &egui::Context,
+    pos: egui::Pos2,
+    version: Option<&str>,
+    drag: bool,
+) -> (egui::Rect, Option<WindowAction>) {
+    let shown = scene_row(ctx, "gantz-wordmark", pos, |ui| {
+        let color = ui.visuals().weak_text_color();
+        let mark = crate::logo::wordmark(WORDMARK, color);
+        let size = mark.size().unwrap_or(egui::vec2(WORDMARK * 4.0, WORDMARK));
+        let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+        mark.paint_at(ui, rect);
+        let id = egui::Id::new("gantz-wordmark-drag");
+        let (action, response) = match drag {
+            true => drag_area(ui, rect, id),
+            false => (None, ui.interact(rect, id, egui::Sense::hover())),
+        };
+        if let Some(version) = version {
+            response.on_hover_text(version);
+        }
+        action
+    });
+    (shown.response.rect, shown.inner)
+}
+
+/// A row over the scene with its top-right corner at `pos`, as tall as a
+/// pane's header so it centres on the tab strip beside it.
+fn scene_row<R>(
+    ctx: &egui::Context,
+    id: &str,
+    pos: egui::Pos2,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<R> {
+    egui::Area::new(egui::Id::new(id))
         .order(egui::Order::Middle)
         .pivot(egui::Align2::RIGHT_TOP)
         .fixed_pos(pos)
         .show(ctx, |ui| {
-            // The controls centre on the tab strip's height beside them.
-            let margin = 4.0;
-            ui.set_min_height(crate::widget::kit::pill_height(ui) + 2.0 * margin);
+            let margin = (chrome::HEADER_HEIGHT - BUTTON) / 2.0;
+            ui.set_min_height(chrome::HEADER_HEIGHT);
             ui.horizontal_centered(|ui| {
                 ui.add_space(margin);
-                let action = controls(ui, window);
+                let inner = add_contents(ui);
                 ui.add_space(margin);
-                action
+                inner
             })
             .inner
         })
+}
+
+/// A band over the scene, in `rect`, whose drag moves the window and whose
+/// double-click maximises it. It shows the grab cursor, so a press there
+/// reads as a press on the window and not on the scene. Returns the action.
+pub(super) fn drag_band(ctx: &egui::Context, rect: egui::Rect) -> Option<WindowAction> {
+    if !rect.is_positive() {
+        return None;
+    }
+    egui::Area::new(egui::Id::new("gantz-window-drag-band"))
+        .order(egui::Order::Middle)
+        .fixed_pos(rect.min)
+        .show(ctx, |ui| {
+            ui.expand_to_include_rect(rect);
+            drag_area(ui, rect, egui::Id::new("gantz-window-drag-band-area")).0
+        })
         .inner
+}
+
+/// Sense a drag on `rect` that moves the window, showing the grab cursor.
+/// Returns the window action and the response. See [`drag_action`].
+pub(super) fn drag_area(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    id: egui::Id,
+) -> (Option<WindowAction>, egui::Response) {
+    let response = ui
+        .interact(rect, id, egui::Sense::click_and_drag())
+        .on_hover_cursor(egui::CursorIcon::Grab);
+    (drag_action(&response), response)
 }
 
 /// The slim header across the top of the window, in `rect`: the logo, the
@@ -218,12 +324,7 @@ fn header_ui(
     responses: &mut crate::response::Responses,
     ext_panes: &[crate::widget::ExtPaneEntry],
 ) -> Option<WindowAction> {
-    let drag = ui.interact(
-        rect,
-        egui::Id::new("gantz-window-drag"),
-        egui::Sense::click_and_drag(),
-    );
-    let mut action = drag_action(&drag);
+    let (mut action, _) = drag_area(ui, rect, egui::Id::new("gantz-window-drag"));
     let font = egui::TextStyle::Body.resolve(ui.style());
     let weak = ui.visuals().weak_text_color();
     ui.painter().text(
@@ -266,11 +367,17 @@ pub(super) fn drag_action(response: &egui::Response) -> Option<WindowAction> {
 }
 
 /// The bands along the edges of `window` that resize it, each showing its
-/// resize cursor. Returns the edge pressed this pass.
-pub(super) fn resize_edges(ctx: &egui::Context, window: egui::Rect) -> Option<WindowAction> {
+/// resize cursor. The corners grow with the window's `radius`, so a corner is
+/// as easy to find when it is round. Returns the edge pressed this pass.
+pub(super) fn resize_edges(
+    ctx: &egui::Context,
+    window: egui::Rect,
+    radius: f32,
+) -> Option<WindowAction> {
     let mut action = None;
+    let corner = radius.max(CORNER);
     for edge in WindowEdge::ALL {
-        let band = edge.band(window);
+        let band = edge.band(window, corner);
         egui::Area::new(egui::Id::new(("gantz-window-edge", edge as u8)))
             .order(egui::Order::Foreground)
             .fixed_pos(band.min)
@@ -283,6 +390,20 @@ pub(super) fn resize_edges(ctx: &egui::Context, window: egui::Rect) -> Option<Wi
             });
     }
     action
+}
+
+/// The outline around the edge of `window`, over all else, with corners of
+/// `radius`.
+pub(super) fn outline(ctx: &egui::Context, window: egui::Rect, radius: f32, stroke: egui::Stroke) {
+    if stroke.is_empty() {
+        return;
+    }
+    let layer = egui::LayerId::new(
+        egui::Order::Foreground,
+        egui::Id::new("gantz-window-outline"),
+    );
+    ctx.layer_painter(layer)
+        .rect_stroke(window, radius, stroke, egui::StrokeKind::Inside);
 }
 
 /// The gantz mark as a button. A click shows or hides the panes and a

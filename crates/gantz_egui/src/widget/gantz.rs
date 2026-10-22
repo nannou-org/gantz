@@ -95,6 +95,8 @@ pub struct Gantz<'a> {
     audio_heads: Option<&'a HashSet<gantz_ca::Head>>,
     /// The host's items for the status line.
     status_items: &'a [StatusItem],
+    /// The app's version, shown on hovering the wordmark.
+    version: Option<&'a str>,
     /// The window the widget decorates, when the host draws it without the
     /// system's decorations.
     native_window: Option<NativeWindow>,
@@ -294,6 +296,7 @@ impl<'a> Gantz<'a> {
             clipboard: None,
             audio_heads: None,
             status_items: &[],
+            version: None,
             native_window: None,
         }
     }
@@ -318,6 +321,13 @@ impl<'a> Gantz<'a> {
     /// VM time.
     pub fn status_items(mut self, items: &'a [StatusItem]) -> Self {
         self.status_items = items;
+        self
+    }
+
+    /// The app's version, such as its release and commit. It shows on hovering
+    /// the wordmark over the scene.
+    pub fn version(mut self, version: &'a str) -> Self {
+        self.version = Some(version);
         self
     }
 
@@ -689,7 +699,10 @@ impl<'a> Gantz<'a> {
             window_actions.extend(action);
         }
         if window.is_some_and(|w| !w.maximized) {
-            window_actions.extend(decor::resize_edges(ui.ctx(), widget_area));
+            window_actions.extend(decor::resize_edges(ui.ctx(), widget_area, window_radius));
+            let color = style::color(ui, Role::WindowOutline);
+            let stroke = egui::Stroke::new(state.style.shape.window_outline, color);
+            decor::outline(ui.ctx(), widget_area, window_radius, stroke);
         }
         for action in window_actions {
             response.responses.push(None, action);

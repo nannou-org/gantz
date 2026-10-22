@@ -63,6 +63,7 @@ fn main() {
         // The app's node codec is the node-set manifest for the reify and
         // erase seam and the `.gantz` parse and export paths.
         .insert_resource(bevy_gantz_egui::NodeCodecRes(node::codec()))
+        .insert_resource(bevy_gantz_egui::AppVersion(version()))
         .add_plugins(DefaultPlugins.set(app::log_plugin()).set(window::plugin()))
         .add_plugins(EguiPlugin::default())
         // Drives both layout settling and the registry persist.
@@ -207,6 +208,16 @@ fn setup_resources(
 /// This build, such as `gantz 0.4.0`. It stamps the store, see
 /// [`gantz_store::StoreMeta`].
 const BUILD: &str = concat!("gantz ", env!("CARGO_PKG_VERSION"));
+
+/// This build and the commit it was built from, when the build names one
+/// through `GANTZ_REV` as the nix package does. The GUI shows it on hovering
+/// the wordmark.
+fn version() -> String {
+    match option_env!("GANTZ_REV") {
+        Some(rev) => format!("{BUILD} ({rev})"),
+        None => BUILD.to_string(),
+    }
+}
 
 /// Bring a writable store in format `from` up to
 /// [`gantz_store::STORE_FORMAT`], then stamp it. The saved heads and GUI

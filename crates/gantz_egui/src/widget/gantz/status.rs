@@ -19,9 +19,9 @@ use web_time::SystemTime;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub enum StatusStyle {
     /// A line in a gutter under the panes, on the scene.
-    #[default]
     Gutter,
     /// A pill over the bottom-right corner of the scene.
+    #[default]
     Pill,
     /// No status line. Toasts still show.
     Hidden,

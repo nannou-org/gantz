@@ -95,6 +95,9 @@ roles! {
     border, Border, Surface, "border",
         "Outlines of cards, fields and windows.",
         c(N3);
+    window_outline, WindowOutline, Surface, "window outline",
+        "The outline around the app's window, when gantz draws its decorations.",
+        c(N7).with_opacity(0.1);
     node, Node, Surface, "node",
         "The background of nodes, a step from the scene toward the panes.",
         c(N1).with_opacity(0.6);

@@ -4,6 +4,7 @@
   lib,
   libxkbcommon,
   pkg-config,
+  rev ? null,
   stdenv,
   vulkan-loader,
   vulkan-validation-layers,
@@ -40,5 +41,8 @@ craneLib.buildPackage (
   commonArgs
   // {
     cargoArtifacts = craneLib.buildDepsOnly commonArgs;
+    # The commit shows in the app's version. It is set on the app alone, so a
+    # new commit does not rebuild the dependencies.
+    env = env // lib.optionalAttrs (rev != null) { GANTZ_REV = rev; };
   }
 )

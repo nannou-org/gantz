@@ -105,7 +105,13 @@ pub(super) fn ground_shapes(
     let radius = cfg.shape.window_corner();
     let mut shapes = vec![egui::Shape::rect_filled(area, window_radius, scene)];
     if let Some(ground) = ground_of(ctx, main_scene_id()) {
-        dots(&mut shapes, area, &ground, dot, |_| true);
+        // The dots keep within the window's rounded corners.
+        let (inner, inner_radius) = (
+            area.shrink(DOT_RADIUS),
+            (window_radius - DOT_RADIUS).max(0.0),
+        );
+        let within = |p| in_rounded_rect(inner, inner_radius, p);
+        dots(&mut shapes, area, &ground, dot, within);
     }
     for id in grounds(tree) {
         let Some(rect) = tree.tiles.rect(id) else {

@@ -736,6 +736,12 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
             );
             px(ui, &mut shape.pane_outline, 0.0..=4.0);
             ui.end_row();
+            ui.label("window outline").on_hover_text(
+                "The width of the outline around the app's window, when gantz draws its \
+                 decorations. 0 draws none.",
+            );
+            px(ui, &mut shape.window_outline, 0.0..=4.0);
+            ui.end_row();
             ui.label("shadows")
                 .on_hover_text("Whether windows and popups cast a shadow.");
             super::kit::switch(ui, &mut shape.shadows);

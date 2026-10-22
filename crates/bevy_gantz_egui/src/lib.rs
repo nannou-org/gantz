@@ -463,6 +463,11 @@ pub struct AudioHeads(pub HashSet<ca::Head>);
 #[derive(Default, Resource)]
 pub struct DecoratedWindow(pub gantz_egui::widget::NativeWindow);
 
+/// The app's version, such as its release and commit. The GUI shows it on
+/// hovering the wordmark. See [`gantz_egui::widget::Gantz::version`].
+#[derive(Resource)]
+pub struct AppVersion(pub String);
+
 /// The host's items for the status line, such as the audio device's rate
 /// and load. Same contract as [`SettingsTabs`].
 #[derive(Default, Resource)]

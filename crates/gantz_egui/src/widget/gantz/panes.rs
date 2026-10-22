@@ -288,15 +288,52 @@ where
         tabs: !patch_only,
         drag: controls.is_some(),
     };
-    if strip.logo.is_some() || strip.tabs {
-        // The strip sits at the scene tile's corner, so its top meets the side
-        // panes' tops and the pane gap sits between them.
-        tab_strip(cx, ui, rect.left_top(), main.as_ref(), &ext_panes, strip);
-    }
-    // The window's controls float over the scene when its tile holds the
-    // tree's top-right corner. A pane there holds them in its header.
+    // The scene's top-right corner holds the window's controls when no pane
+    // does, and the wordmark sits left of them. The header holds both when
+    // it shows. `right` is the left edge of what the top-right corner holds.
+    let mut right = rect.right_top();
     if let Some(w) = controls.filter(|_| at(rect.right_top(), tree.right_top())) {
-        if let Some(action) = super::decor::floating_controls(ui.ctx(), rect.right_top(), w) {
+        let (shown, action) = super::decor::floating_controls(ui.ctx(), right, w);
+        if let Some(action) = action {
+            cx.response.responses.push(None, action);
+        }
+        right.x = shown.left();
+    }
+    if !header {
+        let version = cx.gantz.version;
+        let (shown, action) = super::decor::wordmark(ui.ctx(), right, version, strip.drag);
+        if let Some(action) = action {
+            cx.response.responses.push(None, action);
+        }
+        right.x = shown.left();
+    }
+    // The strip sits at the scene tile's corner, so its top meets the side
+    // panes' tops and the pane gap sits between them.
+    let gap = cx.state.style.shape.separator_width;
+    let strip_right = match strip.logo.is_some() || strip.tabs {
+        true => {
+            let max_right = right.x - gap;
+            let shown = tab_strip(
+                cx,
+                ui,
+                rect.left_top(),
+                max_right,
+                main.as_ref(),
+                &ext_panes,
+                strip,
+            );
+            shown.right() + gap
+        }
+        false => rect.left(),
+    };
+    // The scene's top between the strip and the corner moves the window.
+    if strip.drag {
+        let band = egui::Rect::from_x_y_ranges(
+            strip_right..=right.x,
+            rect.top()..=rect.top() + super::chrome::HEADER_HEIGHT,
+        );
+        let action = super::decor::drag_band(ui.ctx(), band);
+        if let Some(action) = action {
             cx.response.responses.push(None, action);
         }
     }

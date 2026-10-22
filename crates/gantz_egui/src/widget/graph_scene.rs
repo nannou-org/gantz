@@ -481,6 +481,13 @@ impl<'a> GraphScene<'a> {
             responses.push(DynResponse::new(ResetTilesLayout));
         }
 
+        // A right-drag on the background pans the scene, as a middle-drag does.
+        // A right-click without a drag still opens the scene's menu.
+        let background = &graph_response.response;
+        if background.dragged_by(egui::PointerButton::Secondary) {
+            view.scene_rect = view.scene_rect.translate(-background.drag_delta());
+        }
+
         // Recover the viewport-independent camera from the `egui_graph` view,
         // which egui may have panned or zoomed this pass, and write back the
         // possibly relaid-out node layout.
