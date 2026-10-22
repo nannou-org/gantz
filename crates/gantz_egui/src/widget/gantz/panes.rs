@@ -1,9 +1,11 @@
 //! Rendering of each pane, and the helpers the panes share.
 
-use super::graph_tabs::{head_scene, tab_strip};
+use super::graph_tabs::{Strip, head_scene, tab_strip};
 use super::state::{OpenHeadState, SceneConfig, ViewToggles};
 use super::tiles::{NodeViewPane, Pane, ext_pane_entries};
-use super::{FileDrop, FileDropTarget, LogSource, NESTED_GRAPH_TYPE, NodeTyCmd, PaneCtx};
+use super::{
+    FileDrop, FileDropTarget, LogSource, NESTED_GRAPH_TYPE, NodeTyCmd, PaneCtx, WindowStyle,
+};
 use crate::{
     Action, CopyNodes, CreateNestedGraph, CreateNode, CutNodes, DuplicateNodes, Env,
     ExportAllNamed, ExportHead, ExportPalette, ExportStyle, HeadAccess, ImportPalette, ImportStyle,
@@ -265,12 +267,38 @@ where
             head_scene(cx, ui, main, id, &ext_panes);
         });
     }
-    // Patch-only shows the graphs alone. `Gantz::show` draws a mark in the
-    // tab strip's place.
-    if !cx.state.view_toggles.patch_only {
+    // The scene's tile holds the tree's top-left corner when no pane does,
+    // and the strip then leads with the logo, unless the window's header
+    // holds it. Patch-only shows the logo alone.
+    let tree = super::chrome::tree_bounds(ui.ctx()).unwrap_or(rect);
+    let at = |a: egui::Pos2, b: egui::Pos2| (a - b).length() < 0.5;
+    let window_style = cx.state.view_toggles.window;
+    let window = cx
+        .gantz
+        .native_window
+        .filter(|_| window_style != WindowStyle::Native);
+    let header = window.is_some() && window_style == WindowStyle::Header;
+    let controls = window.filter(|_| window_style == WindowStyle::Controls);
+    let patch_only = cx.state.view_toggles.patch_only;
+    let dot = patch_only
+        .then(|| super::status::color(super::status::last(ui.ctx()), ui.visuals()))
+        .flatten();
+    let strip = Strip {
+        logo: (at(rect.left_top(), tree.left_top()) && !header).then_some(dot),
+        tabs: !patch_only,
+        drag: controls.is_some(),
+    };
+    if strip.logo.is_some() || strip.tabs {
         // The strip sits at the scene tile's corner, so its top meets the side
         // panes' tops and the pane gap sits between them.
-        tab_strip(cx, ui, rect.left_top(), main.as_ref(), &ext_panes);
+        tab_strip(cx, ui, rect.left_top(), main.as_ref(), &ext_panes, strip);
+    }
+    // The window's controls float over the scene when its tile holds the
+    // tree's top-right corner. A pane there holds them in its header.
+    if let Some(w) = controls.filter(|_| at(rect.right_top(), tree.right_top())) {
+        if let Some(action) = super::decor::floating_controls(ui.ctx(), rect.right_top(), w) {
+            cx.response.responses.push(None, action);
+        }
     }
 
     let PaneCtx {

@@ -1,5 +1,6 @@
 //! The widget's persistent state and configuration, and its egui memory persistence.
 
+use super::decor::WindowStyle;
 use super::status::StatusStyle;
 use crate::{
     Keymap,
@@ -460,6 +461,8 @@ pub struct ViewToggles {
     pub graph_config: bool,
     /// Where the status line shows.
     pub status: StatusStyle,
+    /// How the window is decorated, when the host lets the widget decorate it.
+    pub window: WindowStyle,
     /// Whether only the graphs show. Every pane with a toggle hides, along
     /// with the tab strip and the status line, until patch-only ends.
     pub patch_only: bool,
@@ -491,6 +494,7 @@ impl Default for ViewToggles {
             gui_tree: false,
             graph_config: true,
             status: StatusStyle::default(),
+            window: WindowStyle::default(),
             patch_only: false,
             ext: BTreeMap::new(),
         }

@@ -99,6 +99,10 @@ fn main() {
     #[cfg(not(target_arch = "wasm32"))]
     app.add_plugins(bevy_gantz_egui::pane_window::PaneWindowPlugin);
 
+    // The GUI decorates the window itself on native platforms.
+    #[cfg(not(target_arch = "wasm32"))]
+    app.add_plugins(window::DecorationsPlugin);
+
     app.run();
 }
 

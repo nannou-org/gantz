@@ -2,7 +2,7 @@
 //! button. Shared between the Settings pane's Panes subtab and the graph-area
 //! context menu's "panes" submenu.
 
-use super::gantz::{StatusStyle, ViewToggles};
+use super::gantz::{StatusStyle, ViewToggles, WindowStyle};
 
 /// Render the per-pane visibility checkboxes.
 ///
@@ -73,6 +73,23 @@ pub fn panes_config(view: &mut ViewToggles, ext: &[super::ExtPaneEntry], ui: &mu
         let on = view.ext.entry(entry.key.clone()).or_insert(false);
         ui.checkbox(on, entry.title.to_lowercase())
             .on_hover_text(entry.description.as_str());
+    }
+    // The window's decorations, when the host lets the widget draw them. A
+    // style brings the status line that suits it.
+    if super::gantz::decorates(ui.ctx()) {
+        let options = [
+            (WindowStyle::Native, "system"),
+            (WindowStyle::Controls, "controls"),
+            (WindowStyle::Header, "header"),
+        ];
+        let res = super::kit::pill_row(ui, "window", &mut view.window, &options).on_hover_text(
+            "How the window is decorated. System keeps the system's title bar. Controls \
+             drops it and floats the window's buttons at the top right. Header draws a slim \
+             header on the scene.",
+        );
+        if res.changed() {
+            view.status = view.window.status();
+        }
     }
     let options = [
         (StatusStyle::Gutter, "line"),
