@@ -105,7 +105,7 @@
   (-> load-bang11 number3))
 
 (graph demo.sampler
-  (comment0 (comment "# sampler\nselect the ~sample node and press\nload. dial the speed." 300 57))
+  (comment0 (comment "# sampler\nright-click the ~sample node and\nchoose load. dial the speed." 300 57))
   (number1 (number #:min 0.5 #:label "speed"))
   (~sample2 ~sample)
   (~playbuf3 ~playbuf)
@@ -176,7 +176,7 @@
   (demo.pluck "Noise bursts pluck a Karplus-Strong string. Dial the numbers for the pluck rate and the string period.")
   (demo.ringmod "Two sines multiplied. Dial the numbers to sweep from tremolo to ring modulation.")
   (demo.samplehold "A latch samples white noise on each impulse. The result sets the frequency of a sine. Dial the numbers for the step rate and the pitch range.")
-  (demo.sampler "A sample plays in a loop. Select the ~sample node and press Load in its inspector to pick a WAV file. Dial the number for the playback speed.")
+  (demo.sampler "A sample plays in a loop. Right-click the ~sample node and choose load to pick a WAV file. Dial the number for the playback speed.")
   (demo.sine "A sine wave into the audio output - the simplest DSP graph.")
   (demo.waveshape "A sine into a tanh waveshaper. Dial the number to raise the drive.")
   (demo.wavetable "A list of numbers fills a wavetable buffer for an oscillator. Dial the number of harmonics to fill the table and hear the tone change.")
