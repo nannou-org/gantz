@@ -1201,16 +1201,26 @@ fn gui_preview_node(
     // The sockets carry the graph's marker docs, as they do on a reference
     // node in a scene.
     if let Some(ca) = head_ca {
-        for (ix, sock) in resp.sockets.inputs() {
-            if let Some(doc) = env.socket_doc(&ca, crate::SocketKind::Input, ix) {
-                super::graph_scene::socket_hover(sock, &doc);
+        let kinds = [
+            (
+                crate::SocketKind::Input,
+                resp.sockets.inputs().collect::<Vec<_>>(),
+            ),
+            (crate::SocketKind::Output, resp.sockets.outputs().collect()),
+        ];
+        let mut hovers = vec![];
+        for (kind, socks) in kinds {
+            for (ix, sock) in socks {
+                hovers.push(super::graph_scene::SocketHover {
+                    resp: sock.clone(),
+                    kind,
+                    ix,
+                    doc: env.socket_doc(&ca, kind, ix),
+                });
             }
         }
-        for (ix, sock) in resp.sockets.outputs() {
-            if let Some(doc) = env.socket_doc(&ca, crate::SocketKind::Output, ix) {
-                super::graph_scene::socket_hover(sock, &doc);
-            }
-        }
+        let on_node = resp.inner.response.contains_pointer();
+        super::graph_scene::show_socket_doc(ui, &hovers, on_node);
     }
     resp.inner.inner
 }

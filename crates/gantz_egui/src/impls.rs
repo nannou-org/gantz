@@ -32,3 +32,22 @@ fn code_edit_desired_width(
     let galley = ui.ctx().fonts_mut(|fonts| fonts.layout_job(job));
     galley.rect.width().ceil() + margin.sum().x + 1.0
 }
+
+/// Show the type and description of an inlet or outlet `node` while the
+/// pointer is over it, at once and without the usual tooltip delay. An empty
+/// type or description says so.
+fn marker_hover(node: &egui::Response, ty: &str, description: &str) {
+    if !node.hovered() || node.ctx.input(|i| i.pointer.any_down()) {
+        return;
+    }
+    egui::Tooltip::for_widget(node).show(|ui| {
+        match ty.is_empty() {
+            true => ui.weak("no type"),
+            false => ui.strong(ty),
+        };
+        match description.is_empty() {
+            true => ui.weak("no description"),
+            false => ui.label(description),
+        };
+    });
+}

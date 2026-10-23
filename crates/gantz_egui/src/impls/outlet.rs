@@ -20,6 +20,7 @@ impl NodeUi for gantz_core::node::graph::Outlet {
             let text = format!("{}[{}]", name, ix);
             ui.add(egui::Label::new(text).selectable(false))
         });
+        super::marker_hover(&framed.inner.response, &self.ty, &self.description);
         NodeUiResponse::new(framed)
     }
 

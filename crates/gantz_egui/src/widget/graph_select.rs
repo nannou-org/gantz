@@ -220,7 +220,7 @@ impl<'a> GraphSelect<'a> {
                             head_row(heads, &head, row_type, ca, focused_head, status, ui);
                         // Show the graph's description and socket docs on hover.
                         res.row = res.row.on_hover_ui(|ui| {
-                            // Re-assert wrap width every frame. See `socket_hover`.
+                            // Re-assert wrap width every frame. See `show_socket_doc`.
                             let max_width = ui.spacing().tooltip_width;
                             ui.set_max_width(max_width);
                             crate::node_info_ui(&registry.command_info(&name_str), ui);
