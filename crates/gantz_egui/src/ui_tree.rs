@@ -244,6 +244,8 @@ impl Walk<'_> {
                 let text = match &value.bind {
                     None => "∅".to_string(),
                     Some(bind) => match ctx.extract_value_at(&self.resolve(bind)) {
+                        // A value that has not arrived yet shows as a dash.
+                        Ok(Some(SteelVal::Void)) => "—".to_string(),
                         Ok(Some(val)) => format!("{val:?}"),
                         Ok(None) => "∅".to_string(),
                         Err(_) => "ERR".to_string(),
@@ -313,50 +315,12 @@ impl Walk<'_> {
                     widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
                     widgets.inactive.bg_fill = egui::Color32::TRANSPARENT;
                 }
-                let drag_value = |ui: &mut egui::Ui, val: &mut SteelVal| match val {
-                    SteelVal::NumV(f) => {
-                        let mut dv = egui::DragValue::new(f);
-                        if d.min.is_some() || d.max.is_some() {
-                            let (lo, hi) = (
-                                d.min.unwrap_or(f64::NEG_INFINITY),
-                                d.max.unwrap_or(f64::INFINITY),
-                            );
-                            dv = dv.range(lo..=hi);
-                        }
-                        if let Some(p) = d.precision {
-                            dv = dv.max_decimals(p as usize);
-                        }
-                        if let Some(s) = d.step {
-                            dv = dv.speed(s);
-                        }
-                        if let Some(p) = &d.prefix {
-                            dv = dv.prefix(p);
-                        }
-                        ui.add(dv)
-                    }
-                    SteelVal::IntV(i) => {
-                        let mut dv = egui::DragValue::new(i);
-                        if d.min.is_some() || d.max.is_some() {
-                            let lo = d.min.map_or(isize::MIN, |m| m as isize);
-                            let hi = d.max.map_or(isize::MAX, |m| m as isize);
-                            dv = dv.range(lo..=hi);
-                        }
-                        if let Some(s) = d.step {
-                            dv = dv.speed(s);
-                        }
-                        if let Some(p) = &d.prefix {
-                            dv = dv.prefix(p);
-                        }
-                        ui.add(dv)
-                    }
-                    _ => err_label(ui, "bound state is not a number"),
-                };
                 // A bounded dialer fills from the left to show where its value
                 // sits in the range. The fill goes in a slot behind the
                 // dialer, whose own fill is translucent.
                 let drag = |ui: &mut egui::Ui, val: &mut SteelVal| {
                     let slot = ui.painter().add(egui::Shape::Noop);
-                    let r = drag_value(ui, val);
+                    let r = drag_value(ui, d, val);
                     if let Some(t) = range_fraction(d, val) {
                         paint_range_fill(ui, slot, r.rect, t);
                     }
@@ -721,10 +685,52 @@ fn seq_rebuild(seq: Seq, items: Vec<SteelVal>) -> SteelVal {
     }
 }
 
-/// An inline chip for a control missing its `bind` attr.
+/// A drag value for the number `val`, with the dialer's bounds, precision,
+/// step and prefix. A value that is not a number shows an error label.
+pub(crate) fn drag_value(ui: &mut egui::Ui, d: &Dialer, val: &mut SteelVal) -> egui::Response {
+    match val {
+        SteelVal::NumV(f) => {
+            let mut dv = egui::DragValue::new(f);
+            if d.min.is_some() || d.max.is_some() {
+                let (lo, hi) = (
+                    d.min.unwrap_or(f64::NEG_INFINITY),
+                    d.max.unwrap_or(f64::INFINITY),
+                );
+                dv = dv.range(lo..=hi);
+            }
+            if let Some(p) = d.precision {
+                dv = dv.max_decimals(p as usize);
+            }
+            if let Some(s) = d.step {
+                dv = dv.speed(s);
+            }
+            if let Some(p) = &d.prefix {
+                dv = dv.prefix(p);
+            }
+            ui.add(dv)
+        }
+        SteelVal::IntV(i) => {
+            let mut dv = egui::DragValue::new(i);
+            if d.min.is_some() || d.max.is_some() {
+                let lo = d.min.map_or(isize::MIN, |m| m as isize);
+                let hi = d.max.map_or(isize::MAX, |m| m as isize);
+                dv = dv.range(lo..=hi);
+            }
+            if let Some(s) = d.step {
+                dv = dv.speed(s);
+            }
+            if let Some(p) = &d.prefix {
+                dv = dv.prefix(p);
+            }
+            ui.add(dv)
+        }
+        _ => err_label(ui, "bound state is not a number"),
+    }
+}
+
 /// Where `val` sits between the dialer's bounds, from 0 to 1. `None` unless
 /// both bounds are set, finite and apart, and the value is a number.
-fn range_fraction(d: &Dialer, val: &SteelVal) -> Option<f32> {
+pub(crate) fn range_fraction(d: &Dialer, val: &SteelVal) -> Option<f32> {
     let (lo, hi) = (d.min?, d.max?);
     let v = match val {
         SteelVal::NumV(f) => *f,
@@ -750,6 +756,7 @@ fn paint_range_fill(ui: &egui::Ui, slot: egui::layers::ShapeIdx, rect: egui::Rec
     ui.painter().with_clip_rect(cut).set(slot, fill);
 }
 
+/// An inline chip for a control missing its `bind` attr.
 fn unbound_chip(ui: &mut egui::Ui, tag: &str) -> egui::Response {
     weak_chip(ui, tag).on_hover_text("no `bind` attribute")
 }

@@ -3,7 +3,7 @@
 //! [`EguiSugar`] provides the keywords for the egui nodes. They are
 //! `(bind <id>...)`, `(comment <text> [w h])`,
 //! `(gui [<role>] [#:display <d>])`,
-//! `(number [#:min m] [#:max m] [#:precision n] [#:input <mode>] [#:no-push-eval])`
+//! `(number [#:min m] [#:max m] [#:precision n] [#:label "l"] [#:input <mode>] [#:no-push-eval])`
 //! and bare `bang`, `bind`, `inspect`, `gui` and `number`. Compose it with
 //! [`gantz_format::CoreSugar`] and the other crates' sugars via
 //! [`gantz_format::Sugars`].
@@ -191,9 +191,9 @@ fn write_gui(node: &Datum) -> String {
     }
 }
 
-/// Read a `(number [#:min m] [#:max m] [#:precision n] [#:input <mode>]
-/// [#:no-push-eval])` form. Only the non-default fields are emitted, so a bare
-/// `number` stays bare.
+/// Read a `(number [#:min m] [#:max m] [#:precision n] [#:label "l"]
+/// [#:input <mode>] [#:no-push-eval])` form. Only the non-default fields are
+/// emitted, so a bare `number` stays bare.
 fn number_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     let mut fields = Vec::new();
     if let Some(min) = args.keyword_f64("min")? {
@@ -204,6 +204,9 @@ fn number_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     }
     if let Some(precision) = args.keyword_int("precision")? {
         fields.push(("precision", Datum::from_u64(precision.max(0) as u64)));
+    }
+    if let Some(label) = args.keyword_strs("label")?.pop().filter(|l| !l.is_empty()) {
+        fields.push(("label", Datum::Str(label)));
     }
     if let Some(s) = args.keyword_symbol("input")? {
         let input = NumberInput::from_str(&s)
@@ -219,18 +222,20 @@ fn number_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
 }
 
 /// Write a `Number` as a bare `number` when all config is default. Otherwise
-/// write `(number #:min m #:max m #:precision n #:input <mode> #:no-push-eval)`
-/// with only the non-default fields.
+/// write `(number #:min m #:max m #:precision n #:label "l" #:input <mode>
+/// #:no-push-eval)` with only the non-default fields.
 fn write_number(node: &Datum) -> String {
     let min = node.get("min").and_then(Datum::as_f64);
     let max = node.get("max").and_then(Datum::as_f64);
     let precision = node.get("precision").and_then(Datum::as_i64);
+    let label = node.get("label").and_then(Datum::as_str);
     let input = node.get("input").and_then(Datum::as_str);
     let push = node
         .get("push_eval_on_edit")
         .and_then(Datum::as_bool)
         .unwrap_or(true);
-    if min.is_none() && max.is_none() && precision.is_none() && input.is_none() && push {
+    let bare = min.is_none() && max.is_none() && precision.is_none() && label.is_none();
+    if bare && input.is_none() && push {
         return "number".to_string();
     }
     let mut parts = Vec::new();
@@ -242,6 +247,9 @@ fn write_number(node: &Datum) -> String {
     }
     if let Some(precision) = precision {
         parts.push(format!("#:precision {precision}"));
+    }
+    if let Some(label) = label {
+        parts.push(format!("#:label {}", quote(label)));
     }
     if let Some(input) = input {
         parts.push(format!("#:input {input}"));
@@ -405,6 +413,19 @@ mod tests {
         assert_eq!(
             s.write_spec("Number", &np).as_deref(),
             Some("(number #:no-push-eval)"),
+        );
+
+        // A label, quoted, and none for an empty one.
+        let l = read_spec(r#"(number #:min 0 #:label "wet mix")"#).expect("label");
+        assert_eq!(l.get("label").and_then(Datum::as_str), Some("wet mix"));
+        assert_eq!(
+            s.write_spec("Number", &l).as_deref(),
+            Some(r#"(number #:min 0 #:label "wet mix")"#),
+        );
+        let empty_label = read_spec(r#"(number #:label "")"#).expect("empty label");
+        assert_eq!(
+            s.write_spec("Number", &empty_label).as_deref(),
+            Some("number")
         );
 
         // Bang input. The default store mode stays bare.

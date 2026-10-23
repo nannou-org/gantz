@@ -3,7 +3,9 @@
 use crate::widget::node_inspector::radio_option;
 use crate::{
     ContextMenuResponse, Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse,
-    NodeViewResponse, SocketDoc, SocketKind, ui_tree::UiTree,
+    NodeViewResponse, SocketDoc, SocketKind,
+    ui_tree::{self, UiTree},
+    widget::kit,
 };
 use gantz_core::node::{self, EvalConf, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_nodetag::NodeTag;
@@ -17,6 +19,8 @@ use steel::SteelVal;
 /// - `min` and `max` clamp every value, including input-socket values.
 /// - `precision` controls how many decimals the dialer shows and edits. It
 ///   is display only.
+/// - `label` names the value on the node, such as "rate". It is display
+///   only.
 /// - `input` selects how an input-socket value is handled. See
 ///   [`NumberInput`].
 /// - `push_eval_on_edit` toggles whether editing the dialer fires downstream.
@@ -33,6 +37,8 @@ pub struct Number {
     max: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     precision: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
     #[serde(default, skip_serializing_if = "is_default_input")]
     input: NumberInput,
     #[serde(
@@ -52,6 +58,21 @@ pub enum NumberInput {
     /// Treat the value as a bang. Output the stored value unchanged.
     Bang,
 }
+
+/// What [`flat_value`] did in a frame.
+#[derive(Default)]
+struct FlatValue {
+    /// Whether a drag or a typed value changed the number.
+    edited: bool,
+    /// Where the value sits in a bounded range, from 0 to 1.
+    fraction: Option<f32>,
+}
+
+/// The room at a number's right for its drag chevrons.
+const CHEVRON_ROOM: f32 = 8.0;
+
+/// The thickness of a bounded number's range hairline.
+const HAIRLINE: f32 = 1.5;
 
 impl NumberInput {
     /// All input modes, in inspector order.
@@ -87,6 +108,11 @@ impl Number {
         self.precision
     }
 
+    /// The name shown before the value on the node, if any.
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
+    }
+
     /// How a value arriving at the input socket is handled.
     pub fn input(&self) -> NumberInput {
         self.input
@@ -110,6 +136,12 @@ impl Number {
     /// Set the dialer display precision. This is UI only.
     pub fn set_precision(&mut self, precision: Option<u8>) {
         self.precision = precision;
+    }
+
+    /// Set the name shown before the value. An empty name shows none. This is
+    /// display only, but it affects the content address.
+    pub fn set_label(&mut self, label: Option<String>) {
+        self.label = label.filter(|l| !l.is_empty());
     }
 
     /// Set how a value arriving at the input socket is handled. This affects
@@ -136,6 +168,7 @@ impl Default for Number {
             min: None,
             max: None,
             precision: None,
+            label: None,
             input: NumberInput::default(),
             push_eval_on_edit: true,
         }
@@ -147,6 +180,7 @@ impl PartialEq for Number {
         self.min.map(f64::to_bits) == other.min.map(f64::to_bits)
             && self.max.map(f64::to_bits) == other.max.map(f64::to_bits)
             && self.precision == other.precision
+            && self.label == other.label
             && self.input == other.input
             && self.push_eval_on_edit == other.push_eval_on_edit
     }
@@ -159,6 +193,7 @@ impl Hash for Number {
         Hash::hash(&self.min.map(f64::to_bits), state);
         Hash::hash(&self.max.map(f64::to_bits), state);
         Hash::hash(&self.precision, state);
+        Hash::hash(&self.label, state);
         Hash::hash(&self.input, state);
         Hash::hash(&self.push_eval_on_edit, state);
     }
@@ -214,23 +249,35 @@ impl NodeUi for Number {
 
     fn ui(&mut self, mut ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
         // The numeric value lives in VM runtime state, not the node weight, so
-        // editing the dialer never sets `changed`. The interpreter only queues
-        // an evaluation when push is enabled.
-        let frame = egui_graph::node::default_frame(uictx.style(), uictx.interaction());
-        let (&id, prefix) = ctx.path().split_last().expect("a node path is never empty");
-        let tree = fragment(self, id);
-        let root_id = uictx.egui_id().with("gui");
-        let mut payloads = Vec::new();
-        let framed = uictx.framed_with(frame, |ui, _sockets| {
-            let r = UiTree::new(root_id)
-                .instance_prefix(prefix)
-                .n_outputs(&|_: &[node::Id]| Some(1))
-                .show(&tree, &mut ctx, ui);
-            payloads = r.payloads;
-            r.inner.unwrap_or_else(|| ui.response())
+        // an edit never sets `changed`. An edit queues an evaluation only when
+        // push is on, and the dot before the value says so.
+        let (&id, _) = ctx.path().split_last().expect("a node path is never empty");
+        let dialer = dialer(self, id);
+        let dot_id = uictx.egui_id().with("dot");
+        let mut value = FlatValue::default();
+        let framed = uictx.framed(|ui, _sockets| {
+            ui.horizontal(|ui| {
+                if dialer.push {
+                    kit::event_dot(ui, dot_id, egui::Sense::hover());
+                }
+                if let Some(label) = &dialer.label {
+                    let text = egui::RichText::new(label).color(ui.visuals().weak_text_color());
+                    ui.add(egui::Label::new(text).selectable(false));
+                }
+                value = flat_value(&dialer, &mut ctx, ui);
+                ui.add_space(CHEVRON_ROOM);
+            })
+            .response
         });
+        let node = &framed.inner.response;
+        paint_marks(node, value.fraction);
+        if value.edited && dialer.push {
+            kit::fire_dot(&node.ctx, dot_id);
+        }
         let mut resp = NodeUiResponse::new(framed);
-        resp.payloads.extend(payloads);
+        if value.edited && dialer.push {
+            resp.push_eval(ctx.path(), 1);
+        }
         resp
     }
 
@@ -309,6 +356,28 @@ impl NodeUi for Number {
                     .on_hover_text("precision: decimal places the dialer shows (display only)");
                 if resp.changed() {
                     self.set_precision(on.then(|| n.clamp(0, 10) as u8));
+                    changed = true;
+                }
+            });
+        });
+
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("label")
+                    .on_hover_text("a name shown before the value on the node (display only)");
+            });
+            row.col(|ui| {
+                let id = egui::Id::new("number_label").with(ctx.path());
+                let current = self.label().unwrap_or("");
+                kit::field_visuals(ui);
+                let edit = crate::widget::buffered_edit(ui, id, current, |label| {
+                    egui::TextEdit::singleline(label)
+                        .hint_text("none")
+                        .margin(kit::FIELD_MARGIN)
+                        .desired_width(crate::widget::node_inspector::DIAL_W * 2.0)
+                });
+                if let Some(label) = edit.committed {
+                    self.set_label(Some(label));
                     changed = true;
                 }
             });
@@ -434,19 +503,113 @@ fn clamp_steel(val: &str, min: Option<f64>, max: Option<f64>) -> String {
     }
 }
 
-/// The number's dialer fragment, bound to its own state. Attrs come from the
-/// weight, and the bind id is the node's id in its defining graph. A bang
-/// input shows a `!` prefix, echoing bang nodes such as `load!`.
+/// The number's dialer fragment, bound to its own state. The pane view
+/// renders it.
 fn fragment(num: &Number, id: node::Id) -> gantz_ui::Element {
-    gantz_ui::Element::Dialer(gantz_ui::Dialer {
+    gantz_ui::Element::Dialer(dialer(num, id))
+}
+
+/// The number's dialer. Attrs come from the weight, and the bind id is the
+/// node's id in its defining graph. A bang input shows a `!` prefix.
+fn dialer(num: &Number, id: node::Id) -> gantz_ui::Dialer {
+    gantz_ui::Dialer {
         bind: Some(gantz_ui::BindPath(vec![id])),
         min: num.min(),
         max: num.max(),
         precision: num.precision(),
+        label: num.label().map(str::to_string),
         prefix: (num.input() == NumberInput::Bang).then(|| "!".to_string()),
         push: num.push_eval_on_edit(),
         ..Default::default()
-    })
+    }
+}
+
+/// Draw the value of `d`'s node flat on the node, as text that a drag or a
+/// click edits, and write an edit to the node's state.
+fn flat_value(d: &gantz_ui::Dialer, ctx: &mut NodeCtx, ui: &mut egui::Ui) -> FlatValue {
+    let Ok(Some(mut val)) = ctx.extract_value() else {
+        ui.weak("—");
+        return FlatValue::default();
+    };
+    let original = val.clone();
+    let r = ui
+        .scope(|ui| {
+            flat_visuals(ui);
+            ui_tree::drag_value(ui, d, &mut val)
+        })
+        .inner;
+    let edited = r.changed() && val != original;
+    let fraction = ui_tree::range_fraction(d, &val);
+    if edited {
+        ctx.update_value(val).unwrap();
+    }
+    FlatValue { edited, fraction }
+}
+
+/// Clear the fill and outline of a drag value, so that its text sits on the
+/// node like the text of any other node.
+fn flat_visuals(ui: &mut egui::Ui) {
+    let text = ui.visuals().strong_text_color();
+    ui.spacing_mut().button_padding.x = 0.0;
+    ui.spacing_mut().interact_size.x = 0.0;
+    let widgets = &mut ui.visuals_mut().widgets;
+    for w in [
+        &mut widgets.inactive,
+        &mut widgets.hovered,
+        &mut widgets.active,
+    ] {
+        w.bg_fill = egui::Color32::TRANSPARENT;
+        w.weak_bg_fill = egui::Color32::TRANSPARENT;
+        w.bg_stroke = egui::Stroke::NONE;
+        w.fg_stroke.color = text;
+        w.expansion = 0.0;
+    }
+}
+
+/// Paint a bounded number's place in its range as a hairline along the base
+/// of its `node`, and drag chevrons at its right while the pointer is over
+/// it.
+fn paint_marks(node: &egui::Response, fraction: Option<f32>) {
+    let mut painter = node.ctx.layer_painter(node.layer_id);
+    // Node layers are transformed, so their clip is layer-local.
+    painter.set_clip_rect(node.rect);
+    let visuals = &node.ctx.global_style().visuals;
+    let rect = node.rect;
+    if let Some(t) = fraction {
+        let inset = crate::style::shape(&node.ctx).node_corner(rect.height());
+        let width = (rect.width() - inset * 2.0) * t;
+        // A bar thinner than a point would draw as a speck.
+        if width >= 1.0 {
+            let y = rect.bottom() - kit::OUTLINE - HAIRLINE;
+            let x = rect.left() + inset;
+            let line =
+                egui::Rect::from_min_max(egui::pos2(x, y), egui::pos2(x + width, y + HAIRLINE));
+            painter.rect_filled(line, 0.0, visuals.strong_text_color());
+        }
+    }
+    if node.contains_pointer() {
+        let x = rect.right() - CHEVRON_ROOM;
+        let y = rect.center().y;
+        let color = visuals.weak_text_color();
+        let (w, h, gap) = (CHEVRON_ROOM * 0.5, CHEVRON_ROOM * 0.35, 2.0);
+        let up = vec![
+            egui::pos2(x, y - gap),
+            egui::pos2(x + w, y - gap),
+            egui::pos2(x + w * 0.5, y - gap - h),
+        ];
+        let down = vec![
+            egui::pos2(x, y + gap),
+            egui::pos2(x + w * 0.5, y + gap + h),
+            egui::pos2(x + w, y + gap),
+        ];
+        for points in [up, down] {
+            painter.add(egui::Shape::convex_polygon(
+                points,
+                color,
+                egui::Stroke::NONE,
+            ));
+        }
+    }
 }
 
 /// Keep `max >= min` and re-clamp the stored value into the new bounds so the
@@ -544,6 +707,7 @@ mod tests {
             min: Some(0.0),
             max: Some(10.0),
             precision: None,
+            label: None,
             input: NumberInput::Store,
             push_eval_on_edit: true,
         };

@@ -1,5 +1,5 @@
 //! Small widgets that the panes, settings and menus share: group cards,
-//! option pills, switches, keycaps and wells.
+//! option pills, switches, keycaps and event dots.
 //!
 //! They draw with the applied style's roles and [`Shape`][crate::style::Shape], so a theme or
 //! roundness change reaches every one of them.
@@ -23,6 +23,21 @@ pub const TAG_CHARS: usize = 40;
 
 /// The space between a field's outline and its text. See [`field_visuals`].
 pub const FIELD_MARGIN: egui::Margin = egui::Margin::symmetric(8, 3);
+
+/// The radius of an [`event_dot`].
+const DOT_RADIUS: f32 = 4.0;
+
+/// The room around an [`event_dot`] that takes its clicks.
+const DOT_ROOM: f32 = 6.0;
+
+/// The opacity of a fired [`event_dot`]'s halo.
+const DOT_HALO: f32 = 0.22;
+
+/// How long an [`event_dot`] glows after it fires, in seconds.
+const DOT_GLOW: f64 = 0.24;
+
+/// The key of the time an [`event_dot`] last fired, beside its id.
+const DOT_FIRED: &str = "fired";
 
 /// A group card: an optional title, optional context to its right, and
 /// `add_contents` below. [`Shape::cards`][crate::style::Shape::cards] chooses whether it is shaded or
@@ -268,17 +283,66 @@ fn keycap_in(
     resp
 }
 
-/// A dark inset that holds a node's value, code or plot, so that every node
-/// keeps the same frame around its own content.
-pub fn well<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    let shape = style::shape(ui.ctx());
-    let height = ui.spacing().interact_size.y;
-    egui::Frame::new()
-        .fill(ui.visuals().extreme_bg_color)
-        .corner_radius(shape.widget_corner(height))
-        .inner_margin(egui::Margin::symmetric(6, 2))
-        .show(ui, add_contents)
-        .inner
+/// A dot that marks an event, such as a bang, a load or a tick. It is weak
+/// at rest, strong while the pointer is over it, and it glows for a moment
+/// after [`fire_dot`] with the same `id`. The response senses `sense` over a
+/// little room around the dot.
+pub fn event_dot(ui: &mut egui::Ui, id: egui::Id, sense: egui::Sense) -> egui::Response {
+    // A square a line of text high, so that a bang with no name is round.
+    let side = ui.text_style_height(&egui::TextStyle::Body);
+    let size = egui::Vec2::splat(side);
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let resp = ui.interact(rect.expand(DOT_ROOM), id, sense);
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.visuals();
+        let glow = dot_glow(ui.ctx(), id);
+        let color = match resp.hovered() || glow > 0.0 {
+            true => visuals.strong_text_color(),
+            false => visuals.weak_text_color(),
+        };
+        let center = rect.center();
+        if glow > 0.0 {
+            let halo = color.gamma_multiply(DOT_HALO * glow);
+            ui.painter().circle_filled(center, DOT_RADIUS * 2.0, halo);
+            ui.ctx().request_repaint();
+        }
+        ui.painter().circle_filled(center, DOT_RADIUS, color);
+    }
+    resp
+}
+
+/// Start the glow of the [`event_dot`] with `id`.
+pub fn fire_dot(ctx: &egui::Context, id: egui::Id) {
+    let now = ctx.input(|i| i.time);
+    ctx.data_mut(|d| d.insert_temp(id.with(DOT_FIRED), now));
+}
+
+/// How strongly the dot `id` glows, from `1.0` as it fires to `0.0` once
+/// [`DOT_GLOW`] has passed.
+fn dot_glow(ctx: &egui::Context, id: egui::Id) -> f32 {
+    let Some(fired) = ctx.data(|d| d.get_temp::<f64>(id.with(DOT_FIRED))) else {
+        return 0.0;
+    };
+    let elapsed = ctx.input(|i| i.time) - fired;
+    (1.0 - elapsed / DOT_GLOW).clamp(0.0, 1.0) as f32
+}
+
+/// An event node's content: its [`event_dot`], then its `name` if it has
+/// one. A bang has no name. `load!`, `tick!` and `update!` show theirs.
+pub fn event_label(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    name: Option<&str>,
+    sense: egui::Sense,
+) -> egui::Response {
+    ui.horizontal(|ui| {
+        let dot = event_dot(ui, id, sense);
+        if let Some(name) = name {
+            ui.add(egui::Label::new(name).selectable(false));
+        }
+        dot
+    })
+    .inner
 }
 
 /// A menu item with `shortcut`, if any, right-aligned in the weak text
