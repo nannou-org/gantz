@@ -60,7 +60,7 @@ eframe = { version = "0.34", default-features = false, features = [
 ] }
 egui = { version = "0.34", default-features = false, features = ["serde", "persistence"] }
 egui_extras = { version = "0.34", default-features = false, features = ["syntect"] }
-egui_graph = "0.17.0"
+egui_graph = "0.18.0"
 egui_plot = "0.35"
 egui_tiles = "0.15"
 emath = { version = "0.34", features = ["serde"] }

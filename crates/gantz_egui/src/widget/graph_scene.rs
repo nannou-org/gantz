@@ -390,7 +390,7 @@ impl<'a> GraphScene<'a> {
                         &mut responses,
                         &mut changed,
                         self.edge_styles,
-                        self.scene_config.edge.curvature,
+                        self.scene_config.edge.shape(),
                         ui,
                     )
                 });
@@ -1204,7 +1204,7 @@ fn edges(
     responses: &mut Vec<DynResponse>,
     changed: &mut bool,
     edge_styles: Option<(&gantz_ca::Head, &[&dyn crate::widget::EdgeStyle])>,
-    curvature: f32,
+    shape: egui_graph::edge::EdgeShape,
     ui: &mut egui::Ui,
 ) {
     // Track whether any edge has a context menu open this frame.
@@ -1228,8 +1228,7 @@ fn edges(
             crate::widget::edge_style::edge_styling(styles, &ctx)
         });
 
-        let edge = egui_graph::edge::Edge::new((a, output), (b, input), &mut selected)
-            .curvature_factor(curvature);
+        let edge = egui_graph::edge::Edge::new((a, output), (b, input), &mut selected).shape(shape);
         let response = match &styling {
             None => edge.show(ectx, ui),
             Some(styling) => edge.show_with(ectx, ui, |ui, pctx| {
@@ -1314,7 +1313,7 @@ fn edges(
 
     // Draw the in-progress edge if there is one.
     if let Some(edge) = ectx.in_progress(ui) {
-        edge.show(ui, curvature);
+        edge.show(ui, shape);
     }
 }
 

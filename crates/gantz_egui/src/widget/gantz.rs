@@ -21,9 +21,9 @@ pub(crate) use decor::decorates;
 pub use decor::{NativeWindow, WindowAction, WindowEdge, WindowStyle};
 use panes::{collect_gantz_file_drops, gui_role_badge, render_pane, set_gui_role};
 pub use state::{
-    AlignConfig, EdgeConfig, FollowSelectionConfig, GantzState, GraphPlacement, GridConfig,
-    LayoutConfig, OpenHeadState, OpenHeadStates, PaneWindowGeometry, SceneConfig, SnapConfig,
-    SnapMode, ViewToggles, request_clear_egui_memory,
+    AlignConfig, EdgeConfig, EdgeKind, FollowSelectionConfig, GantzState, GraphPlacement,
+    GridConfig, LayoutConfig, OpenHeadState, OpenHeadStates, PaneWindowGeometry, SceneConfig,
+    SnapConfig, SnapMode, ViewToggles, request_clear_egui_memory,
 };
 use state::{
     clear_egui_memory_id, default_sidebar_width, default_tray_height, load_ron, load_tree,
