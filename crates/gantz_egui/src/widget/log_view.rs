@@ -164,7 +164,7 @@ impl<'a> LogView<'a> {
                 show_time: true,
                 show_level: true,
                 show_target: false,
-                wrap_messages: false,
+                wrap_messages: true,
             });
 
         // A text filter, with an options button on the right that opens a popup
