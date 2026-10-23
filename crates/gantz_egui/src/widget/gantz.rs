@@ -32,10 +32,11 @@ use state::{
 pub use status::{StatusAction, StatusIcon, StatusItem, StatusStyle};
 pub use tiles::{NodeViewPane, Pane};
 use tiles::{
-    add_graph_pane, add_node_view_pane, capture_fixed_sizes, create_tree, ext_pane_entries,
-    impose_fixed_sizes, impose_min_sizes, migrate_node_view_paths, pane_is_hideable,
-    pane_is_poppable, pane_is_visible, pane_label, pane_min_size, pane_title, set_pane_visible,
-    set_tile_visibility, simplify_tree, sync_ext_panes, sync_singleton_pane,
+    add_graph_pane, add_node_view_pane, apply_reveal, capture_fixed_sizes, create_tree,
+    ext_pane_entries, impose_fixed_sizes, impose_min_sizes, migrate_node_view_paths,
+    pane_is_hideable, pane_is_poppable, pane_is_visible, pane_label, pane_min_size, pane_title,
+    reveal_pane, set_pane_visible, set_tile_visibility, simplify_tree, sync_ext_panes,
+    sync_singleton_pane,
 };
 pub use windowing::{close_windowed_pane, pane_key, redock_windowed_pane};
 use windowing::{
@@ -542,6 +543,7 @@ impl<'a> Gantz<'a> {
 
         // Check the `view_toggles` match the pane visibility.
         set_tile_visibility(&mut tree, &state.view_toggles);
+        apply_reveal(ui.ctx(), &mut tree);
 
         // Simplify the tree, and ensure tabs are where they should be.
         simplify_tree(&mut tree, ui.ctx());
@@ -679,8 +681,13 @@ impl<'a> Gantz<'a> {
             }
             StatusStyle::Hidden => status::StatusResponse::default(),
         };
-        if status_res.open_logs {
-            state.view_toggles.logs = true;
+        match status_res.open {
+            Some(status::Open::Pane(pane)) => reveal_pane(ui.ctx(), &mut state.view_toggles, pane),
+            Some(status::Open::Settings(title)) => {
+                widget::settings::open_section(ui.ctx(), &title);
+                reveal_pane(ui.ctx(), &mut state.view_toggles, Pane::Settings);
+            }
+            None => (),
         }
         if let (true, Some(head)) = (status_res.toggle_mute, &head) {
             let head_state = state.open_heads.entry(head.clone()).or_default();

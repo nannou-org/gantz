@@ -21,9 +21,12 @@ pub struct DspSettingsTab {
     pub heads: Vec<(String, DeriveStatus)>,
 }
 
+/// The title of the DSP settings section.
+pub const TITLE: &str = "DSP";
+
 impl gantz_egui::widget::SettingsTab for DspSettingsTab {
     fn title(&self) -> &str {
-        "DSP"
+        TITLE
     }
 
     fn ui(&mut self, ui: &mut egui::Ui) -> Responses {

@@ -53,9 +53,12 @@ const LABELS: &[&str] = &[
 /// The gap between the grid's columns and rows.
 const GRID_GAP: egui::Vec2 = egui::vec2(8.0, 6.0);
 
+/// The title of the collab settings section.
+pub(crate) const TITLE: &str = "Collab";
+
 impl crate::widget::SettingsTab for CollabSettingsTab {
     fn title(&self) -> &str {
-        "Collab"
+        TITLE
     }
 
     fn ui(&mut self, ui: &mut egui::Ui) -> Responses {

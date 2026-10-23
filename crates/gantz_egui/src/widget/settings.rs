@@ -70,6 +70,10 @@ const NAV_WIDTH: f32 = 110.0;
 /// The gap between the sections and the section shown.
 const NAV_GAP: f32 = 10.0;
 
+/// The id under which the context keeps the section shown. It is not under
+/// the pane's own id, so that [`open_section`] can choose it.
+const SECTION_ID: &str = "gantz-settings-section";
+
 /// Render the Settings pane. A subtab selector over Global, Style, Keybinds
 /// and Panes plus any supplied extension subtabs.
 ///
@@ -88,7 +92,7 @@ pub fn settings(
     ext_panes: &[super::ExtPaneEntry],
     ui: &mut egui::Ui,
 ) -> SettingsResponse {
-    let id = ui.id().with("settings_subtab");
+    let id = egui::Id::new(SECTION_ID);
     let mut tab = ui.data(|d| d.get_temp::<SubTab>(id)).unwrap_or_default();
 
     // An extension subtab stays selected only while the app supplies it.
@@ -207,4 +211,17 @@ pub fn settings(
     outer.allocate_rect(full, egui::Sense::hover());
     outer.data_mut(|d| d.insert_temp(id, tab));
     res
+}
+
+/// Show the settings section titled `title` the next time the settings draw.
+/// An extension section goes by its title, such as "DSP".
+pub fn open_section(ctx: &egui::Context, title: &str) {
+    let tab = match title.to_lowercase().as_str() {
+        "global" => SubTab::Global,
+        "style" => SubTab::Style,
+        "keybinds" => SubTab::Keybinds,
+        "panes" => SubTab::Panes,
+        _ => SubTab::Ext(title.to_string()),
+    };
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(SECTION_ID), tab));
 }

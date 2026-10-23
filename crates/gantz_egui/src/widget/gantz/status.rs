@@ -6,11 +6,11 @@
 //!
 //! New warnings and errors in the log also become toasts.
 
-use super::LogSource;
+use super::{LogSource, Pane};
 use crate::{
     collab::{SessionDisplay, VaultDisplay, VaultState},
     style::{self, Role},
-    widget::{PerfCapture, status_dot, toast},
+    widget::{PerfCapture, collab_config, status_dot, toast},
 };
 use std::time::Duration;
 use web_time::SystemTime;
@@ -44,6 +44,9 @@ pub struct StatusItem {
     pub hover: Option<String>,
     /// What a click on the item does.
     pub action: Option<StatusAction>,
+    /// What a click on the item's icon does. `None` leaves the icon to the
+    /// item's `action`.
+    pub icon_action: Option<StatusAction>,
 }
 
 /// A small icon of a [`StatusItem`].
@@ -54,10 +57,13 @@ pub enum StatusIcon {
 }
 
 /// What a click on a [`StatusItem`] does.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum StatusAction {
     /// Mute or unmute the focused graph.
     ToggleMute,
+    /// Open the settings section with this title, such as a host's own
+    /// section.
+    OpenSettings(String),
 }
 
 /// What the status line shows.
@@ -85,12 +91,20 @@ pub(super) enum Link<'a> {
 }
 
 /// What a click on the status line asks for.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(super) struct StatusResponse {
-    /// The problem counts were clicked.
-    pub open_logs: bool,
+    /// The pane or settings section that a click asks to open.
+    pub open: Option<Open>,
     /// An item that mutes the focused graph was clicked.
     pub toggle_mute: bool,
+}
+
+/// What a click on the status line opens.
+#[derive(Clone, Debug, PartialEq)]
+pub(super) enum Open {
+    Pane(Pane),
+    /// The settings section with this title.
+    Settings(String),
 }
 
 /// The warnings and errors in the log that come from gantz.
@@ -119,6 +133,16 @@ const SPARK_BARS: usize = 12;
 /// The gap between items of the gutter line and of the pill.
 const GUTTER_GAP: f32 = 22.0;
 const PILL_GAP: f32 = 14.0;
+
+impl StatusResponse {
+    /// Record a click on an item that does `action`.
+    fn act(&mut self, action: &StatusAction) {
+        match action {
+            StatusAction::ToggleMute => self.toggle_mute = true,
+            StatusAction::OpenSettings(title) => self.open = Some(Open::Settings(title.clone())),
+        }
+    }
+}
 
 /// Count the problems in the log and push a toast for each warning or error
 /// that is newer than the last call.
@@ -223,23 +247,28 @@ pub(super) fn gutter(ctx: &egui::Context, rect: egui::Rect, status: &Status) -> 
             ui.spacing_mut().item_spacing.x = GUTTER_GAP;
             if let Some(graph) = &status.graph {
                 let saved = status.saved.map(|d| format!("saved {}", ago(d)));
-                item(ui, None, Some(graph), saved.as_deref().unwrap_or(""));
+                let item = item(ui, None, Some(graph), saved.as_deref().unwrap_or(""));
+                if sensed(ui, &item, "graph", egui::Sense::click())
+                    .on_hover_text("open the history")
+                    .clicked()
+                {
+                    res.open = Some(Open::Pane(Pane::History));
+                }
             }
             if let Some(link) = status.link {
-                link_ui(ui, link, false);
+                link_ui(ui, link, false, &mut res);
             }
-            res.toggle_mute |= items_ui(ui, status, false);
+            items_ui(ui, status, false, &mut res);
             if let Some(mean) = mean(&status.vm) {
                 let ms = mean.as_secs_f64() * 1_000.0;
-                let res = ui
+                let item = ui
                     .horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 7.0;
                         ui.weak(format!("vm {ms:.2} ms"));
                         sparkline(ui, &status.vm);
                     })
                     .response;
-                sensed(ui, &res, "vm", egui::Sense::hover())
-                    .on_hover_text("the mean time of the recent VM updates");
+                vm_ui(ui, &item, &mut res);
             }
         });
     });
@@ -251,7 +280,7 @@ pub(super) fn gutter(ctx: &egui::Context, rect: egui::Rect, status: &Status) -> 
     .show(ctx, |ui| {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = GUTTER_GAP;
-            res.open_logs |= problems_ui(ui, status.problems, false);
+            problems_ui(ui, status.problems, false, &mut res);
         });
     });
     res
@@ -275,14 +304,15 @@ pub(super) fn pill(ctx: &egui::Context, anchor: egui::Pos2, status: &Status) -> 
                         ui.spacing_mut().item_spacing.x = PILL_GAP;
                         let mut res = StatusResponse::default();
                         if let Some(link) = status.link {
-                            link_ui(ui, link, true);
+                            link_ui(ui, link, true, &mut res);
                         }
-                        res.toggle_mute |= items_ui(ui, status, true);
+                        items_ui(ui, status, true, &mut res);
                         if let Some(mean) = mean(&status.vm) {
                             let ms = mean.as_secs_f64() * 1_000.0;
-                            item(ui, None, Some("vm"), &format!("{ms:.2} ms"));
+                            let item = item(ui, None, Some("vm"), &format!("{ms:.2} ms"));
+                            vm_ui(ui, &item, &mut res);
                         }
-                        res.open_logs |= problems_ui(ui, status.problems, true);
+                        problems_ui(ui, status.problems, true, &mut res);
                         res
                     })
                     .inner
@@ -316,8 +346,8 @@ fn item(
 }
 
 /// The focused graph's session, or the vault link. The pill shows a short
-/// form.
-fn link_ui(ui: &mut egui::Ui, link: Link, short: bool) {
+/// form. A click opens the collab settings.
+fn link_ui(ui: &mut egui::Ui, link: Link, short: bool, res: &mut StatusResponse) {
     let (role, text, hover) = match link {
         Link::Session(session) => {
             let label = session.conn.label();
@@ -343,28 +373,30 @@ fn link_ui(ui: &mut egui::Ui, link: Link, short: bool) {
         }
     };
     let color = style::color(ui, role);
-    let res = item(ui, Some(color), None, &text);
-    sensed(ui, &res, "link", egui::Sense::hover()).on_hover_text(hover);
+    let item = item(ui, Some(color), None, &text);
+    let hover = format!("{hover}\nclick to open the collab settings.");
+    if sensed(ui, &item, "link", egui::Sense::click())
+        .on_hover_text(hover)
+        .clicked()
+    {
+        res.open = Some(Open::Settings(collab_config::TITLE.to_string()));
+    }
 }
 
-/// The host's items. Returns whether an item that mutes the focused graph
-/// was clicked.
-fn items_ui(ui: &mut egui::Ui, status: &Status, short: bool) -> bool {
-    let mut toggle_mute = false;
+/// The host's items. A click on an item's icon takes the icon's action, if
+/// it has one, and a click on the rest takes the item's action.
+fn items_ui(ui: &mut egui::Ui, status: &Status, short: bool, res: &mut StatusResponse) {
     for (i, it) in status.items.iter().enumerate() {
         let text = match short {
             true => it.short.as_deref().unwrap_or(&it.text),
             false => &it.text,
         };
-        let sense = match it.action {
-            Some(_) => egui::Sense::click(),
-            None => egui::Sense::hover(),
-        };
-        let res = ui
+        let mut icon_rect = None;
+        let group = ui
             .horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 7.0;
                 if let Some(StatusIcon::Speaker) = it.icon {
-                    speaker(ui, status.muted);
+                    icon_rect = Some(speaker(ui, status.muted));
                 }
                 if let Some(lead) = &it.lead {
                     ui.label(egui::RichText::new(lead).color(ui.visuals().text_color()));
@@ -372,46 +404,83 @@ fn items_ui(ui: &mut egui::Ui, status: &Status, short: bool) -> bool {
                 ui.weak(text);
             })
             .response;
-        let res = sensed(ui, &res, ("item", i), sense);
-        let res = match &it.hover {
-            Some(hover) => res.on_hover_text(hover),
-            None => res,
+        let icon = it.icon_action.as_ref().zip(icon_rect);
+        let rest = match icon {
+            Some((_, rect)) => group.rect.with_min_x(rect.max.x),
+            None => group.rect,
         };
-        if res.clicked() && it.action == Some(StatusAction::ToggleMute) {
-            toggle_mute = true;
+        if let Some((action, rect)) = icon {
+            let icon = ui.interact(rect, ui.id().with(("icon", i)), egui::Sense::click());
+            if icon.on_hover_text(hint(action, status.muted)).clicked() {
+                res.act(action);
+            }
+        }
+        let sense = match it.action {
+            Some(_) => egui::Sense::click(),
+            None => egui::Sense::hover(),
+        };
+        let item = ui.interact(rest, ui.id().with(("item", i)), sense);
+        let item = match &it.hover {
+            Some(hover) => item.on_hover_text(hover),
+            None => item,
+        };
+        if let (true, Some(action)) = (item.clicked(), &it.action) {
+            res.act(action);
         }
     }
-    toggle_mute
+}
+
+/// The VM time `item`. A click opens the VM perf pane.
+fn vm_ui(ui: &egui::Ui, item: &egui::Response, res: &mut StatusResponse) {
+    let hover = "the mean time of the recent VM updates. click to open the VM perf pane.";
+    if sensed(ui, item, "vm", egui::Sense::click())
+        .on_hover_text(hover)
+        .clicked()
+    {
+        res.open = Some(Open::Pane(Pane::VmPerf));
+    }
+}
+
+/// What a click on an item's icon does, for its hover text.
+fn hint(action: &StatusAction, muted: bool) -> String {
+    match action {
+        StatusAction::ToggleMute if muted => "unmute the focused graph".to_string(),
+        StatusAction::ToggleMute => "mute the focused graph".to_string(),
+        StatusAction::OpenSettings(title) => {
+            format!("open the {} settings", title.to_lowercase())
+        }
+    }
 }
 
 /// The problem counts in their severities' colours. The pill shows only the
-/// numbers. Returns whether a count was clicked.
-fn problems_ui(ui: &mut egui::Ui, problems: Problems, short: bool) -> bool {
+/// numbers. A click opens the logs.
+fn problems_ui(ui: &mut egui::Ui, problems: Problems, short: bool, res: &mut StatusResponse) {
     let Problems { warnings, errors } = problems;
     let visuals = ui.visuals();
     let counts = [
         (errors, "error", "errors", visuals.error_fg_color),
         (warnings, "warning", "warnings", visuals.warn_fg_color),
     ];
-    let mut clicked = false;
     for (n, one, many, color) in counts.into_iter().filter(|c| c.0 > 0) {
         let text = match (short, n) {
             (true, n) => n.to_string(),
             (false, 1) => format!("1 {one}"),
             (false, n) => format!("{n} {many}"),
         };
-        let res = ui
+        let item = ui
             .horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 7.0;
                 status_dot(ui, color);
                 ui.label(egui::RichText::new(text).color(color));
             })
             .response;
-        let res =
-            sensed(ui, &res, ("problem", one), egui::Sense::click()).on_hover_text("open the logs");
-        clicked |= res.clicked();
+        if sensed(ui, &item, ("problem", one), egui::Sense::click())
+            .on_hover_text("open the logs")
+            .clicked()
+        {
+            res.open = Some(Open::Pane(Pane::Logs));
+        }
     }
-    clicked
 }
 
 /// The group `res` sensing `sense` under an id from `key`. A group's own id
@@ -479,8 +548,8 @@ fn sparkline(ui: &mut egui::Ui, samples: &[Duration]) {
     }
 }
 
-/// A speaker icon, crossed while `muted`.
-fn speaker(ui: &mut egui::Ui, muted: bool) {
+/// A speaker icon, crossed while `muted`. Returns its rect.
+fn speaker(ui: &mut egui::Ui, muted: bool) -> egui::Rect {
     let size = ui.text_style_height(&egui::TextStyle::Body) * 0.85;
     let (rect, _) = ui.allocate_exact_size(egui::Vec2::splat(size), egui::Sense::hover());
     let color = ui.visuals().weak_text_color();
@@ -516,6 +585,7 @@ fn speaker(ui: &mut egui::Ui, muted: bool) {
             }
         }
     }
+    rect
 }
 
 /// How long ago `d` was, in the largest whole unit.

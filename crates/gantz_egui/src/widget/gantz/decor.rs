@@ -489,8 +489,7 @@ fn app_menu(
             }
         });
         if ui.button("settings").clicked() {
-            view.settings = true;
-            view.sidebar_open = true;
+            super::tiles::reveal_pane(ui.ctx(), view, super::Pane::Settings);
             ui.close();
         }
     });

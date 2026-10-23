@@ -836,10 +836,13 @@ fn provide_dsp_status_item(dsp: Option<NonSend<DspEngine>>, mut items: ResMut<St
         short,
         hover: Some(format!(
             "{}. dsp is the share of each audio buffer's time spent filling it. \
-             click to mute the focused graph.",
+             click to open the dsp settings.",
             dsp.device
         )),
-        action: Some(gantz_egui::widget::StatusAction::ToggleMute),
+        action: Some(gantz_egui::widget::StatusAction::OpenSettings(
+            gantz_plyphon::egui::settings::TITLE.to_string(),
+        )),
+        icon_action: Some(gantz_egui::widget::StatusAction::ToggleMute),
     });
 }
 

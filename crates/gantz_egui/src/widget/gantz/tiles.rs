@@ -503,6 +503,10 @@ const GRAPH_PANE_SPLIT: f32 = 0.6;
 /// its time, level and message columns.
 const LOG_MIN_WIDTH: f32 = 200.0;
 
+/// The id under which the context keeps the pane that [`reveal_pane`] asked
+/// for.
+const REVEAL_ID: &str = "gantz-reveal-pane";
+
 /// The minimum visible size of `pane`, in points.
 pub(super) fn pane_min_size(pane: &Pane) -> egui::Vec2 {
     match pane {
@@ -1004,6 +1008,46 @@ pub(super) fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &View
             tree.set_visible(id, has_visible_child);
         }
     }
+}
+
+/// Show `pane` and bring its tab to the front on the next pass. Patch-only
+/// ends, and the sidebar opens for a pane that lives in it.
+pub(super) fn reveal_pane(ctx: &egui::Context, view: &mut ViewToggles, pane: Pane) {
+    view.patch_only = false;
+    if pane_in_sidebar(&pane) {
+        view.sidebar_open = true;
+    }
+    set_pane_visible(view, &pane, true);
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(REVEAL_ID), pane));
+}
+
+/// Bring the pane that [`reveal_pane`] asked for to the front of its tabs.
+pub(super) fn apply_reveal(ctx: &egui::Context, tree: &mut egui_tiles::Tree<Pane>) {
+    let id = egui::Id::new(REVEAL_ID);
+    let Some(pane) = ctx.data_mut(|d| {
+        let pane = d.get_temp::<Pane>(id);
+        d.remove::<Pane>(id);
+        pane
+    }) else {
+        return;
+    };
+    if let Some(id) = tree.tiles.find_pane(&pane) {
+        tree.make_active(|tile_id, _| tile_id == id);
+    }
+}
+
+/// Whether `pane` lives in the sidebar, which hides as a whole.
+fn pane_in_sidebar(pane: &Pane) -> bool {
+    matches!(
+        pane,
+        Pane::Settings
+            | Pane::GraphConfig
+            | Pane::Graphs
+            | Pane::GuiPerf
+            | Pane::History
+            | Pane::NodeInspector
+            | Pane::VmPerf
+    )
 }
 
 #[cfg(test)]
