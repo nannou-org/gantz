@@ -210,6 +210,8 @@ impl TraceView {
         // the trailing remainder column.
         let (show_time, show_level, show_target) =
             (state.show_time, state.show_level, state.show_target);
+        let copy_id = self.id.with("copy");
+        crate::widget::copy_menu::keep(ui, copy_id);
         ui.spacing_mut().item_spacing.x = 14.0;
         let table_w = crate::widget::table_width(ui);
         let mut table = TableBuilder::new(ui)
@@ -268,8 +270,10 @@ impl TraceView {
                     if show_time {
                         row.col(|ui| {
                             let t = entry.system_time();
-                            ui.weak(crate::widget::format_local_time(t))
+                            let time = ui
+                                .weak(crate::widget::format_local_time(t))
                                 .on_hover_text(crate::widget::format_local_datetime(t));
+                            crate::widget::copy_menu::menu(&time, copy_id);
                         });
                     }
 
@@ -282,7 +286,8 @@ impl TraceView {
                                 Level::DEBUG => (level_colors.debug, "debug"),
                                 Level::TRACE => (level_colors.trace, "trace"),
                             };
-                            ui.colored_label(color, text);
+                            let level = ui.colored_label(color, text);
+                            crate::widget::copy_menu::menu(&level, copy_id);
                         });
                     }
 
@@ -296,10 +301,11 @@ impl TraceView {
                         let label =
                             egui::Label::new(galley.clone()).show_tooltip_when_elided(false);
                         let res = ui.add(label);
-                        res.on_hover_text(match count > 1 {
+                        let res = res.on_hover_text(match count > 1 {
                             true => format!("{}\n\n{count} in a row", entry.message),
                             false => entry.message.clone(),
                         });
+                        crate::widget::copy_menu::menu(&res, copy_id);
                     });
 
                     if entry.freshness() > 0.0 {

@@ -38,6 +38,7 @@ pub use tab::{Tab, TabResponse};
 pub mod buffered_edit;
 pub mod checkbox_enabled;
 pub mod collab_config;
+pub(crate) mod copy_menu;
 pub mod edge_style;
 pub mod ext_pane;
 pub mod gantz;
