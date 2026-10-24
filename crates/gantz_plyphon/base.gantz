@@ -48,7 +48,7 @@
 (graph demo.pluck
   (comment0 (comment "# pluck\nnoise bursts pluck a string.\ndial the rate and the period." 300 57))
   (number1 (number #:min 2 #:label "rate"))
-  (number2 (number #:min 0.0045 #:max 0.05 #:precision 4 #:label "period"))
+  (number2 (number #:min 0.001 #:max 0.05 #:init 0.0045 #:precision 4 #:label "period"))
   (~whitenoise3 ~whitenoise)
   (~dust4 ~dust)
   (~pluck5 ~pluck)
@@ -106,7 +106,7 @@
 
 (graph demo.sampler
   (comment0 (comment "# sampler\nright-click the ~sample node and\nchoose load. dial the speed." 300 57))
-  (number1 (number #:min 0.5 #:label "speed"))
+  (number1 (number #:min 0.1 #:max 4 #:init 1 #:label "speed"))
   (~sample2 ~sample)
   (~playbuf3 ~playbuf)
   (~out4 ~out)
