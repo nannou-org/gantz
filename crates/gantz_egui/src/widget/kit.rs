@@ -28,7 +28,7 @@ pub const FIELD_MARGIN: egui::Margin = egui::Margin::symmetric(8, 3);
 const DOT_RADIUS: f32 = 4.0;
 
 /// The room around an [`event_dot`] that takes its clicks.
-const DOT_ROOM: f32 = 6.0;
+const DOT_ROOM: f32 = 4.0;
 
 /// The opacity of a fired [`event_dot`]'s halo.
 const DOT_HALO: f32 = 0.22;
@@ -56,6 +56,7 @@ pub fn card<R>(
             let width = ui.available_width().max(0.0);
             ui.set_min_width(width);
             ui.set_max_width(width);
+            card_controls(ui);
             if title.is_some() || context.is_some() {
                 ui.horizontal(|ui| {
                     if let Some(title) = title {
@@ -72,6 +73,19 @@ pub fn card<R>(
             add_contents(ui)
         })
         .inner
+}
+
+/// Fill the controls in a nested card with the pane's colour, so that they
+/// stand apart from the card as wells. On an outlined card they keep their
+/// own fill, as the card is the pane's colour.
+pub fn card_controls(ui: &mut egui::Ui) {
+    if style::shape(ui.ctx()).cards != CardStyle::Nested {
+        return;
+    }
+    let well = style::color(ui, Role::Panel);
+    let inactive = &mut ui.visuals_mut().widgets.inactive;
+    inactive.bg_fill = well;
+    inactive.weak_bg_fill = well;
 }
 
 /// The frame of a group card. A `selected` card takes the strong outline in
@@ -284,19 +298,23 @@ fn keycap_in(
 }
 
 /// A dot that marks an event, such as a bang, a load or a tick. It is weak
-/// at rest, strong while the pointer is over it, and it glows for a moment
-/// after [`fire_dot`] with the same `id`. The response senses `sense` over a
-/// little room around the dot.
+/// at rest, strong while the pointer is over it if it takes clicks, and it
+/// glows for a moment after [`fire_dot`] with the same `id`. The response
+/// senses `sense` over a little room around the dot.
 pub fn event_dot(ui: &mut egui::Ui, id: egui::Id, sense: egui::Sense) -> egui::Response {
-    // A square a line of text high, so that a bang with no name is round.
-    let side = ui.text_style_height(&egui::TextStyle::Body);
-    let size = egui::Vec2::splat(side);
+    // Exactly the dot's width, so that the gaps around it are the node's own
+    // margin and item spacing. As high as a control, so that it centres on the
+    // row like the value beside it.
+    let size = egui::vec2(DOT_RADIUS * 2.0, ui.spacing().interact_size.y);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let resp = ui.interact(rect.expand(DOT_ROOM), id, sense);
     if ui.is_rect_visible(rect) {
         let visuals = ui.visuals();
         let glow = dot_glow(ui.ctx(), id);
-        let color = match resp.hovered() || glow > 0.0 {
+        // Only a dot that takes clicks lights up under the pointer. Elsewhere
+        // the dot only marks that the node pushes.
+        let lit = sense.senses_click() && resp.hovered();
+        let color = match lit || glow > 0.0 {
             true => visuals.strong_text_color(),
             false => visuals.weak_text_color(),
         };
@@ -335,12 +353,21 @@ pub fn event_label(
     name: Option<&str>,
     sense: egui::Sense,
 ) -> egui::Response {
-    ui.horizontal(|ui| {
-        let dot = event_dot(ui, id, sense);
-        if let Some(name) = name {
+    ui.horizontal(|ui| match name {
+        Some(name) => {
+            let dot = event_dot(ui, id, sense);
             ui.add(egui::Label::new(name).selectable(false));
+            dot
         }
-        dot
+        // A dot alone sits in a square, so that a bang is round.
+        None => {
+            let pad = (ui.spacing().interact_size.y - DOT_RADIUS * 2.0) * 0.5;
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.add_space(pad);
+            let dot = event_dot(ui, id, sense);
+            ui.add_space(pad);
+            dot
+        }
     })
     .inner
 }

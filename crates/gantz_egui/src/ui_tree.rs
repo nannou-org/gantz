@@ -73,6 +73,13 @@ pub struct UiTree<'a> {
 /// bounds the walk's cost on corrupt data.
 const MAX_REF_GUI_DEPTH: usize = 8;
 
+/// The drag, in points, that takes a dialer bounded on both sides across its
+/// whole range, when it sets no step of its own.
+pub(crate) const RANGE_DRAG: f64 = 200.0;
+
+/// The most decimals a bounded dialer shows when it sets no precision.
+const MAX_DECIMALS: usize = 6;
+
 /// Walker state threaded through one tree traversal.
 struct Walk<'a> {
     instance_prefix: &'a [node::Id],
@@ -363,7 +370,7 @@ impl Walk<'_> {
             return;
         };
         let text = t.label.as_deref().unwrap_or("");
-        let r = ui.push_id(id, |ui| ui.checkbox(&mut b, text)).inner;
+        let r = claim_press(ui.push_id(id, |ui| ui.checkbox(&mut b, text)).inner);
         if r.changed() {
             self.emit_set(ctx, &path, SteelVal::BoolV(b), t.push);
         }
@@ -374,7 +381,7 @@ impl Walk<'_> {
     /// Buttons never write state. Bang semantics stay in the node's expr.
     fn button(&mut self, b: &Button, id: egui::Id, ui: &mut egui::Ui) {
         let text = b.label.as_deref().unwrap_or("!");
-        let r = ui.push_id(id, |ui| ui.button(text)).inner;
+        let r = claim_press(ui.push_id(id, |ui| ui.button(text)).inner);
         if r.clicked() {
             match &b.bind {
                 Some(bind) => {
@@ -425,7 +432,7 @@ impl Walk<'_> {
                                 let r = match cell {
                                     SteelVal::BoolV(b) => {
                                         let button = egui::Button::new("").selected(*b);
-                                        let r = ui.add_sized(size, button);
+                                        let r = claim_press(ui.add_sized(size, button));
                                         if r.clicked() {
                                             let flipped = SteelVal::BoolV(!b);
                                             edit = Some((row_ix, col_ix, flipped));
@@ -698,10 +705,12 @@ pub(crate) fn drag_value(ui: &mut egui::Ui, d: &Dialer, val: &mut SteelVal) -> e
                 );
                 dv = dv.range(lo..=hi);
             }
-            if let Some(p) = d.precision {
-                dv = dv.max_decimals(p as usize);
+            match (fixed_decimals(d), d.precision) {
+                (Some(n), _) => dv = dv.fixed_decimals(n),
+                (None, Some(p)) => dv = dv.max_decimals(p as usize),
+                (None, None) => (),
             }
-            if let Some(s) = d.step {
+            if let Some(s) = drag_step(d) {
                 dv = dv.speed(s);
             }
             if let Some(p) = &d.prefix {
@@ -716,7 +725,7 @@ pub(crate) fn drag_value(ui: &mut egui::Ui, d: &Dialer, val: &mut SteelVal) -> e
                 let hi = d.max.map_or(isize::MAX, |m| m as isize);
                 dv = dv.range(lo..=hi);
             }
-            if let Some(s) = d.step {
+            if let Some(s) = drag_step(d) {
                 dv = dv.speed(s);
             }
             if let Some(p) = &d.prefix {
@@ -726,6 +735,39 @@ pub(crate) fn drag_value(ui: &mut egui::Ui, d: &Dialer, val: &mut SteelVal) -> e
         }
         _ => err_label(ui, "bound state is not a number"),
     }
+}
+/// The decimals a dialer bounded on both sides always shows, so that it keeps
+/// one width as its value moves: its precision, or else enough for its bounds
+/// and its drag step. `None` for a dialer that is not bounded on both sides.
+pub(crate) fn fixed_decimals(d: &Dialer) -> Option<usize> {
+    let (lo, hi) = (d.min?, d.max?);
+    let span = hi - lo;
+    if !span.is_finite() || span <= 0.0 {
+        return None;
+    }
+    if let Some(p) = d.precision {
+        return Some(usize::from(p));
+    }
+    let step = drag_step(d).unwrap_or(1.0);
+    let step_decimals = (-step.log10()).ceil().max(0.0) as usize;
+    let auto = decimals(lo).max(decimals(hi)).max(step_decimals);
+    Some(auto.min(MAX_DECIMALS))
+}
+
+/// How far a drag moves the dialer per point: its step, or else a share of
+/// a range bounded on both sides, so that a drag of [`RANGE_DRAG`] points
+/// crosses it. `None` leaves egui's own speed.
+pub(crate) fn drag_step(d: &Dialer) -> Option<f64> {
+    let range = match (d.min, d.max) {
+        (Some(lo), Some(hi)) if (hi - lo).is_finite() && hi > lo => Some((hi - lo) / RANGE_DRAG),
+        _ => None,
+    };
+    d.step.or(range)
+}
+/// The decimals `x` needs, in its shortest form.
+fn decimals(x: f64) -> usize {
+    let s = x.to_string();
+    s.split_once('.').map_or(0, |(_, frac)| frac.len())
 }
 
 /// Where `val` sits between the dialer's bounds, from 0 to 1. `None` unless
@@ -756,6 +798,12 @@ fn paint_range_fill(ui: &egui::Ui, slot: egui::layers::ShapeIdx, rect: egui::Rec
     ui.painter().with_clip_rect(cut).set(slot, fill);
 }
 
+/// Make the control `r` take the drag too. Inside a node, a press on a
+/// control that takes only clicks would go on to select and move the node.
+fn claim_press(r: egui::Response) -> egui::Response {
+    r.interact(egui::Sense::drag())
+}
+
 /// An inline chip for a control missing its `bind` attr.
 fn unbound_chip(ui: &mut egui::Ui, tag: &str) -> egui::Response {
     weak_chip(ui, tag).on_hover_text("no `bind` attribute")
@@ -780,6 +828,32 @@ fn weak_chip(ui: &mut egui::Ui, text: &str) -> egui::Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixed_decimals_fit_the_bounds_and_the_drag_step() {
+        let dialer = |min, max, precision| Dialer {
+            min,
+            max,
+            precision,
+            ..Default::default()
+        };
+        assert_eq!(fixed_decimals(&dialer(Some(0.0), None, None)), None, "open");
+        assert_eq!(
+            fixed_decimals(&dialer(Some(0.0), Some(1.0), Some(2))),
+            Some(2),
+            "set"
+        );
+        assert_eq!(
+            fixed_decimals(&dialer(Some(0.0), Some(1.0), None)),
+            Some(3),
+            "step"
+        );
+        assert_eq!(
+            fixed_decimals(&dialer(Some(0.5), Some(256.0), None)),
+            Some(1),
+            "bound"
+        );
+    }
 
     #[test]
     fn range_fraction_needs_finite_apart_bounds() {

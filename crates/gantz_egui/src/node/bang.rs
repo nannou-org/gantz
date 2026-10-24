@@ -43,6 +43,8 @@ impl NodeUi for Bang {
     fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
         // A bang only triggers downstream evaluation. It never edits the
         // node's content address, so a click pushes but never sets `changed`.
+        // The dot takes the drag too, so that a press on it neither selects nor
+        // moves the node. The rim around it does.
         let dot_id = uictx.egui_id().with("dot");
         // A bang is a circle: a square of even margins with full corners.
         let mut frame = egui_graph::node::default_frame(uictx.style(), uictx.interaction());
@@ -50,7 +52,7 @@ impl NodeUi for Bang {
         frame.inner_margin = egui::Margin::same(margin.left.max(margin.top));
         frame.corner_radius = egui::CornerRadius::same(u8::MAX);
         let framed = uictx.framed_with(frame, |ui, _sockets| {
-            kit::event_label(ui, dot_id, None, egui::Sense::click())
+            kit::event_label(ui, dot_id, None, egui::Sense::click_and_drag())
         });
         let clicked = framed.inner.inner.clicked();
         if clicked {

@@ -770,7 +770,6 @@ fn nodes(
     let mut writes = Vec::new();
     // Each socket and its doc. The one nearest the pointer shows its doc.
     let mut socket_hovers = Vec::new();
-    let mut on_node = false;
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
         let node_id = egui_graph::NodeId::from_u64(n_ix as u64);
@@ -838,7 +837,6 @@ fn nodes(
         // describes its own sockets. Markers read their stored docs.
         // References resolve the referenced graph's marker docs via the
         // registry.
-        on_node |= response.contains_pointer();
         let sockets = response.sockets();
         let kinds = [
             (SocketKind::Input, sockets.inputs().collect::<Vec<_>>()),
@@ -1097,7 +1095,7 @@ fn nodes(
         node_responses.push((n_id, response));
     }
 
-    show_socket_doc(ui, &socket_hovers, on_node);
+    show_socket_doc(ui, &socket_hovers);
 
     // Reset state by removing it, then re-registering the graph.
     // Registration is idempotent and re-initialises any missing state.
@@ -1212,11 +1210,10 @@ fn placeholder_ui(
 /// once, with the type in bold and the description below. A socket with no
 /// doc says so, so that a missing doc is not mistaken for a missed hover.
 ///
-/// egui's own tooltips wait for the pointer to rest, and a node's frame
-/// covers the inner half of each socket's hover area. So the socket is found
-/// by its distance to the pointer, while egui finds the pointer on the
-/// socket or, given `on_node`, on a node.
-pub(crate) fn show_socket_doc(ui: &egui::Ui, sockets: &[SocketHover], on_node: bool) {
+/// egui's own tooltips wait for the pointer to rest, so the doc shows at once
+/// while egui finds the pointer on the socket's part outside its node. Over
+/// the node a press drags the node, so no socket lights up there.
+pub(crate) fn show_socket_doc(ui: &egui::Ui, sockets: &[SocketHover]) {
     let ctx = ui.ctx();
     if ctx.input(|i| i.pointer.any_down()) || egui::Popup::is_any_open(ctx) {
         return;
@@ -1231,7 +1228,7 @@ pub(crate) fn show_socket_doc(ui: &egui::Ui, sockets: &[SocketHover], on_node: b
             let layer = s.resp.layer_id;
             let to_global = ctx.layer_transform_to_global(layer).unwrap_or_default();
             let dist = s.resp.rect.center().distance(to_global.inverse() * pointer);
-            let over = on_node || s.resp.contains_pointer();
+            let over = s.resp.contains_pointer();
             (dist <= reach && over).then_some((dist, s, to_global))
         })
         .min_by(|a, b| a.0.total_cmp(&b.0));

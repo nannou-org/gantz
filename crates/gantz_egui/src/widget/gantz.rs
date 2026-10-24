@@ -676,7 +676,9 @@ impl<'a> Gantz<'a> {
                 status::gutter(ui.ctx(), rect, &status)
             }
             StatusStyle::Pill => {
-                let anchor = scene_rect.right_bottom() - egui::Vec2::splat(inset);
+                // The scene tile already keeps the window margin, so the pill sits
+                // in its corner, in line with the panes' own edges.
+                let anchor = scene_rect.right_bottom();
                 status::pill(ui.ctx(), anchor, &status)
             }
             StatusStyle::Hidden => status::StatusResponse::default(),

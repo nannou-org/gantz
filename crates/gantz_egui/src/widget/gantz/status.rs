@@ -244,6 +244,7 @@ pub(super) fn gutter(ctx: &egui::Context, rect: egui::Rect, status: &Status) -> 
     )
     .show(ctx, |ui| {
         ui.horizontal(|ui| {
+            quiet(ui);
             ui.spacing_mut().item_spacing.x = GUTTER_GAP;
             if let Some(graph) = &status.graph {
                 let saved = status.saved.map(|d| format!("saved {}", ago(d)));
@@ -279,6 +280,7 @@ pub(super) fn gutter(ctx: &egui::Context, rect: egui::Rect, status: &Status) -> 
     )
     .show(ctx, |ui| {
         ui.horizontal(|ui| {
+            quiet(ui);
             ui.spacing_mut().item_spacing.x = GUTTER_GAP;
             problems_ui(ui, status.problems, false, &mut res);
         });
@@ -301,6 +303,7 @@ pub(super) fn pill(ctx: &egui::Context, anchor: egui::Pos2, status: &Status) -> 
                 .show(ui, |ui| {
                     ui.set_height(height);
                     ui.horizontal_centered(|ui| {
+                        quiet(ui);
                         ui.spacing_mut().item_spacing.x = PILL_GAP;
                         let mut res = StatusResponse::default();
                         if let Some(link) = status.link {
@@ -410,7 +413,7 @@ fn items_ui(ui: &mut egui::Ui, status: &Status, short: bool, res: &mut StatusRes
             None => group.rect,
         };
         if let Some((action, rect)) = icon {
-            let icon = ui.interact(rect, ui.id().with(("icon", i)), egui::Sense::click());
+            let icon = interact(ui, rect, ("icon", i), egui::Sense::click());
             if icon.on_hover_text(hint(action, status.muted)).clicked() {
                 res.act(action);
             }
@@ -419,7 +422,7 @@ fn items_ui(ui: &mut egui::Ui, status: &Status, short: bool, res: &mut StatusRes
             Some(_) => egui::Sense::click(),
             None => egui::Sense::hover(),
         };
-        let item = ui.interact(rest, ui.id().with(("item", i)), sense);
+        let item = interact(ui, rest, ("item", i), sense);
         let item = match &it.hover {
             Some(hover) => item.on_hover_text(hover),
             None => item,
@@ -491,7 +494,28 @@ fn sensed(
     key: impl std::hash::Hash,
     sense: egui::Sense,
 ) -> egui::Response {
-    ui.interact(res.rect, ui.id().with(key), sense)
+    interact(ui, res.rect, key, sense)
+}
+
+/// `rect` sensing `sense` under an id from `key`. A part that takes clicks
+/// shows the pointing hand, as it opens or toggles something.
+fn interact(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    key: impl std::hash::Hash,
+    sense: egui::Sense,
+) -> egui::Response {
+    let res = ui.interact(rect, ui.id().with(key), sense);
+    match sense.senses_click() {
+        true => res.on_hover_cursor(egui::CursorIcon::PointingHand),
+        false => res,
+    }
+}
+
+/// Make the status line's text plain to the pointer. Its labels do not
+/// select, so the pointer shows no text cursor over them.
+fn quiet(ui: &mut egui::Ui) {
+    ui.style_mut().interaction.selectable_labels = false;
 }
 
 /// Keep `problems` as this pass's counts, for parts drawn before the status

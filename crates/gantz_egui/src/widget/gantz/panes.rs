@@ -1219,8 +1219,7 @@ fn gui_preview_node(
                 });
             }
         }
-        let on_node = resp.inner.response.contains_pointer();
-        super::graph_scene::show_socket_doc(ui, &hovers, on_node);
+        super::graph_scene::show_socket_doc(ui, &hovers);
     }
     resp.inner.inner
 }
@@ -1618,6 +1617,7 @@ pub(super) fn node_inspector<'a>(
                     let frame_resp = ui
                         .push_id(id, |ui| {
                             frame.show(ui, |ui| {
+                                widget::kit::card_controls(ui);
                                 let Some(weight) = graph.node_weight(id) else {
                                     return;
                                 };
