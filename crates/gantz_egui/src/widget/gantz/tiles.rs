@@ -340,7 +340,7 @@ pub(super) fn add_graph_pane(tree: &mut egui_tiles::Tree<Pane>, id: u64) {
 }
 
 /// Put `new` in place of the child `old` of `container`, keeping its share.
-fn replace_child(
+pub(super) fn replace_child(
     container: &mut egui_tiles::Container,
     old: egui_tiles::TileId,
     new: egui_tiles::TileId,

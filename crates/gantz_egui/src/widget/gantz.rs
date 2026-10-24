@@ -9,6 +9,7 @@ use crate::{
 use std::collections::{HashMap, HashSet};
 
 mod chrome;
+mod corner;
 mod decor;
 mod graph_tabs;
 mod panes;
@@ -195,13 +196,6 @@ where
     /// The pane whose header leads with the logo: the one in the tree's
     /// top-left corner, unless the window's header holds the logo.
     logo_tile: Option<egui_tiles::TileId>,
-    /// The pane whose header ends with the window's controls: the one in the
-    /// tree's top-right corner, when the window has floating controls.
-    controls_tile: Option<egui_tiles::TileId>,
-    /// The window the widget decorates, if any.
-    window: Option<NativeWindow>,
-    /// Actions on the window from the panes' headers.
-    window_actions: Vec<WindowAction>,
 }
 
 /// Response from the top-level gantz widget.
@@ -570,9 +564,36 @@ impl<'a> Gantz<'a> {
         // by imposing the stored pixel sizes on the share splits before layout.
         impose_fixed_sizes(&mut tree, state, tree_area);
 
-        // The panes in the tree's top corners take the logo and the window's
-        // controls.
-        let (logo_tile, controls_tile) = chrome::corner_grounds(&tree);
+        // The pane in the tree's top-left corner takes the logo. The window's
+        // corner holds the wordmark and the window's controls over the tree's
+        // top-right corner, and a pane there moves below it. The window's
+        // header holds all three when it shows, and patch-only hides the
+        // wordmark. A dragged tile may drop anywhere, so the corner keeps no
+        // room of its own during a drag.
+        let (logo_tile, corner_tile) = chrome::corner_grounds(&tree);
+        let controls = window.filter(|_| window_style == WindowStyle::Controls);
+        let wordmark = !header && !patch_only;
+        let (corner_rect, corner_action) = decor::corner(
+            ui.ctx(),
+            tree_area.right_top(),
+            controls,
+            wordmark,
+            self.version,
+            controls.is_some(),
+        );
+        corner::set_rect(ui.ctx(), corner_rect.is_positive().then_some(corner_rect));
+        let reserved = corner_tile
+            .filter(|_| corner_rect.is_positive() && tree.dragged_id(ui.ctx()).is_none())
+            .and_then(|pane| {
+                let gap = state.style.shape.separator_width;
+                corner::reserve(&mut tree, pane, tree_area, chrome::HEADER_HEIGHT, gap)
+            });
+        let mut window_actions: Vec<WindowAction> = corner_action.into_iter().collect();
+        if let (Some(reserved), Some(_)) = (&reserved, controls) {
+            // The row's empty space left of the corner moves the window.
+            let band = reserved.row.with_max_x(corner_rect.left());
+            window_actions.extend(decor::drag_band(ui.ctx(), "gantz-window-corner-band", band));
+        }
 
         let mut response = GantzResponse::new(focused_head);
 
@@ -589,10 +610,6 @@ impl<'a> Gantz<'a> {
             focus: chrome::update_focus(ui.ctx(), &tree, tree_area),
             headers: chrome::headers(&tree.tiles),
             logo_tile: logo_tile.filter(|_| !header),
-            controls_tile: controls_tile
-                .filter(|_| window.is_some() && window_style == WindowStyle::Controls),
-            window,
-            window_actions: vec![],
         };
         // Reserve the bottom layer for the scene colour and the pane
         // grounds. They are painted once the tree has laid out its rects.
@@ -600,10 +617,12 @@ impl<'a> Gantz<'a> {
         let grounds = ui.painter().add(egui::Shape::Noop);
         let tree_ui = egui::UiBuilder::new().max_rect(tree_area);
         ui.scope_builder(tree_ui, |ui| tree.ui(&mut behaviour, ui));
+        if let Some(reserved) = reserved {
+            corner::release(&mut tree, reserved);
+        }
 
         let focused_head = behaviour.cx.focused_head;
         let actions = std::mem::take(&mut behaviour.actions);
-        let mut window_actions = std::mem::take(&mut behaviour.window_actions);
         let focus = behaviour.focus;
         response.focused_head = focused_head;
         let theme = style::theme_of(ui.visuals());
@@ -1141,12 +1160,6 @@ where
         tabs: &egui_tiles::Tabs,
         _scroll_offset: &mut f32,
     ) {
-        // The pane in the tree's top-right corner ends with the window's
-        // controls, which always show.
-        if let Some(window) = self.window.filter(|_| self.controls_tile == Some(tile_id)) {
-            ui.add_space(chrome::HEADER_INSET - 2.0);
-            self.window_actions.extend(decor::controls(ui, window));
-        }
         let Some(active) = tabs.active else { return };
         let Some(pane) = tiles.get_pane(&active) else {
             return;
@@ -1192,6 +1205,15 @@ where
         resize_state: egui_tiles::ResizeState,
     ) -> egui::Stroke {
         separator_stroke(&self.cx.state.style, style, resize_state)
+    }
+
+    fn is_container_resizable(
+        &self,
+        _tiles: &egui_tiles::Tiles<Pane>,
+        tile_id: egui_tiles::TileId,
+    ) -> bool {
+        // The window corner's row keeps its height. See `corner::reserve`.
+        tile_id != corner::column_id()
     }
 
     fn gap_width(&self, _style: &egui::Style) -> f32 {
