@@ -28,6 +28,22 @@ fn reify_all(reg: &DataReg) -> Reified {
     reified
 }
 
+/// Load every base source as the app does, each seeded with the names the
+/// others define, asserting that each parses.
+fn load_base() -> gantz_cli::headless::Loaded {
+    let conf = crate::conf();
+    let sources = gantz_cli::headless::base_sources(&conf);
+    let renames = gantz_edit::base::renames(&conf.base_sources);
+    let ts = gantz_edit::base::BASE_TIMESTAMP;
+    let loaded = gantz_cli::headless::load_sources(&sources, &renames, ts, &conf.codec);
+    for (source, parsed) in sources.iter().zip(&loaded.parsed) {
+        if let Err(e) = parsed {
+            panic!("{}: parse failed: {e}", source.label);
+        }
+    }
+    loaded
+}
+
 /// Erase a typed node to its stored data form via its own tag + serde.
 fn erased<T>(node: &T) -> gantz_ca::NodeData
 where
@@ -2762,18 +2778,7 @@ fn demo_pplot_plots_every_source() {
 fn demo_pattern_partial_evals_are_silent() {
     use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
 
-    let ts = gantz_edit::base::BASE_TIMESTAMP;
-    let mut merged = DataReg::default();
-    for bytes in [
-        gantz_base::BYTES,
-        gantz_plyphon::BASE_BYTES,
-        gantz_pattern::BASE_BYTES,
-    ] {
-        let export: DataReg =
-            gantz_edit::export::parse_export_at(bytes, ts, crate::node::codec().data())
-                .expect("parse");
-        merged.merge(export);
-    }
+    let merged = load_base().registry;
     let reified = reify_all(&merged);
     let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
@@ -2989,25 +2994,17 @@ fn base_names_do_not_shadow_builtins() {
 #[test]
 fn base_sources_parse_reproducibly() {
     use std::collections::BTreeMap;
-    let heads = |source: &gantz_cli::headless::Source| -> BTreeMap<_, _> {
-        gantz_edit::export::parse_export_at(
-            &source.bytes,
-            gantz_edit::base::BASE_TIMESTAMP,
-            crate::node::codec().data(),
-        )
-        .unwrap_or_else(|e| panic!("{}: parse failed: {e}", source.label))
-        .heads()
-        .map(|(n, ca)| (n.clone(), ca))
-        .collect()
+    let heads = || -> Vec<BTreeMap<_, _>> {
+        let loaded = load_base();
+        let own = loaded.parsed.into_iter().flatten();
+        own.map(|p| p.registry.heads().map(|(n, ca)| (n.clone(), ca)).collect())
+            .collect()
     };
-    for source in gantz_cli::headless::base_sources(&crate::conf()) {
-        assert_eq!(
-            heads(&source),
-            heads(&source),
-            "{}: reset must resolve the startup commit addresses",
-            source.label,
-        );
-    }
+    assert_eq!(
+        heads(),
+        heads(),
+        "reset must resolve the startup commit addresses"
+    );
 }
 
 /// The demos in the plyphon base source.
@@ -3033,12 +3030,7 @@ const PLYPHON_DEMOS: [&str; 10] = [
 fn plyphon_base_demos_derive_and_build() {
     use bevy_gantz_plyphon::plyphon;
 
-    let registry: DataReg = gantz_edit::export::parse_export_at(
-        gantz_plyphon::BASE_BYTES,
-        gantz_edit::base::BASE_TIMESTAMP,
-        crate::node::codec().data(),
-    )
-    .expect("parse");
+    let registry: DataReg = load_base().registry;
     let reified = reify_all(&registry);
     let (mut controller, _nrt, _world) = plyphon::engine(plyphon::Options::default());
     for demo in PLYPHON_DEMOS {
@@ -3046,7 +3038,9 @@ fn plyphon_base_demos_derive_and_build() {
         let graph = head_graph(&reified, &registry, &head).expect(demo);
         let flat = gantz_plyphon::flatten_from_registry(graph, &reified).expect(demo);
         let mut cache = gantz_plyphon::DefCache::new();
-        let template = gantz_plyphon::derive_template(&flat, 2, &|_| None, &mut cache)
+        let children = gantz_plyphon::flatten_instance_children(&flat, &reified).expect(demo);
+        let resolve = |ca: &gantz_ca::ContentAddr| children.get(ca);
+        let template = gantz_plyphon::derive_template(&flat, 2, &resolve, &mut cache)
             .unwrap_or_else(|e| panic!("{demo}: derive failed: {e}"));
         let parts = gantz_plyphon::instantiate(&template, &cache);
         for part in &parts {
