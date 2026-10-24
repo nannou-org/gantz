@@ -17,6 +17,8 @@ use steel::SteelVal;
 ///
 /// Optional configuration:
 /// - `min` and `max` clamp every value, including input-socket values.
+/// - `init` is the value a new or reset number starts at, clamped to the
+///   bounds. Without it the number starts at 0, clamped.
 /// - `precision` controls how many decimals the dialer shows and edits. It
 ///   is display only.
 /// - `speed` sets how far a drag moves the value, per point. Without it, a
@@ -38,6 +40,8 @@ pub struct Number {
     min: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     max: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    init: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     precision: Option<u8>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -79,9 +83,9 @@ const CHEVRON_WIDTH: f32 = 4.0;
 /// The thickness of a bounded number's range hairline.
 const HAIRLINE: f32 = 1.5;
 
-/// The drag, in points, that takes a number bounded on both sides across its
-/// whole range, when it sets no speed of its own.
-const RANGE_DRAG: f64 = 200.0;
+/// The hover text of the inspector's init row.
+const INIT_DOC: &str = "the value a new number starts at, and returns to when reset. \
+    off starts at 0. either way the bounds clamp it.";
 
 /// The hover text of the inspector's drag row.
 const DRAG_DOC: &str = "how much the value changes per point of drag. off takes it from a range \
@@ -117,6 +121,11 @@ impl Number {
         self.max
     }
 
+    /// The value a new or reset number starts at, before the clamp, if set.
+    pub fn init(&self) -> Option<f64> {
+        self.init
+    }
+
     /// The number of decimal places the dialer shows/edits, if configured.
     pub fn precision(&self) -> Option<u8> {
         self.precision
@@ -133,7 +142,7 @@ impl Number {
     pub fn drag_speed(&self) -> Option<f64> {
         let range = match (self.min, self.max) {
             (Some(lo), Some(hi)) if (hi - lo).is_finite() && hi > lo => {
-                Some((hi - lo) / RANGE_DRAG)
+                Some((hi - lo) / ui_tree::RANGE_DRAG)
             }
             _ => None,
         };
@@ -163,6 +172,12 @@ impl Number {
     /// Set the upper bound. This affects the content address.
     pub fn set_max(&mut self, max: Option<f64>) {
         self.max = max;
+    }
+
+    /// Set the value a new or reset number starts at. A value that is not
+    /// finite sets none. This affects the content address.
+    pub fn set_init(&mut self, init: Option<f64>) {
+        self.init = init.filter(|v| v.is_finite());
     }
 
     /// Set the dialer display precision. This is UI only.
@@ -205,6 +220,7 @@ impl Default for Number {
         Number {
             min: None,
             max: None,
+            init: None,
             precision: None,
             speed: None,
             label: None,
@@ -218,6 +234,7 @@ impl PartialEq for Number {
     fn eq(&self, other: &Self) -> bool {
         self.min.map(f64::to_bits) == other.min.map(f64::to_bits)
             && self.max.map(f64::to_bits) == other.max.map(f64::to_bits)
+            && self.init.map(f64::to_bits) == other.init.map(f64::to_bits)
             && self.precision == other.precision
             && self.speed.map(f64::to_bits) == other.speed.map(f64::to_bits)
             && self.label == other.label
@@ -232,6 +249,7 @@ impl Hash for Number {
     fn hash<H: Hasher>(&self, state: &mut H) {
         Hash::hash(&self.min.map(f64::to_bits), state);
         Hash::hash(&self.max.map(f64::to_bits), state);
+        Hash::hash(&self.init.map(f64::to_bits), state);
         Hash::hash(&self.precision, state);
         Hash::hash(&self.speed.map(f64::to_bits), state);
         Hash::hash(&self.label, state);
@@ -274,7 +292,7 @@ impl gantz_core::Node for Number {
 
     fn register(&self, mut ctx: RegCtx<'_, '_>) {
         let path = ctx.path();
-        let init = self.clamp(0.0);
+        let init = self.clamp(self.init.unwrap_or(0.0));
         node::state::init_value_if_absent(ctx.vm(), path, || SteelVal::NumV(init)).unwrap()
     }
 }
@@ -299,11 +317,19 @@ impl NodeUi for Number {
         let frame = egui_graph::node::default_frame(uictx.style(), uictx.interaction());
         let framed = uictx.framed_with(frame, |ui, _sockets| {
             ui.horizontal(|ui| {
+                // The row takes the value's height before anything else, so
+                // that the dot, the label and the value centre on one line.
+                let text = ui.text_style_height(&egui::TextStyle::Button);
+                let row = text + 2.0 * ui.spacing().button_padding.y;
+                ui.set_height(row.max(ui.spacing().interact_size.y));
                 if dialer.push {
                     kit::event_dot(ui, dot_id, egui::Sense::hover());
                 }
                 if let Some(label) = &dialer.label {
-                    let text = egui::RichText::new(label).color(ui.visuals().weak_text_color());
+                    // In the value's text style, so that the two share a baseline.
+                    let text = egui::RichText::new(label)
+                        .text_style(egui::TextStyle::Button)
+                        .color(ui.visuals().weak_text_color());
                     ui.add(egui::Label::new(text).selectable(false));
                 }
                 value = flat_value(&dialer, &mut ctx, ui);
@@ -380,6 +406,28 @@ impl NodeUi for Number {
 
         body.row(row_h, |mut row| {
             row.col(|ui| {
+                ui.label("init").on_hover_text(INIT_DOC);
+            });
+            row.col(|ui| {
+                let mut on = self.init().is_some();
+                let mut init = self.init().unwrap_or(0.0);
+                let dialer =
+                    egui::DragValue::new(&mut init).speed(self.drag_speed().unwrap_or(1.0));
+                let resp = ui
+                    .add(
+                        crate::widget::CheckboxEnabled::new(&mut on, dialer)
+                            .width(crate::widget::node_inspector::DIAL_W),
+                    )
+                    .on_hover_text(INIT_DOC);
+                if resp.changed() {
+                    self.set_init(on.then_some(init));
+                    changed = true;
+                }
+            });
+        });
+
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
                 ui.label("prec.")
                     .on_hover_text("precision: decimal places the dialer shows (display only)");
             });
@@ -436,10 +484,14 @@ impl NodeUi for Number {
                 let id = egui::Id::new("number_label").with(ctx.path());
                 let current = self.label().unwrap_or("");
                 kit::field_visuals(ui);
+                // The field is a control high, so that it lines up with its row.
+                let text = ui.text_style_height(&egui::TextStyle::Body);
+                let pad = ((ui.spacing().interact_size.y - text) * 0.5).max(0.0);
+                let margin = egui::Margin::symmetric(kit::FIELD_MARGIN.left, pad as i8);
                 let edit = crate::widget::buffered_edit(ui, id, current, |label| {
                     egui::TextEdit::singleline(label)
                         .hint_text("none")
-                        .margin(kit::FIELD_MARGIN)
+                        .margin(margin)
                         .desired_width(crate::widget::node_inspector::DIAL_W * 2.0)
                 });
                 if let Some(label) = edit.committed {
@@ -583,7 +635,7 @@ fn dialer(num: &Number, id: node::Id) -> gantz_ui::Dialer {
         min: num.min(),
         max: num.max(),
         precision: num.precision(),
-        step: num.drag_speed(),
+        step: num.speed(),
         label: num.label().map(str::to_string),
         prefix: (num.input() == NumberInput::Bang).then(|| "!".to_string()),
         push: num.push_eval_on_edit(),
@@ -599,12 +651,23 @@ fn flat_value(d: &gantz_ui::Dialer, ctx: &mut NodeCtx, ui: &mut egui::Ui) -> Fla
         return FlatValue::default();
     };
     let original = val.clone();
-    let r = ui
-        .scope(|ui| {
-            flat_visuals(ui);
-            ui_tree::drag_value(ui, d, &mut val)
-        })
-        .inner;
+    flat_visuals(ui);
+    // A bounded value keeps the width of its wider bound, so that the node
+    // does not resize as the value moves.
+    if let Some(n) = ui_tree::fixed_decimals(d) {
+        let font = egui::TextStyle::Button.resolve(ui.style());
+        let prefix = d.prefix.as_deref().unwrap_or("");
+        let width = |v: f64| {
+            let text = format!("{prefix}{v:.n$}");
+            let galley =
+                ui.painter()
+                    .layout_no_wrap(text, font.clone(), egui::Color32::PLACEHOLDER);
+            galley.size().x
+        };
+        let widest = d.min.map_or(0.0, width).max(d.max.map_or(0.0, width));
+        ui.spacing_mut().interact_size.x = widest;
+    }
+    let r = ui_tree::drag_value(ui, d, &mut val);
     let edited = r.changed() && val != original;
     let fraction = ui_tree::range_fraction(d, &val);
     if edited {
@@ -773,6 +836,7 @@ mod tests {
         let n = Number {
             min: Some(0.0),
             max: Some(10.0),
+            init: None,
             precision: None,
             speed: None,
             label: None,
@@ -910,7 +974,6 @@ mod tests {
             min: Some(0.0),
             max: Some(10.0),
             precision: Some(2),
-            step: Some(0.05),
             push: false,
             ..Default::default()
         });

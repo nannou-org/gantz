@@ -126,7 +126,7 @@
 
 (graph demo.waveshape
   (comment0 (comment "# waveshaping\na sine into a tanh shaper.\ndial the drive." 300 57))
-  (number1 (number #:min 1 #:label "drive"))
+  (number1 (number #:min 0.5 #:max 10 #:init 1 #:label "drive"))
   (~sinosc2 ~sinosc)
   (~mul3 ~mul)
   (~tanh4 ~tanh)
