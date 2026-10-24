@@ -792,7 +792,7 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
         .num_columns(2)
         .show(ui, |ui| {
             ui.label("pane outline").on_hover_text(
-                "The width of the outline around each pane. 0 draws none. Inked palettes \
+                "The width of the outline around each pane. 0 draws none. Contrast palettes \
                  need one, since their panes share the scene's colour.",
             );
             px(ui, &mut shape.pane_outline, 0.0..=4.0);

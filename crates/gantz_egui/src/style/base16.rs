@@ -23,40 +23,130 @@ pub enum ParseError {
     BadColor { key: String, value: String },
 }
 
-/// gantz's own dark palette. Warm ink and paper greys with egui's accents.
+/// gantz's own dark palette. Untinted greys with egui's accents.
 pub const GANTZ_DARK: Scheme = Scheme {
     name: "gantz Dark",
     colors: [
-        0x0e0e0d, 0x1d1d1b, 0x292927, 0x3d3d3a, 0x82817a, 0xc9c8c1, 0xe6e5de, 0xf3f3ef, 0xe86464,
+        0x0e0e0e, 0x1c1c1c, 0x282828, 0x3b3b3b, 0x808080, 0xc7c7c7, 0xe4e4e4, 0xf2f2f2, 0xe86464,
         0xf0902a, 0xd4aa3a, 0x5cbf5c, 0x4cc2c2, 0x5aaaff, 0xb070e0, 0xe070b8,
     ],
 };
 
-/// gantz's own light palette. The scene is a mid paper grey and panes sit a
-/// step above it, so the window does not glare. The accents are dark enough
-/// to read on the panes.
+/// gantz's own light palette. The scene is a mid grey and panes sit a step
+/// above it, so the window does not glare. The accents are dark enough to
+/// read on the panes.
 pub const GANTZ_LIGHT: Scheme = Scheme {
     name: "gantz Light",
     colors: [
-        0xcfcec7, 0xe2e1da, 0xe9e8e1, 0xb9b8b0, 0x6a6963, 0x2c2c29, 0x1a1a18, 0x0d0d0d, 0xb3261e,
+        0xcecece, 0xe1e1e1, 0xe8e8e8, 0xb8b8b8, 0x696969, 0x2b2b2b, 0x1a1a1a, 0x0d0d0d, 0xb3261e,
         0x9a4a00, 0x7a5700, 0x1d6a35, 0x086868, 0x1d5fb0, 0x7038a8, 0x9a2a70,
     ],
 };
 
-/// A dark palette of ink and paper with no greys between, for high-contrast
-/// and e-ink displays. Panes share the scene's ink, so pair it with a pane
-/// outline.
-pub const GANTZ_INKED_DARK: Scheme = Scheme {
-    name: "gantz Inked Dark",
+/// [`GANTZ_DARK`] with warm greys, as of paper in low light.
+pub const GANTZ_PAPER_DARK: Scheme = Scheme {
+    name: "gantz Paper Dark",
+    colors: [
+        0x100e0d, 0x1f1c1a, 0x2b2826, 0x3f3b38, 0x88817c, 0xccc5bf, 0xe9e3dd, 0xf6f1eb, 0xe86464,
+        0xf0902a, 0xd4aa3a, 0x5cbf5c, 0x4cc2c2, 0x5aaaff, 0xb070e0, 0xe070b8,
+    ],
+};
+
+/// [`GANTZ_LIGHT`] with warm greys.
+pub const GANTZ_PAPER_LIGHT: Scheme = Scheme {
+    name: "gantz Paper Light",
+    colors: [
+        0xd1ccc6, 0xe4dfd9, 0xebe6e0, 0xbbb5af, 0x6c6661, 0x2e2a27, 0x1c1917, 0x0f0d0c, 0xb3261e,
+        0x9a4a00, 0x7a5700, 0x1d6a35, 0x086868, 0x1d5fb0, 0x7038a8, 0x9a2a70,
+    ],
+};
+
+/// [`GANTZ_DARK`] with cool, blue greys.
+pub const GANTZ_SLATE_DARK: Scheme = Scheme {
+    name: "gantz Slate Dark",
+    colors: [
+        0x0d0e10, 0x1b1c1f, 0x27292c, 0x3a3c40, 0x7f8288, 0xc6c8cc, 0xe3e5e8, 0xf1f2f4, 0xe86464,
+        0xf0902a, 0xd4aa3a, 0x5cbf5c, 0x4cc2c2, 0x5aaaff, 0xb070e0, 0xe070b8,
+    ],
+};
+
+/// [`GANTZ_LIGHT`] with cool, blue greys.
+pub const GANTZ_SLATE_LIGHT: Scheme = Scheme {
+    name: "gantz Slate Light",
+    colors: [
+        0xcbcdd1, 0xdfe1e4, 0xe6e8eb, 0xb5b8bd, 0x666a70, 0x2a2c30, 0x191a1d, 0x0c0d0f, 0xb3261e,
+        0x9a4a00, 0x7a5700, 0x1d6a35, 0x086868, 0x1d5fb0, 0x7038a8, 0x9a2a70,
+    ],
+};
+
+/// [`GANTZ_DARK`] with a deeper scene and brighter text, for more contrast.
+pub const GANTZ_INK_DARK: Scheme = Scheme {
+    name: "gantz Ink Dark",
+    colors: [
+        0x080808, 0x141414, 0x1f1f1f, 0x303030, 0x7a7a7a, 0xd0d0d0, 0xebebeb, 0xfafafa, 0xe86464,
+        0xf0902a, 0xd4aa3a, 0x5cbf5c, 0x4cc2c2, 0x5aaaff, 0xb070e0, 0xe070b8,
+    ],
+};
+
+/// [`GANTZ_LIGHT`] with brighter panes and darker text, for more contrast.
+pub const GANTZ_INK_LIGHT: Scheme = Scheme {
+    name: "gantz Ink Light",
+    colors: [
+        0xd6d6d6, 0xebebeb, 0xf2f2f2, 0xbdbdbd, 0x5e5e5e, 0x1f1f1f, 0x111111, 0x050505, 0xb3261e,
+        0x9a4a00, 0x7a5700, 0x1d6a35, 0x086868, 0x1d5fb0, 0x7038a8, 0x9a2a70,
+    ],
+};
+
+/// [`GANTZ_DARK`] with a lifted scene and softer text, for less contrast.
+pub const GANTZ_GRAPHITE_DARK: Scheme = Scheme {
+    name: "gantz Graphite Dark",
+    colors: [
+        0x18181a, 0x242426, 0x2f2f31, 0x424245, 0x8a8a8e, 0xc3c3c6, 0xdedee0, 0xececee, 0xe86464,
+        0xf0902a, 0xd4aa3a, 0x5cbf5c, 0x4cc2c2, 0x5aaaff, 0xb070e0, 0xe070b8,
+    ],
+};
+
+/// [`GANTZ_LIGHT`] with a dimmer scene and softer text, for less contrast.
+pub const GANTZ_GRAPHITE_LIGHT: Scheme = Scheme {
+    name: "gantz Graphite Light",
+    colors: [
+        0xc8c8cb, 0xdcdcdf, 0xe2e2e5, 0xb3b3b7, 0x68686d, 0x333336, 0x242426, 0x18181a, 0xb3261e,
+        0x9a4a00, 0x7a5700, 0x1d6a35, 0x086868, 0x1d5fb0, 0x7038a8, 0x9a2a70,
+    ],
+};
+
+/// [`GANTZ_DARK`] with greys of a faint violet.
+pub const GANTZ_MAUVE_DARK: Scheme = Scheme {
+    name: "gantz Mauve Dark",
+    colors: [
+        0x0f0e10, 0x1d1b1f, 0x29272b, 0x3d3a40, 0x848088, 0xc9c5cc, 0xe6e2e8, 0xf3f0f4, 0xe86464,
+        0xf0902a, 0xd4aa3a, 0x5cbf5c, 0x4cc2c2, 0x5aaaff, 0xb070e0, 0xe070b8,
+    ],
+};
+
+/// [`GANTZ_LIGHT`] with greys of a faint violet.
+pub const GANTZ_MAUVE_LIGHT: Scheme = Scheme {
+    name: "gantz Mauve Light",
+    colors: [
+        0xcdc9cf, 0xe1dde3, 0xe8e4ea, 0xb8b3bb, 0x6a656d, 0x2c292e, 0x1b191d, 0x0e0d0f, 0xb3261e,
+        0x9a4a00, 0x7a5700, 0x1d6a35, 0x086868, 0x1d5fb0, 0x7038a8, 0x9a2a70,
+    ],
+};
+
+/// A dark palette of black and white with no greys between, for
+/// high-contrast and e-ink displays. Panes share the scene's black, so pair
+/// it with a pane outline.
+pub const GANTZ_CONTRAST_DARK: Scheme = Scheme {
+    name: "gantz Contrast Dark",
     colors: [
         0x0d0d0d, 0x0d0d0d, 0x0d0d0d, 0xf3f3ef, 0xa8a7a1, 0xf3f3ef, 0xf3f3ef, 0xf3f3ef, 0xff6b6b,
         0xffa040, 0xf0c040, 0x70d070, 0x50d0d0, 0x70b0ff, 0xc080f0, 0xf080c8,
     ],
 };
 
-/// The light counterpart of [`GANTZ_INKED_DARK`].
-pub const GANTZ_INKED_LIGHT: Scheme = Scheme {
-    name: "gantz Inked Light",
+/// The light counterpart of [`GANTZ_CONTRAST_DARK`].
+pub const GANTZ_CONTRAST_LIGHT: Scheme = Scheme {
+    name: "gantz Contrast Light",
     colors: [
         0xf3f3ef, 0xf3f3ef, 0xf3f3ef, 0x0d0d0d, 0x55544f, 0x0d0d0d, 0x0d0d0d, 0x0d0d0d, 0xa01810,
         0x8a3e00, 0x6a4c00, 0x145a28, 0x045858, 0x14509a, 0x602c98, 0x8a2060,
@@ -105,8 +195,18 @@ pub const GNOME_LIGHT: Scheme = Scheme {
 pub const PRESETS: &[Scheme] = &[
     GANTZ_DARK,
     GANTZ_LIGHT,
-    GANTZ_INKED_DARK,
-    GANTZ_INKED_LIGHT,
+    GANTZ_PAPER_DARK,
+    GANTZ_PAPER_LIGHT,
+    GANTZ_SLATE_DARK,
+    GANTZ_SLATE_LIGHT,
+    GANTZ_INK_DARK,
+    GANTZ_INK_LIGHT,
+    GANTZ_GRAPHITE_DARK,
+    GANTZ_GRAPHITE_LIGHT,
+    GANTZ_MAUVE_DARK,
+    GANTZ_MAUVE_LIGHT,
+    GANTZ_CONTRAST_DARK,
+    GANTZ_CONTRAST_LIGHT,
     EGUI_DARK,
     EGUI_LIGHT,
     GNOME_DARK,

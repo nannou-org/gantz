@@ -489,8 +489,8 @@ fn colors_id(theme: egui::Theme) -> egui::Id {
 #[cfg(test)]
 mod tests {
     use super::{
-        Palettes, Role, SaveError, StyleConfig, Swatch, apply, color_of, contrast, from_ron,
-        role_contrast, style, to_ron,
+        Palette, Palettes, Role, SaveError, StyleConfig, Swatch, apply, base16, color_of, contrast,
+        from_ron, role_contrast, style, to_ron,
     };
 
     /// A config with both palettes and a role customised.
@@ -571,18 +571,25 @@ mod tests {
         assert!((contrast(egui::Color32::TRANSPARENT, black) - 1.0).abs() < 0.01);
     }
 
-    /// The default style passes every contrast check of the style editor in
-    /// both themes.
+    /// The default roles pass every contrast check of the style editor with
+    /// each of gantz's own palettes.
     #[test]
     fn default_style_is_readable() {
         let cfg = StyleConfig::default();
-        for theme in [egui::Theme::Dark, egui::Theme::Light] {
-            let palette = cfg.palettes.get(theme);
+        let gantz = base16::PRESETS
+            .iter()
+            .filter(|s| s.name.starts_with("gantz"));
+        for scheme in gantz {
+            let palette = &Palette::from(scheme);
             for &role in Role::ALL {
                 let Some((ratio, _)) = role_contrast(&cfg.roles, role, palette) else {
                     continue;
                 };
-                assert!(ratio >= role.min_contrast(), "{theme:?} {role:?} {ratio}");
+                assert!(
+                    ratio >= role.min_contrast(),
+                    "{} {role:?} {ratio}",
+                    scheme.name
+                );
             }
         }
     }
