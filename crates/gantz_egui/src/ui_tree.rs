@@ -710,6 +710,10 @@ pub(crate) fn drag_value(ui: &mut egui::Ui, d: &Dialer, val: &mut SteelVal) -> e
                 (None, Some(p)) => dv = dv.max_decimals(p as usize),
                 (None, None) => (),
             }
+            if let Some(digits) = fixed_digits(d) {
+                dv =
+                    dv.custom_formatter(move |v, decimals| zero_padded(v, digits, *decimals.end()));
+            }
             if let Some(s) = drag_step(d) {
                 dv = dv.speed(s);
             }
@@ -725,6 +729,9 @@ pub(crate) fn drag_value(ui: &mut egui::Ui, d: &Dialer, val: &mut SteelVal) -> e
                 let hi = d.max.map_or(isize::MAX, |m| m as isize);
                 dv = dv.range(lo..=hi);
             }
+            if let Some(digits) = fixed_digits(d) {
+                dv = dv.custom_formatter(move |v, _| zero_padded(v, digits, 0));
+            }
             if let Some(s) = drag_step(d) {
                 dv = dv.speed(s);
             }
@@ -736,15 +743,20 @@ pub(crate) fn drag_value(ui: &mut egui::Ui, d: &Dialer, val: &mut SteelVal) -> e
         _ => err_label(ui, "bound state is not a number"),
     }
 }
+
+/// The bounds of a dialer bounded on both sides, while they are finite and
+/// apart.
+fn bounds(d: &Dialer) -> Option<(f64, f64)> {
+    let (lo, hi) = (d.min?, d.max?);
+    let span = hi - lo;
+    (span.is_finite() && span > 0.0).then_some((lo, hi))
+}
+
 /// The decimals a dialer bounded on both sides always shows, so that it keeps
 /// one width as its value moves: its precision, or else enough for its bounds
 /// and its drag step. `None` for a dialer that is not bounded on both sides.
 pub(crate) fn fixed_decimals(d: &Dialer) -> Option<usize> {
-    let (lo, hi) = (d.min?, d.max?);
-    let span = hi - lo;
-    if !span.is_finite() || span <= 0.0 {
-        return None;
-    }
+    let (lo, hi) = bounds(d)?;
     if let Some(p) = d.precision {
         return Some(usize::from(p));
     }
@@ -754,33 +766,54 @@ pub(crate) fn fixed_decimals(d: &Dialer) -> Option<usize> {
     Some(auto.min(MAX_DECIMALS))
 }
 
+/// The integer digits a dialer bounded on both sides always shows: those of
+/// its wider bound. Leading zeros fill the rest, so that it keeps one width
+/// as its value moves. `None` for a dialer that is not bounded on both sides.
+pub(crate) fn fixed_digits(d: &Dialer) -> Option<usize> {
+    let (lo, hi) = bounds(d)?;
+    let digits = |x: f64| format!("{:.0}", x.abs().trunc()).len();
+    Some(digits(lo).max(digits(hi)))
+}
+
 /// How far a drag moves the dialer per point: its step, or else a share of
 /// a range bounded on both sides, so that a drag of [`RANGE_DRAG`] points
 /// crosses it. `None` leaves egui's own speed.
 pub(crate) fn drag_step(d: &Dialer) -> Option<f64> {
-    let range = match (d.min, d.max) {
-        (Some(lo), Some(hi)) if (hi - lo).is_finite() && hi > lo => Some((hi - lo) / RANGE_DRAG),
-        _ => None,
-    };
-    d.step.or(range)
+    d.step
+        .or_else(|| bounds(d).map(|(lo, hi)| (hi - lo) / RANGE_DRAG))
 }
+
 /// The decimals `x` needs, in its shortest form.
 fn decimals(x: f64) -> usize {
     let s = x.to_string();
     s.split_once('.').map_or(0, |(_, frac)| frac.len())
 }
 
+/// `v` with `decimals` decimals, and leading zeros up to `digits` integer
+/// digits.
+fn zero_padded(v: f64, digits: usize, decimals: usize) -> String {
+    let sign = if v.is_sign_negative() && v != 0.0 {
+        "-"
+    } else {
+        ""
+    };
+    let width = match decimals {
+        0 => digits,
+        n => digits + 1 + n,
+    };
+    format!("{sign}{:0width$.decimals$}", v.abs())
+}
+
 /// Where `val` sits between the dialer's bounds, from 0 to 1. `None` unless
 /// both bounds are set, finite and apart, and the value is a number.
 pub(crate) fn range_fraction(d: &Dialer, val: &SteelVal) -> Option<f32> {
-    let (lo, hi) = (d.min?, d.max?);
+    let (lo, hi) = bounds(d)?;
     let v = match val {
         SteelVal::NumV(f) => *f,
         SteelVal::IntV(i) => *i as f64,
         _ => return None,
     };
-    let span = hi - lo;
-    (span.is_finite() && span > 0.0).then(|| ((v - lo) / span).clamp(0.0, 1.0) as f32)
+    Some(((v - lo) / (hi - lo)).clamp(0.0, 1.0) as f32)
 }
 
 /// Fill `slot` with the fill of a bounded dialer in `rect`, from its left
@@ -853,6 +886,22 @@ mod tests {
             Some(1),
             "bound"
         );
+    }
+
+    #[test]
+    fn bounded_values_pad_to_the_digits_of_the_wider_bound() {
+        let dialer = |min, max| Dialer {
+            min,
+            max,
+            ..Default::default()
+        };
+        assert_eq!(fixed_digits(&dialer(Some(0.0), Some(100.0))), Some(3));
+        assert_eq!(fixed_digits(&dialer(Some(-20.0), Some(1.5))), Some(2));
+        assert_eq!(fixed_digits(&dialer(Some(0.0), None)), None, "open");
+        assert_eq!(zero_padded(5.0, 3, 0), "005");
+        assert_eq!(zero_padded(5.25, 3, 2), "005.25");
+        assert_eq!(zero_padded(-5.0, 2, 1), "-05.0");
+        assert_eq!(zero_padded(-0.0, 1, 1), "0.0");
     }
 
     #[test]
