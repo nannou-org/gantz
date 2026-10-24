@@ -39,7 +39,9 @@ pub struct StyleConfig {
     pub theme: egui::ThemePreference,
     #[serde(default)]
     pub palettes: Palettes,
-    #[serde(default)]
+    /// The key names the current set of role defaults. Roles stored under an
+    /// older key take the current defaults.
+    #[serde(default, rename = "roles_v2")]
     pub roles: Roles,
     #[serde(default)]
     pub shape: Shape,
