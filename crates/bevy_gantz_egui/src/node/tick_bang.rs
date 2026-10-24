@@ -217,11 +217,8 @@ impl gantz_egui::NodeUi for TickBang {
 
     fn description(&self) -> Option<&'static str> {
         Some(
-            "Self-driven clock that fires once per configurable tick interval, set \
-             as a duration (seconds) or a rate (Hz). Fires once for every whole \
-             interval elapsed since the last update, so the tick count stays \
-             correct even when the app updates slower than the tick rate. Outputs \
-             the tick duration in seconds.",
+            "Bangs once per tick, with the tick duration in seconds. Set the tick \
+             as a duration or a rate. A slow update fires each tick it missed.",
         )
     }
 

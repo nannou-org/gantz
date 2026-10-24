@@ -53,9 +53,9 @@ impl gantz_egui::NodeUi for UpdateBang {
 
     fn description(&self) -> Option<&'static str> {
         Some(
-            "Drives continuous evaluation, banging once per update with the update \
-             delta time in seconds. Updates can fire more frequently than rendered \
-             frames under presentation modes like Mailbox.",
+            "Bangs once per app update, with the time since the last update in \
+             seconds. Updates can outpace rendered frames, as with Mailbox \
+             presentation.",
         )
     }
 

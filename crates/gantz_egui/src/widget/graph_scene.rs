@@ -857,6 +857,19 @@ fn nodes(
             }
         }
 
+        // A hover on the node's frame, where a press drags the node, shows
+        // what the node does. A reference to a named graph shows that
+        // graph's description.
+        let description = instance.as_ref().and_then(|e| {
+            let node = &e.inst.node;
+            node.description()
+                .map(std::borrow::Cow::Borrowed)
+                .or_else(|| registry.node_description(&node.name(registry)))
+        });
+        if let Some(description) = description {
+            (*response).clone().on_hover_text(description);
+        }
+
         if response.changed() {
             if let Some(ev) = response.edge_event() {
                 match ev {

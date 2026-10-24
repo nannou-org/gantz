@@ -46,10 +46,8 @@ impl gantz_egui::NodeUi for LoadBang {
 
     fn description(&self) -> Option<&'static str> {
         Some(
-            "Emits a bang once when the graph loads. A graph loads when it opens \
-             in a tab, including at startup, or when it replaces the graph in the \
-             focused tab. Edits, undo and redo do not fire it. Double-click to \
-             fire it by hand.",
+            "Bangs once when the graph loads into a tab, as at startup. Edits, \
+             undo and redo do not fire it. Double-click to fire it by hand.",
         )
     }
 
