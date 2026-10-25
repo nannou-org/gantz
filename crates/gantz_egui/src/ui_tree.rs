@@ -965,8 +965,14 @@ fn paint_range_fill(ui: &egui::Ui, slot: egui::layers::ShapeIdx, rect: egui::Rec
 
 /// Make the control `r` take the drag too. Inside a node, a press on a
 /// control that takes only clicks would go on to select and move the node.
+/// The widget's own `changed` mark carries over, as `interact` drops it.
 fn claim_press(r: egui::Response) -> egui::Response {
-    r.interact(egui::Sense::drag())
+    let changed = r.changed();
+    let mut claimed = r.interact(egui::Sense::drag());
+    if changed {
+        claimed.mark_changed();
+    }
+    claimed
 }
 
 /// An inline chip for a control missing its `bind` attr.
