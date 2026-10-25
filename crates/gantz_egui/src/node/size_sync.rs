@@ -116,6 +116,88 @@ pub(crate) fn fitted_size(width: f32, height: f32) -> [u16; 2] {
     [width.round() as u16, height.round() as u16]
 }
 
+/// A node body of the committed `size` that resizes from its corner while the
+/// node is selected. `content` fills the ui it is given, and gets the size
+/// committed this frame. Returns the framed
+/// response and whether a settled resize changed `size`.
+///
+/// The frame is a minimal extreme-bg frame. With `margin` on, the content is
+/// inset by the frame's regular margin with rounded corners. With it off,
+/// the content fills the frame edge-to-edge with square corners, so nothing
+/// is clipped.
+pub(crate) fn resizable_body(
+    uictx: egui_graph::NodeCtx,
+    size: &mut [u16; 2],
+    margin: bool,
+    content: impl FnOnce(&mut egui::Ui, [u16; 2]) -> egui::Response,
+) -> (egui_graph::FramedResponse<egui::Response>, bool) {
+    // Set when a settled resize commits a new body size.
+    let mut changed = false;
+
+    let style = uictx.style();
+    let interaction = uictx.interaction();
+
+    let mut frame = egui_graph::node::default_frame(style, interaction);
+    frame.fill = style.visuals.extreme_bg_color;
+    if !margin {
+        frame.inner_margin = egui::Margin::ZERO;
+        frame.corner_radius = egui::CornerRadius::ZERO;
+    }
+
+    let node_egui_id = uictx.egui_id();
+    let resize_id = node_egui_id.with("resize");
+    let size_sync_id = node_egui_id.with("size_sync");
+    let min_size = egui::Vec2::splat(style.interaction.interact_radius * 2.0);
+    let default_size = egui::vec2(f32::from(size[0]), f32::from(size[1]));
+
+    let framed = uictx.framed_with(frame, |ui, _sockets| {
+        let Decisions {
+            resizing,
+            push_external,
+            drag_released,
+        } = begin(ui, size_sync_id, resize_id, *size);
+
+        let resize = egui::containers::Resize::default()
+            .id(resize_id)
+            .with_stroke(false);
+        let resize = if push_external {
+            // One-frame push of the committed size into the displayed resize
+            // state. It overrides persisted state and cancels any in-flight
+            // drag. External wins.
+            ui.ctx().request_repaint();
+            resize.fixed_size(default_size.max(min_size))
+        } else {
+            // Both axes are user-resizable while the node is selected.
+            let resizable = egui::Vec2b::new(interaction.selected, interaction.selected);
+            resize
+                .resizable(resizable)
+                .default_size(default_size)
+                .min_size(min_size)
+        };
+        let inner = resize.show(ui, |ui| {
+            let avail = ui.available_size();
+
+            // `size` is part of the content address, so it is written only
+            // on a settled corner-drag release. Writing mid-drag would commit
+            // per drag frame. Writing because the rendered size differs would
+            // clobber external changes from undo or collab sync and mint
+            // spurious commits.
+            let fitted = fitted_size(avail.x.max(min_size.x), avail.y.max(min_size.y));
+            if drag_released && *size != fitted {
+                *size = fitted;
+                changed = true;
+            }
+
+            content(ui, *size)
+        });
+
+        store(ui, size_sync_id, *size, push_external, resizing);
+
+        inner
+    });
+    (framed, changed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

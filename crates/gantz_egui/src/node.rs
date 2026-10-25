@@ -9,7 +9,7 @@ pub use dyn_node::{DynNode, NodeCodec, NodeUiInstance, NormalizeNodeError, UiBui
 pub use fn_named_ref::FnNamedRef;
 #[doc(inline)]
 pub use gantz_core::node::{Id, state};
-pub use gui::{GUI_REF_EXT_KEY, Gui, GuiDisplay, GuiRefExt, GuiRole};
+pub use gui::{GUI_REF_EXT_KEY, GUI_SIZE_EXT_KEY, Gui, GuiDisplay, GuiRefExt, GuiRole, GuiSizeExt};
 pub use inspect::Inspect;
 pub use instance_cache::{InstanceEntry, NodeInstances};
 pub use number::{Number, NumberInput};
@@ -28,7 +28,7 @@ pub mod instance_cache;
 pub mod number;
 pub mod plot;
 pub mod ref_ext;
-mod size_sync;
+pub(crate) mod size_sync;
 pub mod state_node;
 
 /// Builtin specs for the egui node set.

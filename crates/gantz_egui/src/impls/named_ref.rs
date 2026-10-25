@@ -1,4 +1,7 @@
-use crate::node::gui::{GUI_REF_EXT_KEY, Gui, GuiDisplay, GuiRefExt, GuiRole};
+use crate::node::gui::{
+    GUI_REF_EXT_KEY, GUI_SIZE_EXT_KEY, Gui, GuiDisplay, GuiRefExt, GuiRole, GuiSizeExt,
+};
+use crate::node::size_sync;
 use crate::ui_tree::UiTree;
 use crate::{
     BranchNode, ContextMenuResponse, InspectorRowsResponse, InspectorUiResponse, NodeCtx, NodeUi,
@@ -68,12 +71,13 @@ impl NodeUi for NamedRef {
             .flatten();
 
         let mut payloads = Vec::new();
+        let read_only = ctx.is_read_only();
         let framed = match tree {
             Some(decoded) => {
                 let path = ctx.path();
                 let (n_outputs, ref_gui) = resolvers(registry, ref_ca, path);
                 let root_id = uictx.egui_id().with("gui");
-                uictx.framed(|ui, _sockets| {
+                let mut content = |ui: &mut egui::Ui| {
                     let r = UiTree::new(root_id)
                         .instance_prefix(path)
                         .n_outputs(&n_outputs)
@@ -81,7 +85,25 @@ impl NodeUi for NamedRef {
                         .show(&decoded.root, &mut ctx, ui);
                     payloads = r.payloads;
                     r.inner.unwrap_or_else(|| ui.response())
-                })
+                };
+                // A tree that fills its space, such as a plot, gets a body
+                // that resizes as a plot node's does. Its size is stored on
+                // this instance.
+                if crate::ui_tree::fills(&decoded.root) {
+                    let mut size = self
+                        .ext_as::<GuiSizeExt>(GUI_SIZE_EXT_KEY)
+                        .map_or(GuiSizeExt::DEFAULT_SIZE, |e| e.size);
+                    let (framed, resized) =
+                        size_sync::resizable_body(uictx, &mut size, true, |ui, _| content(ui));
+                    if resized && !read_only {
+                        self.set_ext(GUI_SIZE_EXT_KEY, &GuiSizeExt { size })
+                            .expect("`GuiSizeExt` is datum-representable");
+                        changed = true;
+                    }
+                    framed
+                } else {
+                    uictx.framed(|ui, _sockets| content(ui))
+                }
             }
             // Regular frame, error color if missing, warning color if
             // outdated.

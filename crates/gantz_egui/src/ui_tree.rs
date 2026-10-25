@@ -926,6 +926,16 @@ fn zero_padded(v: f64, digits: usize, decimals: usize) -> String {
     format!("{sign}{:0width$.decimals$}", v.abs())
 }
 
+/// Whether the tree `e` fills the space it is given: whether it holds a plot
+/// without a fixed width or height. A host gives such a tree a size, such as
+/// a resizable node body or a pane.
+pub(crate) fn fills(e: &Element) -> bool {
+    match e {
+        Element::Plot(p) => p.w.is_none() || p.h.is_none(),
+        e => e.children().iter().any(fills),
+    }
+}
+
 /// Where `val` sits between the dialer's bounds, from 0 to 1. `None` unless
 /// both bounds are set, finite and apart, and the value is a number.
 pub(crate) fn range_fraction(d: &Dialer, val: &SteelVal) -> Option<f32> {
@@ -1008,6 +1018,29 @@ mod tests {
             Some(1),
             "bound"
         );
+    }
+
+    #[test]
+    fn a_tree_fills_where_a_plot_has_no_fixed_size() {
+        let plot = |w, h| {
+            Element::Plot(gantz_ui::Plot {
+                w,
+                h,
+                ..Default::default()
+            })
+        };
+        assert!(fills(&plot(None, None)));
+        assert!(fills(&plot(Some(100.0), None)));
+        assert!(!fills(&plot(Some(100.0), Some(50.0))));
+        let col = |children| {
+            Element::Col(gantz_ui::Col {
+                children,
+                ..Default::default()
+            })
+        };
+        assert!(fills(&col(vec![plot(None, None)])));
+        assert!(!fills(&col(vec![plot(Some(1.0), Some(1.0))])));
+        assert!(!fills(&Element::Toggle(Toggle::default())));
     }
 
     #[test]
