@@ -1606,57 +1606,64 @@ pub(super) fn node_inspector<'a>(
                     let frame_resp = ui
                         .push_id(id, |ui| {
                             frame.show(ui, |ui| {
-                                widget::kit::card_controls(ui);
-                                let Some(weight) = graph.node_weight(id) else {
-                                    return;
-                                };
-                                let ix = id.index();
-                                // An unknown tag shows a weak placeholder row.
-                                let Ok(mut entry) = instances.take(codec, ix, weight) else {
-                                    ui.weak(format!("{} (unknown node type)", weight.tag));
-                                    return;
-                                };
-                                // A locked node shows why above its disabled rows. See
-                                // `InstanceEntry::lost`.
-                                let locked = !entry.lost.is_empty();
-                                if locked {
-                                    widget::locked_label(ui, &entry.lost);
-                                    if !immutable && widget::discard_button(ui) {
-                                        let drop = crate::DropUnknownData { node: id };
-                                        responses.push(DynResponse::new(drop));
+                                widget::kit::exact_width(ui, |ui| {
+                                    widget::kit::card_controls(ui);
+                                    let Some(weight) = graph.node_weight(id) else {
+                                        return;
+                                    };
+                                    let ix = id.index();
+                                    // An unknown tag shows a weak placeholder row.
+                                    let Ok(mut entry) = instances.take(codec, ix, weight) else {
+                                        ui.weak(format!("{} (unknown node type)", weight.tag));
+                                        return;
+                                    };
+                                    // A locked node shows why above its disabled rows. See
+                                    // `InstanceEntry::lost`.
+                                    let locked = !entry.lost.is_empty();
+                                    if locked {
+                                        widget::locked_label(ui, &entry.lost);
+                                        if !immutable && widget::discard_button(ui) {
+                                            let drop = crate::DropUnknownData { node: id };
+                                            responses.push(DynResponse::new(drop));
+                                        }
                                     }
-                                }
-                                let path = [ix];
-                                let ctx = NodeCtx::new(
-                                    registry,
-                                    graph,
-                                    &path[..],
-                                    &inlets,
-                                    &outlets,
-                                    ref_ext_uis,
-                                    vm,
-                                    &mut writes,
-                                )
-                                .read_only(locked);
-                                let node = &mut entry.inst.node;
-                                let resp =
-                                    widget::NodeInspector::new(node, ctx, immutable || locked)
-                                        .show(ui);
-                                let weight = &mut graph[id];
-                                changed |=
-                                    instances.restore(ix, entry, weight, resp.changed, validate);
-                                responses.extend(resp.payloads);
-                                if resp.label_response.clicked() {
-                                    let sel = &mut head_state.scene.interaction.selection.nodes;
-                                    if ui.input(|i| i.modifiers.command) {
-                                        if !sel.remove(&id) {
+                                    let path = [ix];
+                                    let ctx = NodeCtx::new(
+                                        registry,
+                                        graph,
+                                        &path[..],
+                                        &inlets,
+                                        &outlets,
+                                        ref_ext_uis,
+                                        vm,
+                                        &mut writes,
+                                    )
+                                    .read_only(locked);
+                                    let node = &mut entry.inst.node;
+                                    let resp =
+                                        widget::NodeInspector::new(node, ctx, immutable || locked)
+                                            .show(ui);
+                                    let weight = &mut graph[id];
+                                    changed |= instances.restore(
+                                        ix,
+                                        entry,
+                                        weight,
+                                        resp.changed,
+                                        validate,
+                                    );
+                                    responses.extend(resp.payloads);
+                                    if resp.label_response.clicked() {
+                                        let sel = &mut head_state.scene.interaction.selection.nodes;
+                                        if ui.input(|i| i.modifiers.command) {
+                                            if !sel.remove(&id) {
+                                                sel.insert(id);
+                                            }
+                                        } else {
+                                            sel.clear();
                                             sel.insert(id);
                                         }
-                                    } else {
-                                        sel.clear();
-                                        sel.insert(id);
                                     }
-                                }
+                                })
                             })
                         })
                         .inner;

@@ -51,28 +51,54 @@ pub fn card<R>(
     let frame = card_frame(ui, false);
     frame
         .show(ui, |ui| {
-            // A card fills the width it is given and no more, so that it keeps
-            // to the margin of the pane it sits in.
-            let width = ui.available_width().max(0.0);
-            ui.set_min_width(width);
-            ui.set_max_width(width);
-            card_controls(ui);
-            if title.is_some() || context.is_some() {
-                ui.horizontal(|ui| {
-                    if let Some(title) = title {
-                        let color = ui.visuals().strong_text_color();
-                        ui.label(style::font::strong_text(ui, title).color(color));
-                    }
-                    if let Some(context) = context {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(egui::RichText::new(context).small().weak());
-                        });
-                    }
-                });
-            }
-            add_contents(ui)
+            exact_width(ui, |ui| {
+                card_controls(ui);
+                if title.is_some() || context.is_some() {
+                    ui.horizontal(|ui| {
+                        if let Some(title) = title {
+                            let color = ui.visuals().strong_text_color();
+                            ui.label(style::font::strong_text(ui, title).color(color));
+                        }
+                        if let Some(context) = context {
+                            let layout = egui::Layout::right_to_left(egui::Align::Center);
+                            ui.with_layout(layout, |ui| {
+                                ui.label(egui::RichText::new(context).small().weak());
+                            });
+                        }
+                    });
+                }
+                add_contents(ui)
+            })
         })
         .inner
+}
+
+/// Run `add_contents` in a ui exactly the width available, clipped to it.
+/// Contents wider than that are cut off rather than widening what holds
+/// them, so that a card keeps to the margin of the pane it sits in.
+pub fn exact_width<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    /// How far past the width contents may paint, for the outline of a
+    /// control that fills the width.
+    const BLEED: f32 = 2.0;
+    let width = ui.available_width().max(0.0);
+    let top_left = ui.available_rect_before_wrap().min;
+    let max_rect = egui::Rect::from_min_size(top_left, egui::vec2(width, f32::INFINITY));
+    let builder = egui::UiBuilder::new()
+        .id_salt(ui.next_auto_id())
+        .max_rect(max_rect)
+        .layout(*ui.layout());
+    let mut child = ui.new_child(builder);
+    child.set_min_width(width);
+    let clip = ui.clip_rect();
+    let x_range = max_rect.x_range().expand(BLEED);
+    child.set_clip_rect(egui::Rect::from_x_y_ranges(x_range, clip.y_range()).intersect(clip));
+    let inner = add_contents(&mut child);
+    let height = child.min_rect().height();
+    ui.allocate_rect(
+        egui::Rect::from_min_size(top_left, egui::vec2(width, height)),
+        egui::Sense::hover(),
+    );
+    inner
 }
 
 /// Fill the controls in a nested card with the pane's colour, so that they
