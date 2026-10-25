@@ -15,6 +15,7 @@ pub use instance_cache::{InstanceEntry, NodeInstances};
 pub use number::{Number, NumberInput};
 pub use plot::{F32, Plot, PlotLook, PlotMode, PlotStyle};
 pub use ref_ext::RefExtUi;
+pub use state_node::{Init, State};
 
 pub mod bang;
 pub mod bind;
@@ -28,6 +29,7 @@ pub mod number;
 pub mod plot;
 pub mod ref_ext;
 mod size_sync;
+pub mod state_node;
 
 /// Builtin specs for the egui node set.
 pub fn builtins() -> Vec<gantz_core::Builtin> {
@@ -49,5 +51,6 @@ pub fn builtins() -> Vec<gantz_core::Builtin> {
         Builtin::new("inspect", &Inspect::default()),
         Builtin::new("number", &Number::default()),
         Builtin::new("plot", &Plot::default()),
+        Builtin::new("state", &State::default()),
     ]
 }

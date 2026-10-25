@@ -3,18 +3,21 @@
 //! [`EguiSugar`] provides the keywords for the egui nodes. They are
 //! `(bind <id>...)`, `(comment <text> [w h])`,
 //! `(gui [<role>] [#:display <d>])`,
-//! `(number [#:min m] [#:max m] [#:init v] [#:precision n] [#:speed s] [#:label "l"] [#:input <mode>] [#:no-push-eval])`
-//! and bare `bang`, `bind`, `inspect`, `gui` and `number`. Compose it with
+//! `(number [#:min m] [#:max m] [#:init v] [#:precision n] [#:speed s] [#:label "l"] [#:input <mode>] [#:no-push-eval])`,
+//! `(state [#:init v])`
+//! and bare `bang`, `bind`, `inspect`, `gui`, `number` and `state`. Compose it with
 //! [`gantz_format::CoreSugar`] and the other crates' sugars via
 //! [`gantz_format::Sugars`].
 
-use crate::node::{Bang, Bind, Comment, Gui, GuiDisplay, GuiRole, Inspect, Number, NumberInput};
+use crate::node::{
+    Bang, Bind, Comment, Gui, GuiDisplay, GuiRole, Inspect, Number, NumberInput, State,
+};
 use gantz_format::sexpr::quote;
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
 use gantz_nodetag::NodeTag;
 
-/// Keyword sugar for [`Bang`], [`Bind`], [`Comment`], [`Gui`], [`Inspect`]
-/// and [`Number`].
+/// Keyword sugar for [`Bang`], [`Bind`], [`Comment`], [`Gui`], [`Inspect`],
+/// [`Number`] and [`State`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EguiSugar;
 
@@ -28,6 +31,7 @@ const KEYWORD_TAG: &[(&str, &str)] = &[
     ("comment", Comment::TAG),
     ("gui", Gui::TAG),
     ("number", Number::TAG),
+    ("state", State::TAG),
 ];
 
 /// The node tag for a sugar keyword.
@@ -53,6 +57,7 @@ impl Sugar for EguiSugar {
             "comment" => comment_spec(args)?,
             "gui" => gui_spec(args)?,
             "number" => number_spec(args)?,
+            "state" => state_spec(args)?,
             _ => return Ok(None),
         };
         Ok(Some(datum))
@@ -70,6 +75,7 @@ impl Sugar for EguiSugar {
             // `Gui` or `Number` written bare would silently drop its config.
             "Gui" => Some(write_gui(node)),
             "Number" => Some(write_number(node)),
+            "State" => Some(write_state(node)),
             other => keyword_for_tag(other).map(str::to_string),
         }
     }
@@ -278,6 +284,56 @@ fn write_number(node: &Datum) -> String {
     format!("(number {})", parts.join(" "))
 }
 
+/// Read a `(state [#:init v])` form. `v` is `#t`, `#f`, a number, a string
+/// or a symbol.
+fn state_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
+    let Some(text) = args.keyword_verbatim("init")? else {
+        return Ok(node_datum("State", vec![]));
+    };
+    let malformed = || FormatError::malformed(format!("state: bad #:init value `{text}`"));
+    let exprs = gantz_format::sexpr::read(text)?;
+    let expr = exprs.first().ok_or_else(malformed)?;
+    let init = match text {
+        "#t" | "#true" => ("Bool", Datum::Bool(true)),
+        "#f" | "#false" => ("Bool", Datum::Bool(false)),
+        _ => match gantz_format::sexpr::as_string(expr) {
+            Some(s) => ("Text", Datum::Str(s)),
+            None => match gantz_format::sexpr::as_f64(expr, text) {
+                Some(n) => ("Number", Datum::F64(n)),
+                None => {
+                    let symbol = gantz_format::sexpr::as_symbol(expr).ok_or_else(malformed)?;
+                    ("Symbol", Datum::Str(symbol))
+                }
+            },
+        },
+    };
+    let (variant, value) = init;
+    let init = Datum::Map(vec![(variant.to_string(), value)]);
+    Ok(node_datum("State", vec![("init", init)]))
+}
+
+/// Write a `State` as a bare `state` without an init, else
+/// `(state #:init v)`.
+fn write_state(node: &Datum) -> String {
+    let Some(Datum::Map(entries)) = node.get("init") else {
+        return "state".to_string();
+    };
+    let value = match entries.first() {
+        Some((variant, Datum::Bool(b))) if variant == "Bool" => match b {
+            true => "#t".to_string(),
+            false => "#f".to_string(),
+        },
+        Some((variant, Datum::Str(s))) if variant == "Text" => quote(s),
+        Some((variant, Datum::Str(s))) if variant == "Symbol" => s.clone(),
+        Some((_, value)) => match value.as_f64() {
+            Some(n) => format!("{n}"),
+            None => return "state".to_string(),
+        },
+        None => return "state".to_string(),
+    };
+    format!("(state #:init {value})")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -291,6 +347,32 @@ mod tests {
         EguiSugar
             .read_spec(&head, SugarArgs::new(&args[1..], text))
             .expect("read_spec")
+    }
+
+    #[test]
+    fn state_round_trips_each_init() {
+        let bare = EguiSugar.read_bare("state").expect("bare state");
+        assert_eq!(
+            EguiSugar.write_spec("State", &bare).as_deref(),
+            Some("state")
+        );
+        for text in [
+            "(state #:init #t)",
+            "(state #:init #f)",
+            "(state #:init -1)",
+            "(state #:init 0.25)",
+            "(state #:init line)",
+            "(state #:init \"#ff8800\")",
+        ] {
+            let datum = read_spec(text).expect("state spec");
+            assert_eq!(EguiSugar.write_spec("State", &datum).as_deref(), Some(text));
+        }
+        let symbol = read_spec("(state #:init line)").expect("state spec");
+        let node: crate::node::State = gantz_format::from_datum(symbol).expect("decode");
+        assert_eq!(
+            node.init().map(crate::node::Init::to_steel),
+            Some(steel::SteelVal::SymbolV("line".into())),
+        );
     }
 
     #[test]

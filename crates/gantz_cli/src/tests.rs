@@ -47,6 +47,7 @@ fn conf() -> Conf {
                 gantz_egui::node::Comment,
                 gantz_egui::node::Gui,
                 gantz_egui::node::Inspect,
+                gantz_egui::node::State,
                 gantz_egui::node::Plot,
             }
         },
