@@ -152,6 +152,10 @@ impl NodeUi for NamedRef {
         let Some(decoded) = marker.and_then(|(ix, _)| marker_tree(&ctx, ix)) else {
             return InspectorUiResponse::default();
         };
+        // A table tree already shows as rows. See `inspector_rows`.
+        if table_cells(&decoded.root).is_some() {
+            return InspectorUiResponse::default();
+        }
         let path = ctx.path();
         let (n_outputs, ref_gui) = resolvers(registry, ref_ca, path);
         let r = UiTree::new(ui.id().with("gui-inspector"))
@@ -254,9 +258,23 @@ impl NodeUi for NamedRef {
         // a body marker. `auto` follows the graph's definition default and is
         // stored as absence. An explicit pick is stored even when it equals
         // the default, because the user chose it. Ext writes are CA edits.
-        if marker_of(&registry.gui_markers(&self.content_addr()), GuiRole::Body).is_some() {
+        let markers = registry.gui_markers(&self.content_addr());
+        if let Some((_, body_marker)) = marker_of(&markers, GuiRole::Body) {
             let mut choice: Option<GuiDisplay> =
                 self.ext_as::<GuiRefExt>(GUI_REF_EXT_KEY).map(|e| e.display);
+            // Offer only the modes that render other than `auto` does. A graph
+            // with no compact tree shows its label for `compact`.
+            let has_compact = marker_of(&markers, GuiRole::Compact).is_some();
+            let shows = |d: GuiDisplay| match d {
+                GuiDisplay::Compact if !has_compact => GuiDisplay::Label,
+                d => d,
+            };
+            let auto_shows = shows(body_marker.display);
+            let offered: Vec<GuiDisplay> = GuiDisplay::ALL
+                .into_iter()
+                .filter(|&d| d != GuiDisplay::Compact || has_compact)
+                .filter(|&d| shows(d) != auto_shows || choice == Some(d))
+                .collect();
             body.row(row_h, |mut row| {
                 row.col(|ui| {
                     ui.label("gui");
@@ -270,7 +288,7 @@ impl NodeUi for NamedRef {
                             "auto",
                             "follow the graph's display default",
                         );
-                        for display in GuiDisplay::ALL {
+                        for display in offered {
                             let hover = match display {
                                 GuiDisplay::Full => "render the full body tree",
                                 GuiDisplay::Compact => "render the compact tree",
@@ -308,6 +326,29 @@ impl NodeUi for NamedRef {
             let inner = ext_ui.inspector_rows(self, ctx, body);
             resp.set_changed(inner.changed);
             resp.payloads.extend(inner.payloads);
+        }
+
+        // An inspector tree that is a two-column grid shows as rows of the
+        // table, each a label beside its control. See `inspector_ui`.
+        let marker = marker_of(&markers, GuiRole::Inspector);
+        let decoded = marker.and_then(|(ix, _)| marker_tree(ctx, ix));
+        if let Some(cells) = decoded.as_ref().and_then(|d| table_cells(&d.root)) {
+            let ref_ca = self.content_addr();
+            let (n_outputs, ref_gui) = resolvers(registry, ref_ca, &path);
+            for (i, cells) in cells.chunks(2).enumerate() {
+                body.row(row_h, |mut row| {
+                    for (j, cell) in cells.iter().enumerate() {
+                        row.col(|ui| {
+                            let r = UiTree::new(ui.id().with(("gui-row", i, j)))
+                                .instance_prefix(&path)
+                                .n_outputs(&n_outputs)
+                                .ref_gui(&ref_gui)
+                                .show(cell, ctx, ui);
+                            resp.payloads.extend(r.payloads);
+                        });
+                    }
+                });
+            }
         }
         resp
     }
@@ -383,6 +424,15 @@ fn body_tree(
         GuiDisplay::Label => return None,
     };
     marker_tree(ctx, ix)
+}
+
+/// The cells of an inspector tree that shows as rows of the inspector's
+/// table, row-major: a grid of two columns, a label beside a control.
+fn table_cells(root: &gantz_ui::Element) -> Option<&[gantz_ui::Element]> {
+    match root {
+        gantz_ui::Element::Grid(grid) if grid.cols == 2 => Some(&grid.children),
+        _ => None,
+    }
 }
 
 /// The interpreter resolvers for an instance of the graph at `ca` rendered at
