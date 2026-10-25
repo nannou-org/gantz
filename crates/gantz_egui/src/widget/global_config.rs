@@ -162,6 +162,10 @@ pub fn global_config(
                 .on_hover_text("Align to neighbours' left/right/top/bottom edges.");
             ui.checkbox(&mut align.centers, "Centres")
                 .on_hover_text("Align to neighbours' horizontal/vertical centres.");
+            ui.checkbox(&mut align.sockets, "Sockets").on_hover_text(
+                "Align an output socket with a downstream input socket, so the \
+                 edge between them runs straight.",
+            );
         });
     });
 

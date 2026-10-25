@@ -336,7 +336,7 @@ struct SocketDocEditState {
 /// value.
 pub(crate) fn socket_doc_rows(
     body: &mut egui_extras::TableBody,
-    id_salt: impl std::hash::Hash,
+    id_salt: impl egui::AsIdSalt,
     ty: &mut String,
     description: &mut String,
 ) -> bool {

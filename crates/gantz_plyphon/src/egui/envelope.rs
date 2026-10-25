@@ -508,7 +508,7 @@ mod tests {
             ..Default::default()
         };
         let mut out = None;
-        let _ = ctx.run_ui(input, |ui| {
+        ctx.run_ui(input, |ui| {
             let rect = test_rect();
             let node = egui::UiBuilder::new()
                 .max_rect(rect)
@@ -523,7 +523,8 @@ mod tests {
                 };
                 out = Some((r.edits, map));
             });
-        });
+        })
+        .drop_without_applying_deltas();
         out.expect("the editor ran")
     }
 

@@ -2,7 +2,7 @@
 //!
 //! Each popped-out pane becomes a real OS window, for example for monitoring
 //! on a second display. A pop-out window is a Bevy [`Window`] plus a camera
-//! carrying an [`EguiContext`] and no `EguiMultipassSchedule`. It is a
+//! carrying an [`EguiContext`] and no `EguiSchedule`. It is a
 //! single-pass secondary context. bevy_egui begins and ends its egui pass each
 //! frame, so `render_windowed_panes`, one ordinary `Update` system, draws into
 //! any number of them. There is no fixed window pool.
@@ -25,7 +25,7 @@ use crate::{
 use bevy_app::prelude::*;
 use bevy_camera::{Camera2d, RenderTarget};
 use bevy_ecs::prelude::*;
-use bevy_egui::{EguiContext, EguiContexts, EguiMultipassSchedule, EguiPreUpdateSet, egui};
+use bevy_egui::{EguiContext, EguiContexts, EguiPreUpdateSet, EguiSchedule, egui};
 use bevy_window::{PresentMode, PrimaryWindow, Window, WindowCloseRequested, WindowRef};
 use gantz_ca as ca;
 use gantz_egui::widget::Pane;
@@ -141,7 +141,7 @@ fn reconcile_windowed_panes(
 /// Uses the same widget inputs and response handling as [`crate::update`],
 /// so a windowed pane behaves like a docked one.
 fn render_windowed_panes(
-    mut popouts: Query<(&mut EguiContext, &PopoutView), Without<EguiMultipassSchedule>>,
+    mut popouts: Query<(&mut EguiContext, &PopoutView), Without<EguiSchedule>>,
     mut gui_state: ResMut<GuiState>,
     mut vms: NonSendMut<head::HeadVms>,
     tab_order: Res<head::HeadTabOrder>,
@@ -196,7 +196,7 @@ fn render_windowed_panes(
         let mut response = {
             let mut access = HeadAccess::new(&tab_order, &mut heads_query, &mut vms);
             egui::CentralPanel::default()
-                .show_inside(&mut panel_ui, |ui| {
+                .show(&mut panel_ui, |ui| {
                     let state = &mut gui_state.0;
                     let pane = Some(&mut pane);
                     show_gantz(

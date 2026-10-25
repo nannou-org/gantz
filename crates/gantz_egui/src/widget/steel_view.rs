@@ -2,7 +2,7 @@
 //! as the selected node's emitted fns or diagnostic spans, and can scroll to
 //! an offset.
 
-use egui::text::{LayoutJob, LayoutSection};
+use egui::text::{ByteIndex, LayoutJob, LayoutSection};
 use std::ops::Range;
 
 /// A syntax-highlighted, read-only steel source view.
@@ -80,6 +80,7 @@ pub(crate) fn apply_background(job: &mut LayoutJob, ranges: &[Range<usize>], col
         if range.start >= range.end {
             continue;
         }
+        let range = ByteIndex(range.start)..ByteIndex(range.end);
         let mut sections = Vec::with_capacity(job.sections.len() + 2);
         for section in job.sections.drain(..) {
             let sr = section.byte_range.clone();
@@ -122,7 +123,11 @@ mod tests {
     fn job() -> LayoutJob {
         let mut job = LayoutJob::default();
         job.append("hello", 0.0, Default::default());
-        job.append(" world!", 0.0, Default::default());
+        let format = egui::TextFormat {
+            color: Color32::RED,
+            ..Default::default()
+        };
+        job.append(" world!", 0.0, format);
         job
     }
 
@@ -131,7 +136,7 @@ mod tests {
             .iter()
             .map(|s| {
                 (
-                    s.byte_range.clone(),
+                    s.byte_range.start.0..s.byte_range.end.0,
                     s.format.background != Color32::default(),
                 )
             })
@@ -147,7 +152,10 @@ mod tests {
             vec![(0..3, false), (3..5, true), (5..8, true), (8..12, false)]
         );
         // The full text is preserved in order.
-        assert_eq!(job.sections.last().unwrap().byte_range.end, job.text.len());
+        assert_eq!(
+            job.sections.last().unwrap().byte_range.end.0,
+            job.text.len()
+        );
     }
 
     #[test]
