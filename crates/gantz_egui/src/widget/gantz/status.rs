@@ -47,6 +47,17 @@ pub struct StatusItem {
     /// What a click on the item's icon does. `None` leaves the icon to the
     /// item's `action`.
     pub icon_action: Option<StatusAction>,
+    /// A level meter after the icon, one bar per channel. Empty shows none.
+    pub meter: Vec<MeterLevel>,
+}
+
+/// One channel of a [`StatusItem`]'s meter.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MeterLevel {
+    /// How full the bar is, from 0 to 1.
+    pub level: f32,
+    /// Whether the channel clipped of late. Its bar shows in the error colour.
+    pub clipped: bool,
 }
 
 /// A small icon of a [`StatusItem`].
@@ -401,6 +412,9 @@ fn items_ui(ui: &mut egui::Ui, status: &Status, short: bool, res: &mut StatusRes
                 if let Some(StatusIcon::Speaker) = it.icon {
                     icon_rect = Some(speaker(ui, status.muted));
                 }
+                if !it.meter.is_empty() {
+                    meter(ui, &it.meter);
+                }
                 if let Some(lead) = &it.lead {
                     ui.label(egui::RichText::new(lead).color(ui.visuals().text_color()));
                 }
@@ -569,6 +583,29 @@ fn sparkline(ui: &mut egui::Ui, samples: &[Duration]) {
             egui::pos2(x + bar, rect.bottom()),
         );
         ui.painter().rect_filled(r, 1.0, color);
+    }
+}
+
+/// A meter of `levels`, one thin bar per channel as tall as the speaker. Each
+/// bar fills from its base with its level, in the error colour while its
+/// channel clips.
+fn meter(ui: &mut egui::Ui, levels: &[MeterLevel]) {
+    let (bar, gap) = (2.0, 2.0);
+    let height = ui.text_style_height(&egui::TextStyle::Body) * 0.85;
+    let width = levels.len() as f32 * (bar + gap) - gap;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(width, height), egui::Sense::hover());
+    let visuals = ui.visuals();
+    let track = visuals.widgets.noninteractive.bg_stroke.color;
+    for (i, channel) in levels.iter().enumerate() {
+        let x = rect.left() + i as f32 * (bar + gap);
+        let full = egui::Rect::from_x_y_ranges(x..=x + bar, rect.y_range());
+        ui.painter().rect_filled(full, 1.0, track);
+        let color = match channel.clipped {
+            true => visuals.error_fg_color,
+            false => visuals.text_color(),
+        };
+        let level = full.with_min_y(full.bottom() - channel.level.clamp(0.0, 1.0) * height);
+        ui.painter().rect_filled(level, 1.0, color);
     }
 }
 

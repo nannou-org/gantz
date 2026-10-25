@@ -150,6 +150,13 @@ const CHUNK_FRAMES: usize = 64;
 /// ring only keeps the last `size` frames.
 const NUM_CHUNKS: usize = 32;
 
+/// The quietest level the output meter shows, in dB below full scale.
+const METER_FLOOR_DB: f32 = -60.0;
+/// How fast a meter level falls back, in full heights per second.
+const METER_FALL: f32 = 1.5;
+/// How long a meter channel shows that it clipped.
+const CLIP_HOLD: Duration = Duration::from_secs(1);
+
 /// Convert monotonic [`EvalEpoch`] seconds to an absolute OSC/NTP engine-clock time.
 fn osc(secs: f64) -> u64 {
     (secs * OSC_UNITS_PER_SEC) as u64
@@ -322,10 +329,8 @@ struct DspEngine {
     device: String,
     /// The output sample rate (Hz).
     sample_rate: f64,
-    /// The share of each audio buffer's time that the engine spends filling
-    /// it, smoothed, as `f32` bits. Measured on native only, since the web
-    /// audio thread has no clock.
-    load: std::sync::Arc<AtomicU32>,
+    /// What the audio callback measures.
+    monitor: Monitor,
     /// The cpal output stream. Held to keep audio running. Paused on mute and
     /// played on unmute.
     stream: cpal::Stream,
@@ -336,6 +341,29 @@ struct DspEngine {
     /// [`refresh_clock_offset`], which also absorbs context suspends.
     #[cfg(target_arch = "wasm32")]
     clock_offset: std::sync::Arc<AtomicU64>,
+}
+
+/// What the audio callback measures for the main thread, shared with it.
+#[derive(Clone)]
+struct Monitor {
+    /// The share of each audio buffer's time that the engine spends filling
+    /// it, smoothed, as `f32` bits. Measured on native only, since the web
+    /// audio thread has no clock.
+    load: std::sync::Arc<AtomicU32>,
+    /// Each output channel's peak magnitude since the main thread last took
+    /// it, as `f32` bits. See [`record_peaks`].
+    peaks: std::sync::Arc<[AtomicU32]>,
+}
+
+/// The output meter's state between frames. See [`provide_dsp_status_item`].
+#[derive(Default)]
+struct MeterState {
+    /// Each channel's shown level, from 0 to 1.
+    levels: Vec<f32>,
+    /// Until when each channel shows that it clipped.
+    clipped_until: Vec<Option<Instant>>,
+    /// When the levels last fell.
+    last: Option<Instant>,
 }
 
 /// The audio-buffer blob entries, from content address to canonical encoded
@@ -813,15 +841,20 @@ fn provide_dsp_audio_heads(
     );
 }
 
-/// Provide this frame's status line item: the output's sample rate and the
-/// engine's load. A click on it mutes the focused graph. See
-/// [`StatusItems`].
-fn provide_dsp_status_item(dsp: Option<NonSend<DspEngine>>, mut items: ResMut<StatusItems>) {
+/// Provide this frame's status line item: the output's sample rate, the
+/// engine's load and a meter of each output channel's peak. A click on its
+/// icon mutes the focused graph. See [`StatusItems`].
+fn provide_dsp_status_item(
+    dsp: Option<NonSend<DspEngine>>,
+    mut items: ResMut<StatusItems>,
+    mut meter_state: Local<MeterState>,
+) {
     let Some(dsp) = dsp else {
         return;
     };
+    let levels = meter(&mut meter_state, &dsp.monitor.peaks, Instant::now());
     let rate = format_rate(dsp.sample_rate);
-    let load = f32::from_bits(dsp.load.load(Ordering::Relaxed));
+    let load = f32::from_bits(dsp.monitor.load.load(Ordering::Relaxed));
     let (text, short) = match cfg!(target_arch = "wasm32") {
         true => (String::new(), None),
         false => {
@@ -835,14 +868,16 @@ fn provide_dsp_status_item(dsp: Option<NonSend<DspEngine>>, mut items: ResMut<St
         text,
         short,
         hover: Some(format!(
-            "{}. dsp is the share of each audio buffer's time spent filling it. \
-             click to open the dsp settings.",
+            "{}. the bars show each output channel's peak, red when it clips. dsp is \
+             the share of each audio buffer's time spent filling it. click to open \
+             the dsp settings.",
             dsp.device
         )),
         action: Some(gantz_egui::widget::StatusAction::OpenSettings(
             gantz_plyphon::egui::settings::TITLE.to_string(),
         )),
         icon_action: Some(gantz_egui::widget::StatusAction::ToggleMute),
+        meter: levels,
     });
 }
 
@@ -2128,7 +2163,10 @@ fn build_dsp_engine(epoch: EvalEpoch, unit_registrars: &[UnitRegistrar]) -> Opti
     // race the first callback because the worklet's async setup only runs once
     // this synchronous startup code returns to the JS event loop.
     let clock_offset = std::sync::Arc::new(AtomicU64::new(epoch.now_secs().to_bits()));
-    let load = std::sync::Arc::new(AtomicU32::new(0.0f32.to_bits()));
+    let monitor = Monitor {
+        load: std::sync::Arc::new(AtomicU32::new(0.0f32.to_bits())),
+        peaks: (0..channels).map(|_| AtomicU32::new(0)).collect(),
+    };
     let stream = build_stream(
         &device,
         config,
@@ -2137,7 +2175,7 @@ fn build_dsp_engine(epoch: EvalEpoch, unit_registrars: &[UnitRegistrar]) -> Opti
         world,
         epoch,
         clock_offset.clone(),
-        load.clone(),
+        monitor.clone(),
     )?;
     stream.play().ok()?;
 
@@ -2149,7 +2187,7 @@ fn build_dsp_engine(epoch: EvalEpoch, unit_registrars: &[UnitRegistrar]) -> Opti
         private_channels,
         device: device_name,
         sample_rate,
-        load,
+        monitor,
         stream,
         #[cfg(target_arch = "wasm32")]
         clock_offset,
@@ -2166,18 +2204,36 @@ fn build_stream(
     world: World,
     epoch: EvalEpoch,
     clock_offset: std::sync::Arc<AtomicU64>,
-    load: std::sync::Arc<AtomicU32>,
+    monitor: Monitor,
 ) -> Option<cpal::Stream> {
     match format {
-        cpal::SampleFormat::F32 => {
-            build_typed::<f32>(device, config, channels, world, epoch, clock_offset, load)
-        }
-        cpal::SampleFormat::I16 => {
-            build_typed::<i16>(device, config, channels, world, epoch, clock_offset, load)
-        }
-        cpal::SampleFormat::U16 => {
-            build_typed::<u16>(device, config, channels, world, epoch, clock_offset, load)
-        }
+        cpal::SampleFormat::F32 => build_typed::<f32>(
+            device,
+            config,
+            channels,
+            world,
+            epoch,
+            clock_offset,
+            monitor,
+        ),
+        cpal::SampleFormat::I16 => build_typed::<i16>(
+            device,
+            config,
+            channels,
+            world,
+            epoch,
+            clock_offset,
+            monitor,
+        ),
+        cpal::SampleFormat::U16 => build_typed::<u16>(
+            device,
+            config,
+            channels,
+            world,
+            epoch,
+            clock_offset,
+            monitor,
+        ),
         other => {
             log::error!("bevy_gantz_plyphon: unsupported sample format {other:?}");
             None
@@ -2194,7 +2250,7 @@ fn build_typed<T>(
     mut world: World,
     epoch: EvalEpoch,
     clock_offset: std::sync::Arc<AtomicU64>,
-    load: std::sync::Arc<AtomicU32>,
+    monitor: Monitor,
 ) -> Option<cpal::Stream>
 where
     T: SizedSample + FromSample<f32>,
@@ -2224,7 +2280,7 @@ where
                     let start = Instant::now();
                     world.fill_at(&mut scratch, channels, buffer_time);
                     let frames = output.len() / channels.max(1);
-                    record_load(&load, start.elapsed(), frames, sample_rate);
+                    record_load(&monitor.load, start.elapsed(), frames, sample_rate);
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -2233,7 +2289,7 @@ where
                     // `AudioContext.currentTime` timeline instead, so heard-time
                     // is the playback instant shifted onto the epoch by the
                     // main-thread-refreshed `clock_offset`.
-                    let _ = (&epoch, &load, sample_rate);
+                    let _ = (&epoch, sample_rate);
                     let playback_secs = info
                         .timestamp()
                         .playback
@@ -2242,6 +2298,7 @@ where
                     let offset = f64::from_bits(clock_offset.load(Ordering::Relaxed));
                     world.fill_at(&mut scratch, channels, osc(playback_secs + offset));
                 }
+                record_peaks(&monitor.peaks, &scratch, channels);
                 for (o, s) in output.iter_mut().zip(scratch.iter()) {
                     *o = T::from_sample(*s);
                 }
@@ -2270,11 +2327,96 @@ fn record_load(load: &AtomicU32, busy: Duration, frames: usize, sample_rate: f64
     );
 }
 
+/// Raise each channel's peak in `peaks` to the largest magnitude among its
+/// samples in the interleaved `samples` of `channels` channels.
+fn record_peaks(peaks: &[AtomicU32], samples: &[f32], channels: usize) {
+    for (channel, peak) in peaks.iter().enumerate().take(channels) {
+        let max = samples
+            .iter()
+            .skip(channel)
+            .step_by(channels)
+            .map(|s| s.abs())
+            .filter(|s| !s.is_nan())
+            .fold(0.0f32, f32::max);
+        // The bits of non-negative floats order as the floats do.
+        peak.fetch_max(max.to_bits(), Ordering::Relaxed);
+    }
+}
+
+/// The shown level of a `peak` magnitude, from 0 at [`METER_FLOOR_DB`] to 1
+/// at full scale, so that quiet signals still show.
+fn meter_level(peak: f32) -> f32 {
+    let db = 20.0 * peak.log10();
+    (1.0 - db / METER_FLOOR_DB).clamp(0.0, 1.0)
+}
+
+/// Take each channel's peak since the last frame into the meter's shown
+/// levels. A level rises at once to a new peak and falls back at
+/// [`METER_FALL`]. A channel that reached full scale shows that it clipped
+/// for [`CLIP_HOLD`].
+fn meter(
+    state: &mut MeterState,
+    peaks: &[AtomicU32],
+    now: Instant,
+) -> Vec<gantz_egui::widget::MeterLevel> {
+    let n = peaks.len();
+    state.levels.resize(n, 0.0);
+    state.clipped_until.resize(n, None);
+    let dt = state.last.map_or(0.0, |last| {
+        now.saturating_duration_since(last).as_secs_f32()
+    });
+    state.last = Some(now);
+    let channels = peaks.iter().zip(&mut state.levels);
+    let channels = channels.zip(&mut state.clipped_until);
+    channels
+        .map(|((peak, level), clipped_until)| {
+            let peak = f32::from_bits(peak.swap(0, Ordering::Relaxed));
+            *level = meter_level(peak).max(*level - METER_FALL * dt);
+            if peak >= 1.0 {
+                *clipped_until = Some(now + CLIP_HOLD);
+            }
+            gantz_egui::widget::MeterLevel {
+                level: *level,
+                clipped: clipped_until.is_some_and(|until| now < until),
+            }
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     mod plugin_order;
+
+    #[test]
+    fn meter_levels_span_the_floor_to_full_scale() {
+        assert_eq!(meter_level(1.0), 1.0);
+        assert_eq!(meter_level(0.0), 0.0);
+        assert!(meter_level(0.001).abs() < 1e-5, "-60 dB is the floor");
+        assert!((meter_level(0.1) - 2.0 / 3.0).abs() < 1e-5, "-20 dB");
+        assert_eq!(meter_level(2.0), 1.0);
+    }
+
+    #[test]
+    fn meter_rises_at_once_falls_back_and_holds_a_clip() {
+        let peaks: Vec<AtomicU32> = (0..2).map(|_| AtomicU32::new(0)).collect();
+        let mut state = MeterState::default();
+        let start = Instant::now();
+        record_peaks(&peaks, &[0.5, -1.0, 0.25, 0.5], 2);
+        let first = meter(&mut state, &peaks, start);
+        assert_eq!(first.len(), 2);
+        assert!((first[0].level - meter_level(0.5)).abs() < 1e-5);
+        assert_eq!((first[0].clipped, first[1].clipped), (false, true));
+        // Silence: the levels fall at `METER_FALL`, and the clip holds.
+        let later = start + Duration::from_millis(100);
+        let second = meter(&mut state, &peaks, later);
+        let fallen = first[0].level - METER_FALL * 0.1;
+        assert!((second[0].level - fallen).abs() < 1e-4);
+        assert!(second[1].clipped);
+        let after = start + CLIP_HOLD + Duration::from_millis(1);
+        assert!(!meter(&mut state, &peaks, after)[1].clipped);
+    }
 
     #[test]
     fn format_rate_shows_khz() {

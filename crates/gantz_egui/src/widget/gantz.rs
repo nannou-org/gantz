@@ -30,7 +30,7 @@ use state::{
     clear_egui_memory_id, default_sidebar_width, default_tray_height, load_ron, load_tree,
     store_ron, store_tree,
 };
-pub use status::{StatusAction, StatusIcon, StatusItem, StatusStyle};
+pub use status::{MeterLevel, StatusAction, StatusIcon, StatusItem, StatusStyle};
 pub use tiles::{NodeViewPane, Pane};
 use tiles::{
     add_graph_pane, add_node_view_pane, apply_reveal, capture_fixed_sizes, create_tree,
