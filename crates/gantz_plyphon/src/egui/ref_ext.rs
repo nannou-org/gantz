@@ -44,10 +44,9 @@ impl RefExtUi for DspRefExtUi {
                 if ui
                     .checkbox(&mut inline, "")
                     .on_hover_text(
-                        "Inline this reference's DSP nodes into the parent synthdef \
-                         instead of spawning them from the shared per-variant \
-                         definition (the default). Inlined copies compile their own \
-                         units; instanced copies share one definition.",
+                        "Copy this graph's dsp nodes into the parent's synth. When \
+                         off, the graph runs as a synth of its own, and every copy \
+                         of the graph shares one definition of it.",
                     )
                     .changed()
                 {
