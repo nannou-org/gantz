@@ -203,7 +203,7 @@ pub struct SceneConfig {
 #[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
 pub struct EdgeConfig {
     /// How far each edge curves from a straight line, from `0.0` (straight)
-    /// to `1.0`. See [`egui_graph::edge::Edge::curvature_factor`].
+    /// to `1.0`. See [`egui_graph::edge::EdgeShape::Bezier`].
     #[serde(default = "default_edge_curvature")]
     pub curvature: f32,
 }
@@ -217,6 +217,14 @@ impl Default for EdgeConfig {
         Self {
             curvature: default_edge_curvature(),
         }
+    }
+}
+
+impl EdgeConfig {
+    /// The [`egui_graph::edge::EdgeShape`] edges are drawn with: a bezier
+    /// curve of the configured curvature.
+    pub fn shape(&self) -> egui_graph::edge::EdgeShape {
+        egui_graph::edge::EdgeShape::bezier(self.curvature)
     }
 }
 
@@ -296,6 +304,10 @@ pub struct AlignConfig {
     /// Align to neighbours' horizontal/vertical centres.
     #[serde(default = "default_align_centers")]
     pub centers: bool,
+    /// Align an output socket with a downstream input socket, so the edge
+    /// between them runs straight.
+    #[serde(default = "default_align_sockets")]
+    pub sockets: bool,
 }
 
 fn default_align_enabled() -> bool {
@@ -310,12 +322,17 @@ fn default_align_centers() -> bool {
     false
 }
 
+fn default_align_sockets() -> bool {
+    true
+}
+
 impl Default for AlignConfig {
     fn default() -> Self {
         Self {
             enabled: default_align_enabled(),
             edges: default_align_edges(),
             centers: default_align_centers(),
+            sockets: default_align_sockets(),
         }
     }
 }
@@ -343,6 +360,7 @@ impl SceneConfig {
             .align_targets(egui_graph::AlignTargets {
                 edges: self.align.edges,
                 centers: self.align.centers,
+                sockets: self.align.sockets,
             })
     }
 }

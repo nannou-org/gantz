@@ -623,9 +623,10 @@ mod tests {
                 color: [1, 2, 3, 255],
             }];
             for _ in 0..2 {
-                let _ = ctx.run_ui(Default::default(), |ui| {
+                ctx.run_ui(Default::default(), |ui| {
                     keys_edit(ui, egui::Id::new("keys"), &mut kcs, None);
-                });
+                })
+                .drop_without_applying_deltas();
             }
             tx.send(()).ok();
         });

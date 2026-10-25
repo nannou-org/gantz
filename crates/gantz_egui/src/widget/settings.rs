@@ -131,12 +131,12 @@ pub fn settings(
             egui::Panel::bottom(id.with("reset"))
                 .show_separator_line(false)
                 .frame(egui::Frame::NONE)
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     res.reset_layout = super::reset_layout_button(ui);
                 });
             egui::CentralPanel::default()
                 .frame(egui::Frame::NONE)
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     egui::ScrollArea::vertical()
                         .auto_shrink([false, false])
                         .show(ui, |ui| super::panes_config(view, ext_panes, ui));

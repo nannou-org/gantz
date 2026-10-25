@@ -295,7 +295,7 @@ mod tests {
         let mut used = 0.0;
         // The grid sizes its columns in the first pass.
         for _ in 0..2 {
-            let _ = ctx.run_ui(Default::default(), |ui| {
+            ctx.run_ui(Default::default(), |ui| {
                 let settings = CollabSettings {
                     config: &mut config,
                     peer_id: Some("22846021"),
@@ -307,7 +307,8 @@ mod tests {
                     collab_config(settings, ui)
                 });
                 used = scope.response.rect.width();
-            });
+            })
+            .drop_without_applying_deltas();
         }
         used
     }

@@ -98,7 +98,7 @@ pub fn update(
 
     let mut response = egui::containers::CentralPanel::default()
         .frame(egui::Frame::default())
-        .show_inside(&mut panel_ui, |ui| {
+        .show(&mut panel_ui, |ui| {
             let state = &mut gui_state;
             show_gantz(
                 &mut inputs,

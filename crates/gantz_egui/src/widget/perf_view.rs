@@ -108,7 +108,11 @@ impl<'a> PerfView<'a> {
             .show_grid(false)
             .set_margin_fraction(egui::Vec2::ZERO)
             .include_y(0.0)
-            .label_formatter(|_, point| format_ms(point.y));
+            .label_formatter(|pos| {
+                let (egui_plot::HoverPosition::NearDataPoint { position, .. }
+                | egui_plot::HoverPosition::Elsewhere { position }) = pos;
+                Some(format_ms(position.y))
+            });
 
         ui.scope(|ui| {
             // Remove the 1px border around the plot background.

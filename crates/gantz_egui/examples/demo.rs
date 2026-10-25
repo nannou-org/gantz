@@ -124,7 +124,7 @@ impl eframe::App for App {
         let base_names = Default::default();
         let response = egui::CentralPanel::default()
             .frame(egui::Frame::default())
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 gantz_egui::widget::Gantz::new(&env, &base_names)
                     .logger(self.logger.clone())
                     .compile_config(self.config)

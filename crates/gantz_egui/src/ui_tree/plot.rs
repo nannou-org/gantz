@@ -328,7 +328,7 @@ mod tests {
         let size = egui::vec2(100.0, 101.0);
         for n in 0..=6 {
             let mut used = egui::Vec2::ZERO;
-            let _ = ctx.run_ui(Default::default(), |ui| {
+            ctx.run_ui(Default::default(), |ui| {
                 used = ui
                     .scope(|ui| {
                         stacked(n, size, ui, |_, s, ui| {
@@ -338,7 +338,8 @@ mod tests {
                     .response
                     .rect
                     .size();
-            });
+            })
+            .drop_without_applying_deltas();
             assert!(used.y <= size.y, "{n} rows use {} of {}", used.y, size.y);
         }
     }

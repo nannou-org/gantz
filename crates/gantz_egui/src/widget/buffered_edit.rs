@@ -155,13 +155,14 @@ mod tests {
             ..Default::default()
         };
         let mut committed = None;
-        let _ = ctx.run_ui(input, |ui| {
+        ctx.run_ui(input, |ui| {
             if let Focus::Taken = focus {
                 ui.memory_mut(|m| m.request_focus(egui::Id::new("other")));
             }
             let edit = super::buffered_edit(ui, id, source, |t| egui::TextEdit::singleline(t));
             committed = edit.committed;
-        });
+        })
+        .drop_without_applying_deltas();
         committed
     }
 

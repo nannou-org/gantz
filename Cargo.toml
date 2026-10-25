@@ -17,7 +17,7 @@ repository = "https://github.com/nannou-org/gantz"
 async-channel = "2.5"
 base64 = "0.22"
 bincode = "1"
-bevy = { version = "0.19", default-features = false, features = [
+bevy = { version = "0.20", default-features = false, features = [
     "bevy_asset",
     "bevy_camera",
     "bevy_core_pipeline",
@@ -27,42 +27,42 @@ bevy = { version = "0.19", default-features = false, features = [
     "bevy_window",
     "multi_threaded",
     "std",
-    # "trace", # FIXME: Re-add once this lands https://github.com/emilk/egui/pull/7646.
+    "trace",
     "wayland",
     "webgl2",
 ] }
-bevy_app = "0.19"
-bevy_camera = "0.19"
-bevy_ecs = "0.19"
-bevy_log = "0.19"
-bevy_tasks = "0.19"
-bevy_egui = { version = "0.40", features = ["serde"] }
+bevy_app = "0.20"
+bevy_camera = "0.20"
+bevy_ecs = "0.20"
+bevy_log = "0.20"
+bevy_tasks = "0.20"
+bevy_egui = { version = "0.43.1", features = ["serde"] }
 bevy_gantz = { version = "0.8.0", path = "crates/bevy_gantz" }
 bevy_gantz_collab = { version = "0.4.0", path = "crates/bevy_gantz_collab" }
 bevy_gantz_egui = { version = "0.10.0", path = "crates/bevy_gantz_egui" }
 bevy_gantz_plyphon = { version = "0.6.0", path = "crates/bevy_gantz_plyphon" }
-bevy_input = "0.19"
-bevy_pkv = { version = "0.16", default-features = false, features = ["redb"] }
-bevy_time = "0.19"
-bevy_window = "0.19"
+bevy_input = "0.20"
+bevy_pkv = { version = "0.17", default-features = false, features = ["redb"] }
+bevy_time = "0.20"
+bevy_window = "0.20"
 blake3 = "1"
 clap = { version = "4.5", features = ["derive"] }
 cpal = "0.18"
 ctrlc = { version = "3.5", features = ["termination"] }
 directories = "6"
 dyn-clone = "1"
-eframe = { version = "0.34", default-features = false, features = [
+eframe = { version = "0.36", default-features = false, features = [
     "default_fonts",
     "persistence",
     "wayland",
     "wgpu",
 ] }
-egui = { version = "0.34", default-features = false, features = ["serde", "persistence"] }
-egui_extras = { version = "0.34", default-features = false, features = ["syntect"] }
-egui_graph = "0.17.0"
-egui_plot = "0.35"
-egui_tiles = "0.15"
-emath = { version = "0.34", features = ["serde"] }
+egui = { version = "0.36", default-features = false, features = ["serde", "persistence"] }
+egui_extras = { version = "0.36", default-features = false, features = ["syntect"] }
+egui_graph = "0.19"
+egui_plot = "0.37"
+egui_tiles = "0.17.1"
+emath = { version = "0.36", features = ["serde"] }
 gantz_base = { version = "0.3.1", path = "crates/gantz_base" }
 gantz_ca = { version = "0.6.0", path = "crates/gantz_ca" }
 gantz_ca_derive = { version = "0.2.2", path = "crates/gantz_ca_derive" }

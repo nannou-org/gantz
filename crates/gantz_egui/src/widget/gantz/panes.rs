@@ -585,81 +585,79 @@ fn render_node_view<Access>(
     if no_margin {
         frame.inner_margin = egui::Margin::ZERO;
     }
-    egui::CentralPanel::default()
-        .frame(frame)
-        .show_inside(ui, |ui| {
-            if !access.heads().iter().any(|h| h == &head) {
-                ui.centered_and_justified(|ui| {
-                    ui.weak("node's graph is not open");
-                });
-                return;
-            }
-            let env = gantz.env;
-            let ref_ext_uis = gantz.ref_ext_uis;
-            let validate = gantz.validates_change_tracking();
-            // VM-state writes recorded by the node's `NodeCtx`.
-            let mut writes = Vec::new();
-            // Scope child widget ids by head and path so views never
-            // share ids with each other or the in-graph node.
-            let result = ui
-                .push_id((&head, &path), |ui| {
-                    access.with_head_mut(&head, |data| {
-                        let &[n_ix] = path.as_slice() else {
-                            return None;
-                        };
-                        let (inlets, outlets) = crate::inlet_outlet_ids(env, data.graph);
-                        let n_id = graph_scene::NodeIndex::new(n_ix);
-                        let weight = data.graph.node_weight(n_id)?;
-                        // Panes render sequentially, so each take and
-                        // restore pair completes within its site.
-                        let mut entry = data.instances.take(codec, n_ix, weight).ok()?;
-                        // A locked node's view is read-only. See
-                        // `InstanceEntry::lost`.
-                        let locked = !entry.lost.is_empty();
-                        if locked {
-                            widget::locked_label(ui, &entry.lost);
-                        }
-                        let ctx = NodeCtx::new(
-                            env,
-                            data.graph,
-                            &path,
-                            &inlets,
-                            &outlets,
-                            ref_ext_uis,
-                            data.vm,
-                            &mut writes,
-                        )
-                        .read_only(locked);
-                        let node = &mut entry.inst.node;
-                        let r = ui.add_enabled_ui(!locked, |ui| node.view_ui(ctx, ui)).inner;
-                        let weight = &mut data.graph[n_id];
-                        let changed = data
-                            .instances
-                            .restore(n_ix, entry, weight, r.changed, validate);
-                        Some((changed, r.payloads))
-                    })
-                })
-                .inner;
-            match result {
-                Some(Some((changed, payloads))) => {
-                    if changed {
-                        gantz_response.changed_heads.push(head.clone());
+    egui::CentralPanel::default().frame(frame).show(ui, |ui| {
+        if !access.heads().iter().any(|h| h == &head) {
+            ui.centered_and_justified(|ui| {
+                ui.weak("node's graph is not open");
+            });
+            return;
+        }
+        let env = gantz.env;
+        let ref_ext_uis = gantz.ref_ext_uis;
+        let validate = gantz.validates_change_tracking();
+        // VM-state writes recorded by the node's `NodeCtx`.
+        let mut writes = Vec::new();
+        // Scope child widget ids by head and path so views never
+        // share ids with each other or the in-graph node.
+        let result = ui
+            .push_id((&head, &path), |ui| {
+                access.with_head_mut(&head, |data| {
+                    let &[n_ix] = path.as_slice() else {
+                        return None;
+                    };
+                    let (inlets, outlets) = crate::inlet_outlet_ids(env, data.graph);
+                    let n_id = graph_scene::NodeIndex::new(n_ix);
+                    let weight = data.graph.node_weight(n_id)?;
+                    // Panes render sequentially, so each take and
+                    // restore pair completes within its site.
+                    let mut entry = data.instances.take(codec, n_ix, weight).ok()?;
+                    // A locked node's view is read-only. See
+                    // `InstanceEntry::lost`.
+                    let locked = !entry.lost.is_empty();
+                    if locked {
+                        widget::locked_label(ui, &entry.lost);
                     }
-                    gantz_response.responses.extend(Some(&head), payloads);
-                    gantz_response
-                        .responses
-                        .extend(Some(&head), crate::action::state_written(&mut writes));
+                    let ctx = NodeCtx::new(
+                        env,
+                        data.graph,
+                        &path,
+                        &inlets,
+                        &outlets,
+                        ref_ext_uis,
+                        data.vm,
+                        &mut writes,
+                    )
+                    .read_only(locked);
+                    let node = &mut entry.inst.node;
+                    let r = ui.add_enabled_ui(!locked, |ui| node.view_ui(ctx, ui)).inner;
+                    let weight = &mut data.graph[n_id];
+                    let changed = data
+                        .instances
+                        .restore(n_ix, entry, weight, r.changed, validate);
+                    Some((changed, r.payloads))
+                })
+            })
+            .inner;
+        match result {
+            Some(Some((changed, payloads))) => {
+                if changed {
+                    gantz_response.changed_heads.push(head.clone());
                 }
-                _ => {
-                    // Head open but node missing at `path`, for example
-                    // removed this frame before migration drops the
-                    // view.
-                    ui.centered_and_justified(|ui| {
-                        ui.weak("node not found");
-                    });
-                }
+                gantz_response.responses.extend(Some(&head), payloads);
+                gantz_response
+                    .responses
+                    .extend(Some(&head), crate::action::state_written(&mut writes));
             }
-        });
+            _ => {
+                // Head open but node missing at `path`, for example
+                // removed this frame before migration drops the
+                // view.
+                ui.centered_and_justified(|ui| {
+                    ui.weak("node not found");
+                });
+            }
+        }
+    });
 }
 
 /// Render the steel pane. See [`render_pane`].
@@ -939,23 +937,20 @@ pub(super) fn collect_gantz_file_drops(ctx: &egui::Context) -> Vec<FileDrop> {
 
     dropped
         .iter()
-        .filter(|f| export::is_maybe_gantz(f.path.as_deref()))
-        .filter_map(read_dropped_file)
+        .filter(|f| export::is_gantz_path(f.path()))
+        .filter_map(|f| read_dropped_file(f.as_ref()))
         .map(|bytes| FileDrop { bytes, target })
         .collect()
 }
 
 /// Read bytes from an [`egui::DroppedFile`].
-///
-/// Tries `file.bytes` first for web, then `std::fs::read` from `file.path` for
-/// desktop.
-fn read_dropped_file(file: &egui::DroppedFile) -> Option<Vec<u8>> {
-    if let Some(ref bytes) = file.bytes {
-        return Some(bytes.to_vec());
-    }
-    if let Some(ref path) = file.path {
-        return std::fs::read(path).ok();
-    }
+#[cfg(not(target_arch = "wasm32"))]
+fn read_dropped_file(file: &dyn egui::DroppedFile) -> Option<Vec<u8>> {
+    file.bytes().ok()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_dropped_file(_file: &dyn egui::DroppedFile) -> Option<Vec<u8>> {
     None
 }
 
@@ -1197,7 +1192,7 @@ pub(super) fn pane_ui<R>(
     ui: &mut egui::Ui,
     pane: impl FnOnce(&mut egui::Ui) -> R,
 ) -> egui::InnerResponse<R> {
-    egui::CentralPanel::default().show_inside(ui, |ui| pane(ui))
+    egui::CentralPanel::default().show(ui, |ui| pane(ui))
 }
 
 /// The margin between the scene's edges and its floating overlays, e.g. the
@@ -1329,7 +1324,7 @@ fn perf_view(title: &str, capture: &mut widget::PerfCapture, ui: &mut egui::Ui) 
     // Use Frame::NONE to fill the entire pane with no padding.
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             widget::PerfView::new(title, capture).show(ui);
         });
 }
@@ -1813,7 +1808,7 @@ mod tests {
         let commit = |b| gantz_ca::Head::Commit(gantz_ca::ContentAddr::from([b; 32]).into());
         let (a, b) = (commit(1), commit(2));
         for head in [&a, &b] {
-            let _ = ctx.run_ui(Default::default(), |ui| {
+            ctx.run_ui(Default::default(), |ui| {
                 graph_scene(
                     id,
                     &env,
@@ -1835,7 +1830,8 @@ mod tests {
                     &mut vm,
                     ui,
                 );
-            });
+            })
+            .drop_without_applying_deltas();
         }
         let sizes = |id| egui_graph::with_graph_memory(&ctx, id, |m| m.node_sizes().len());
         assert_eq!(sizes(id), 2);
@@ -1919,6 +1915,7 @@ mod tests {
             for clipped in &output.shapes {
                 shape_texts(&clipped.shape, &mut texts);
             }
+            output.drop_without_applying_deltas();
         }
         assert!(texts.iter().any(|t| t == "path"), "the tables drew");
         let clashes: Vec<_> = texts.iter().filter(|t| t.contains(" ID ")).collect();
