@@ -328,3 +328,45 @@ fn multi_fed_ref_outlet_sums_shapes() {
         Some(&Some(shape(2, Rate::Audio))),
     );
 }
+
+/// A reference output that its graph wires straight from an inlet carries
+/// what reaches the reference's input there, through nested references too.
+#[test]
+fn passthrough_ref_outputs_follow_their_inputs() {
+    let mut registry = gantz_ca::Registry::default();
+
+    // The inner graph is `inlet -> outlet`.
+    let mut inner: Graph<N> = Graph::default();
+    let i = inner.add_node(N::Inlet);
+    let o = inner.add_node(N::Outlet);
+    inner.add_edge(i, o, Edge::new(0.into(), 0.into()));
+    let inner_ca = commit(&mut registry, inner);
+
+    // The outer graph is `inlet -> ref(inner) -> outlet`.
+    let mut outer: Graph<N> = Graph::default();
+    let oi = outer.add_node(N::Inlet);
+    let ri = outer.add_node(N::Ref(Ref::new(inner_ca)));
+    let oo = outer.add_node(N::Outlet);
+    outer.add_edge(oi, ri, Edge::new(0.into(), 0.into()));
+    outer.add_edge(ri, oo, Edge::new(0.into(), 0.into()));
+    let outer_ca = commit(&mut registry, outer);
+
+    // The root is `~sinosc -> ref(inner) -> ref(outer) -> ~out`, and a
+    // control-fed `ref(inner)` beside it.
+    let mut g: Graph<N> = Graph::default();
+    let sin = g.add_node(sinosc());
+    let a = g.add_node(N::Ref(Ref::new(inner_ca)));
+    let b = g.add_node(N::Ref(Ref::new(outer_ca)));
+    let out = g.add_node(N::Out(Out::default()));
+    let quiet = g.add_node(N::Ref(Ref::new(inner_ca)));
+    g.add_edge(sin, a, Edge::new(0.into(), 0.into()));
+    g.add_edge(a, b, Edge::new(0.into(), 0.into()));
+    g.add_edge(b, out, Edge::new(0.into(), 0.into()));
+
+    let shapes = shapes([(&[0], 0, shape(1, Rate::Audio))]);
+    let info = root_port_info(&g, &reify_all(&registry), &shapes);
+    let sine = Some(&Some(shape(1, Rate::Audio)));
+    assert_eq!(info.signal_outputs.get(&(a.index(), 0)), sine);
+    assert_eq!(info.signal_outputs.get(&(b.index(), 0)), sine);
+    assert_eq!(info.signal_outputs.get(&(quiet.index(), 0)), None);
+}

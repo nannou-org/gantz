@@ -14,10 +14,10 @@
 //! lowers the graph. A concrete DSP node's ports come straight off
 //! [`NodeDsp`](crate::NodeDsp). A reference's ports resolve recursively
 //! through the referenced graph's inlets and outlets. Root-level boundary
-//! nodes forward their neighbours' classification. One approximation is by
-//! design. A chain that resolves through a referenced graph's inlet is not
-//! followed, since that is parent-side wiring. A pure `inlet -> outlet` wire
-//! child is one example. Such a reference's ports classify as control.
+//! nodes forward their neighbours' classification. A reference output that a
+//! referenced graph wires straight from an inlet carries what the reference's
+//! input at that inlet receives, so it classifies by the root edge into that
+//! input.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
@@ -56,6 +56,8 @@ struct Memos {
     inlet_stack: Vec<ContentAddr>,
     outlets: HashMap<(ContentAddr, usize), Vec<(Vec<usize>, usize)>>,
     outlet_stack: Vec<(ContentAddr, usize)>,
+    passthrough: HashMap<(ContentAddr, usize), Vec<usize>>,
+    passthrough_stack: Vec<(ContentAddr, usize)>,
 }
 
 /// Classify `graph`'s root-level ports, resolving references through the
@@ -124,6 +126,45 @@ where
             }
         }
     }
+
+    // A reference output wired straight from one of its graph's inlets
+    // carries the signal that reaches the reference's input there. Repeat
+    // until no output changes, so chains of such references resolve.
+    let mut passthrough = Vec::new();
+    for ix in graph.node_indices() {
+        if let Some(r) = graph[ix].as_ref_node() {
+            let ca = r.content_addr();
+            for p in 0..n_outlets(reified, ctx, ca) {
+                let inlets = outlet_inlets(reified, ctx, ca, p, &mut memos);
+                if !inlets.is_empty() {
+                    passthrough.push((ix, p, inlets));
+                }
+            }
+        }
+    }
+    loop {
+        let mut changed = false;
+        for (ix, p, inlets) in &passthrough {
+            if info.signal_outputs.contains_key(&(ix.index(), *p)) {
+                continue;
+            }
+            let fed = graph
+                .edges_directed(*ix, Direction::Incoming)
+                .filter(|e| inlets.contains(&(e.weight().input.0 as usize)))
+                .find_map(|e| {
+                    let src = (e.source().index(), e.weight().output.0 as usize);
+                    info.signal_outputs.get(&src).copied()
+                });
+            if let Some(shape) = fed {
+                info.signal_outputs.insert((ix.index(), *p), shape);
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+
     for ix in graph.node_indices() {
         if graph[ix].role(ctx) == Role::Outlet {
             let signal = graph.edges_directed(ix, Direction::Incoming).any(|e| {
@@ -264,6 +305,65 @@ where
     memos.outlet_stack.pop();
     memos.outlets.insert(key, sources.clone());
     sources
+}
+
+/// The inlets of the graph at `ca` whose values reach its `outlet`-th outlet
+/// unchanged, by a wire from the inlet or through the same kind of wire in a
+/// nested reference. Inlets are numbered in ascending node index order. A
+/// reference's output carries whatever its inputs at these positions carry.
+fn outlet_inlets<N>(
+    reified: &ReifiedGraphs<N>,
+    ctx: MetaCtx,
+    ca: ContentAddr,
+    outlet: usize,
+    memos: &mut Memos,
+) -> Vec<usize>
+where
+    N: gantz_core::Node + AsRefNode,
+{
+    let key = (ca, outlet);
+    if let Some(known) = memos.passthrough.get(&key) {
+        return known.clone();
+    }
+    if memos.passthrough_stack.contains(&key) {
+        return Vec::new();
+    }
+    let Some(graph) = reified.get(&ca.into()) else {
+        memos.passthrough.insert(key, Vec::new());
+        return Vec::new();
+    };
+    memos.passthrough_stack.push(key);
+    let inlets: Vec<NodeIx> = graph
+        .node_indices()
+        .filter(|&n| graph[n].role(ctx) == Role::Inlet)
+        .collect();
+    let position = |n: NodeIx| inlets.iter().position(|&i| i == n);
+    let outlet_node = graph
+        .node_indices()
+        .filter(|&n| graph[n].role(ctx) == Role::Outlet)
+        .nth(outlet);
+    let mut result = Vec::new();
+    for e in outlet_node
+        .into_iter()
+        .flat_map(|o| graph.edges_directed(o, Direction::Incoming))
+    {
+        let (src, port) = (e.source(), e.weight().output.0 as usize);
+        if let Some(p) = position(src) {
+            result.push(p);
+        } else if let Some(r) = graph[src].as_ref_node() {
+            for inner in outlet_inlets(reified, ctx, r.content_addr(), port, memos) {
+                let feeds = graph
+                    .edges_directed(src, Direction::Incoming)
+                    .filter(|f| f.weight().input.0 as usize == inner);
+                result.extend(feeds.filter_map(|f| position(f.source())));
+            }
+        }
+    }
+    result.sort_unstable();
+    result.dedup();
+    memos.passthrough_stack.pop();
+    memos.passthrough.insert(key, result.clone());
+    result
 }
 
 /// The shape of a reference output fed by the given concrete DSP `sources`.
