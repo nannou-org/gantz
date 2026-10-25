@@ -35,7 +35,9 @@
 //! referenced graph to see them.
 
 use crate::{NodeCtx, node, response::DynResponse};
-use gantz_ui::{Align, BindPath, Button, Dialer, Element, Key, Matrix, Rgba, Toggle};
+use gantz_ui::{
+    Align, BindPath, Bound, Button, Choice, Color, Dialer, Element, Key, Matrix, Rgba, Toggle,
+};
 use steel::{SteelVal, Vector, gc::Gc};
 
 pub mod plot;
@@ -233,6 +235,9 @@ impl Walk<'_> {
             }
             Element::Dialer(dialer) => self.dialer(dialer, id, ctx, ui),
             Element::Toggle(toggle) => self.toggle(toggle, id, ctx, ui),
+            Element::Bound(bound) => self.bound(bound, id, ctx, ui),
+            Element::Choice(choice) => self.choice(choice, id, ctx, ui),
+            Element::Color(color) => self.color(color, id, ctx, ui),
             Element::Button(button) => self.button(button, id, ui),
             Element::Matrix(matrix) => self.matrix(matrix, id, ctx, ui),
             Element::Label(label) => {
@@ -370,11 +375,122 @@ impl Walk<'_> {
             return;
         };
         let text = t.label.as_deref().unwrap_or("");
-        let r = claim_press(ui.push_id(id, |ui| ui.checkbox(&mut b, text)).inner);
+        let r = ui.push_id(id, |ui| match t.pill {
+            true => {
+                let strong = ui.visuals().strong_text_color();
+                ui.add(crate::widget::LabelToggle::new(text, &mut b).selected_color(strong))
+            }
+            false => ui.checkbox(&mut b, text),
+        });
+        let r = claim_press(r.inner);
         if r.changed() {
             self.emit_set(ctx, &path, SteelVal::BoolV(b), t.push);
         }
         self.merge(r);
+    }
+
+    /// The path that `bind` resolves to and the state there. Shows why when
+    /// there is none and returns `None`.
+    fn bound_state(
+        &mut self,
+        bind: &Option<BindPath>,
+        tag: &str,
+        ctx: &mut NodeCtx,
+        ui: &mut egui::Ui,
+    ) -> Option<(Vec<node::Id>, SteelVal)> {
+        let Some(bind) = bind else {
+            let r = unbound_chip(ui, tag);
+            self.merge(r);
+            return None;
+        };
+        let path = self.resolve(bind);
+        let Ok(Some(val)) = ctx.extract_value_at(&path) else {
+            let r = err_label(ui, "no state at the bound path");
+            self.merge(r);
+            return None;
+        };
+        Some((path, val))
+    }
+
+    /// Render a checkbox and a number bound to number or `#f` state, as an
+    /// inspector bound row does. The checkbox sets the number or clears it.
+    fn bound(&mut self, b: &Bound, id: egui::Id, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+        let Some((path, val)) = self.bound_state(&b.bind, "bound", ctx, ui) else {
+            return;
+        };
+        let mut bound = match val {
+            SteelVal::NumV(n) => Some(n),
+            SteelVal::IntV(i) => Some(i as f64),
+            _ => None,
+        };
+        let kind = b.label.as_deref().unwrap_or("bound");
+        let r = ui.push_id(id, |ui| {
+            crate::widget::node_inspector::bound_col(ui, kind, &mut bound)
+        });
+        if r.inner {
+            let val = bound.map_or(SteelVal::BoolV(false), SteelVal::NumV);
+            self.emit_set(ctx, &path, val, true);
+        }
+        self.merge(r.response);
+    }
+
+    /// Render a pill per option, bound to state that holds one of them as a
+    /// symbol. A click sets the state to its option.
+    fn choice(&mut self, c: &Choice, id: egui::Id, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+        let Some((path, val)) = self.bound_state(&c.bind, "choice", ctx, ui) else {
+            return;
+        };
+        let current = match &val {
+            SteelVal::SymbolV(s) | SteelVal::StringV(s) => Some(s.to_string()),
+            _ => None,
+        };
+        let r = ui.push_id(id, |ui| {
+            ui.horizontal(|ui| {
+                let strong = ui.visuals().strong_text_color();
+                let mut picked = None;
+                for option in &c.options {
+                    let mut on = current.as_deref() == Some(option.as_str());
+                    let toggle = crate::widget::LabelToggle::new(option, &mut on);
+                    let r = claim_press(ui.add(toggle.selected_color(strong)));
+                    if r.changed() && on {
+                        picked = Some(option.clone());
+                    }
+                }
+                picked
+            })
+        });
+        if let Some(option) = r.inner.inner {
+            self.emit_set(ctx, &path, SteelVal::SymbolV(option.into()), true);
+        }
+        self.merge(r.response);
+    }
+
+    /// Render a colour button bound to `"#rrggbb"` or `#f` state. `#f` shows
+    /// the theme's colour. A `theme` button clears an edited colour.
+    fn color(&mut self, c: &Color, id: egui::Id, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+        let Some((path, val)) = self.bound_state(&c.bind, "color", ctx, ui) else {
+            return;
+        };
+        let set = match &val {
+            SteelVal::StringV(s) => Rgba::parse(s),
+            _ => None,
+        };
+        let r = ui.push_id(id, |ui| {
+            ui.horizontal(|ui| {
+                let mut col = plot::resolve_color(set.map(|Rgba(c)| c), ui);
+                let edit = claim_press(ui.color_edit_button_srgba(&mut col));
+                if edit.changed() {
+                    let rgba = Rgba([col.r(), col.g(), col.b(), col.a()]);
+                    return Some(SteelVal::StringV(rgba.hex().into()));
+                }
+                let theme = set.is_some() && claim_press(ui.button("theme")).clicked();
+                theme.then_some(SteelVal::BoolV(false))
+            })
+        });
+        if let Some(val) = r.inner.inner {
+            self.emit_set(ctx, &path, val, true);
+        }
+        self.merge(r.response);
     }
 
     /// Render a button that queues a push evaluation at the bound node.
@@ -486,10 +602,16 @@ impl Walk<'_> {
             return;
         };
         let path = self.resolve(bind);
-        let channels = match ctx.extract_value_at(&path) {
+        let mut channels = match ctx.extract_value_at(&path) {
             Ok(Some(val)) => plot::split_channels(&val),
             _ => Vec::new(),
         };
+        if let Some(capacity) = p.capacity {
+            for channel in &mut channels {
+                let excess = channel.len().saturating_sub(capacity as usize);
+                channel.drain(..excess);
+            }
+        }
         let params = plot::PlotParams {
             style: p.style.unwrap_or(gantz_ui::PlotStyle::Bars),
             color: p.color.map(|Rgba(c)| c),

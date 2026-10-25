@@ -540,6 +540,7 @@ fn fragment(
         y_max: look.y_max.map(F32::get),
         w: size.map(|s| s.x),
         h: size.map(|s| s.y),
+        capacity: None,
         key: None,
     })
 }
@@ -940,6 +941,7 @@ mod tests {
             y_max: Some(1.0),
             w: Some(120.0),
             h: Some(80.0),
+            capacity: None,
             key: None,
         });
         assert_eq!(

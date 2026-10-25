@@ -123,6 +123,7 @@ fn builtins_match_expected_name_set() {
         "pat.plot",
         "plot",
         "sleep",
+        "state",
         "tick!",
         "update!",
         "~buffer",

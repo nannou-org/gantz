@@ -90,8 +90,32 @@ pub fn encode(elem: &Element) -> SExpr {
             push_bind(&mut attrs, &e.bind);
             push_string(&mut attrs, "label", &e.label);
             push_bool(&mut attrs, "push", e.push, true);
+            push_bool(&mut attrs, "pill", e.pill, false);
             push_key(&mut attrs, &e.key);
             form("toggle", attrs, Vec::new(), &[])
+        }
+        Element::Bound(e) => {
+            let mut attrs = Vec::new();
+            push_bind(&mut attrs, &e.bind);
+            push_string(&mut attrs, "label", &e.label);
+            push_key(&mut attrs, &e.key);
+            form("bound", attrs, Vec::new(), &[])
+        }
+        Element::Choice(e) => {
+            let mut attrs = Vec::new();
+            push_bind(&mut attrs, &e.bind);
+            if !e.options.is_empty() {
+                let options = e.options.iter().map(|o| SExpr::Ident(o.clone()));
+                attrs.push(entry("options", SExpr::List(options.collect())));
+            }
+            push_key(&mut attrs, &e.key);
+            form("choice", attrs, Vec::new(), &[])
+        }
+        Element::Color(e) => {
+            let mut attrs = Vec::new();
+            push_bind(&mut attrs, &e.bind);
+            push_key(&mut attrs, &e.key);
+            form("color", attrs, Vec::new(), &[])
         }
         Element::Button(e) => {
             let mut attrs = Vec::new();
@@ -135,6 +159,7 @@ pub fn encode(elem: &Element) -> SExpr {
             push_f32(&mut attrs, "y-max", e.y_max);
             push_f32(&mut attrs, "w", e.w);
             push_f32(&mut attrs, "h", e.h);
+            push_int(&mut attrs, "capacity", e.capacity.map(i64::from));
             push_key(&mut attrs, &e.key);
             form("plot", attrs, Vec::new(), &[])
         }
@@ -245,8 +270,8 @@ mod tests {
     use crate::decode::{Decoded, Limits, decode};
     use crate::diag::{ErrorReason, TreePath};
     use crate::elem::{
-        Align, Button, Col, Dialer, DialerStyle, ErrorElem, Frame, Grid, Label, Matrix, Plot,
-        PlotMode, PlotStyle, RefGui, Row, Scope, Sep, Space, Toggle, Value,
+        Align, Bound, Button, Choice, Col, Color, Dialer, DialerStyle, ErrorElem, Frame, Grid,
+        Label, Matrix, Plot, PlotMode, PlotStyle, RefGui, Row, Scope, Sep, Space, Toggle, Value,
     };
 
     fn roundtrips(elem: Element) {
@@ -377,6 +402,7 @@ mod tests {
                 bind: Some(BindPath(vec![5])),
                 label: Some("drive".to_string()),
                 push: false,
+                pill: true,
                 key: None,
             })],
         }));
@@ -421,6 +447,7 @@ mod tests {
             y_max: Some(1.0),
             w: Some(120.0),
             h: Some(80.0),
+            capacity: Some(64),
             key: None,
         }));
         roundtrips(Element::RefGui(RefGui {
@@ -450,5 +477,22 @@ mod tests {
             children: vec![],
         }));
         roundtrips(Element::RefGui(RefGui { id: 0, key: None }));
+        roundtrips(Element::Bound(Bound {
+            bind: Some(BindPath(vec![3])),
+            label: Some("minimum".to_string()),
+            key: None,
+        }));
+        roundtrips(Element::Choice(Choice {
+            bind: Some(BindPath(vec![6])),
+            options: vec!["bars".to_string(), "line".to_string()],
+            key: None,
+        }));
+        roundtrips(Element::Color(Color {
+            bind: Some(BindPath(vec![7])),
+            key: None,
+        }));
+        roundtrips(Element::Bound(Bound::default()));
+        roundtrips(Element::Choice(Choice::default()));
+        roundtrips(Element::Color(Color::default()));
     }
 }

@@ -51,6 +51,7 @@ fn reader_output_decodes() {
                         bind: Some(BindPath(vec![5])),
                         label: Some("drive".to_string()),
                         push: false,
+                        pill: false,
                         key: None,
                     }),
                 ],

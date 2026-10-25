@@ -3,8 +3,9 @@
 #![cfg(all(feature = "steel", feature = "datum"))]
 
 use crate::elem::{
-    Align, BindPath, Button, Col, Dialer, DialerStyle, Element, Frame, Grid, Key, Label, Matrix,
-    Plot, PlotMode, PlotStyle, RefGui, Rgba, Row, Scope, Sep, Space, Toggle, Value,
+    Align, BindPath, Bound, Button, Choice, Col, Color, Dialer, DialerStyle, Element, Frame, Grid,
+    Key, Label, Matrix, Plot, PlotMode, PlotStyle, RefGui, Rgba, Row, Scope, Sep, Space, Toggle,
+    Value,
 };
 use crate::{Decoded, Limits, SExpr, codec};
 
@@ -39,6 +40,7 @@ fn full_tree() -> Element {
                             bind: Some(BindPath(vec![5])),
                             label: Some("drive".to_string()),
                             push: false,
+                            pill: true,
                             key: None,
                         }),
                         Element::Button(Button {
@@ -70,6 +72,20 @@ fn full_tree() -> Element {
                         wrap: true,
                         key: None,
                     }),
+                    Element::Bound(Bound {
+                        bind: Some(BindPath(vec![10])),
+                        label: Some("level".to_string()),
+                        key: None,
+                    }),
+                    Element::Choice(Choice {
+                        bind: Some(BindPath(vec![11])),
+                        options: vec!["sine".to_string(), "saw".to_string()],
+                        key: None,
+                    }),
+                    Element::Color(Color {
+                        bind: Some(BindPath(vec![12])),
+                        key: Some(Key::Int(2)),
+                    }),
                 ],
             }),
             Element::Label(Label {
@@ -90,6 +106,7 @@ fn full_tree() -> Element {
                 y_max: Some(1.0),
                 w: Some(120.0),
                 h: Some(80.0),
+                capacity: Some(256),
                 key: None,
             }),
             Element::Scope(Scope {

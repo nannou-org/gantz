@@ -981,11 +981,29 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph ui.bound
+  (expr0 (expr (ui-elem 'bound '() (list (list 'bind $?bind) (list 'label $?label)) (None)) #:require "gantz/ui"))
+  (inlet1 (inlet "path" "path of the state node whose number or #f to edit"))
+  (inlet2 (inlet "string" "what the number bounds, such as minimum"))
+  (outlet3 (outlet "element" "bound element"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (graph ui.button
   (expr0 (expr (ui-elem 'button '() (list (list 'bind $?bind) (list 'label $?label)) (None)) #:require "gantz/ui"))
   (inlet1 (inlet "path" "path of the node to push-eval on press"))
   (inlet2 (inlet "string" "button text"))
   (outlet3 (outlet "element" "button element"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph ui.choice
+  (expr0 (expr (ui-elem 'choice '() (list (list 'bind $?bind) (list 'options $?options)) (None)) #:require "gantz/ui"))
+  (inlet1 (inlet "path" "path of the state node whose option to set"))
+  (inlet2 (inlet "list" "the options, as symbols"))
+  (outlet3 (outlet "element" "choice element"))
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
@@ -1000,6 +1018,13 @@
   (-> inlet2 expr0)
   (-> inlet3 (expr0 1))
   (-> expr0 outlet4))
+
+(graph ui.color
+  (expr0 (expr (ui-elem 'color '() (list (list 'bind $?bind)) (None)) #:require "gantz/ui"))
+  (inlet1 (inlet "path" "path of the state node whose colour to edit"))
+  (outlet2 (outlet "element" "color element"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
 
 (graph ui.dialer
   (expr0 (expr (ui-elem 'dialer '() (list (list 'bind $?bind) (list 'min $?min) (list 'max $?max) (list 'step $?step) (list 'precision (ui-int $?precision)) (list 'label $?label) (list 'push $?push)) (None)) #:require "gantz/ui"))
@@ -1063,7 +1088,7 @@
   (-> expr0 outlet4))
 
 (graph ui.plot
-  (expr0 (expr (ui-elem 'plot '() (list (list 'bind $?bind) (list 'mode $?mode) (list 'style $?style) (list 'color $?color) (list 'grid $?grid) (list 'axes $?axes) (list 'interactive $?interactive) (list 'y-min $?y-min) (list 'y-max $?y-max) (list 'w $?w) (list 'h $?h)) (None)) #:require "gantz/ui"))
+  (expr0 (expr (ui-elem 'plot '() (list (list 'bind $?bind) (list 'mode $?mode) (list 'style $?style) (list 'color $?color) (list 'grid $?grid) (list 'axes $?axes) (list 'interactive $?interactive) (list 'y-min $?y-min) (list 'y-max $?y-max) (list 'w $?w) (list 'h $?h) (list 'capacity (ui-int $?capacity))) (None)) #:require "gantz/ui"))
   (inlet1 (inlet "path" "path of the node whose state to plot"))
   (inlet2 (inlet "symbol" "scope or signal"))
   (inlet3 (inlet "symbol" "bars or line"))
@@ -1076,6 +1101,7 @@
   (inlet10 (inlet "number" "width"))
   (inlet11 (inlet "number" "height"))
   (outlet12 (outlet "element" "plot element"))
+  (inlet13 (inlet "number" "how many of the newest samples of each channel show"))
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> inlet3 (expr0 2))
@@ -1087,6 +1113,7 @@
   (-> inlet9 (expr0 8))
   (-> inlet10 (expr0 9))
   (-> inlet11 (expr0 10))
+  (-> inlet13 (expr0 11))
   (-> expr0 outlet12))
 
 (graph ui.ref
@@ -1120,14 +1147,16 @@
   (-> expr0 outlet2))
 
 (graph ui.toggle
-  (expr0 (expr (ui-elem 'toggle '() (list (list 'bind $?bind) (list 'label $?label) (list 'push $?push)) (None)) #:require "gantz/ui"))
+  (expr0 (expr (ui-elem 'toggle '() (list (list 'bind $?bind) (list 'label $?label) (list 'push $?push) (list 'pill $?pill)) (None)) #:require "gantz/ui"))
   (inlet1 (inlet "path" "path of the node whose boolean state to edit"))
   (inlet2 (inlet "string" "inline label"))
   (inlet3 (inlet "boolean" "push-eval on edit, default #t"))
   (outlet4 (outlet "element" "toggle element"))
+  (inlet5 (inlet "boolean" "show as a pill that lights while on, default #f"))
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> inlet3 (expr0 2))
+  (-> inlet5 (expr0 3))
   (-> expr0 outlet4))
 
 (graph ui.value
@@ -1199,8 +1228,11 @@
   (string? "Whether a value is a string")
   (sub "Subtract one number from another")
   (take "The first n items of a list")
+  (ui.bound "GUI: an optional number, set or cleared by a checkbox")
   (ui.button "GUI: a button that push-evals a node")
+  (ui.choice "GUI: a pill per option, editing a state node")
   (ui.col "GUI: stack children vertically")
+  (ui.color "GUI: a colour editing a state node")
   (ui.dialer "GUI: a dialer editing a number node")
   (ui.frame "GUI: a titled group box around children")
   (ui.grid "GUI: lay children out in columns")
@@ -1894,12 +1926,26 @@
   (outlet3 -70 106.59375)
   (camera 26.5 26.5 1))
 
+(layout ui.bound
+  (expr0 0 60)
+  (inlet1 0 0)
+  (inlet2 100 0)
+  (outlet3 0 120)
+  (camera 50 60 1))
+
 (layout ui.button
   (expr0 -39.625 13.40625)
   (inlet1 -39.625 -75.78125)
   (inlet2 60.002 -75.78125)
   (outlet3 -39.625 106.59375)
   (camera 26.5 26.5 1))
+
+(layout ui.choice
+  (expr0 0 60)
+  (inlet1 0 0)
+  (inlet2 100 0)
+  (outlet3 0 120)
+  (camera 50 60 1))
 
 (layout ui.col
   (expr0 -89.4385 13.40625)
@@ -1908,6 +1954,12 @@
   (inlet3 109.815 -75.78125)
   (outlet4 -89.4385 106.59375)
   (camera 26.5 26.5 1))
+
+(layout ui.color
+  (expr0 0 60)
+  (inlet1 0 0)
+  (outlet2 0 120)
+  (camera 50 60 1))
 
 (layout ui.dialer
   (expr0 -288.692 13.40625)
@@ -1957,6 +2009,7 @@
   (inlet1 -487.947 -75.78125)
   (inlet10 408.696 -75.78125)
   (inlet11 508.323 -75.78125)
+  (inlet13 700 -75.78125)
   (inlet2 -388.32 -75.78125)
   (inlet3 -288.693 -75.78125)
   (inlet4 -189.066 -75.78125)
@@ -1998,6 +2051,7 @@
   (inlet1 -89.4385 -75.78125)
   (inlet2 10.1885 -75.78125)
   (inlet3 109.815 -75.78125)
+  (inlet5 209.4415 -75.78125)
   (outlet4 -89.4385 106.59375)
   (camera 26.5 26.5 1))
 
