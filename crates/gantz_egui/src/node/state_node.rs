@@ -1,7 +1,7 @@
 //! A State node: a value for a GUI control to bind to and edit.
 
 use crate::{Env, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind};
-use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
+use gantz_core::node::{self, EvalConf, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
@@ -87,6 +87,11 @@ impl gantz_core::Node for State {
 
     fn stateful(&self, _ctx: MetaCtx) -> bool {
         true
+    }
+
+    // A GUI edit of the value pushes from this node.
+    fn push_eval(&self, _ctx: MetaCtx) -> Vec<EvalConf> {
+        vec![EvalConf::All]
     }
 
     fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
