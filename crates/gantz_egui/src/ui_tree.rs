@@ -35,7 +35,9 @@
 //! referenced graph to see them.
 
 use crate::{NodeCtx, node, response::DynResponse};
-use gantz_ui::{Align, BindPath, Button, Dialer, Element, Key, Matrix, Rgba, Toggle};
+use gantz_ui::{
+    Align, BindPath, Bound, Button, Choice, Color, Dialer, Element, Key, Matrix, Rgba, Toggle,
+};
 use steel::{SteelVal, Vector, gc::Gc};
 
 pub mod plot;
@@ -72,6 +74,13 @@ pub struct UiTree<'a> {
 /// Registry cycle-prevention makes truly cyclic references impossible. This
 /// bounds the walk's cost on corrupt data.
 const MAX_REF_GUI_DEPTH: usize = 8;
+
+/// The drag, in points, that takes a dialer bounded on both sides across its
+/// whole range, when it sets no step of its own.
+pub(crate) const RANGE_DRAG: f64 = 200.0;
+
+/// The most decimals a bounded dialer shows when it sets no precision.
+const MAX_DECIMALS: usize = 6;
 
 /// Walker state threaded through one tree traversal.
 struct Walk<'a> {
@@ -226,6 +235,9 @@ impl Walk<'_> {
             }
             Element::Dialer(dialer) => self.dialer(dialer, id, ctx, ui),
             Element::Toggle(toggle) => self.toggle(toggle, id, ctx, ui),
+            Element::Bound(bound) => self.bound(bound, id, ctx, ui),
+            Element::Choice(choice) => self.choice(choice, id, ctx, ui),
+            Element::Color(color) => self.color(color, id, ctx, ui),
             Element::Button(button) => self.button(button, id, ui),
             Element::Matrix(matrix) => self.matrix(matrix, id, ctx, ui),
             Element::Label(label) => {
@@ -244,6 +256,8 @@ impl Walk<'_> {
                 let text = match &value.bind {
                     None => "∅".to_string(),
                     Some(bind) => match ctx.extract_value_at(&self.resolve(bind)) {
+                        // A value that has not arrived yet shows as a dash.
+                        Ok(Some(SteelVal::Void)) => "—".to_string(),
                         Ok(Some(val)) => format!("{val:?}"),
                         Ok(None) => "∅".to_string(),
                         Err(_) => "ERR".to_string(),
@@ -313,50 +327,12 @@ impl Walk<'_> {
                     widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
                     widgets.inactive.bg_fill = egui::Color32::TRANSPARENT;
                 }
-                let drag_value = |ui: &mut egui::Ui, val: &mut SteelVal| match val {
-                    SteelVal::NumV(f) => {
-                        let mut dv = egui::DragValue::new(f);
-                        if d.min.is_some() || d.max.is_some() {
-                            let (lo, hi) = (
-                                d.min.unwrap_or(f64::NEG_INFINITY),
-                                d.max.unwrap_or(f64::INFINITY),
-                            );
-                            dv = dv.range(lo..=hi);
-                        }
-                        if let Some(p) = d.precision {
-                            dv = dv.max_decimals(p as usize);
-                        }
-                        if let Some(s) = d.step {
-                            dv = dv.speed(s);
-                        }
-                        if let Some(p) = &d.prefix {
-                            dv = dv.prefix(p);
-                        }
-                        ui.add(dv)
-                    }
-                    SteelVal::IntV(i) => {
-                        let mut dv = egui::DragValue::new(i);
-                        if d.min.is_some() || d.max.is_some() {
-                            let lo = d.min.map_or(isize::MIN, |m| m as isize);
-                            let hi = d.max.map_or(isize::MAX, |m| m as isize);
-                            dv = dv.range(lo..=hi);
-                        }
-                        if let Some(s) = d.step {
-                            dv = dv.speed(s);
-                        }
-                        if let Some(p) = &d.prefix {
-                            dv = dv.prefix(p);
-                        }
-                        ui.add(dv)
-                    }
-                    _ => err_label(ui, "bound state is not a number"),
-                };
                 // A bounded dialer fills from the left to show where its value
                 // sits in the range. The fill goes in a slot behind the
                 // dialer, whose own fill is translucent.
                 let drag = |ui: &mut egui::Ui, val: &mut SteelVal| {
                     let slot = ui.painter().add(egui::Shape::Noop);
-                    let r = drag_value(ui, val);
+                    let r = drag_value(ui, d, val);
                     if let Some(t) = range_fraction(d, val) {
                         paint_range_fill(ui, slot, r.rect, t);
                     }
@@ -399,18 +375,129 @@ impl Walk<'_> {
             return;
         };
         let text = t.label.as_deref().unwrap_or("");
-        let r = ui.push_id(id, |ui| ui.checkbox(&mut b, text)).inner;
+        let r = ui.push_id(id, |ui| match t.pill {
+            true => {
+                let strong = ui.visuals().strong_text_color();
+                ui.add(crate::widget::LabelToggle::new(text, &mut b).selected_color(strong))
+            }
+            false => ui.checkbox(&mut b, text),
+        });
+        let r = claim_press(r.inner);
         if r.changed() {
             self.emit_set(ctx, &path, SteelVal::BoolV(b), t.push);
         }
         self.merge(r);
     }
 
+    /// The path that `bind` resolves to and the state there. Shows why when
+    /// there is none and returns `None`.
+    fn bound_state(
+        &mut self,
+        bind: &Option<BindPath>,
+        tag: &str,
+        ctx: &mut NodeCtx,
+        ui: &mut egui::Ui,
+    ) -> Option<(Vec<node::Id>, SteelVal)> {
+        let Some(bind) = bind else {
+            let r = unbound_chip(ui, tag);
+            self.merge(r);
+            return None;
+        };
+        let path = self.resolve(bind);
+        let Ok(Some(val)) = ctx.extract_value_at(&path) else {
+            let r = err_label(ui, "no state at the bound path");
+            self.merge(r);
+            return None;
+        };
+        Some((path, val))
+    }
+
+    /// Render a checkbox and a number bound to number or `#f` state, as an
+    /// inspector bound row does. The checkbox sets the number or clears it.
+    fn bound(&mut self, b: &Bound, id: egui::Id, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+        let Some((path, val)) = self.bound_state(&b.bind, "bound", ctx, ui) else {
+            return;
+        };
+        let mut bound = match val {
+            SteelVal::NumV(n) => Some(n),
+            SteelVal::IntV(i) => Some(i as f64),
+            _ => None,
+        };
+        let kind = b.label.as_deref().unwrap_or("bound");
+        let r = ui.push_id(id, |ui| {
+            crate::widget::node_inspector::bound_col(ui, kind, &mut bound)
+        });
+        if r.inner {
+            let val = bound.map_or(SteelVal::BoolV(false), SteelVal::NumV);
+            self.emit_set(ctx, &path, val, true);
+        }
+        self.merge(r.response);
+    }
+
+    /// Render a pill per option, bound to state that holds one of them as a
+    /// symbol. A click sets the state to its option.
+    fn choice(&mut self, c: &Choice, id: egui::Id, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+        let Some((path, val)) = self.bound_state(&c.bind, "choice", ctx, ui) else {
+            return;
+        };
+        let current = match &val {
+            SteelVal::SymbolV(s) | SteelVal::StringV(s) => Some(s.to_string()),
+            _ => None,
+        };
+        let r = ui.push_id(id, |ui| {
+            ui.horizontal(|ui| {
+                let strong = ui.visuals().strong_text_color();
+                let mut picked = None;
+                for option in &c.options {
+                    let mut on = current.as_deref() == Some(option.as_str());
+                    let toggle = crate::widget::LabelToggle::new(option, &mut on);
+                    let r = claim_press(ui.add(toggle.selected_color(strong)));
+                    if r.changed() && on {
+                        picked = Some(option.clone());
+                    }
+                }
+                picked
+            })
+        });
+        if let Some(option) = r.inner.inner {
+            self.emit_set(ctx, &path, SteelVal::SymbolV(option.into()), true);
+        }
+        self.merge(r.response);
+    }
+
+    /// Render a colour button bound to `"#rrggbb"` or `#f` state. `#f` shows
+    /// the theme's colour. A `theme` button clears an edited colour.
+    fn color(&mut self, c: &Color, id: egui::Id, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+        let Some((path, val)) = self.bound_state(&c.bind, "color", ctx, ui) else {
+            return;
+        };
+        let set = match &val {
+            SteelVal::StringV(s) => Rgba::parse(s),
+            _ => None,
+        };
+        let r = ui.push_id(id, |ui| {
+            ui.horizontal(|ui| {
+                let mut col = plot::resolve_color(set.map(|Rgba(c)| c), ui);
+                let edit = claim_press(ui.color_edit_button_srgba(&mut col));
+                if edit.changed() {
+                    let rgba = Rgba([col.r(), col.g(), col.b(), col.a()]);
+                    return Some(SteelVal::StringV(rgba.hex().into()));
+                }
+                let theme = set.is_some() && claim_press(ui.button("theme")).clicked();
+                theme.then_some(SteelVal::BoolV(false))
+            })
+        });
+        if let Some(val) = r.inner.inner {
+            self.emit_set(ctx, &path, val, true);
+        }
+        self.merge(r.response);
+    }
+
     /// Render a button that queues a push evaluation at the bound node.
     /// Buttons never write state. Bang semantics stay in the node's expr.
     fn button(&mut self, b: &Button, id: egui::Id, ui: &mut egui::Ui) {
         let text = b.label.as_deref().unwrap_or("!");
-        let r = ui.push_id(id, |ui| ui.button(text)).inner;
+        let r = claim_press(ui.push_id(id, |ui| ui.button(text)).inner);
         if r.clicked() {
             match &b.bind {
                 Some(bind) => {
@@ -461,7 +548,7 @@ impl Walk<'_> {
                                 let r = match cell {
                                     SteelVal::BoolV(b) => {
                                         let button = egui::Button::new("").selected(*b);
-                                        let r = ui.add_sized(size, button);
+                                        let r = claim_press(ui.add_sized(size, button));
                                         if r.clicked() {
                                             let flipped = SteelVal::BoolV(!b);
                                             edit = Some((row_ix, col_ix, flipped));
@@ -515,10 +602,16 @@ impl Walk<'_> {
             return;
         };
         let path = self.resolve(bind);
-        let channels = match ctx.extract_value_at(&path) {
+        let mut channels = match ctx.extract_value_at(&path) {
             Ok(Some(val)) => plot::split_channels(&val),
             _ => Vec::new(),
         };
+        if let Some(capacity) = p.capacity {
+            for channel in &mut channels {
+                let excess = channel.len().saturating_sub(capacity as usize);
+                channel.drain(..excess);
+            }
+        }
         let params = plot::PlotParams {
             style: p.style.unwrap_or(gantz_ui::PlotStyle::Bars),
             color: p.color.map(|Rgba(c)| c),
@@ -721,18 +814,138 @@ fn seq_rebuild(seq: Seq, items: Vec<SteelVal>) -> SteelVal {
     }
 }
 
-/// An inline chip for a control missing its `bind` attr.
+/// A drag value for the number `val`, with the dialer's bounds, precision,
+/// step and prefix. A value that is not a number shows an error label.
+pub(crate) fn drag_value(ui: &mut egui::Ui, d: &Dialer, val: &mut SteelVal) -> egui::Response {
+    match val {
+        SteelVal::NumV(f) => {
+            let mut dv = egui::DragValue::new(f);
+            if d.min.is_some() || d.max.is_some() {
+                let (lo, hi) = (
+                    d.min.unwrap_or(f64::NEG_INFINITY),
+                    d.max.unwrap_or(f64::INFINITY),
+                );
+                dv = dv.range(lo..=hi);
+            }
+            match (fixed_decimals(d), d.precision) {
+                (Some(n), _) => dv = dv.fixed_decimals(n),
+                (None, Some(p)) => dv = dv.max_decimals(p as usize),
+                (None, None) => (),
+            }
+            if let Some(digits) = fixed_digits(d) {
+                dv =
+                    dv.custom_formatter(move |v, decimals| zero_padded(v, digits, *decimals.end()));
+            }
+            if let Some(s) = drag_step(d) {
+                dv = dv.speed(s);
+            }
+            if let Some(p) = &d.prefix {
+                dv = dv.prefix(p);
+            }
+            ui.add(dv)
+        }
+        SteelVal::IntV(i) => {
+            let mut dv = egui::DragValue::new(i);
+            if d.min.is_some() || d.max.is_some() {
+                let lo = d.min.map_or(isize::MIN, |m| m as isize);
+                let hi = d.max.map_or(isize::MAX, |m| m as isize);
+                dv = dv.range(lo..=hi);
+            }
+            if let Some(digits) = fixed_digits(d) {
+                dv = dv.custom_formatter(move |v, _| zero_padded(v, digits, 0));
+            }
+            if let Some(s) = drag_step(d) {
+                dv = dv.speed(s);
+            }
+            if let Some(p) = &d.prefix {
+                dv = dv.prefix(p);
+            }
+            ui.add(dv)
+        }
+        _ => err_label(ui, "bound state is not a number"),
+    }
+}
+
+/// The bounds of a dialer bounded on both sides, while they are finite and
+/// apart.
+fn bounds(d: &Dialer) -> Option<(f64, f64)> {
+    let (lo, hi) = (d.min?, d.max?);
+    let span = hi - lo;
+    (span.is_finite() && span > 0.0).then_some((lo, hi))
+}
+
+/// The decimals a dialer bounded on both sides always shows, so that it keeps
+/// one width as its value moves: its precision, or else enough for its bounds
+/// and its drag step. `None` for a dialer that is not bounded on both sides.
+pub(crate) fn fixed_decimals(d: &Dialer) -> Option<usize> {
+    let (lo, hi) = bounds(d)?;
+    if let Some(p) = d.precision {
+        return Some(usize::from(p));
+    }
+    let step = drag_step(d).unwrap_or(1.0);
+    let step_decimals = (-step.log10()).ceil().max(0.0) as usize;
+    let auto = decimals(lo).max(decimals(hi)).max(step_decimals);
+    Some(auto.min(MAX_DECIMALS))
+}
+
+/// The integer digits a dialer bounded on both sides always shows: those of
+/// its wider bound. Leading zeros fill the rest, so that it keeps one width
+/// as its value moves. `None` for a dialer that is not bounded on both sides.
+pub(crate) fn fixed_digits(d: &Dialer) -> Option<usize> {
+    let (lo, hi) = bounds(d)?;
+    let digits = |x: f64| format!("{:.0}", x.abs().trunc()).len();
+    Some(digits(lo).max(digits(hi)))
+}
+
+/// How far a drag moves the dialer per point: its step, or else a share of
+/// a range bounded on both sides, so that a drag of [`RANGE_DRAG`] points
+/// crosses it. `None` leaves egui's own speed.
+pub(crate) fn drag_step(d: &Dialer) -> Option<f64> {
+    d.step
+        .or_else(|| bounds(d).map(|(lo, hi)| (hi - lo) / RANGE_DRAG))
+}
+
+/// The decimals `x` needs, in its shortest form.
+fn decimals(x: f64) -> usize {
+    let s = x.to_string();
+    s.split_once('.').map_or(0, |(_, frac)| frac.len())
+}
+
+/// `v` with `decimals` decimals, and leading zeros up to `digits` integer
+/// digits.
+fn zero_padded(v: f64, digits: usize, decimals: usize) -> String {
+    let sign = if v.is_sign_negative() && v != 0.0 {
+        "-"
+    } else {
+        ""
+    };
+    let width = match decimals {
+        0 => digits,
+        n => digits + 1 + n,
+    };
+    format!("{sign}{:0width$.decimals$}", v.abs())
+}
+
+/// Whether the tree `e` fills the space it is given: whether it holds a plot
+/// without a fixed width or height. A host gives such a tree a size, such as
+/// a resizable node body or a pane.
+pub(crate) fn fills(e: &Element) -> bool {
+    match e {
+        Element::Plot(p) => p.w.is_none() || p.h.is_none(),
+        e => e.children().iter().any(fills),
+    }
+}
+
 /// Where `val` sits between the dialer's bounds, from 0 to 1. `None` unless
 /// both bounds are set, finite and apart, and the value is a number.
-fn range_fraction(d: &Dialer, val: &SteelVal) -> Option<f32> {
-    let (lo, hi) = (d.min?, d.max?);
+pub(crate) fn range_fraction(d: &Dialer, val: &SteelVal) -> Option<f32> {
+    let (lo, hi) = bounds(d)?;
     let v = match val {
         SteelVal::NumV(f) => *f,
         SteelVal::IntV(i) => *i as f64,
         _ => return None,
     };
-    let span = hi - lo;
-    (span.is_finite() && span > 0.0).then(|| ((v - lo) / span).clamp(0.0, 1.0) as f32)
+    Some(((v - lo) / (hi - lo)).clamp(0.0, 1.0) as f32)
 }
 
 /// Fill `slot` with the fill of a bounded dialer in `rect`, from its left
@@ -750,6 +963,19 @@ fn paint_range_fill(ui: &egui::Ui, slot: egui::layers::ShapeIdx, rect: egui::Rec
     ui.painter().with_clip_rect(cut).set(slot, fill);
 }
 
+/// Make the control `r` take the drag too. Inside a node, a press on a
+/// control that takes only clicks would go on to select and move the node.
+/// The widget's own `changed` mark carries over, as `interact` drops it.
+fn claim_press(r: egui::Response) -> egui::Response {
+    let changed = r.changed();
+    let mut claimed = r.interact(egui::Sense::drag());
+    if changed {
+        claimed.mark_changed();
+    }
+    claimed
+}
+
+/// An inline chip for a control missing its `bind` attr.
 fn unbound_chip(ui: &mut egui::Ui, tag: &str) -> egui::Response {
     weak_chip(ui, tag).on_hover_text("no `bind` attribute")
 }
@@ -773,6 +999,71 @@ fn weak_chip(ui: &mut egui::Ui, text: &str) -> egui::Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixed_decimals_fit_the_bounds_and_the_drag_step() {
+        let dialer = |min, max, precision| Dialer {
+            min,
+            max,
+            precision,
+            ..Default::default()
+        };
+        assert_eq!(fixed_decimals(&dialer(Some(0.0), None, None)), None, "open");
+        assert_eq!(
+            fixed_decimals(&dialer(Some(0.0), Some(1.0), Some(2))),
+            Some(2),
+            "set"
+        );
+        assert_eq!(
+            fixed_decimals(&dialer(Some(0.0), Some(1.0), None)),
+            Some(3),
+            "step"
+        );
+        assert_eq!(
+            fixed_decimals(&dialer(Some(0.5), Some(256.0), None)),
+            Some(1),
+            "bound"
+        );
+    }
+
+    #[test]
+    fn a_tree_fills_where_a_plot_has_no_fixed_size() {
+        let plot = |w, h| {
+            Element::Plot(gantz_ui::Plot {
+                w,
+                h,
+                ..Default::default()
+            })
+        };
+        assert!(fills(&plot(None, None)));
+        assert!(fills(&plot(Some(100.0), None)));
+        assert!(!fills(&plot(Some(100.0), Some(50.0))));
+        let col = |children| {
+            Element::Col(gantz_ui::Col {
+                children,
+                ..Default::default()
+            })
+        };
+        assert!(fills(&col(vec![plot(None, None)])));
+        assert!(!fills(&col(vec![plot(Some(1.0), Some(1.0))])));
+        assert!(!fills(&Element::Toggle(Toggle::default())));
+    }
+
+    #[test]
+    fn bounded_values_pad_to_the_digits_of_the_wider_bound() {
+        let dialer = |min, max| Dialer {
+            min,
+            max,
+            ..Default::default()
+        };
+        assert_eq!(fixed_digits(&dialer(Some(0.0), Some(100.0))), Some(3));
+        assert_eq!(fixed_digits(&dialer(Some(-20.0), Some(1.5))), Some(2));
+        assert_eq!(fixed_digits(&dialer(Some(0.0), None)), None, "open");
+        assert_eq!(zero_padded(5.0, 3, 0), "005");
+        assert_eq!(zero_padded(5.25, 3, 2), "005.25");
+        assert_eq!(zero_padded(-5.0, 2, 1), "-05.0");
+        assert_eq!(zero_padded(-0.0, 1, 1), "0.0");
+    }
 
     #[test]
     fn range_fraction_needs_finite_apart_bounds() {

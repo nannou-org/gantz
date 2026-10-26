@@ -39,17 +39,25 @@ pub struct StyleConfig {
     pub theme: egui::ThemePreference,
     #[serde(default)]
     pub palettes: Palettes,
-    #[serde(default)]
+    /// The key names the current set of role defaults. Roles stored under an
+    /// older key take the current defaults.
+    #[serde(default, rename = "roles_v2")]
     pub roles: Roles,
     #[serde(default)]
     pub shape: Shape,
 }
 
 /// The palette of each theme, and the palettes the user saved.
+///
+/// The keys of the palettes in use name the current set of defaults.
+/// Palettes stored under an older key take the current defaults. The saved
+/// palettes are kept.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct Palettes {
+    #[serde(rename = "dark_v2")]
     pub dark: Palette,
+    #[serde(rename = "light_v2")]
     pub light: Palette,
     /// The saved palettes, sorted by name. None shares a name with a preset.
     pub saved: Vec<Palette>,
@@ -487,8 +495,8 @@ fn colors_id(theme: egui::Theme) -> egui::Id {
 #[cfg(test)]
 mod tests {
     use super::{
-        Palettes, Role, SaveError, StyleConfig, Swatch, apply, color_of, contrast, from_ron,
-        role_contrast, style, to_ron,
+        Palette, Palettes, Role, SaveError, StyleConfig, Swatch, apply, base16, color_of, contrast,
+        from_ron, role_contrast, style, to_ron,
     };
 
     /// A config with both palettes and a role customised.
@@ -527,6 +535,23 @@ mod tests {
             ..StyleConfig::default()
         };
         assert_eq!(cfg, expected);
+    }
+
+    /// Palettes stored under the first keys take the gantz defaults, and the
+    /// saved palettes stay.
+    #[test]
+    fn first_palettes_take_the_defaults() {
+        let mut cfg = customised();
+        let saved = cfg.palettes.saved.clone();
+        cfg.palettes.dark = Palette::from(&base16::EGUI_DARK);
+        let text = to_ron(&cfg)
+            .expect("serialize StyleConfig")
+            .replace("dark_v2:", "dark:")
+            .replace("light_v2:", "light:");
+        let cfg = from_ron(&text).expect("deserialize StyleConfig");
+        assert_eq!(cfg.palettes.dark, Palette::dark());
+        assert_eq!(cfg.palettes.light, Palette::light());
+        assert_eq!(cfg.palettes.saved, saved);
     }
 
     /// The derived visuals take their colours from the theme's palette.
@@ -569,18 +594,25 @@ mod tests {
         assert!((contrast(egui::Color32::TRANSPARENT, black) - 1.0).abs() < 0.01);
     }
 
-    /// The default style passes every contrast check of the style editor in
-    /// both themes.
+    /// The default roles pass every contrast check of the style editor with
+    /// each of gantz's own palettes.
     #[test]
     fn default_style_is_readable() {
         let cfg = StyleConfig::default();
-        for theme in [egui::Theme::Dark, egui::Theme::Light] {
-            let palette = cfg.palettes.get(theme);
+        let gantz = base16::PRESETS
+            .iter()
+            .filter(|s| s.name.starts_with("gantz"));
+        for scheme in gantz {
+            let palette = &Palette::from(scheme);
             for &role in Role::ALL {
                 let Some((ratio, _)) = role_contrast(&cfg.roles, role, palette) else {
                     continue;
                 };
-                assert!(ratio >= role.min_contrast(), "{theme:?} {role:?} {ratio}");
+                assert!(
+                    ratio >= role.min_contrast(),
+                    "{} {role:?} {ratio}",
+                    scheme.name
+                );
             }
         }
     }

@@ -12,7 +12,7 @@
 //! hidden.
 
 use super::{
-    gantz::{EdgeConfig, GridConfig},
+    gantz::{EdgeConfig, EdgeKind, GridConfig},
     section,
 };
 use crate::{
@@ -138,7 +138,28 @@ pub fn style_config(
         });
     });
 
-    section(ui, "edges", |ui| {
+    section(ui, "edges", |ui| edge_editor(edge, ui));
+
+    res
+}
+
+/// The edge shape pills, then the parameters of the chosen shape.
+fn edge_editor(edge: &mut EdgeConfig, ui: &mut egui::Ui) {
+    super::kit::pills(
+        ui,
+        &mut edge.kind,
+        &[
+            (EdgeKind::Bezier, "bezier"),
+            (EdgeKind::Flow, "flow"),
+            (EdgeKind::Step, "step"),
+        ],
+    )
+    .on_hover_text(
+        "How an edge runs between its sockets. Bezier curves with the distance between \
+         them. Flow curves with the run along the flow. Step runs straight and turns at \
+         the midpoint.",
+    );
+    if edge.kind != EdgeKind::Step {
         let label = super::kit::text_width(ui, "curvature");
         super::kit::fit_sliders(ui, label + ui.spacing().item_spacing.x, "0.00");
         ui.horizontal(|ui| {
@@ -146,9 +167,49 @@ pub fn style_config(
                 .on_hover_text("How far each edge curves. 0 draws straight lines.");
             ui.label("curvature");
         });
-    });
-
-    res
+    }
+    let px = |ui: &mut egui::Ui,
+              value: &mut f32,
+              range: std::ops::RangeInclusive<f32>,
+              label: &str,
+              hover: &str| {
+        ui.horizontal(|ui| {
+            ui.add(
+                egui::DragValue::new(value)
+                    .speed(0.5)
+                    .range(range)
+                    .fixed_decimals(0)
+                    .suffix(" px"),
+            )
+            .on_hover_text(hover);
+            ui.label(label);
+        });
+    };
+    match edge.kind {
+        EdgeKind::Bezier => px(
+            ui,
+            &mut edge.max_handle,
+            1.0..=1000.0,
+            "max handle",
+            "The longest a curve's handle grows, so an edge between distant nodes does not \
+             swing far out.",
+        ),
+        EdgeKind::Flow => px(
+            ui,
+            &mut edge.min_span,
+            0.0..=200.0,
+            "min span",
+            "The shortest run along the flow that an edge curves for, so a near-level edge \
+             still bends.",
+        ),
+        EdgeKind::Step => px(
+            ui,
+            &mut edge.radius,
+            0.0..=50.0,
+            "radius",
+            "The radius of each corner.",
+        ),
+    }
 }
 
 /// The palette of `theme`. Its menu, name, swatches and file actions. Returns
@@ -731,7 +792,7 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
         .num_columns(2)
         .show(ui, |ui| {
             ui.label("pane outline").on_hover_text(
-                "The width of the outline around each pane. 0 draws none. Inked palettes \
+                "The width of the outline around each pane. 0 draws none. Contrast palettes \
                  need one, since their panes share the scene's colour.",
             );
             px(ui, &mut shape.pane_outline, 0.0..=4.0);
@@ -755,13 +816,17 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
     choice(
         ui,
         "font",
-        "The font of all text. Plex mono sets text and code alike. egui sets text in a \
-         proportional face and code in a monospace face.",
+        "The font of all text. Plex mono and egui mono set text and code alike. egui \
+         sets text in a proportional face and code in a monospace face.",
     );
     super::kit::pills(
         ui,
         &mut shape.font,
-        &[(Font::PlexMono, "plex mono"), (Font::Egui, "egui")],
+        &[
+            (Font::PlexMono, "plex mono"),
+            (Font::EguiMono, "egui mono"),
+            (Font::Egui, "egui"),
+        ],
     );
     choice(
         ui,

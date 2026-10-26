@@ -3,18 +3,21 @@
 //! [`EguiSugar`] provides the keywords for the egui nodes. They are
 //! `(bind <id>...)`, `(comment <text> [w h])`,
 //! `(gui [<role>] [#:display <d>])`,
-//! `(number [#:min m] [#:max m] [#:precision n] [#:input <mode>] [#:no-push-eval])`
-//! and bare `bang`, `bind`, `inspect`, `gui` and `number`. Compose it with
+//! `(number [#:min m] [#:max m] [#:init v] [#:precision n] [#:speed s] [#:label "l"] [#:input <mode>] [#:no-push-eval])`,
+//! `(state [#:init v])`
+//! and bare `bang`, `bind`, `inspect`, `gui`, `number` and `state`. Compose it with
 //! [`gantz_format::CoreSugar`] and the other crates' sugars via
 //! [`gantz_format::Sugars`].
 
-use crate::node::{Bang, Bind, Comment, Gui, GuiDisplay, GuiRole, Inspect, Number, NumberInput};
+use crate::node::{
+    Bang, Bind, Comment, Gui, GuiDisplay, GuiRole, Inspect, Number, NumberInput, State,
+};
 use gantz_format::sexpr::quote;
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
 use gantz_nodetag::NodeTag;
 
-/// Keyword sugar for [`Bang`], [`Bind`], [`Comment`], [`Gui`], [`Inspect`]
-/// and [`Number`].
+/// Keyword sugar for [`Bang`], [`Bind`], [`Comment`], [`Gui`], [`Inspect`],
+/// [`Number`] and [`State`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct EguiSugar;
 
@@ -28,6 +31,7 @@ const KEYWORD_TAG: &[(&str, &str)] = &[
     ("comment", Comment::TAG),
     ("gui", Gui::TAG),
     ("number", Number::TAG),
+    ("state", State::TAG),
 ];
 
 /// The node tag for a sugar keyword.
@@ -53,6 +57,7 @@ impl Sugar for EguiSugar {
             "comment" => comment_spec(args)?,
             "gui" => gui_spec(args)?,
             "number" => number_spec(args)?,
+            "state" => state_spec(args)?,
             _ => return Ok(None),
         };
         Ok(Some(datum))
@@ -70,6 +75,7 @@ impl Sugar for EguiSugar {
             // `Gui` or `Number` written bare would silently drop its config.
             "Gui" => Some(write_gui(node)),
             "Number" => Some(write_number(node)),
+            "State" => Some(write_state(node)),
             other => keyword_for_tag(other).map(str::to_string),
         }
     }
@@ -191,9 +197,9 @@ fn write_gui(node: &Datum) -> String {
     }
 }
 
-/// Read a `(number [#:min m] [#:max m] [#:precision n] [#:input <mode>]
-/// [#:no-push-eval])` form. Only the non-default fields are emitted, so a bare
-/// `number` stays bare.
+/// Read a `(number [#:min m] [#:max m] [#:init v] [#:precision n] [#:speed s]
+/// [#:label "l"] [#:input <mode>] [#:no-push-eval])` form. Only the non-default
+/// fields are emitted, so a bare `number` stays bare.
 fn number_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     let mut fields = Vec::new();
     if let Some(min) = args.keyword_f64("min")? {
@@ -202,8 +208,20 @@ fn number_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
     if let Some(max) = args.keyword_f64("max")? {
         fields.push(("max", Datum::F64(max)));
     }
+    if let Some(init) = args.keyword_f64("init")?.filter(|v| v.is_finite()) {
+        fields.push(("init", Datum::F64(init)));
+    }
     if let Some(precision) = args.keyword_int("precision")? {
         fields.push(("precision", Datum::from_u64(precision.max(0) as u64)));
+    }
+    if let Some(speed) = args
+        .keyword_f64("speed")?
+        .filter(|s| s.is_finite() && *s > 0.0)
+    {
+        fields.push(("speed", Datum::F64(speed)));
+    }
+    if let Some(label) = args.keyword_strs("label")?.pop().filter(|l| !l.is_empty()) {
+        fields.push(("label", Datum::Str(label)));
     }
     if let Some(s) = args.keyword_symbol("input")? {
         let input = NumberInput::from_str(&s)
@@ -219,18 +237,23 @@ fn number_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
 }
 
 /// Write a `Number` as a bare `number` when all config is default. Otherwise
-/// write `(number #:min m #:max m #:precision n #:input <mode> #:no-push-eval)`
-/// with only the non-default fields.
+/// write `(number #:min m #:max m #:init v #:precision n #:speed s #:label "l"
+/// #:input <mode> #:no-push-eval)` with only the non-default fields.
 fn write_number(node: &Datum) -> String {
     let min = node.get("min").and_then(Datum::as_f64);
     let max = node.get("max").and_then(Datum::as_f64);
+    let init = node.get("init").and_then(Datum::as_f64);
     let precision = node.get("precision").and_then(Datum::as_i64);
+    let speed = node.get("speed").and_then(Datum::as_f64);
+    let label = node.get("label").and_then(Datum::as_str);
     let input = node.get("input").and_then(Datum::as_str);
     let push = node
         .get("push_eval_on_edit")
         .and_then(Datum::as_bool)
         .unwrap_or(true);
-    if min.is_none() && max.is_none() && precision.is_none() && input.is_none() && push {
+    let bare = min.is_none() && max.is_none() && init.is_none() && precision.is_none();
+    let bare = bare && speed.is_none() && label.is_none();
+    if bare && input.is_none() && push {
         return "number".to_string();
     }
     let mut parts = Vec::new();
@@ -240,8 +263,17 @@ fn write_number(node: &Datum) -> String {
     if let Some(max) = max {
         parts.push(format!("#:max {max}"));
     }
+    if let Some(init) = init {
+        parts.push(format!("#:init {init}"));
+    }
     if let Some(precision) = precision {
         parts.push(format!("#:precision {precision}"));
+    }
+    if let Some(speed) = speed {
+        parts.push(format!("#:speed {speed}"));
+    }
+    if let Some(label) = label {
+        parts.push(format!("#:label {}", quote(label)));
     }
     if let Some(input) = input {
         parts.push(format!("#:input {input}"));
@@ -250,6 +282,56 @@ fn write_number(node: &Datum) -> String {
         parts.push("#:no-push-eval".to_string());
     }
     format!("(number {})", parts.join(" "))
+}
+
+/// Read a `(state [#:init v])` form. `v` is `#t`, `#f`, a number, a string
+/// or a symbol.
+fn state_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
+    let Some(text) = args.keyword_verbatim("init")? else {
+        return Ok(node_datum("State", vec![]));
+    };
+    let malformed = || FormatError::malformed(format!("state: bad #:init value `{text}`"));
+    let exprs = gantz_format::sexpr::read(text)?;
+    let expr = exprs.first().ok_or_else(malformed)?;
+    let init = match text {
+        "#t" | "#true" => ("Bool", Datum::Bool(true)),
+        "#f" | "#false" => ("Bool", Datum::Bool(false)),
+        _ => match gantz_format::sexpr::as_string(expr) {
+            Some(s) => ("Text", Datum::Str(s)),
+            None => match gantz_format::sexpr::as_f64(expr, text) {
+                Some(n) => ("Number", Datum::F64(n)),
+                None => {
+                    let symbol = gantz_format::sexpr::as_symbol(expr).ok_or_else(malformed)?;
+                    ("Symbol", Datum::Str(symbol))
+                }
+            },
+        },
+    };
+    let (variant, value) = init;
+    let init = Datum::Map(vec![(variant.to_string(), value)]);
+    Ok(node_datum("State", vec![("init", init)]))
+}
+
+/// Write a `State` as a bare `state` without an init, else
+/// `(state #:init v)`.
+fn write_state(node: &Datum) -> String {
+    let Some(Datum::Map(entries)) = node.get("init") else {
+        return "state".to_string();
+    };
+    let value = match entries.first() {
+        Some((variant, Datum::Bool(b))) if variant == "Bool" => match b {
+            true => "#t".to_string(),
+            false => "#f".to_string(),
+        },
+        Some((variant, Datum::Str(s))) if variant == "Text" => quote(s),
+        Some((variant, Datum::Str(s))) if variant == "Symbol" => s.clone(),
+        Some((_, value)) => match value.as_f64() {
+            Some(n) => format!("{n}"),
+            None => return "state".to_string(),
+        },
+        None => return "state".to_string(),
+    };
+    format!("(state #:init {value})")
 }
 
 #[cfg(test)]
@@ -265,6 +347,32 @@ mod tests {
         EguiSugar
             .read_spec(&head, SugarArgs::new(&args[1..], text))
             .expect("read_spec")
+    }
+
+    #[test]
+    fn state_round_trips_each_init() {
+        let bare = EguiSugar.read_bare("state").expect("bare state");
+        assert_eq!(
+            EguiSugar.write_spec("State", &bare).as_deref(),
+            Some("state")
+        );
+        for text in [
+            "(state #:init #t)",
+            "(state #:init #f)",
+            "(state #:init -1)",
+            "(state #:init 0.25)",
+            "(state #:init line)",
+            "(state #:init \"#ff8800\")",
+        ] {
+            let datum = read_spec(text).expect("state spec");
+            assert_eq!(EguiSugar.write_spec("State", &datum).as_deref(), Some(text));
+        }
+        let symbol = read_spec("(state #:init line)").expect("state spec");
+        let node: crate::node::State = gantz_format::from_datum(symbol).expect("decode");
+        assert_eq!(
+            node.init().map(crate::node::Init::to_steel),
+            Some(steel::SteelVal::SymbolV("line".into())),
+        );
     }
 
     #[test]
@@ -405,6 +513,37 @@ mod tests {
         assert_eq!(
             s.write_spec("Number", &np).as_deref(),
             Some("(number #:no-push-eval)"),
+        );
+
+        // A starting value.
+        let i = read_spec("(number #:min 0 #:init 3)").expect("init");
+        assert_eq!(i.get("init").and_then(Datum::as_f64), Some(3.0));
+        assert_eq!(
+            s.write_spec("Number", &i).as_deref(),
+            Some("(number #:min 0 #:init 3)"),
+        );
+
+        // A drag speed. A speed that is not positive reads as none.
+        let sp = read_spec("(number #:speed 0.01)").expect("speed");
+        assert_eq!(sp.get("speed").and_then(Datum::as_f64), Some(0.01));
+        assert_eq!(
+            s.write_spec("Number", &sp).as_deref(),
+            Some("(number #:speed 0.01)"),
+        );
+        let zero = read_spec("(number #:speed 0)").expect("zero speed");
+        assert_eq!(s.write_spec("Number", &zero).as_deref(), Some("number"));
+
+        // A label, quoted, and none for an empty one.
+        let l = read_spec(r#"(number #:min 0 #:label "wet mix")"#).expect("label");
+        assert_eq!(l.get("label").and_then(Datum::as_str), Some("wet mix"));
+        assert_eq!(
+            s.write_spec("Number", &l).as_deref(),
+            Some(r#"(number #:min 0 #:label "wet mix")"#),
+        );
+        let empty_label = read_spec(r#"(number #:label "")"#).expect("empty label");
+        assert_eq!(
+            s.write_spec("Number", &empty_label).as_deref(),
+            Some("number")
         );
 
         // Bang input. The default store mode stays bare.

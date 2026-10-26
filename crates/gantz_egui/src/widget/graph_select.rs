@@ -158,292 +158,292 @@ impl<'a> GraphSelect<'a> {
         // input/output docs on hover.
         let registry = self.registry;
 
-        ui.add_space(SECTION_GAP);
-        // List all the graphs, named then unnamed.
-        egui::ScrollArea::vertical()
-            // Limit the scroll height to allow for the `+` button below.
-            .max_height(
-                ui.available_height()
-                    - ui.spacing().interact_size.y
-                    - ui.spacing().item_spacing.y
-                    - SECTION_GAP,
-            )
-            .show(ui, |ui| {
-                ui.spacing_mut().item_spacing.y = ROW_GAP;
-                // Names fall into three groups.
-                // 1. User-named, non-demo
-                // 2. Base-named, non-demo
-                // 3. All demos, alphabetical, regardless of user or base
-                let is_base = |name: &Name| self.base_names.contains_key(name);
-                let is_demo = self::is_demo;
-                // Nested `parent:child` graphs are hidden from the root list.
-                // They are reached by navigating into their parent.
-                let is_nested = |name: &Name| name.is_nested();
-                let matches_filter = |name: &str| {
-                    state.name_filter.is_empty()
-                        || state
-                            .name_filter
-                            .split_whitespace()
-                            .all(|s| name.contains(s))
-                };
-
-                let mut visited = HashSet::new();
-                let collab = self.collab;
-
-                // Show a named graph row and its right-click menu, and handle
-                // clicks.
-                let show_named =
-                    |ui: &mut egui::Ui,
-                     name: &Name,
-                     ca: &gantz_ca::CommitAddr,
-                     base: bool,
-                     heads: &[gantz_ca::Head],
-                     focused_head: Option<usize>,
-                     response: &mut GraphSelectResponse| {
-                        let name_str = name.to_string();
-                        let row_type = if base {
-                            HeadRowType::Base(&name_str)
-                        } else {
-                            HeadRowType::Named(&name_str)
-                        };
-                        let head = gantz_ca::Head::Branch(name.clone());
-                        // A live session's dot beside the name, mirroring the
-                        // graph tabs. Sessions outlive their tabs, so this is
-                        // where a closed head's session stays visible.
-                        let status = collab.and_then(|c| c.sessions.get(name)).map(|d| {
-                            (
-                                crate::style::color(ui, d.conn.role()),
-                                d.hover_text().into(),
-                            )
-                        });
-                        let mut res =
-                            head_row(heads, &head, row_type, ca, focused_head, status, ui);
-                        // Show the graph's description and socket docs on hover.
-                        res.row = res.row.on_hover_ui(|ui| {
-                            // Re-assert wrap width every frame. See `socket_hover`.
-                            let max_width = ui.spacing().tooltip_width;
-                            ui.set_max_width(max_width);
-                            crate::node_info_ui(&registry.command_info(&name_str), ui);
-                        });
-                        // Only named non-base rows offer an `×` and are deletable.
-                        let deletable = res.delete.is_some();
-                        // The associated demo to offer, if any.
-                        let demo = registry.demo_graph(&name_str);
-                        res.row.context_menu(|ui| {
-                            if ui.button("open").clicked() {
-                                response.replaced = Some(head.clone());
-                                ui.close();
-                            }
-                            if ui.button("open tab").clicked() {
-                                response.opened = Some(head.clone());
-                                ui.close();
-                            }
-                            if let Some(demo_name) = &demo {
-                                if ui
-                                    .button("demo")
-                                    .on_hover_text("open the associated demo in a new tab")
-                                    .clicked()
-                                {
-                                    response.opened = Some(gantz_ca::Head::Branch(
-                                        demo_name.parse().expect("infallible"),
-                                    ));
-                                    ui.close();
-                                }
-                            }
-                            if deletable && ui.button("delete").clicked() {
-                                response.name_removed = Some(name.clone());
-                                ui.close();
-                            }
-                        });
-                        if res.row.clicked() {
-                            click_head(ui, heads, focused_head, head, response);
-                        } else if let Some(delete) = res.delete {
-                            if delete.clicked() {
-                                response.name_removed = Some(name.clone());
-                            }
+        // The buttons take their own height at the bottom, and the list fills
+        // the height above them.
+        egui::Panel::bottom(self.id.with("footer"))
+            .frame(egui::Frame::NONE)
+            .show_separator_line(false)
+            .resizable(false)
+            .show_inside(ui, |ui| {
+                ui.add_space(SECTION_GAP);
+                ui.horizontal(|ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .button("\u{2B07}")
+                            .on_hover_text("export all named graphs")
+                            .clicked()
+                        {
+                            response.export_all = true;
                         }
-                    };
-
-                // 1. User-named, non-demo.
-                for (name, ca) in names
-                    .iter()
-                    .filter(|(n, _)| !is_base(n) && !is_demo(n) && !is_nested(n))
-                {
-                    if !matches_filter(&name.to_string()) {
-                        continue;
-                    }
-                    visited.insert(*ca);
-                    show_named(
-                        ui,
-                        name,
-                        ca,
-                        false,
-                        self.heads,
-                        self.focused_head,
-                        &mut response,
-                    );
-                }
-
-                // 2. Base-named, non-demo. Hidden when the `base` filter is off.
-                for (name, ca) in names
-                    .iter()
-                    .filter(|(n, _)| state.show_base && is_base(n) && !is_demo(n) && !is_nested(n))
-                {
-                    if !matches_filter(&name.to_string()) {
-                        continue;
-                    }
-                    visited.insert(*ca);
-                    show_named(
-                        ui,
-                        name,
-                        ca,
-                        true,
-                        self.heads,
-                        self.focused_head,
-                        &mut response,
-                    );
-                }
-
-                // 3. All demos, alphabetical, regardless of user or base. Hidden
-                //    when the `demo` filter is off. Shown even if also a base.
-                for (name, ca) in names
-                    .iter()
-                    .filter(|(n, _)| state.show_demo && is_demo(n) && !is_nested(n))
-                {
-                    if !matches_filter(&name.to_string()) {
-                        continue;
-                    }
-                    visited.insert(*ca);
-                    show_named(
-                        ui,
-                        name,
-                        ca,
-                        is_base(name),
-                        self.heads,
-                        self.focused_head,
-                        &mut response,
-                    );
-                }
-
-                // Collect commit addresses for open unnamed heads. Named ones
-                // are already shown.
-                let open_head_cas: HashSet<_> = self
-                    .heads
-                    .iter()
-                    .filter_map(|head| match head {
-                        gantz_ca::Head::Branch(_) => None,
-                        gantz_ca::Head::Commit(ca) => Some(*ca),
-                    })
-                    .collect();
-
-                // Show only unnamed commits that are currently open as heads.
-                for (ca, commit) in commits_by_recency(self.registry.registry)
-                    .into_iter()
-                    .filter(|(ca, _)| !visited.contains(ca) && open_head_cas.contains(ca))
-                {
-                    if !state.name_filter.is_empty() {
-                        let ca_str = format!("{ca}");
-                        if !state.name_filter.split(" ").all(|s| ca_str.contains(s)) {
-                            continue;
+                        if ui
+                            .button("\u{2B06}")
+                            .on_hover_text("import graph(s)")
+                            .clicked()
+                        {
+                            response.import = true;
                         }
-                    }
-
-                    let head = gantz_ca::Head::Commit(*ca);
-                    let row_type = HeadRowType::Unnamed(&commit.timestamp);
-                    let res =
-                        head_row(self.heads, &head, row_type, ca, self.focused_head, None, ui);
-                    if res.row.clicked() {
-                        click_head(ui, self.heads, self.focused_head, head, &mut response);
-                    }
-                }
-            });
-
-        ui.add_space(SECTION_GAP);
-        ui.horizontal(|ui| {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .button("\u{2B07}")
-                    .on_hover_text("export all named graphs")
-                    .clicked()
-                {
-                    response.export_all = true;
-                }
-                if ui
-                    .button("\u{2B06}")
-                    .on_hover_text("import graph(s)")
-                    .clicked()
-                {
-                    response.import = true;
-                }
-                // Join a session from an invite ticket. Only shown when a
-                // collab layer is wired.
-                if self.collab.is_some() {
-                    let btn = ui
-                        .button("\u{1F310} join")
-                        .on_hover_text("join a session from an invite ticket");
-                    let ticket_id = self.id.with("join_ticket");
-                    let clipboard = self.clipboard;
-                    egui::Popup::menu(&btn)
-                        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                        .show(|ui| {
-                            let mut ticket = ui
-                                .data(|d| d.get_temp::<String>(ticket_id))
-                                .unwrap_or_default();
-                            ui.horizontal(|ui| {
-                                let edit = ui.add(
-                                    egui::TextEdit::singleline(&mut ticket)
-                                        .hint_text("paste an invite ticket"),
-                                );
-                                // Pasting is how this field is nearly always
-                                // filled. egui alone cannot read the clipboard,
-                                // so right-click paste needs a host-provided
-                                // reader. Ctrl+V works through egui's event
-                                // path regardless.
-                                if let Some(read) = clipboard {
-                                    edit.context_menu(|ui| {
-                                        if ui.button("paste").clicked() {
-                                            if let Some(text) = read() {
-                                                ticket = text.trim().to_string();
-                                            }
+                        // Join a session from an invite ticket. Only shown when a
+                        // collab layer is wired.
+                        if self.collab.is_some() {
+                            let btn = ui
+                                .button("\u{1F310} join")
+                                .on_hover_text("join a session from an invite ticket");
+                            let ticket_id = self.id.with("join_ticket");
+                            let clipboard = self.clipboard;
+                            egui::Popup::menu(&btn)
+                                .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+                                .show(|ui| {
+                                    let mut ticket = ui
+                                        .data(|d| d.get_temp::<String>(ticket_id))
+                                        .unwrap_or_default();
+                                    ui.horizontal(|ui| {
+                                        let edit = ui.add(
+                                            egui::TextEdit::singleline(&mut ticket)
+                                                .hint_text("paste an invite ticket"),
+                                        );
+                                        // Pasting is how this field is nearly always
+                                        // filled. egui alone cannot read the clipboard,
+                                        // so right-click paste needs a host-provided
+                                        // reader. Ctrl+V works through egui's event
+                                        // path regardless.
+                                        if let Some(read) = clipboard {
+                                            edit.context_menu(|ui| {
+                                                if ui.button("paste").clicked() {
+                                                    if let Some(text) = read() {
+                                                        ticket = text.trim().to_string();
+                                                    }
+                                                    ui.close();
+                                                }
+                                            });
+                                        }
+                                        let ready = !ticket.trim().is_empty();
+                                        if ui
+                                            .add_enabled(ready, egui::Button::new("connect"))
+                                            .clicked()
+                                        {
+                                            response.join_ticket = Some(ticket.trim().to_string());
+                                            ticket.clear();
                                             ui.close();
                                         }
                                     });
+                                    ui.data_mut(|d| d.insert_temp(ticket_id, ticket));
+                                });
+                        }
+                        // The vault link's state, while this device is linked. A mark
+                        // flags a link that only the user can fix.
+                        if let Some(vault) = self.collab.and_then(|c| c.vault.as_ref()) {
+                            let color = crate::style::color(ui, vault.state.role());
+                            let dot = crate::widget::status_dot(ui, color);
+                            let dot = match vault.state.needs_action() {
+                                true => {
+                                    dot | ui.label(egui::RichText::new("!").strong().color(color))
                                 }
-                                let ready = !ticket.trim().is_empty();
-                                if ui
-                                    .add_enabled(ready, egui::Button::new("connect"))
-                                    .clicked()
-                                {
-                                    response.join_ticket = Some(ticket.trim().to_string());
-                                    ticket.clear();
-                                    ui.close();
-                                }
-                            });
-                            ui.data_mut(|d| d.insert_temp(ticket_id, ticket));
+                                false => dot,
+                            };
+                            dot.on_hover_text(vault.hover_text());
+                        }
+                        // The "+" button fills the remaining width.
+                        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                            let width = egui::vec2(ui.available_width(), 0.0);
+                            if ui
+                                .add(egui::Button::new("+").min_size(width))
+                                .on_hover_text("add graph (Ctrl+N)")
+                                .clicked()
+                            {
+                                response.new_graph = true;
+                            }
                         });
-                }
-                // The vault link's state, while this device is linked. A mark
-                // flags a link that only the user can fix.
-                if let Some(vault) = self.collab.and_then(|c| c.vault.as_ref()) {
-                    let color = crate::style::color(ui, vault.state.role());
-                    let dot = crate::widget::status_dot(ui, color);
-                    let dot = match vault.state.needs_action() {
-                        true => dot | ui.label(egui::RichText::new("!").strong().color(color)),
-                        false => dot,
-                    };
-                    dot.on_hover_text(vault.hover_text());
-                }
-                // Fill remaining space with the "+" button.
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    if ui
-                        .add(egui::Button::new("+").min_size(ui.available_size()))
-                        .on_hover_text("add graph (Ctrl+N)")
-                        .clicked()
-                    {
-                        response.new_graph = true;
-                    }
+                    });
                 });
             });
+
+        ui.add_space(SECTION_GAP);
+        // List all the graphs, named then unnamed.
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = ROW_GAP;
+            // Names fall into three groups.
+            // 1. User-named, non-demo
+            // 2. Base-named, non-demo
+            // 3. All demos, alphabetical, regardless of user or base
+            let is_base = |name: &Name| self.base_names.contains_key(name);
+            let is_demo = self::is_demo;
+            // Nested `parent:child` graphs are hidden from the root list.
+            // They are reached by navigating into their parent.
+            let is_nested = |name: &Name| name.is_nested();
+            let matches_filter = |name: &str| {
+                state.name_filter.is_empty()
+                    || state
+                        .name_filter
+                        .split_whitespace()
+                        .all(|s| name.contains(s))
+            };
+
+            let mut visited = HashSet::new();
+            let collab = self.collab;
+
+            // Show a named graph row and its right-click menu, and handle
+            // clicks.
+            let show_named = |ui: &mut egui::Ui,
+                              name: &Name,
+                              ca: &gantz_ca::CommitAddr,
+                              base: bool,
+                              heads: &[gantz_ca::Head],
+                              focused_head: Option<usize>,
+                              response: &mut GraphSelectResponse| {
+                let name_str = name.to_string();
+                let row_type = if base {
+                    HeadRowType::Base(&name_str)
+                } else {
+                    HeadRowType::Named(&name_str)
+                };
+                let head = gantz_ca::Head::Branch(name.clone());
+                // A live session's dot beside the name, mirroring the
+                // graph tabs. Sessions outlive their tabs, so this is
+                // where a closed head's session stays visible.
+                let status = collab.and_then(|c| c.sessions.get(name)).map(|d| {
+                    (
+                        crate::style::color(ui, d.conn.role()),
+                        d.hover_text().into(),
+                    )
+                });
+                let mut res = head_row(heads, &head, row_type, ca, focused_head, status, ui);
+                // Show the graph's description and socket docs on hover.
+                res.row = res.row.on_hover_ui(|ui| {
+                    // Re-assert wrap width every frame. See `show_socket_doc`.
+                    let max_width = ui.spacing().tooltip_width;
+                    ui.set_max_width(max_width);
+                    crate::node_info_ui(&registry.command_info(&name_str), ui);
+                });
+                // Only named non-base rows offer an `×` and are deletable.
+                let deletable = res.delete.is_some();
+                // The associated demo to offer, if any.
+                let demo = registry.demo_graph(&name_str);
+                res.row.context_menu(|ui| {
+                    if ui.button("open").clicked() {
+                        response.replaced = Some(head.clone());
+                        ui.close();
+                    }
+                    if ui.button("open tab").clicked() {
+                        response.opened = Some(head.clone());
+                        ui.close();
+                    }
+                    if let Some(demo_name) = &demo {
+                        if ui
+                            .button("demo")
+                            .on_hover_text("open the associated demo in a new tab")
+                            .clicked()
+                        {
+                            response.opened = Some(gantz_ca::Head::Branch(
+                                demo_name.parse().expect("infallible"),
+                            ));
+                            ui.close();
+                        }
+                    }
+                    if deletable && ui.button("delete").clicked() {
+                        response.name_removed = Some(name.clone());
+                        ui.close();
+                    }
+                });
+                if res.row.clicked() {
+                    click_head(ui, heads, focused_head, head, response);
+                } else if let Some(delete) = res.delete {
+                    if delete.clicked() {
+                        response.name_removed = Some(name.clone());
+                    }
+                }
+            };
+
+            // 1. User-named, non-demo.
+            for (name, ca) in names
+                .iter()
+                .filter(|(n, _)| !is_base(n) && !is_demo(n) && !is_nested(n))
+            {
+                if !matches_filter(&name.to_string()) {
+                    continue;
+                }
+                visited.insert(*ca);
+                show_named(
+                    ui,
+                    name,
+                    ca,
+                    false,
+                    self.heads,
+                    self.focused_head,
+                    &mut response,
+                );
+            }
+
+            // 2. Base-named, non-demo. Hidden when the `base` filter is off.
+            for (name, ca) in names
+                .iter()
+                .filter(|(n, _)| state.show_base && is_base(n) && !is_demo(n) && !is_nested(n))
+            {
+                if !matches_filter(&name.to_string()) {
+                    continue;
+                }
+                visited.insert(*ca);
+                show_named(
+                    ui,
+                    name,
+                    ca,
+                    true,
+                    self.heads,
+                    self.focused_head,
+                    &mut response,
+                );
+            }
+
+            // 3. All demos, alphabetical, regardless of user or base. Hidden
+            //    when the `demo` filter is off. Shown even if also a base.
+            for (name, ca) in names
+                .iter()
+                .filter(|(n, _)| state.show_demo && is_demo(n) && !is_nested(n))
+            {
+                if !matches_filter(&name.to_string()) {
+                    continue;
+                }
+                visited.insert(*ca);
+                show_named(
+                    ui,
+                    name,
+                    ca,
+                    is_base(name),
+                    self.heads,
+                    self.focused_head,
+                    &mut response,
+                );
+            }
+
+            // Collect commit addresses for open unnamed heads. Named ones
+            // are already shown.
+            let open_head_cas: HashSet<_> = self
+                .heads
+                .iter()
+                .filter_map(|head| match head {
+                    gantz_ca::Head::Branch(_) => None,
+                    gantz_ca::Head::Commit(ca) => Some(*ca),
+                })
+                .collect();
+
+            // Show only unnamed commits that are currently open as heads.
+            for (ca, commit) in commits_by_recency(self.registry.registry)
+                .into_iter()
+                .filter(|(ca, _)| !visited.contains(ca) && open_head_cas.contains(ca))
+            {
+                if !state.name_filter.is_empty() {
+                    let ca_str = format!("{ca}");
+                    if !state.name_filter.split(" ").all(|s| ca_str.contains(s)) {
+                        continue;
+                    }
+                }
+
+                let head = gantz_ca::Head::Commit(*ca);
+                let row_type = HeadRowType::Unnamed(&commit.timestamp);
+                let res = head_row(self.heads, &head, row_type, ca, self.focused_head, None, ui);
+                if res.row.clicked() {
+                    click_head(ui, self.heads, self.focused_head, head, &mut response);
+                }
+            }
         });
 
         ui.memory_mut(|mem| mem.data.insert_temp(state_id, state));

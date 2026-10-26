@@ -35,6 +35,9 @@ pub struct Comment {
     size: [u16; 2],
 }
 
+/// The mark that starts a heading line in a comment. See [`text_job`].
+const HEADING: &str = "# ";
+
 impl Comment {
     /// The default size if none is loaded from state.
     pub const DEFAULT_SIZE: [u16; 2] = [100, 40];
@@ -264,15 +267,17 @@ impl NodeUi for Comment {
     }
 }
 
-/// The layout of a comment's `text`. A span between backticks is inline code,
-/// set in the monospace font on a well. The backticks stay, faint, so the
+/// The layout of a comment's `text`. A line that starts with `# ` is a
+/// heading, set in the strong text colour. A span between backticks is inline
+/// code, set in the monospace font on a well. The marks stay, faint, so the
 /// text edits as typed.
 fn text_job(ui: &egui::Ui, text: &str) -> egui::text::LayoutJob {
     let visuals = ui.visuals();
     let body = egui::TextStyle::Body.resolve(ui.style());
     let mono = egui::FontId::monospace(body.size);
-    let plain = egui::TextFormat::simple(body, visuals.text_color());
-    let tick = egui::TextFormat::simple(mono.clone(), visuals.weak_text_color());
+    let plain = egui::TextFormat::simple(body.clone(), visuals.text_color());
+    let heading = egui::TextFormat::simple(body, visuals.strong_text_color());
+    let mark = egui::TextFormat::simple(mono.clone(), visuals.weak_text_color());
     let code = egui::TextFormat {
         font_id: mono,
         color: visuals.strong_text_color(),
@@ -280,14 +285,23 @@ fn text_job(ui: &egui::Ui, text: &str) -> egui::text::LayoutJob {
         ..Default::default()
     };
     let mut job = egui::text::LayoutJob::default();
-    for (span, is_code) in code_spans(text) {
-        match is_code {
-            true => {
-                job.append("`", 0.0, tick.clone());
-                job.append(span, 0.0, code.clone());
-                job.append("`", 0.0, tick.clone());
+    for line in text.split_inclusive('\n') {
+        let (line, format) = match line.strip_prefix(HEADING) {
+            Some(rest) => {
+                job.append(HEADING, 0.0, mark.clone());
+                (rest, &heading)
             }
-            false => job.append(span, 0.0, plain.clone()),
+            None => (line, &plain),
+        };
+        for (span, is_code) in code_spans(line) {
+            match is_code {
+                true => {
+                    job.append("`", 0.0, mark.clone());
+                    job.append(span, 0.0, code.clone());
+                    job.append("`", 0.0, mark.clone());
+                }
+                false => job.append(span, 0.0, format.clone()),
+            }
         }
     }
     job

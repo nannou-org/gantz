@@ -21,7 +21,7 @@
 //! forwards the input value unchanged, so a value can be observed without
 //! breaking the chain it flows through.
 
-use super::size_sync::{self, fitted_size};
+use super::size_sync;
 use crate::ui_tree::UiTree;
 use crate::ui_tree::plot::{PlotFrame, is_container, resolve_color, split_channels};
 use crate::widget::node_inspector;
@@ -339,79 +339,17 @@ impl PlotLook {
         uictx: egui_graph::NodeCtx,
         content: impl FnOnce(&mut egui::Ui, &PlotLook) -> egui::Response,
     ) -> NodeUiResponse {
-        // Set when a settled resize commits a new body size.
-        let mut changed = false;
-
-        let style = uictx.style();
-        let interaction = uictx.interaction();
-
-        let mut frame = egui_graph::node::default_frame(style, interaction);
-        frame.fill = style.visuals.extreme_bg_color;
-        if !self.margin {
-            frame.inner_margin = egui::Margin::ZERO;
-            frame.corner_radius = egui::CornerRadius::ZERO;
-        }
-
-        let node_egui_id = uictx.egui_id();
-        let resize_id = node_egui_id.with("resize");
-        let size_sync_id = node_egui_id.with("size_sync");
-        let min_size = egui::Vec2::splat(style.interaction.interact_radius * 2.0);
-        let default_size = egui::vec2(self.width as f32, self.height as f32);
-
-        let framed = uictx.framed_with(frame, |ui, _sockets| {
-            let size_sync::Decisions {
-                resizing,
-                push_external,
-                drag_released,
-            } = size_sync::begin(ui, size_sync_id, resize_id, [self.width, self.height]);
-
-            let resize = egui::containers::Resize::default()
-                .id(resize_id)
-                .with_stroke(false);
-            let resize = if push_external {
-                // One-frame push of the committed size into the displayed
-                // resize state. See `node::size_sync`. It overrides persisted
-                // state and cancels any in-flight drag. External wins.
-                ui.ctx().request_repaint();
-                let w = (self.width as f32).max(min_size.x);
-                let h = (self.height as f32).max(min_size.y);
-                resize.fixed_size(egui::vec2(w, h))
-            } else {
-                // Both axes are user-resizable while the node is selected.
-                let resizable = egui::Vec2b::new(interaction.selected, interaction.selected);
-                resize
-                    .resizable(resizable)
-                    .default_size(default_size)
-                    .min_size(min_size)
-            };
-            let inner = resize.show(ui, |ui| {
-                let avail = ui.available_size();
-
-                // `size` is part of the content address, so it is written
-                // only on a settled corner-drag release. Writing mid-drag
-                // would commit per drag frame. Writing because the rendered
-                // size differs would clobber external changes from undo or
-                // collab sync and mint spurious commits.
-                let fitted = fitted_size(avail.x.max(min_size.x), avail.y.max(min_size.y));
-                if drag_released && [self.width, self.height] != fitted {
-                    [self.width, self.height] = fitted;
-                    changed = true;
-                }
-
-                content(ui, self)
+        let mut size = [self.width, self.height];
+        let (framed, changed) =
+            size_sync::resizable_body(uictx, &mut size, self.margin, |ui, s| {
+                let look = PlotLook {
+                    width: s[0],
+                    height: s[1],
+                    ..self.clone()
+                };
+                content(ui, &look)
             });
-
-            size_sync::store(
-                ui,
-                size_sync_id,
-                [self.width, self.height],
-                push_external,
-                resizing,
-            );
-
-            inner
-        });
-
+        [self.width, self.height] = size;
         let mut resp = NodeUiResponse::new(framed);
         resp.set_changed(changed);
         resp
@@ -540,6 +478,7 @@ fn fragment(
         y_max: look.y_max.map(F32::get),
         w: size.map(|s| s.x),
         h: size.map(|s| s.y),
+        capacity: None,
         key: None,
     })
 }
@@ -940,6 +879,7 @@ mod tests {
             y_max: Some(1.0),
             w: Some(120.0),
             h: Some(80.0),
+            capacity: None,
             key: None,
         });
         assert_eq!(

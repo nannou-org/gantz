@@ -149,6 +149,24 @@ pub struct Selection {
     pub edges: HashSet<EdgeIndex>,
 }
 
+/// A socket and its doc, gathered over a pass so that only the socket
+/// nearest the pointer shows its doc. See [`show_socket_doc`].
+pub(crate) struct SocketHover {
+    /// The socket's hover response. Its rect centres on the socket.
+    pub resp: egui::Response,
+    pub kind: SocketKind,
+    pub ix: usize,
+    pub doc: Option<SocketDoc>,
+}
+
+/// How near the pointer must come to a socket to show its doc, as a share of
+/// the interact height.
+const SOCKET_REACH: f32 = 0.6;
+
+/// The radii of a hovered socket's highlight and of the faint halo around it.
+const SOCKET_LIT: f32 = 5.0;
+const SOCKET_HALO: f32 = 10.0;
+
 impl<'a> GraphScene<'a> {
     /// Create a graph scene for the given graph and its cache of reified node
     /// instances. The graph is a head's root graph. Nested graphs are
@@ -390,7 +408,7 @@ impl<'a> GraphScene<'a> {
                         &mut responses,
                         &mut changed,
                         self.edge_styles,
-                        self.scene_config.edge.curvature,
+                        self.scene_config.edge.shape(),
                         ui,
                     )
                 });
@@ -750,6 +768,8 @@ fn nodes(
     // VM-state writes recorded by each node's `NodeCtx`. They drain per node
     // into `StateWritten` payloads.
     let mut writes = Vec::new();
+    // Each socket and its doc. The one nearest the pointer shows its doc.
+    let mut socket_hovers = Vec::new();
     for n_id in node_ids {
         let n_ix = graph.to_index(n_id);
         let node_id = egui_graph::NodeId::from_u64(n_ix as u64);
@@ -813,20 +833,41 @@ fn nodes(
             lock_badge(ui, &response, &lost);
         }
 
-        // Attach on-hover docs to each socket. Each node describes its own
-        // sockets. Markers read their stored docs. References resolve the
-        // referenced graph's marker docs via the registry.
-        if let Some(entry) = &instance {
-            for (ix, sock) in response.sockets().inputs() {
-                if let Some(doc) = entry.inst.node.socket_doc(registry, SocketKind::Input, ix) {
-                    socket_hover(sock, &doc);
-                }
+        // Gather each socket's doc for the hover after the loop. Each node
+        // describes its own sockets. Markers read their stored docs.
+        // References resolve the referenced graph's marker docs via the
+        // registry.
+        let sockets = response.sockets();
+        let kinds = [
+            (SocketKind::Input, sockets.inputs().collect::<Vec<_>>()),
+            (SocketKind::Output, sockets.outputs().collect()),
+        ];
+        for (kind, socks) in kinds {
+            for (ix, sock) in socks {
+                let doc = instance
+                    .as_ref()
+                    .and_then(|e| e.inst.node.socket_doc(registry, kind, ix));
+                let resp = sock.clone();
+                socket_hovers.push(SocketHover {
+                    resp,
+                    kind,
+                    ix,
+                    doc,
+                });
             }
-            for (ix, sock) in response.sockets().outputs() {
-                if let Some(doc) = entry.inst.node.socket_doc(registry, SocketKind::Output, ix) {
-                    socket_hover(sock, &doc);
-                }
-            }
+        }
+
+        // A hover on the node's frame, where a press drags the node, shows
+        // what the node does. A reference to a named graph shows that
+        // graph's description.
+        let description = instance.as_ref().and_then(|e| {
+            let node = &e.inst.node;
+            node.description()
+                .map(std::borrow::Cow::Borrowed)
+                .or_else(|| registry.node_description(&node.name(registry)))
+        });
+        if let Some(description) = description {
+            (*response).clone().on_hover_text(description);
         }
 
         if response.changed() {
@@ -1067,6 +1108,8 @@ fn nodes(
         node_responses.push((n_id, response));
     }
 
+    show_socket_doc(ui, &socket_hovers);
+
     // Reset state by removing it, then re-registering the graph.
     // Registration is idempotent and re-initialises any missing state.
     // Registration needs typed nodes, so the graph reifies transiently.
@@ -1176,23 +1219,74 @@ fn placeholder_ui(
     })
 }
 
-/// Show a socket's doc as a hover tooltip, with the type label in bold and
-/// the description below.
-pub(crate) fn socket_hover(resp: &egui::Response, doc: &SocketDoc) {
-    resp.clone().on_hover_ui(|ui| {
+/// Highlight the socket in `sockets` nearest the pointer and show its doc at
+/// once, with the type in bold and the description below. A socket with no
+/// doc says so, so that a missing doc is not mistaken for a missed hover.
+///
+/// egui's own tooltips wait for the pointer to rest, so the doc shows at once
+/// while egui finds the pointer on the socket's part outside its node. Over
+/// the node a press drags the node, so no socket lights up there.
+pub(crate) fn show_socket_doc(ui: &egui::Ui, sockets: &[SocketHover]) {
+    let ctx = ui.ctx();
+    if ctx.input(|i| i.pointer.any_down()) || egui::Popup::is_any_open(ctx) {
+        return;
+    }
+    let Some(pointer) = ctx.input(|i| i.pointer.hover_pos()) else {
+        return;
+    };
+    let reach = ui.spacing().interact_size.y * SOCKET_REACH;
+    let nearest = sockets
+        .iter()
+        .filter_map(|s| {
+            let layer = s.resp.layer_id;
+            let to_global = ctx.layer_transform_to_global(layer).unwrap_or_default();
+            let dist = s.resp.rect.center().distance(to_global.inverse() * pointer);
+            let over = s.resp.contains_pointer();
+            (dist <= reach && over).then_some((dist, s, to_global))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0));
+    let Some((_, socket, to_global)) = nearest else {
+        return;
+    };
+
+    // The highlight sits under the node's frame, so only its outer half
+    // shows, in the shape of the socket.
+    let painter = ui.painter().clone().with_layer_id(socket.resp.layer_id);
+    let center = socket.resp.rect.center();
+    let color = ui.visuals().strong_text_color();
+    painter.circle_filled(center, SOCKET_HALO, color.gamma_multiply(0.2));
+    painter.circle_filled(center, SOCKET_LIT, color);
+
+    let anchor = to_global * socket.resp.rect;
+    // The doc opens away from the node: above an input, below an output.
+    let align = match socket.kind {
+        SocketKind::Input => egui::RectAlign::TOP_START,
+        SocketKind::Output => egui::RectAlign::BOTTOM_START,
+    };
+    let mut tooltip =
+        egui::Tooltip::always_open(ctx.clone(), socket.resp.layer_id, socket.resp.id, anchor);
+    tooltip.popup = tooltip.popup.align(align);
+    tooltip.show(|ui| {
         // Re-assert the wrap width every frame. The tooltip's `Area` caches the
         // width it first rendered at, and wrapped text keeps fitting that stale
         // width. Docs added to a referenced graph later would never widen it
         // until egui memory is cleared. Forcing the max width breaks that
         // feedback loop while still letting short tooltips stay narrow.
-        let max_width = ui.spacing().tooltip_width;
-        ui.set_max_width(max_width);
-        if !doc.ty.is_empty() {
-            ui.strong(doc.ty.as_ref());
-        }
-        if let Some(desc) = &doc.description {
-            ui.label(desc.as_ref());
-        }
+        ui.set_max_width(ui.spacing().tooltip_width);
+        let doc = socket.doc.as_ref();
+        let ty = doc.map(|d| d.ty.as_ref()).filter(|ty| !ty.is_empty());
+        let kind = match socket.kind {
+            SocketKind::Input => "input",
+            SocketKind::Output => "output",
+        };
+        match ty {
+            Some(ty) => ui.strong(ty),
+            None => ui.strong(format!("{kind} {}", socket.ix)),
+        };
+        match doc.and_then(|d| d.description.as_ref()) {
+            Some(desc) => ui.label(desc.as_ref()),
+            None => ui.weak("no description"),
+        };
     });
 }
 
@@ -1204,7 +1298,7 @@ fn edges(
     responses: &mut Vec<DynResponse>,
     changed: &mut bool,
     edge_styles: Option<(&gantz_ca::Head, &[&dyn crate::widget::EdgeStyle])>,
-    curvature: f32,
+    shape: egui_graph::edge::EdgeShape,
     ui: &mut egui::Ui,
 ) {
     // Track whether any edge has a context menu open this frame.
@@ -1228,8 +1322,7 @@ fn edges(
             crate::widget::edge_style::edge_styling(styles, &ctx)
         });
 
-        let edge = egui_graph::edge::Edge::new((a, output), (b, input), &mut selected)
-            .curvature_factor(curvature);
+        let edge = egui_graph::edge::Edge::new((a, output), (b, input), &mut selected).shape(shape);
         let response = match &styling {
             None => edge.show(ectx, ui),
             Some(styling) => edge.show_with(ectx, ui, |ui, pctx| {
@@ -1314,7 +1407,7 @@ fn edges(
 
     // Draw the in-progress edge if there is one.
     if let Some(edge) = ectx.in_progress(ui) {
-        edge.show(ui, curvature);
+        edge.show(ui, shape);
     }
 }
 

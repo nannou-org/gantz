@@ -2,13 +2,14 @@
 
 use crate::node::Sample;
 use gantz_egui::{
-    Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind,
+    ContextMenuResponse, Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, SocketDoc,
+    SocketKind,
 };
 use std::borrow::Cow;
 
 /// A request to load a WAV file into the `~sample` node at `path`. The node's
-/// inspector emits it. The audio driver shows a file dialog, stores the
-/// decoded audio as an asset and assigns it to the node.
+/// inspector and context menu emit it. The audio driver shows a file dialog,
+/// stores the decoded audio as an asset and assigns it to the node.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LoadSample {
     /// The node's path within the head's graph.
@@ -57,7 +58,7 @@ impl NodeUi for Sample {
             row.col(|ui| {
                 ui.horizontal(|ui| {
                     load = ui
-                        .button("Load…")
+                        .button("load…")
                         .on_hover_text("load a WAV file into this sample")
                         .clicked();
                     ui.label(summary);
@@ -71,6 +72,21 @@ impl NodeUi for Sample {
             resp.emit(LoadSample {
                 path: ctx.path().to_vec(),
             });
+        }
+        resp
+    }
+
+    fn context_menu(&mut self, ctx: &mut NodeCtx, ui: &mut egui::Ui) -> ContextMenuResponse {
+        let mut resp = ContextMenuResponse::default();
+        if ui
+            .button("load…")
+            .on_hover_text("load a WAV file into this sample")
+            .clicked()
+        {
+            resp.emit(LoadSample {
+                path: ctx.path().to_vec(),
+            });
+            ui.close();
         }
         resp
     }

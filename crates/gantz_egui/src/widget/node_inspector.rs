@@ -57,8 +57,12 @@ where
     }
 }
 
+/// The height of an inspector row: a line of text or a control, such as a
+/// dialer or a field, with the item spacing around it, so that no control
+/// reaches into the rows beside it.
 pub fn table_row_h(ui: &egui::Ui) -> f32 {
-    ui.text_style_height(&egui::TextStyle::Body) + ui.spacing().item_spacing.y
+    let line = ui.text_style_height(&egui::TextStyle::Body);
+    line.max(ui.spacing().interact_size.y) + ui.spacing().item_spacing.y
 }
 
 /// A clickable collapse/expand triangle for the inspector's state row. Returns

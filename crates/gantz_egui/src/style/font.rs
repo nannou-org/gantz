@@ -19,6 +19,8 @@ pub enum Font {
     /// IBM Plex Mono, for text and code alike.
     #[default]
     PlexMono,
+    /// egui's own monospace face, for text and code alike.
+    EguiMono,
     /// egui's own fonts: a proportional face for text and a monospace face
     /// for code.
     Egui,
@@ -56,6 +58,18 @@ pub fn definitions(font: Font) -> egui::FontDefinitions {
                 .collect()
         }
         // egui ships no semibold face, so titles keep the regular weight.
+        Font::EguiMono => {
+            let mono = fonts
+                .families
+                .get(&egui::FontFamily::Monospace)
+                .cloned()
+                .unwrap_or_default();
+            let text: Vec<String> = mono.into_iter().chain(fallbacks).collect();
+            fonts
+                .families
+                .insert(egui::FontFamily::Proportional, text.clone());
+            text
+        }
         Font::Egui => fallbacks,
     };
     fonts
@@ -98,5 +112,24 @@ fn strong_family(ctx: &egui::Context) -> egui::FontFamily {
     match ctx.fonts(|f| f.definitions().families.contains_key(&strong)) {
         true => strong,
         false => egui::FontFamily::Proportional,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// egui mono sets text in egui's monospace face, with egui's own text
+    /// fonts after it for the glyphs it lacks.
+    #[test]
+    fn egui_mono_sets_text_in_the_monospace_face() {
+        let fonts = definitions(Font::EguiMono);
+        let family = |f: egui::FontFamily| fonts.families[&f].clone();
+        let mono = family(egui::FontFamily::Monospace);
+        let text = family(egui::FontFamily::Proportional);
+        assert_eq!(text.first(), mono.first());
+        let defaults = egui::FontDefinitions::default();
+        let proportional = &defaults.families[&egui::FontFamily::Proportional];
+        assert!(proportional.iter().all(|f| text.contains(f)));
     }
 }

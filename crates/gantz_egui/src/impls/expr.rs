@@ -4,11 +4,15 @@ use crate::{
 };
 
 /// A widget for editing and parsing a Steel expression.
+///
+/// In the graph the code sits on the node as text, and the field shows only
+/// while the user edits, from [`ExprEdit::open`] until the field loses focus.
 pub struct ExprEdit<'a> {
     expr: &'a mut gantz_core::node::Expr,
     pub id: egui::Id,
     /// When `true`, the editor fills the available width and height instead
-    /// of sizing to its widest line. The detached view uses this.
+    /// of sizing to its widest line, and it always shows its field. The
+    /// detached view uses this.
     fill: bool,
 }
 
@@ -18,7 +22,26 @@ struct ExprEditState {
     code: String,
     /// Why the working code does not parse, if it does not.
     error: Option<String>,
+    edit: Edit,
 }
+
+/// Whether an in-graph [`ExprEdit`] shows its field.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+enum Edit {
+    /// The code sits on the node as text.
+    #[default]
+    Rest,
+    /// The field shows and takes the focus this frame.
+    Opening,
+    /// The field shows until it loses the focus.
+    Open,
+}
+
+/// The language the code is highlighted as.
+const LANGUAGE: &str = "scm";
+
+/// The code a field with no code hints at.
+const HINT: &str = "(+ $l $r)";
 
 impl<'a> egui::Widget for ExprEdit<'a> {
     fn ui(self, ui: &mut egui::Ui) -> egui::Response {
@@ -37,8 +60,14 @@ impl<'a> egui::Widget for ExprEdit<'a> {
             state.error = None;
         }
 
-        let language = "scm";
         let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
+
+        // At rest in the graph, the code is the node's text.
+        if !fill && state.edit == Edit::Rest {
+            let response = code_label(ui, &theme, &state.code);
+            ui.memory_mut(|m| m.data.insert_temp(code_id, state));
+            return response;
+        }
 
         let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
             let mut layout_job = egui_extras::syntax_highlighting::highlight(
@@ -46,15 +75,20 @@ impl<'a> egui::Widget for ExprEdit<'a> {
                 ui.style(),
                 &theme,
                 buf.as_str(),
-                language,
+                LANGUAGE,
             );
             layout_job.wrap.max_width = wrap_width;
             ui.fonts_mut(|fonts| fonts.layout_job(layout_job))
         };
 
-        // `margin` is passed to both the editor and the width measurement.
+        // `margin` is passed to both the editor and the width measurement. In
+        // the graph the field has none, so the code keeps its place as the
+        // field opens.
         let font_id = egui::FontSelection::from(egui::TextStyle::Monospace).resolve(ui.style());
-        let margin = egui::Margin::symmetric(4, 2);
+        let margin = match fill {
+            true => egui::Margin::symmetric(4, 2),
+            false => egui::Margin::ZERO,
+        };
         // Fill the pane in the detached view, or size to the widest line in
         // the graph.
         let (desired_width, desired_rows) = if fill {
@@ -63,7 +97,7 @@ impl<'a> egui::Widget for ExprEdit<'a> {
             (ui.available_width(), rows)
         } else {
             (
-                super::code_edit_desired_width(ui, &theme, &state.code, language, margin),
+                super::code_edit_desired_width(ui, &theme, &state.code, LANGUAGE, margin),
                 1,
             )
         };
@@ -83,17 +117,19 @@ impl<'a> egui::Widget for ExprEdit<'a> {
                     w.bg_stroke.width = width;
                     w.expansion = 0.0;
                 }
-                ui.add(
-                    egui::TextEdit::multiline(&mut state.code)
-                        .id(id)
-                        .code_editor()
-                        .font(font_id)
-                        .margin(margin)
-                        .desired_rows(desired_rows)
-                        .desired_width(desired_width)
-                        .hint_text("(+ $l $r)")
-                        .layouter(&mut layouter),
-                )
+                let mut edit = egui::TextEdit::multiline(&mut state.code)
+                    .id(id)
+                    .code_editor()
+                    .font(font_id)
+                    .margin(margin)
+                    .desired_rows(desired_rows)
+                    .desired_width(desired_width)
+                    .hint_text(HINT)
+                    .layouter(&mut layouter);
+                if !fill {
+                    edit = edit.frame(egui::Frame::NONE);
+                }
+                ui.add(edit)
             })
             .inner;
         if response.changed() {
@@ -106,6 +142,14 @@ impl<'a> egui::Widget for ExprEdit<'a> {
                 }
                 Err(e) => state.error = Some(e.to_string()),
             }
+        }
+        match state.edit {
+            Edit::Opening => {
+                response.request_focus();
+                state.edit = Edit::Open;
+            }
+            Edit::Open if !response.has_focus() => state.edit = Edit::Rest,
+            _ => (),
         }
 
         ui.memory_mut(|m| m.data.insert_temp(code_id, state));
@@ -129,8 +173,29 @@ impl NodeUi for gantz_core::node::Expr {
         // changes the buffer but not the node, so it must not mark `changed`.
         let before = expr_hash(self);
         let id = egui::Id::new("ExprEdit").with(ctx.path());
-        let framed = uictx.framed(|ui, _sockets| ui.add(ExprEdit::new(self, id)));
+        let frame = egui_graph::node::default_frame(uictx.style(), uictx.interaction());
+        let framed = uictx.framed_with(frame, |ui, _sockets| {
+            // While the field is open the node becomes the field. The slot sits
+            // behind the code and covers the node's own fill.
+            let slot = ui.painter().add(egui::Shape::Noop);
+            let response = ui.add(ExprEdit::new(self, id));
+            if ExprEdit::is_open(ui.ctx(), id) {
+                let rect = ui.min_rect() + frame.inner_margin;
+                let field = egui::epaint::RectShape::new(
+                    rect,
+                    frame.corner_radius,
+                    ui.visuals().extreme_bg_color,
+                    egui::Stroke::new(frame.stroke.width, ui.visuals().strong_text_color()),
+                    egui::StrokeKind::Outside,
+                );
+                ui.painter().set(slot, field);
+            }
+            response
+        });
         let node = &framed.inner.response;
+        if node.double_clicked() {
+            ExprEdit::open(&node.ctx, id);
+        }
         if let Some(error) = ExprEdit::error(&node.ctx, id) {
             unparsed_tag(node, &error);
         }
@@ -228,6 +293,42 @@ impl<'a> ExprEdit<'a> {
         ctx.data(|d| d.get_temp::<ExprEditState>(id.with("code")))
             .and_then(|state| state.error)
     }
+
+    /// Show the field of the in-graph editor `id` and give it the focus.
+    pub fn open(ctx: &egui::Context, id: egui::Id) {
+        ctx.data_mut(|d| {
+            let state = d.get_temp_mut_or_default::<ExprEditState>(id.with("code"));
+            if state.edit == Edit::Rest {
+                state.edit = Edit::Opening;
+            }
+        });
+    }
+
+    /// Whether the in-graph editor `id` shows its field.
+    pub fn is_open(ctx: &egui::Context, id: egui::Id) -> bool {
+        ctx.data(|d| d.get_temp::<ExprEditState>(id.with("code")))
+            .is_some_and(|state| state.edit != Edit::Rest)
+    }
+}
+
+/// The code as the node's text, in the code colours and with its own lines.
+/// Code with no text shows the hint in the weak text colour.
+fn code_label(
+    ui: &mut egui::Ui,
+    theme: &egui_extras::syntax_highlighting::CodeTheme,
+    code: &str,
+) -> egui::Response {
+    if code.is_empty() {
+        let font = egui::FontSelection::from(egui::TextStyle::Monospace).resolve(ui.style());
+        let hint = egui::RichText::new(HINT)
+            .font(font)
+            .color(ui.visuals().weak_text_color());
+        return ui.add(egui::Label::new(hint).selectable(false));
+    }
+    let mut job =
+        egui_extras::syntax_highlighting::highlight(ui.ctx(), ui.style(), theme, code, LANGUAGE);
+    job.wrap.max_width = f32::INFINITY;
+    ui.add(egui::Label::new(job).selectable(false))
 }
 
 fn expr_hash(expr: &gantz_core::node::Expr) -> u64 {

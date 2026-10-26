@@ -14,6 +14,7 @@ use bevy_gantz::head::{HeadRef, Module, OpenHead, PendingLoad};
 use bevy_gantz::vm::{CompileConfig, CompiledInputs, Inputs};
 use gantz_core::node::{self, EvalConf, ExprCtx, ExprResult, MetaCtx};
 use gantz_egui::node::DynNode;
+use gantz_egui::widget::kit;
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
@@ -45,10 +46,8 @@ impl gantz_egui::NodeUi for LoadBang {
 
     fn description(&self) -> Option<&'static str> {
         Some(
-            "Emits a bang once when the graph loads. A graph loads when it opens \
-             in a tab, including at startup, or when it replaces the graph in the \
-             focused tab. Edits, undo and redo do not fire it. Double-click to \
-             fire it by hand.",
+            "Bangs once when the graph loads into a tab, as at startup. Edits, \
+             undo and redo do not fire it. Double-click to fire it by hand.",
         )
     }
 
@@ -57,10 +56,16 @@ impl gantz_egui::NodeUi for LoadBang {
         ctx: gantz_egui::NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> gantz_egui::NodeUiResponse {
-        let framed =
-            uictx.framed(|ui, _sockets| ui.add(egui::Label::new("load!").selectable(false)));
+        let dot_id = uictx.egui_id().with("dot");
+        let framed = uictx.framed(|ui, _sockets| {
+            kit::event_label(ui, dot_id, Some("load"), egui::Sense::hover())
+        });
+        let fired = framed.inner.response.double_clicked();
+        if fired {
+            kit::fire_dot(&framed.inner.response.ctx, dot_id);
+        }
         let mut resp = gantz_egui::NodeUiResponse::new(framed);
-        if resp.framed.inner.response.double_clicked() {
+        if fired {
             resp.push_eval(ctx.path(), 1);
         }
         resp

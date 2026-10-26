@@ -12,6 +12,7 @@ use bevy_egui::egui;
 use bevy_time::prelude::*;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_egui::node::DynNode;
+use gantz_egui::widget::kit;
 use gantz_egui::widget::node_inspector::radio_option;
 use gantz_format::{Datum, FormatError, SugarArgs, node_datum};
 use gantz_nodetag::NodeTag;
@@ -216,11 +217,8 @@ impl gantz_egui::NodeUi for TickBang {
 
     fn description(&self) -> Option<&'static str> {
         Some(
-            "Self-driven clock that fires once per configurable tick interval, set \
-             as a duration (seconds) or a rate (Hz). Fires once for every whole \
-             interval elapsed since the last update, so the tick count stays \
-             correct even when the app updates slower than the tick rate. Outputs \
-             the tick duration in seconds.",
+            "Bangs once per tick, with the tick duration in seconds. Set the tick \
+             as a duration or a rate. A slow update fires each tick it missed.",
         )
     }
 
@@ -229,8 +227,10 @@ impl gantz_egui::NodeUi for TickBang {
         _ctx: gantz_egui::NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> gantz_egui::NodeUiResponse {
-        let framed =
-            uictx.framed(|ui, _sockets| ui.add(egui::Label::new("tick!").selectable(false)));
+        let dot_id = uictx.egui_id().with("dot");
+        let framed = uictx.framed(|ui, _sockets| {
+            kit::event_label(ui, dot_id, Some("tick"), egui::Sense::hover())
+        });
         gantz_egui::NodeUiResponse::new(framed)
     }
 

@@ -14,6 +14,7 @@ use bevy_egui::egui;
 use bevy_time::prelude::*;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_egui::node::DynNode;
+use gantz_egui::widget::kit;
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 use steel::SteelVal;
@@ -52,9 +53,9 @@ impl gantz_egui::NodeUi for UpdateBang {
 
     fn description(&self) -> Option<&'static str> {
         Some(
-            "Drives continuous evaluation, banging once per update with the update \
-             delta time in seconds. Updates can fire more frequently than rendered \
-             frames under presentation modes like Mailbox.",
+            "Bangs once per app update, with the time since the last update in \
+             seconds. Updates can outpace rendered frames, as with Mailbox \
+             presentation.",
         )
     }
 
@@ -63,8 +64,10 @@ impl gantz_egui::NodeUi for UpdateBang {
         _ctx: gantz_egui::NodeCtx,
         uictx: egui_graph::NodeCtx,
     ) -> gantz_egui::NodeUiResponse {
-        let framed =
-            uictx.framed(|ui, _sockets| ui.add(egui::Label::new("update!").selectable(false)));
+        let dot_id = uictx.egui_id().with("dot");
+        let framed = uictx.framed(|ui, _sockets| {
+            kit::event_label(ui, dot_id, Some("update"), egui::Sense::hover())
+        });
         gantz_egui::NodeUiResponse::new(framed)
     }
 

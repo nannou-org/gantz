@@ -288,25 +288,14 @@ where
         tabs: !patch_only,
         drag: controls.is_some(),
     };
-    // The scene's top-right corner holds the window's controls when no pane
-    // does, and the wordmark sits left of them. The header holds both when
-    // it shows, and patch-only hides the wordmark. `right` is the left edge of
-    // what the top-right corner holds.
+    // The window's corner sits over the tree's top-right corner. When the
+    // scene holds that corner, the strip and the drag band end at the
+    // corner's left. `right` is where they end.
     let mut right = rect.right_top();
-    if let Some(w) = controls.filter(|_| at(rect.right_top(), tree.right_top())) {
-        let (shown, action) = super::decor::floating_controls(ui.ctx(), right, w);
-        if let Some(action) = action {
-            cx.response.responses.push(None, action);
-        }
-        right.x = shown.left();
-    }
-    if !header && !patch_only {
-        let version = cx.gantz.version;
-        let (shown, action) = super::decor::wordmark(ui.ctx(), right, version, strip.drag);
-        if let Some(action) = action {
-            cx.response.responses.push(None, action);
-        }
-        right.x = shown.left();
+    if let Some(corner) =
+        super::corner::rect(ui.ctx()).filter(|_| at(rect.right_top(), tree.right_top()))
+    {
+        right.x = corner.left();
     }
     // The strip sits at the scene tile's corner, so its top meets the side
     // panes' tops and the pane gap sits between them.
@@ -333,7 +322,7 @@ where
             strip_right..=right.x,
             rect.top()..=rect.top() + super::chrome::HEADER_HEIGHT,
         );
-        let action = super::decor::drag_band(ui.ctx(), band);
+        let action = super::decor::drag_band(ui.ctx(), "gantz-window-drag-band", band);
         if let Some(action) = action {
             cx.response.responses.push(None, action);
         }
@@ -1201,16 +1190,25 @@ fn gui_preview_node(
     // The sockets carry the graph's marker docs, as they do on a reference
     // node in a scene.
     if let Some(ca) = head_ca {
-        for (ix, sock) in resp.sockets.inputs() {
-            if let Some(doc) = env.socket_doc(&ca, crate::SocketKind::Input, ix) {
-                super::graph_scene::socket_hover(sock, &doc);
+        let kinds = [
+            (
+                crate::SocketKind::Input,
+                resp.sockets.inputs().collect::<Vec<_>>(),
+            ),
+            (crate::SocketKind::Output, resp.sockets.outputs().collect()),
+        ];
+        let mut hovers = vec![];
+        for (kind, socks) in kinds {
+            for (ix, sock) in socks {
+                hovers.push(super::graph_scene::SocketHover {
+                    resp: sock.clone(),
+                    kind,
+                    ix,
+                    doc: env.socket_doc(&ca, kind, ix),
+                });
             }
         }
-        for (ix, sock) in resp.sockets.outputs() {
-            if let Some(doc) = env.socket_doc(&ca, crate::SocketKind::Output, ix) {
-                super::graph_scene::socket_hover(sock, &doc);
-            }
-        }
+        super::graph_scene::show_socket_doc(ui, &hovers);
     }
     resp.inner.inner
 }
@@ -1608,56 +1606,64 @@ pub(super) fn node_inspector<'a>(
                     let frame_resp = ui
                         .push_id(id, |ui| {
                             frame.show(ui, |ui| {
-                                let Some(weight) = graph.node_weight(id) else {
-                                    return;
-                                };
-                                let ix = id.index();
-                                // An unknown tag shows a weak placeholder row.
-                                let Ok(mut entry) = instances.take(codec, ix, weight) else {
-                                    ui.weak(format!("{} (unknown node type)", weight.tag));
-                                    return;
-                                };
-                                // A locked node shows why above its disabled rows. See
-                                // `InstanceEntry::lost`.
-                                let locked = !entry.lost.is_empty();
-                                if locked {
-                                    widget::locked_label(ui, &entry.lost);
-                                    if !immutable && widget::discard_button(ui) {
-                                        let drop = crate::DropUnknownData { node: id };
-                                        responses.push(DynResponse::new(drop));
+                                widget::kit::exact_width(ui, |ui| {
+                                    widget::kit::card_controls(ui);
+                                    let Some(weight) = graph.node_weight(id) else {
+                                        return;
+                                    };
+                                    let ix = id.index();
+                                    // An unknown tag shows a weak placeholder row.
+                                    let Ok(mut entry) = instances.take(codec, ix, weight) else {
+                                        ui.weak(format!("{} (unknown node type)", weight.tag));
+                                        return;
+                                    };
+                                    // A locked node shows why above its disabled rows. See
+                                    // `InstanceEntry::lost`.
+                                    let locked = !entry.lost.is_empty();
+                                    if locked {
+                                        widget::locked_label(ui, &entry.lost);
+                                        if !immutable && widget::discard_button(ui) {
+                                            let drop = crate::DropUnknownData { node: id };
+                                            responses.push(DynResponse::new(drop));
+                                        }
                                     }
-                                }
-                                let path = [ix];
-                                let ctx = NodeCtx::new(
-                                    registry,
-                                    graph,
-                                    &path[..],
-                                    &inlets,
-                                    &outlets,
-                                    ref_ext_uis,
-                                    vm,
-                                    &mut writes,
-                                )
-                                .read_only(locked);
-                                let node = &mut entry.inst.node;
-                                let resp =
-                                    widget::NodeInspector::new(node, ctx, immutable || locked)
-                                        .show(ui);
-                                let weight = &mut graph[id];
-                                changed |=
-                                    instances.restore(ix, entry, weight, resp.changed, validate);
-                                responses.extend(resp.payloads);
-                                if resp.label_response.clicked() {
-                                    let sel = &mut head_state.scene.interaction.selection.nodes;
-                                    if ui.input(|i| i.modifiers.command) {
-                                        if !sel.remove(&id) {
+                                    let path = [ix];
+                                    let ctx = NodeCtx::new(
+                                        registry,
+                                        graph,
+                                        &path[..],
+                                        &inlets,
+                                        &outlets,
+                                        ref_ext_uis,
+                                        vm,
+                                        &mut writes,
+                                    )
+                                    .read_only(locked);
+                                    let node = &mut entry.inst.node;
+                                    let resp =
+                                        widget::NodeInspector::new(node, ctx, immutable || locked)
+                                            .show(ui);
+                                    let weight = &mut graph[id];
+                                    changed |= instances.restore(
+                                        ix,
+                                        entry,
+                                        weight,
+                                        resp.changed,
+                                        validate,
+                                    );
+                                    responses.extend(resp.payloads);
+                                    if resp.label_response.clicked() {
+                                        let sel = &mut head_state.scene.interaction.selection.nodes;
+                                        if ui.input(|i| i.modifiers.command) {
+                                            if !sel.remove(&id) {
+                                                sel.insert(id);
+                                            }
+                                        } else {
+                                            sel.clear();
                                             sel.insert(id);
                                         }
-                                    } else {
-                                        sel.clear();
-                                        sel.insert(id);
                                     }
-                                }
+                                })
                             })
                         })
                         .inner;

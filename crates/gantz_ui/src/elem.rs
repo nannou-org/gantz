@@ -97,6 +97,12 @@ pub enum Element {
     Dialer(Dialer),
     /// A boolean control, `(toggle)`.
     Toggle(Toggle),
+    /// An optional number, `(bound)`.
+    Bound(Bound),
+    /// One of a set of options, `(choice)`.
+    Choice(Choice),
+    /// A colour, `(color)`.
+    Color(Color),
     /// A trigger control, `(button)`.
     Button(Button),
     /// A grid of bool or number cells, `(matrix)`.
@@ -231,6 +237,43 @@ pub struct Toggle {
     pub label: Option<String>,
     /// Whether a `set` also queues a push eval at the bound node.
     pub push: bool,
+    /// Whether it shows as a pill that lights while on, as a display option
+    /// does, rather than as a checkbox. The pill shows the label.
+    pub pill: bool,
+    /// Identity override.
+    pub key: Option<Key>,
+}
+
+/// An optional number bound to number or `#f` state. A checkbox sets the
+/// bound state to the number beside it, or clears it to `#f`.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Bound {
+    /// The bound node path.
+    pub bind: Option<BindPath>,
+    /// The checkbox's hint, such as `minimum`.
+    pub label: Option<String>,
+    /// Identity override.
+    pub key: Option<Key>,
+}
+
+/// One of a set of options, bound to state that holds one of them. A pill
+/// per option sets the bound state to it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Choice {
+    /// The bound node path.
+    pub bind: Option<BindPath>,
+    /// The options, as symbols.
+    pub options: Vec<String>,
+    /// Identity override.
+    pub key: Option<Key>,
+}
+
+/// A colour bound to `"#rrggbb"` or `#f` state. `#f` follows the theme, and
+/// a reset button clears an edited colour back to it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Color {
+    /// The bound node path.
+    pub bind: Option<BindPath>,
     /// Identity override.
     pub key: Option<Key>,
 }
@@ -314,6 +357,8 @@ pub struct Plot {
     pub w: Option<f32>,
     /// Height, host default when absent.
     pub h: Option<f32>,
+    /// How many of the newest samples of each channel show, all when absent.
+    pub capacity: Option<u32>,
     /// Identity override.
     pub key: Option<Key>,
 }
@@ -370,6 +415,9 @@ impl Element {
             Element::Scope(_) => "scope",
             Element::Dialer(_) => "dialer",
             Element::Toggle(_) => "toggle",
+            Element::Bound(_) => "bound",
+            Element::Choice(_) => "choice",
+            Element::Color(_) => "color",
             Element::Button(_) => "button",
             Element::Matrix(_) => "matrix",
             Element::Label(_) => "label",
@@ -404,6 +452,9 @@ impl Element {
             Element::Scope(e) => e.key.as_ref(),
             Element::Dialer(e) => e.key.as_ref(),
             Element::Toggle(e) => e.key.as_ref(),
+            Element::Bound(e) => e.key.as_ref(),
+            Element::Choice(e) => e.key.as_ref(),
+            Element::Color(e) => e.key.as_ref(),
             Element::Button(e) => e.key.as_ref(),
             Element::Matrix(e) => e.key.as_ref(),
             Element::Label(e) => e.key.as_ref(),
@@ -510,6 +561,16 @@ impl Rgba {
         let a = if hex.len() == 8 { byte(6)? } else { 255 };
         Some(Rgba([r, g, b, a]))
     }
+
+    /// The colour as `"#rrggbb"`, or `"#rrggbbaa"` when not opaque. The
+    /// inverse of [`Rgba::parse`].
+    pub fn hex(&self) -> String {
+        let Rgba([r, g, b, a]) = *self;
+        match a {
+            255 => format!("#{r:02x}{g:02x}{b:02x}"),
+            _ => format!("#{r:02x}{g:02x}{b:02x}{a:02x}"),
+        }
+    }
 }
 
 impl Default for Grid {
@@ -546,6 +607,7 @@ impl Default for Toggle {
             bind: None,
             label: None,
             push: true,
+            pill: false,
             key: None,
         }
     }

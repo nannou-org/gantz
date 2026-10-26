@@ -185,6 +185,8 @@ impl NodePalette {
             });
         });
 
+        // A little room between the lists and the keys.
+        ui.add_space(ui.spacing().item_spacing.y);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 4.0;
             kit::keycap(ui, "↑", false);

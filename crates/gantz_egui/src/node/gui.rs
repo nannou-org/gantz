@@ -17,6 +17,9 @@ use std::borrow::Cow;
 /// The ext key under which a ref stores its per-instance GUI overrides.
 pub const GUI_REF_EXT_KEY: &str = "gantz.gui";
 
+/// The ext key under which a ref stores its body size. See [`GuiSizeExt`].
+pub const GUI_SIZE_EXT_KEY: &str = "gantz.gui-size";
+
 /// The `NodeUi` surface a marker's tree presents.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -75,6 +78,20 @@ pub struct GuiRefExt {
     /// The display mode this instance renders the referenced GUI with.
     #[serde(default)]
     pub display: GuiDisplay,
+}
+
+/// The size of a ref's body when its GUI fills the space it is given, stored
+/// in the ref's ext map under [`GUI_SIZE_EXT_KEY`]. Absent means
+/// [`GuiSizeExt::DEFAULT_SIZE`].
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct GuiSizeExt {
+    /// The body's `[width, height]`.
+    pub size: [u16; 2],
+}
+
+impl GuiSizeExt {
+    /// The body size of a ref that stores none.
+    pub const DEFAULT_SIZE: [u16; 2] = [160, 60];
 }
 
 impl GuiRole {

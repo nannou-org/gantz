@@ -145,7 +145,7 @@ impl WindowEdge {
 /// The window's minimise, maximise and close buttons, in a row. Each shows a
 /// fill only while hovered. The row reads left to right in any layout.
 /// Returns the action of the button clicked.
-pub(super) fn controls(ui: &mut egui::Ui, window: NativeWindow) -> Option<WindowAction> {
+fn controls(ui: &mut egui::Ui, window: NativeWindow) -> Option<WindowAction> {
     let mut action = None;
     let size = egui::vec2(3.0 * BUTTON + 2.0 * BUTTON_GAP, BUTTON);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
@@ -192,9 +192,36 @@ fn button(ui: &mut egui::Ui, icon: Icon, hint: &str) -> egui::Response {
     response.on_hover_text(hint)
 }
 
+/// The window's corner, with its top-right corner at `pos`: the window's
+/// `controls`, when it has floating controls, and the wordmark left of them,
+/// when `wordmark`. See [`wordmark`] for `version` and `drag`. Returns the
+/// corner's rect, empty at `pos` when it holds nothing, and the window action.
+pub(super) fn corner(
+    ctx: &egui::Context,
+    pos: egui::Pos2,
+    controls: Option<NativeWindow>,
+    wordmark: bool,
+    version: Option<&str>,
+    drag: bool,
+) -> (egui::Rect, Option<WindowAction>) {
+    let mut rect = egui::Rect::from_min_max(pos, pos);
+    let mut action = None;
+    if let Some(window) = controls {
+        let (shown, a) = floating_controls(ctx, rect.left_top(), window);
+        rect = rect.union(shown);
+        action = action.or(a);
+    }
+    if wordmark {
+        let (shown, a) = self::wordmark(ctx, rect.left_top(), version, drag);
+        rect = rect.union(shown);
+        action = action.or(a);
+    }
+    (rect, action)
+}
+
 /// The window's controls over the scene, with their top-right corner at
 /// `pos`. Returns their rect and the action of the button clicked.
-pub(super) fn floating_controls(
+fn floating_controls(
     ctx: &egui::Context,
     pos: egui::Pos2,
     window: NativeWindow,
@@ -206,7 +233,7 @@ pub(super) fn floating_controls(
 /// The gantz wordmark over the scene, with its top-right corner at `pos`.
 /// Hovering shows `version`. When `drag`, a drag on it moves the window and a
 /// double-click maximises it. Returns its rect and the window action.
-pub(super) fn wordmark(
+fn wordmark(
     ctx: &egui::Context,
     pos: egui::Pos2,
     version: Option<&str>,
@@ -256,19 +283,21 @@ fn scene_row<R>(
         })
 }
 
-/// A band over the scene, in `rect`, whose drag moves the window and whose
-/// double-click maximises it. It shows the grab cursor, so a press there
-/// reads as a press on the window and not on the scene. Returns the action.
-pub(super) fn drag_band(ctx: &egui::Context, rect: egui::Rect) -> Option<WindowAction> {
+/// A band named `id` over the scene, in `rect`, whose drag moves the window
+/// and whose double-click maximises it. It shows the grab cursor, so a press
+/// there reads as a press on the window and not on the scene. Returns the
+/// action.
+pub(super) fn drag_band(ctx: &egui::Context, id: &str, rect: egui::Rect) -> Option<WindowAction> {
     if !rect.is_positive() {
         return None;
     }
-    egui::Area::new(egui::Id::new("gantz-window-drag-band"))
+    let id = egui::Id::new(id);
+    egui::Area::new(id)
         .order(egui::Order::Middle)
         .fixed_pos(rect.min)
         .show(ctx, |ui| {
             ui.expand_to_include_rect(rect);
-            drag_area(ui, rect, egui::Id::new("gantz-window-drag-band-area")).0
+            drag_area(ui, rect, id.with("area")).0
         })
         .inner
 }
@@ -489,8 +518,7 @@ fn app_menu(
             }
         });
         if ui.button("settings").clicked() {
-            view.settings = true;
-            view.sidebar_open = true;
+            super::tiles::reveal_pane(ui.ctx(), view, super::Pane::Settings);
             ui.close();
         }
     });

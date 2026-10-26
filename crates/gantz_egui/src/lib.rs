@@ -111,7 +111,7 @@ pub struct CommandInfo {
 ///
 /// Used for the node palette's side panel and as the body of the per-item and
 /// graph-select hover tooltips. Callers that render inside a tooltip should
-/// set a max width first. See the tooltip-width note in `socket_hover`.
+/// set a max width first. See the tooltip-width note in `show_socket_doc`.
 pub fn node_info_ui(info: &CommandInfo, ui: &mut egui::Ui) {
     if !info.name.is_empty() {
         ui.strong(&info.name);

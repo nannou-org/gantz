@@ -165,9 +165,9 @@
 pub use decode::{Decoded, Limits, decode};
 pub use diag::{ErrorReason, TreePath, Warning, WarningKind};
 pub use elem::{
-    ATTRS_MARKER, Align, BindPath, Button, Col, Dialer, DialerStyle, Element, ErrorElem, Frame,
-    Grid, Key, Label, Matrix, Plot, PlotMode, PlotStyle, RESERVED_TAGS, RefGui, Rgba, Row, Scope,
-    Sep, Space, Toggle, Value,
+    ATTRS_MARKER, Align, BindPath, Bound, Button, Choice, Col, Color, Dialer, DialerStyle, Element,
+    ErrorElem, Frame, Grid, Key, Label, Matrix, Plot, PlotMode, PlotStyle, RESERVED_TAGS, RefGui,
+    Rgba, Row, Scope, Sep, Space, Toggle, Value,
 };
 pub use encode::encode;
 pub use sexpr::{SExpr, flat, pretty, summary};

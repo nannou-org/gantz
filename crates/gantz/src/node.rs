@@ -48,6 +48,7 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             bevy_gantz_egui::node::Sleep,
             gantz_egui::node::Gui,
             gantz_egui::node::Inspect,
+            gantz_egui::node::State,
             gantz_egui::node::Plot,
             gantz_plyphon::UnitNode,
             gantz_plyphon::Out,

@@ -1,6 +1,6 @@
-//! A bang node with a button for triggering downstream evaluation.
+//! A bang node: a dot that fires downstream evaluation.
 
-use crate::{Env, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind, ui_tree::UiTree};
+use crate::{Env, NodeCtx, NodeUi, NodeUiResponse, SocketDoc, SocketKind, widget::kit};
 use gantz_core::node::{self, EvalConf, ExprCtx, ExprResult, MetaCtx};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// Exposes a single trigger input whose value is ignored. A push into it
 /// emits a bang, `'()`, downstream. This lets upstream nodes fire the bang as
-/// well as its button. Any input value becomes a bang.
+/// well as a click on its dot. Any input value becomes a bang.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, NodeTag)]
 pub struct Bang;
 
@@ -40,25 +40,28 @@ impl NodeUi for Bang {
         Some("Trigger downstream evaluation")
     }
 
-    fn ui(&mut self, mut ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
+    fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
         // A bang only triggers downstream evaluation. It never edits the
-        // node's content address, so the button pushes but never sets
-        // `changed`.
-        let (&id, prefix) = ctx.path().split_last().expect("a node path is never empty");
-        let tree = fragment(id);
-        let root_id = uictx.egui_id().with("gui");
-        let mut payloads = Vec::new();
-        let framed = uictx.framed(|ui, _sockets| {
-            ball(ui);
-            let r = UiTree::new(root_id)
-                .instance_prefix(prefix)
-                .n_outputs(&|_: &[node::Id]| Some(1))
-                .show(&tree, &mut ctx, ui);
-            payloads = r.payloads;
-            r.inner.unwrap_or_else(|| ui.response())
+        // node's content address, so a click pushes but never sets `changed`.
+        // The dot takes the drag too, so that a press on it neither selects nor
+        // moves the node. The rim around it does.
+        let dot_id = uictx.egui_id().with("dot");
+        // A bang is a circle: a square of even margins with full corners.
+        let mut frame = egui_graph::node::default_frame(uictx.style(), uictx.interaction());
+        let margin = frame.inner_margin;
+        frame.inner_margin = egui::Margin::same(margin.left.max(margin.top));
+        frame.corner_radius = egui::CornerRadius::same(u8::MAX);
+        let framed = uictx.framed_with(frame, |ui, _sockets| {
+            kit::event_label(ui, dot_id, None, egui::Sense::click_and_drag())
         });
+        let clicked = framed.inner.inner.clicked();
+        if clicked {
+            kit::fire_dot(&framed.inner.response.ctx, dot_id);
+        }
         let mut resp = NodeUiResponse::new(framed);
-        resp.payloads.extend(payloads);
+        if clicked {
+            resp.push_eval(ctx.path(), 1);
+        }
         resp
     }
 
@@ -72,30 +75,6 @@ impl NodeUi for Bang {
                 SocketDoc::ty("trigger").with_description("ignored. A push into it emits a bang"),
             ),
         }
-    }
-}
-
-/// The bang's button fragment, bound to its own id. The padded label is the
-/// bang's visual, not an interpreter default.
-fn fragment(id: node::Id) -> gantz_ui::Element {
-    gantz_ui::Element::Button(gantz_ui::Button {
-        bind: Some(gantz_ui::BindPath(vec![id])),
-        label: Some(" ! ".to_string()),
-        key: None,
-    })
-}
-
-/// Round the bang's button into a ball.
-fn ball(ui: &mut egui::Ui) {
-    let pad = ui.spacing().button_padding.y + 2.0;
-    ui.spacing_mut().button_padding = egui::Vec2::splat(pad);
-    let widgets = &mut ui.visuals_mut().widgets;
-    for w in [
-        &mut widgets.inactive,
-        &mut widgets.hovered,
-        &mut widgets.active,
-    ] {
-        w.corner_radius = egui::CornerRadius::same(u8::MAX);
     }
 }
 

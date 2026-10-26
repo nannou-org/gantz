@@ -6,6 +6,7 @@ use crate::{
     Keymap,
     widget::{self, GraphSceneState, graph_scene},
 };
+use egui_graph::edge::EdgeShape;
 use std::collections::{BTreeMap, HashMap};
 
 /// All state for the widget.
@@ -213,23 +214,80 @@ pub struct SceneConfig {
     pub edge: EdgeConfig,
 }
 
-/// The shape of the edges drawn between sockets.
+/// The shape of the edges drawn between sockets. It keeps the parameters of
+/// every shape, so a shape keeps its values while another is chosen. See
+/// [`EdgeShape`].
 #[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
 pub struct EdgeConfig {
-    /// How far each edge curves from a straight line, from `0.0` (straight)
-    /// to `1.0`. See [`egui_graph::edge::Edge::curvature_factor`].
+    #[serde(default)]
+    pub kind: EdgeKind,
+    /// How far a bezier or flow edge curves, from `0.0` (straight) to `1.0`.
     #[serde(default = "default_edge_curvature")]
     pub curvature: f32,
+    /// The longest handle of a bezier edge, in graph-space units.
+    #[serde(default = "default_edge_max_handle")]
+    pub max_handle: f32,
+    /// The shortest run along the flow that a flow edge curves for, in
+    /// graph-space units.
+    #[serde(default = "default_edge_min_span")]
+    pub min_span: f32,
+    /// The corner radius of a step edge, in graph-space units.
+    #[serde(default = "default_edge_radius")]
+    pub radius: f32,
+}
+
+/// Which [`EdgeShape`] the edges take.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub enum EdgeKind {
+    #[default]
+    Bezier,
+    Flow,
+    Step,
 }
 
 fn default_edge_curvature() -> f32 {
     egui_graph::bezier::Cubic::DEFAULT_CURVATURE
 }
 
+fn default_edge_max_handle() -> f32 {
+    EdgeShape::DEFAULT_MAX_HANDLE
+}
+
+fn default_edge_min_span() -> f32 {
+    EdgeShape::DEFAULT_MIN_SPAN
+}
+
+fn default_edge_radius() -> f32 {
+    EdgeShape::DEFAULT_RADIUS
+}
+
+impl EdgeConfig {
+    /// The edge shape of the chosen kind, with its parameters.
+    pub fn shape(&self) -> EdgeShape {
+        match self.kind {
+            EdgeKind::Bezier => EdgeShape::Bezier {
+                curvature: self.curvature,
+                max_handle: self.max_handle,
+            },
+            EdgeKind::Flow => EdgeShape::Flow {
+                curvature: self.curvature,
+                min_span: self.min_span,
+            },
+            EdgeKind::Step => EdgeShape::Step {
+                radius: self.radius,
+            },
+        }
+    }
+}
+
 impl Default for EdgeConfig {
     fn default() -> Self {
         Self {
+            kind: EdgeKind::default(),
             curvature: default_edge_curvature(),
+            max_handle: default_edge_max_handle(),
+            min_span: default_edge_min_span(),
+            radius: default_edge_radius(),
         }
     }
 }

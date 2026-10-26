@@ -3,7 +3,9 @@
 use crate::widget::node_inspector::radio_option;
 use crate::{
     ContextMenuResponse, Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse,
-    NodeViewResponse, SocketDoc, SocketKind, ui_tree::UiTree,
+    NodeViewResponse, SocketDoc, SocketKind,
+    ui_tree::{self, UiTree},
+    widget::kit,
 };
 use gantz_core::node::{self, EvalConf, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_nodetag::NodeTag;
@@ -15,8 +17,15 @@ use steel::SteelVal;
 ///
 /// Optional configuration:
 /// - `min` and `max` clamp every value, including input-socket values.
+/// - `init` is the value a new or reset number starts at, clamped to the
+///   bounds. Without it the number starts at 0, clamped.
 /// - `precision` controls how many decimals the dialer shows and edits. It
 ///   is display only.
+/// - `speed` sets how far a drag moves the value, per point. Without it, a
+///   number bounded on both sides takes its speed from its range. It is UI
+///   only.
+/// - `label` names the value on the node, such as "rate". It is display
+///   only.
 /// - `input` selects how an input-socket value is handled. See
 ///   [`NumberInput`].
 /// - `push_eval_on_edit` toggles whether editing the dialer fires downstream.
@@ -32,7 +41,13 @@ pub struct Number {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     max: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    init: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     precision: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    speed: Option<f64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    label: Option<String>,
     #[serde(default, skip_serializing_if = "is_default_input")]
     input: NumberInput,
     #[serde(
@@ -52,6 +67,30 @@ pub enum NumberInput {
     /// Treat the value as a bang. Output the stored value unchanged.
     Bang,
 }
+
+/// What [`flat_value`] did in a frame.
+#[derive(Default)]
+struct FlatValue {
+    /// Whether a drag or a typed value changed the number.
+    edited: bool,
+    /// Where the value sits in a bounded range, from 0 to 1.
+    fraction: Option<f32>,
+}
+
+/// The width of a number's drag chevrons.
+const CHEVRON_WIDTH: f32 = 4.0;
+
+/// The thickness of a bounded number's range hairline.
+const HAIRLINE: f32 = 1.5;
+
+/// The hover text of the inspector's init row.
+const INIT_DOC: &str = "the value a new number starts at, and returns to when reset. \
+    off starts at 0. either way the bounds clamp it.";
+
+/// The hover text of the inspector's drag row.
+const DRAG_DOC: &str = "how much the value changes per point of drag. off takes it from a range \
+    bounded on both sides, so that a drag of 200 points crosses it. hold shift to drag ten \
+    times slower.";
 
 impl NumberInput {
     /// All input modes, in inspector order.
@@ -82,9 +121,37 @@ impl Number {
         self.max
     }
 
+    /// The value a new or reset number starts at, before the clamp, if set.
+    pub fn init(&self) -> Option<f64> {
+        self.init
+    }
+
     /// The number of decimal places the dialer shows/edits, if configured.
     pub fn precision(&self) -> Option<u8> {
         self.precision
+    }
+
+    /// How far a drag moves the value per point, if set.
+    pub fn speed(&self) -> Option<f64> {
+        self.speed
+    }
+
+    /// How far a drag moves the value per point: the set speed, or else a
+    /// share of a range bounded on both sides. `None` leaves the dialer's
+    /// own speed.
+    pub fn drag_speed(&self) -> Option<f64> {
+        let range = match (self.min, self.max) {
+            (Some(lo), Some(hi)) if (hi - lo).is_finite() && hi > lo => {
+                Some((hi - lo) / ui_tree::RANGE_DRAG)
+            }
+            _ => None,
+        };
+        self.speed.or(range)
+    }
+
+    /// The name shown before the value on the node, if any.
+    pub fn label(&self) -> Option<&str> {
+        self.label.as_deref()
     }
 
     /// How a value arriving at the input socket is handled.
@@ -107,9 +174,27 @@ impl Number {
         self.max = max;
     }
 
+    /// Set the value a new or reset number starts at. A value that is not
+    /// finite sets none. This affects the content address.
+    pub fn set_init(&mut self, init: Option<f64>) {
+        self.init = init.filter(|v| v.is_finite());
+    }
+
     /// Set the dialer display precision. This is UI only.
     pub fn set_precision(&mut self, precision: Option<u8>) {
         self.precision = precision;
+    }
+
+    /// Set how far a drag moves the value per point. A speed that is not a
+    /// positive number sets none. This is UI only.
+    pub fn set_speed(&mut self, speed: Option<f64>) {
+        self.speed = speed.filter(|s| s.is_finite() && *s > 0.0);
+    }
+
+    /// Set the name shown before the value. An empty name shows none. This is
+    /// display only, but it affects the content address.
+    pub fn set_label(&mut self, label: Option<String>) {
+        self.label = label.filter(|l| !l.is_empty());
     }
 
     /// Set how a value arriving at the input socket is handled. This affects
@@ -135,7 +220,10 @@ impl Default for Number {
         Number {
             min: None,
             max: None,
+            init: None,
             precision: None,
+            speed: None,
+            label: None,
             input: NumberInput::default(),
             push_eval_on_edit: true,
         }
@@ -146,7 +234,10 @@ impl PartialEq for Number {
     fn eq(&self, other: &Self) -> bool {
         self.min.map(f64::to_bits) == other.min.map(f64::to_bits)
             && self.max.map(f64::to_bits) == other.max.map(f64::to_bits)
+            && self.init.map(f64::to_bits) == other.init.map(f64::to_bits)
             && self.precision == other.precision
+            && self.speed.map(f64::to_bits) == other.speed.map(f64::to_bits)
+            && self.label == other.label
             && self.input == other.input
             && self.push_eval_on_edit == other.push_eval_on_edit
     }
@@ -158,7 +249,10 @@ impl Hash for Number {
     fn hash<H: Hasher>(&self, state: &mut H) {
         Hash::hash(&self.min.map(f64::to_bits), state);
         Hash::hash(&self.max.map(f64::to_bits), state);
+        Hash::hash(&self.init.map(f64::to_bits), state);
         Hash::hash(&self.precision, state);
+        Hash::hash(&self.speed.map(f64::to_bits), state);
+        Hash::hash(&self.label, state);
         Hash::hash(&self.input, state);
         Hash::hash(&self.push_eval_on_edit, state);
     }
@@ -198,7 +292,7 @@ impl gantz_core::Node for Number {
 
     fn register(&self, mut ctx: RegCtx<'_, '_>) {
         let path = ctx.path();
-        let init = self.clamp(0.0);
+        let init = self.clamp(self.init.unwrap_or(0.0));
         node::state::init_value_if_absent(ctx.vm(), path, || SteelVal::NumV(init)).unwrap()
     }
 }
@@ -214,23 +308,43 @@ impl NodeUi for Number {
 
     fn ui(&mut self, mut ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
         // The numeric value lives in VM runtime state, not the node weight, so
-        // editing the dialer never sets `changed`. The interpreter only queues
-        // an evaluation when push is enabled.
+        // an edit never sets `changed`. An edit queues an evaluation only when
+        // push is on, and the dot before the value says so.
+        let (&id, _) = ctx.path().split_last().expect("a node path is never empty");
+        let dialer = dialer(self, id);
+        let dot_id = uictx.egui_id().with("dot");
+        let mut value = FlatValue::default();
         let frame = egui_graph::node::default_frame(uictx.style(), uictx.interaction());
-        let (&id, prefix) = ctx.path().split_last().expect("a node path is never empty");
-        let tree = fragment(self, id);
-        let root_id = uictx.egui_id().with("gui");
-        let mut payloads = Vec::new();
         let framed = uictx.framed_with(frame, |ui, _sockets| {
-            let r = UiTree::new(root_id)
-                .instance_prefix(prefix)
-                .n_outputs(&|_: &[node::Id]| Some(1))
-                .show(&tree, &mut ctx, ui);
-            payloads = r.payloads;
-            r.inner.unwrap_or_else(|| ui.response())
+            ui.horizontal(|ui| {
+                // The row takes the value's height before anything else, so
+                // that the dot, the label and the value centre on one line.
+                let text = ui.text_style_height(&egui::TextStyle::Button);
+                let row = text + 2.0 * ui.spacing().button_padding.y;
+                ui.set_height(row.max(ui.spacing().interact_size.y));
+                if dialer.push {
+                    kit::event_dot(ui, dot_id, egui::Sense::hover());
+                }
+                if let Some(label) = &dialer.label {
+                    // In the value's text style, so that the two share a baseline.
+                    let text = egui::RichText::new(label)
+                        .text_style(egui::TextStyle::Button)
+                        .color(ui.visuals().weak_text_color());
+                    ui.add(egui::Label::new(text).selectable(false));
+                }
+                value = flat_value(&dialer, &mut ctx, ui);
+            })
+            .response
         });
+        let node = &framed.inner.response;
+        paint_marks(node, value.fraction, f32::from(frame.inner_margin.right));
+        if value.edited && dialer.push {
+            kit::fire_dot(&node.ctx, dot_id);
+        }
         let mut resp = NodeUiResponse::new(framed);
-        resp.payloads.extend(payloads);
+        if value.edited && dialer.push {
+            resp.push_eval(ctx.path(), 1);
+        }
         resp
     }
 
@@ -292,6 +406,28 @@ impl NodeUi for Number {
 
         body.row(row_h, |mut row| {
             row.col(|ui| {
+                ui.label("init").on_hover_text(INIT_DOC);
+            });
+            row.col(|ui| {
+                let mut on = self.init().is_some();
+                let mut init = self.init().unwrap_or(0.0);
+                let dialer =
+                    egui::DragValue::new(&mut init).speed(self.drag_speed().unwrap_or(1.0));
+                let resp = ui
+                    .add(
+                        crate::widget::CheckboxEnabled::new(&mut on, dialer)
+                            .width(crate::widget::node_inspector::DIAL_W),
+                    )
+                    .on_hover_text(INIT_DOC);
+                if resp.changed() {
+                    self.set_init(on.then_some(init));
+                    changed = true;
+                }
+            });
+        });
+
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
                 ui.label("prec.")
                     .on_hover_text("precision: decimal places the dialer shows (display only)");
             });
@@ -309,6 +445,57 @@ impl NodeUi for Number {
                     .on_hover_text("precision: decimal places the dialer shows (display only)");
                 if resp.changed() {
                     self.set_precision(on.then(|| n.clamp(0, 10) as u8));
+                    changed = true;
+                }
+            });
+        });
+
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("drag").on_hover_text(DRAG_DOC);
+            });
+            row.col(|ui| {
+                let mut on = self.speed().is_some();
+                let mut speed = self.drag_speed().unwrap_or(1.0);
+                let step = speed * 0.01;
+                let dialer = egui::DragValue::new(&mut speed)
+                    .range(1e-6..=1e6)
+                    .speed(step)
+                    .max_decimals(6);
+                let resp = ui
+                    .add(
+                        crate::widget::CheckboxEnabled::new(&mut on, dialer)
+                            .width(crate::widget::node_inspector::DIAL_W),
+                    )
+                    .on_hover_text(DRAG_DOC);
+                if resp.changed() {
+                    self.set_speed(on.then_some(speed));
+                    changed = true;
+                }
+            });
+        });
+
+        body.row(row_h, |mut row| {
+            row.col(|ui| {
+                ui.label("label")
+                    .on_hover_text("a name shown before the value on the node (display only)");
+            });
+            row.col(|ui| {
+                let id = egui::Id::new("number_label").with(ctx.path());
+                let current = self.label().unwrap_or("");
+                kit::field_visuals(ui);
+                // The field is a control high, so that it lines up with its row.
+                let text = ui.text_style_height(&egui::TextStyle::Body);
+                let pad = ((ui.spacing().interact_size.y - text) * 0.5).max(0.0);
+                let margin = egui::Margin::symmetric(kit::FIELD_MARGIN.left, pad as i8);
+                let edit = crate::widget::buffered_edit(ui, id, current, |label| {
+                    egui::TextEdit::singleline(label)
+                        .hint_text("none")
+                        .margin(margin)
+                        .desired_width(crate::widget::node_inspector::DIAL_W * 2.0)
+                });
+                if let Some(label) = edit.committed {
+                    self.set_label(Some(label));
                     changed = true;
                 }
             });
@@ -434,19 +621,125 @@ fn clamp_steel(val: &str, min: Option<f64>, max: Option<f64>) -> String {
     }
 }
 
-/// The number's dialer fragment, bound to its own state. Attrs come from the
-/// weight, and the bind id is the node's id in its defining graph. A bang
-/// input shows a `!` prefix, echoing bang nodes such as `load!`.
+/// The number's dialer fragment, bound to its own state. The pane view
+/// renders it.
 fn fragment(num: &Number, id: node::Id) -> gantz_ui::Element {
-    gantz_ui::Element::Dialer(gantz_ui::Dialer {
+    gantz_ui::Element::Dialer(dialer(num, id))
+}
+
+/// The number's dialer. Attrs come from the weight, and the bind id is the
+/// node's id in its defining graph. A bang input shows a `!` prefix.
+fn dialer(num: &Number, id: node::Id) -> gantz_ui::Dialer {
+    gantz_ui::Dialer {
         bind: Some(gantz_ui::BindPath(vec![id])),
         min: num.min(),
         max: num.max(),
         precision: num.precision(),
+        step: num.speed(),
+        label: num.label().map(str::to_string),
         prefix: (num.input() == NumberInput::Bang).then(|| "!".to_string()),
         push: num.push_eval_on_edit(),
         ..Default::default()
-    })
+    }
+}
+
+/// Draw the value of `d`'s node flat on the node, as text that a drag or a
+/// click edits, and write an edit to the node's state.
+fn flat_value(d: &gantz_ui::Dialer, ctx: &mut NodeCtx, ui: &mut egui::Ui) -> FlatValue {
+    let Ok(Some(mut val)) = ctx.extract_value() else {
+        ui.weak("—");
+        return FlatValue::default();
+    };
+    let original = val.clone();
+    flat_visuals(ui);
+    // A bounded value keeps the width of its wider bound, so that the node
+    // does not resize as the value moves.
+    if let Some(n) = ui_tree::fixed_decimals(d) {
+        let font = egui::TextStyle::Button.resolve(ui.style());
+        let prefix = d.prefix.as_deref().unwrap_or("");
+        let width = |v: f64| {
+            let text = format!("{prefix}{v:.n$}");
+            let galley =
+                ui.painter()
+                    .layout_no_wrap(text, font.clone(), egui::Color32::PLACEHOLDER);
+            galley.size().x
+        };
+        let widest = d.min.map_or(0.0, width).max(d.max.map_or(0.0, width));
+        ui.spacing_mut().interact_size.x = widest;
+    }
+    let r = ui_tree::drag_value(ui, d, &mut val);
+    let edited = r.changed() && val != original;
+    let fraction = ui_tree::range_fraction(d, &val);
+    if edited {
+        ctx.update_value(val).unwrap();
+    }
+    FlatValue { edited, fraction }
+}
+
+/// Clear the fill and outline of a drag value, so that its text sits on the
+/// node like the text of any other node.
+fn flat_visuals(ui: &mut egui::Ui) {
+    let text = ui.visuals().strong_text_color();
+    ui.spacing_mut().button_padding.x = 0.0;
+    ui.spacing_mut().interact_size.x = 0.0;
+    let widgets = &mut ui.visuals_mut().widgets;
+    for w in [
+        &mut widgets.inactive,
+        &mut widgets.hovered,
+        &mut widgets.active,
+    ] {
+        w.bg_fill = egui::Color32::TRANSPARENT;
+        w.weak_bg_fill = egui::Color32::TRANSPARENT;
+        w.bg_stroke = egui::Stroke::NONE;
+        w.fg_stroke.color = text;
+        w.expansion = 0.0;
+    }
+}
+
+/// Paint a bounded number's place in its range as a hairline along the base
+/// of its `node`, and drag chevrons in its right `margin` while the pointer
+/// is over it.
+fn paint_marks(node: &egui::Response, fraction: Option<f32>, margin: f32) {
+    let mut painter = node.ctx.layer_painter(node.layer_id);
+    // Node layers are transformed, so their clip is layer-local.
+    painter.set_clip_rect(node.rect);
+    let visuals = &node.ctx.global_style().visuals;
+    let rect = node.rect;
+    if let Some(t) = fraction {
+        let inset = crate::style::shape(&node.ctx).node_corner(rect.height());
+        let width = (rect.width() - inset * 2.0) * t;
+        // A bar thinner than a point would draw as a speck.
+        if width >= 1.0 {
+            let y = rect.bottom() - kit::OUTLINE - HAIRLINE;
+            let x = rect.left() + inset;
+            let line =
+                egui::Rect::from_min_max(egui::pos2(x, y), egui::pos2(x + width, y + HAIRLINE));
+            painter.rect_filled(line, 0.0, visuals.strong_text_color());
+        }
+    }
+    if node.contains_pointer() {
+        let (w, h, gap) = (CHEVRON_WIDTH, CHEVRON_WIDTH * 0.7, 2.0);
+        let x = rect.right() - (margin + w) * 0.5;
+        let y = rect.center().y;
+        let color = visuals.weak_text_color();
+        let up = vec![
+            egui::pos2(x, y - gap),
+            egui::pos2(x + w, y - gap),
+            egui::pos2(x + w * 0.5, y - gap - h),
+        ];
+        let down = vec![
+            egui::pos2(x, y + gap),
+            egui::pos2(x + w * 0.5, y + gap + h),
+            egui::pos2(x + w, y + gap),
+        ];
+        for points in [up, down] {
+            painter.add(egui::Shape::convex_polygon(
+                points,
+                color,
+                egui::Stroke::NONE,
+            ));
+        }
+    }
 }
 
 /// Keep `max >= min` and re-clamp the stored value into the new bounds so the
@@ -543,7 +836,10 @@ mod tests {
         let n = Number {
             min: Some(0.0),
             max: Some(10.0),
+            init: None,
             precision: None,
+            speed: None,
+            label: None,
             input: NumberInput::Store,
             push_eval_on_edit: true,
         };
@@ -651,6 +947,21 @@ mod tests {
         assert_forwards("bang", "42", num, "(assert! (= $n 0))");
     }
 
+    #[test]
+    fn drag_speed_follows_the_set_speed_or_else_the_range() {
+        assert_eq!(Number::default().drag_speed(), None, "unbounded");
+        assert_eq!(bounded(Some(0.0), None).drag_speed(), None, "half bounded");
+        assert_eq!(
+            bounded(Some(0.0), Some(1.0)).drag_speed(),
+            Some(0.005),
+            "range"
+        );
+        let mut set = bounded(Some(0.0), Some(1.0));
+        set.set_speed(Some(0.1));
+        assert_eq!(set.drag_speed(), Some(0.1), "set speed wins");
+        set.set_speed(Some(-1.0));
+        assert_eq!(set.speed(), None, "a speed that is not positive sets none");
+    }
     #[test]
     fn fragment_bakes_weight_attrs_and_bind() {
         let mut num = Number::default();

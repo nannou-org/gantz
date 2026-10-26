@@ -1,5 +1,5 @@
 //! Small widgets that the panes, settings and menus share: group cards,
-//! option pills, switches, keycaps and wells.
+//! option pills, switches, keycaps and event dots.
 //!
 //! They draw with the applied style's roles and [`Shape`][crate::style::Shape], so a theme or
 //! roundness change reaches every one of them.
@@ -24,6 +24,21 @@ pub const TAG_CHARS: usize = 40;
 /// The space between a field's outline and its text. See [`field_visuals`].
 pub const FIELD_MARGIN: egui::Margin = egui::Margin::symmetric(8, 3);
 
+/// The radius of an [`event_dot`].
+const DOT_RADIUS: f32 = 4.0;
+
+/// The room around an [`event_dot`] that takes its clicks.
+const DOT_ROOM: f32 = 4.0;
+
+/// The opacity of a fired [`event_dot`]'s halo.
+const DOT_HALO: f32 = 0.22;
+
+/// How long an [`event_dot`] glows after it fires, in seconds.
+const DOT_GLOW: f64 = 0.24;
+
+/// The key of the time an [`event_dot`] last fired, beside its id.
+const DOT_FIRED: &str = "fired";
+
 /// A group card: an optional title, optional context to its right, and
 /// `add_contents` below. [`Shape::cards`][crate::style::Shape::cards] chooses whether it is shaded or
 /// outlined.
@@ -36,27 +51,67 @@ pub fn card<R>(
     let frame = card_frame(ui, false);
     frame
         .show(ui, |ui| {
-            // A card fills the width it is given and no more, so that it keeps
-            // to the margin of the pane it sits in.
-            let width = ui.available_width().max(0.0);
-            ui.set_min_width(width);
-            ui.set_max_width(width);
-            if title.is_some() || context.is_some() {
-                ui.horizontal(|ui| {
-                    if let Some(title) = title {
-                        let color = ui.visuals().strong_text_color();
-                        ui.label(style::font::strong_text(ui, title).color(color));
-                    }
-                    if let Some(context) = context {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.label(egui::RichText::new(context).small().weak());
-                        });
-                    }
-                });
-            }
-            add_contents(ui)
+            exact_width(ui, |ui| {
+                card_controls(ui);
+                if title.is_some() || context.is_some() {
+                    ui.horizontal(|ui| {
+                        if let Some(title) = title {
+                            let color = ui.visuals().strong_text_color();
+                            ui.label(style::font::strong_text(ui, title).color(color));
+                        }
+                        if let Some(context) = context {
+                            let layout = egui::Layout::right_to_left(egui::Align::Center);
+                            ui.with_layout(layout, |ui| {
+                                ui.label(egui::RichText::new(context).small().weak());
+                            });
+                        }
+                    });
+                }
+                add_contents(ui)
+            })
         })
         .inner
+}
+
+/// Run `add_contents` in a ui exactly the width available, clipped to it.
+/// Contents wider than that are cut off rather than widening what holds
+/// them, so that a card keeps to the margin of the pane it sits in.
+pub fn exact_width<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    /// How far past the width contents may paint, for the outline of a
+    /// control that fills the width.
+    const BLEED: f32 = 2.0;
+    let width = ui.available_width().max(0.0);
+    let top_left = ui.available_rect_before_wrap().min;
+    let max_rect = egui::Rect::from_min_size(top_left, egui::vec2(width, f32::INFINITY));
+    let builder = egui::UiBuilder::new()
+        .id_salt(ui.next_auto_id())
+        .max_rect(max_rect)
+        .layout(*ui.layout());
+    let mut child = ui.new_child(builder);
+    child.set_min_width(width);
+    let clip = ui.clip_rect();
+    let x_range = max_rect.x_range().expand(BLEED);
+    child.set_clip_rect(egui::Rect::from_x_y_ranges(x_range, clip.y_range()).intersect(clip));
+    let inner = add_contents(&mut child);
+    let height = child.min_rect().height();
+    ui.allocate_rect(
+        egui::Rect::from_min_size(top_left, egui::vec2(width, height)),
+        egui::Sense::hover(),
+    );
+    inner
+}
+
+/// Fill the controls in a nested card with the pane's colour, so that they
+/// stand apart from the card as wells. On an outlined card they keep their
+/// own fill, as the card is the pane's colour.
+pub fn card_controls(ui: &mut egui::Ui) {
+    if style::shape(ui.ctx()).cards != CardStyle::Nested {
+        return;
+    }
+    let well = style::color(ui, Role::Panel);
+    let inactive = &mut ui.visuals_mut().widgets.inactive;
+    inactive.bg_fill = well;
+    inactive.weak_bg_fill = well;
 }
 
 /// The frame of a group card. A `selected` card takes the strong outline in
@@ -268,17 +323,79 @@ fn keycap_in(
     resp
 }
 
-/// A dark inset that holds a node's value, code or plot, so that every node
-/// keeps the same frame around its own content.
-pub fn well<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
-    let shape = style::shape(ui.ctx());
-    let height = ui.spacing().interact_size.y;
-    egui::Frame::new()
-        .fill(ui.visuals().extreme_bg_color)
-        .corner_radius(shape.widget_corner(height))
-        .inner_margin(egui::Margin::symmetric(6, 2))
-        .show(ui, add_contents)
-        .inner
+/// A dot that marks an event, such as a bang, a load or a tick. It is weak
+/// at rest, strong while the pointer is over it if it takes clicks, and it
+/// glows for a moment after [`fire_dot`] with the same `id`. The response
+/// senses `sense` over a little room around the dot.
+pub fn event_dot(ui: &mut egui::Ui, id: egui::Id, sense: egui::Sense) -> egui::Response {
+    // Exactly the dot's width, so that the gaps around it are the node's own
+    // margin and item spacing. As high as a control, so that it centres on the
+    // row like the value beside it.
+    let size = egui::vec2(DOT_RADIUS * 2.0, ui.spacing().interact_size.y);
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let resp = ui.interact(rect.expand(DOT_ROOM), id, sense);
+    if ui.is_rect_visible(rect) {
+        let visuals = ui.visuals();
+        let glow = dot_glow(ui.ctx(), id);
+        // Only a dot that takes clicks lights up under the pointer. Elsewhere
+        // the dot only marks that the node pushes.
+        let lit = sense.senses_click() && resp.hovered();
+        let color = match lit || glow > 0.0 {
+            true => visuals.strong_text_color(),
+            false => visuals.weak_text_color(),
+        };
+        let center = rect.center();
+        if glow > 0.0 {
+            let halo = color.gamma_multiply(DOT_HALO * glow);
+            ui.painter().circle_filled(center, DOT_RADIUS * 2.0, halo);
+            ui.ctx().request_repaint();
+        }
+        ui.painter().circle_filled(center, DOT_RADIUS, color);
+    }
+    resp
+}
+
+/// Start the glow of the [`event_dot`] with `id`.
+pub fn fire_dot(ctx: &egui::Context, id: egui::Id) {
+    let now = ctx.input(|i| i.time);
+    ctx.data_mut(|d| d.insert_temp(id.with(DOT_FIRED), now));
+}
+
+/// How strongly the dot `id` glows, from `1.0` as it fires to `0.0` once
+/// [`DOT_GLOW`] has passed.
+fn dot_glow(ctx: &egui::Context, id: egui::Id) -> f32 {
+    let Some(fired) = ctx.data(|d| d.get_temp::<f64>(id.with(DOT_FIRED))) else {
+        return 0.0;
+    };
+    let elapsed = ctx.input(|i| i.time) - fired;
+    (1.0 - elapsed / DOT_GLOW).clamp(0.0, 1.0) as f32
+}
+
+/// An event node's content: its [`event_dot`], then its `name` if it has
+/// one. A bang has no name. `load!`, `tick!` and `update!` show theirs.
+pub fn event_label(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    name: Option<&str>,
+    sense: egui::Sense,
+) -> egui::Response {
+    ui.horizontal(|ui| match name {
+        Some(name) => {
+            let dot = event_dot(ui, id, sense);
+            ui.add(egui::Label::new(name).selectable(false));
+            dot
+        }
+        // A dot alone sits in a square, so that a bang is round.
+        None => {
+            let pad = (ui.spacing().interact_size.y - DOT_RADIUS * 2.0) * 0.5;
+            ui.spacing_mut().item_spacing.x = 0.0;
+            ui.add_space(pad);
+            let dot = event_dot(ui, id, sense);
+            ui.add_space(pad);
+            dot
+        }
+    })
+    .inner
 }
 
 /// A menu item with `shortcut`, if any, right-aligned in the weak text

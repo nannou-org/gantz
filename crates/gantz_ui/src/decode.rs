@@ -11,9 +11,9 @@
 
 use crate::diag::{ErrorReason, TreePath, Warning, WarningKind};
 use crate::elem::{
-    ATTRS_MARKER, Align, BindPath, Button, Col, Dialer, DialerStyle, Element, ErrorElem, Frame,
-    Grid, Key, Label, Matrix, Plot, PlotMode, PlotStyle, RESERVED_TAGS, RefGui, Rgba, Row, Scope,
-    Sep, Space, Toggle, Value,
+    ATTRS_MARKER, Align, BindPath, Bound, Button, Choice, Col, Color, Dialer, DialerStyle, Element,
+    ErrorElem, Frame, Grid, Key, Label, Matrix, Plot, PlotMode, PlotStyle, RESERVED_TAGS, RefGui,
+    Rgba, Row, Scope, Sep, Space, Toggle, Value,
 };
 use crate::sexpr::{self, SExpr};
 
@@ -60,8 +60,8 @@ struct Attrs<'a, 'b> {
 
 /// Every tag of the v1 vocabulary.
 const KNOWN_TAGS: &[&str] = &[
-    "col", "row", "grid", "frame", "sep", "space", "scope", "dialer", "toggle", "button", "matrix",
-    "label", "value", "plot", "ref-gui",
+    "col", "row", "grid", "frame", "sep", "space", "scope", "dialer", "toggle", "bound", "choice",
+    "color", "button", "matrix", "label", "value", "plot", "ref-gui",
 ];
 
 impl Ctx<'_> {
@@ -100,8 +100,9 @@ impl<'a, 'b> Attrs<'a, 'b> {
         }
     }
 
-    /// Consume the attribute `name`, parse it, and warn with a fallback to
-    /// the field default on a mismatch.
+    /// Consume the optional attribute `name` and parse it. `#f` leaves it
+    /// unset, so that a graph can clear an attribute with a value. Warn with
+    /// a fallback to the field default on a mismatch.
     fn take<T>(
         &mut self,
         name: &str,
@@ -109,6 +110,20 @@ impl<'a, 'b> Attrs<'a, 'b> {
         parse: impl Fn(&SExpr) -> Option<T>,
     ) -> Option<T> {
         let v = self.set.take(name)?;
+        if v == SExpr::Bool(false) {
+            return None;
+        }
+        self.parse(name, expected, v, parse)
+    }
+
+    /// Parse the value `v` of the attribute `name`, and warn on a mismatch.
+    fn parse<T>(
+        &mut self,
+        name: &str,
+        expected: &'static str,
+        v: SExpr,
+        parse: impl Fn(&SExpr) -> Option<T>,
+    ) -> Option<T> {
         let parsed = parse(&v);
         if parsed.is_none() {
             let kind = WarningKind::InvalidAttrValue {
@@ -135,7 +150,10 @@ impl<'a, 'b> Attrs<'a, 'b> {
     }
 
     fn bool_or(&mut self, name: &str, default: bool) -> bool {
-        self.take(name, "a boolean", as_bool).unwrap_or(default)
+        let Some(v) = self.set.take(name) else {
+            return default;
+        };
+        self.parse(name, "a boolean", v, as_bool).unwrap_or(default)
     }
 
     fn string(&mut self, name: &str) -> Option<String> {
@@ -396,6 +414,7 @@ fn elem(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, expr: SExpr) -> Elem
             let bind = a.bind();
             let label = a.string("label");
             let push = a.bool_or("push", true);
+            let pill = a.bool_or("pill", false);
             let key = a.key();
             a.finish();
             warn_ignored(ctx, path, &tag, rest.len());
@@ -403,8 +422,37 @@ fn elem(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, expr: SExpr) -> Elem
                 bind,
                 label,
                 push,
+                pill,
                 key,
             })
+        }
+        "bound" => {
+            let mut a = Attrs::new(ctx, path, &tag, set);
+            let bind = a.bind();
+            let label = a.string("label");
+            let key = a.key();
+            a.finish();
+            warn_ignored(ctx, path, &tag, rest.len());
+            Element::Bound(Bound { bind, label, key })
+        }
+        "choice" => {
+            let mut a = Attrs::new(ctx, path, &tag, set);
+            let bind = a.bind();
+            let options = a
+                .take("options", "a list of symbols", as_texts)
+                .unwrap_or_default();
+            let key = a.key();
+            a.finish();
+            warn_ignored(ctx, path, &tag, rest.len());
+            Element::Choice(Choice { bind, options, key })
+        }
+        "color" => {
+            let mut a = Attrs::new(ctx, path, &tag, set);
+            let bind = a.bind();
+            let key = a.key();
+            a.finish();
+            warn_ignored(ctx, path, &tag, rest.len());
+            Element::Color(Color { bind, key })
         }
         "button" => {
             let mut a = Attrs::new(ctx, path, &tag, set);
@@ -493,6 +541,7 @@ fn elem(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, expr: SExpr) -> Elem
             let y_max = a.f32("y-max");
             let w = a.f32("w");
             let h = a.f32("h");
+            let capacity = a.take("capacity", "a positive integer", as_cols);
             let key = a.key();
             a.finish();
             warn_ignored(ctx, path, &tag, rest.len());
@@ -508,6 +557,7 @@ fn elem(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, expr: SExpr) -> Elem
                 y_max,
                 w,
                 h,
+                capacity,
                 key,
             })
         }
@@ -640,6 +690,14 @@ fn warn_ignored(ctx: &mut Ctx, path: &[usize], tag: &str, count: usize) {
 fn text(expr: &SExpr) -> Option<String> {
     match expr {
         SExpr::Ident(s) | SExpr::Str(s) => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// A list of identifiers or strings.
+fn as_texts(expr: &SExpr) -> Option<Vec<String>> {
+    match expr {
+        SExpr::List(items) => items.iter().map(text).collect(),
         _ => None,
     }
 }
@@ -893,6 +951,7 @@ mod tests {
                 attr("y-max", float(1.0)),
                 attr("w", int(120)),
                 attr("h", int(80)),
+                attr("capacity", int(256)),
             ]),
         ]));
         let expected = Element::Plot(Plot {
@@ -907,6 +966,7 @@ mod tests {
             y_max: Some(1.0),
             w: Some(120.0),
             h: Some(80.0),
+            capacity: Some(256),
             key: None,
         });
         assert_eq!(d.root, expected);
@@ -1018,6 +1078,47 @@ mod tests {
 
         let d = dec(list(vec![ident("ref-gui"), int(9)]));
         assert_eq!(d.root, Element::RefGui(RefGui { id: 9, key: None }));
+    }
+
+    #[test]
+    fn false_unsets_optional_attrs_but_not_booleans() {
+        let d = dec(list(vec![
+            ident("plot"),
+            attrs(vec![
+                attr("y-min", SExpr::Bool(false)),
+                attr("color", SExpr::Bool(false)),
+                attr("style", SExpr::Bool(false)),
+                attr("grid", SExpr::Bool(false)),
+            ]),
+        ]));
+        assert_eq!(d.root, Element::Plot(Plot::default()));
+        assert_eq!(d.warnings, vec![]);
+        let d = dec(list(vec![
+            ident("toggle"),
+            attrs(vec![attr("push", SExpr::Bool(false))]),
+        ]));
+        let expected = Toggle {
+            push: false,
+            ..Default::default()
+        };
+        assert_eq!(d.root, Element::Toggle(expected));
+    }
+
+    #[test]
+    fn choice_options_decode_from_symbols_or_strings() {
+        let d = dec(list(vec![
+            ident("choice"),
+            attrs(vec![attr(
+                "options",
+                list(vec![ident("bars"), str_("line")]),
+            )]),
+        ]));
+        let expected = Choice {
+            options: vec!["bars".to_string(), "line".to_string()],
+            ..Default::default()
+        };
+        assert_eq!(d.root, Element::Choice(expected));
+        assert_eq!(d.warnings, vec![]);
     }
 
     #[test]
