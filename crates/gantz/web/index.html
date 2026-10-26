@@ -25,6 +25,7 @@ worker: only one service worker can own the scope, and the cross-origin-isolatio
           data-wasm-opt-params="--enable-simd --enable-threads --enable-mutable-globals --enable-bulk-memory --enable-reference-types --enable-multivalue --enable-tail-call --enable-nontrapping-float-to-int"
           data-initializer="initializer.js" />
     <link data-trunk rel="copy-file" href="coi-serviceworker.min.js" />
+    <link data-trunk rel="copy-file" href="../../gantz_egui/assets/logo/wordmark-white.svg" />
 
     <title>gantz</title>
     <style>
@@ -33,7 +34,7 @@ worker: only one service worker can own the scope, and the cross-origin-isolatio
             padding: 0;
             width: 100vw;
             height: 100%;
-            background-color: #1b1b1b;
+            background-color: #0e0e0e;
         }
         canvas {
             display: block;
@@ -51,10 +52,10 @@ worker: only one service worker can own the scope, and the cross-origin-isolatio
             font-family: sans-serif;
             text-align: center;
         }
-        #loading-title {
-            font-size: 18px;
-            letter-spacing: 0.5em;
-            margin: 0 0 12px 0;
+        #loading-wordmark {
+            display: block;
+            width: 120px;
+            margin: 0 auto 16px auto;
         }
         #loading-track {
             width: 100%;
@@ -71,7 +72,7 @@ worker: only one service worker can own the scope, and the cross-origin-isolatio
 </head>
 <body>
     <div id="loading">
-        <p id="loading-title">g a n t z</p>
+        <img id="loading-wordmark" src="wordmark-white.svg" alt="gantz">
         <div id="loading-track"><div id="loading-bar"></div></div>
     </div>
     <script>
