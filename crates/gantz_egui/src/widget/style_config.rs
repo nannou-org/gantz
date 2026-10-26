@@ -816,13 +816,17 @@ fn shape_editor(shape: &mut Shape, ui: &mut egui::Ui) {
     choice(
         ui,
         "font",
-        "The font of all text. Plex mono sets text and code alike. egui sets text in a \
-         proportional face and code in a monospace face.",
+        "The font of all text. Plex mono and egui mono set text and code alike. egui \
+         sets text in a proportional face and code in a monospace face.",
     );
     super::kit::pills(
         ui,
         &mut shape.font,
-        &[(Font::PlexMono, "plex mono"), (Font::Egui, "egui")],
+        &[
+            (Font::PlexMono, "plex mono"),
+            (Font::EguiMono, "egui mono"),
+            (Font::Egui, "egui"),
+        ],
     );
     choice(
         ui,
