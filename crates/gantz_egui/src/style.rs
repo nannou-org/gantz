@@ -48,10 +48,16 @@ pub struct StyleConfig {
 }
 
 /// The palette of each theme, and the palettes the user saved.
+///
+/// The keys of the palettes in use name the current set of defaults.
+/// Palettes stored under an older key take the current defaults. The saved
+/// palettes are kept.
 #[derive(Clone, Debug, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct Palettes {
+    #[serde(rename = "dark_v2")]
     pub dark: Palette,
+    #[serde(rename = "light_v2")]
     pub light: Palette,
     /// The saved palettes, sorted by name. None shares a name with a preset.
     pub saved: Vec<Palette>,
@@ -529,6 +535,23 @@ mod tests {
             ..StyleConfig::default()
         };
         assert_eq!(cfg, expected);
+    }
+
+    /// Palettes stored under the first keys take the gantz defaults, and the
+    /// saved palettes stay.
+    #[test]
+    fn first_palettes_take_the_defaults() {
+        let mut cfg = customised();
+        let saved = cfg.palettes.saved.clone();
+        cfg.palettes.dark = Palette::from(&base16::EGUI_DARK);
+        let text = to_ron(&cfg)
+            .expect("serialize StyleConfig")
+            .replace("dark_v2:", "dark:")
+            .replace("light_v2:", "light:");
+        let cfg = from_ron(&text).expect("deserialize StyleConfig");
+        assert_eq!(cfg.palettes.dark, Palette::dark());
+        assert_eq!(cfg.palettes.light, Palette::light());
+        assert_eq!(cfg.palettes.saved, saved);
     }
 
     /// The derived visuals take their colours from the theme's palette.
