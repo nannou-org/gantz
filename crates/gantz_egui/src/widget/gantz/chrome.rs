@@ -273,3 +273,39 @@ pub(super) fn headers(
     }
     out
 }
+
+/// The mark that stands in for the hidden panes while patch-only is on, with
+/// its top-left corner at `pos`. A dot in `problem`'s colour shows there are
+/// problems in the log. Returns whether the mark was clicked.
+pub(super) fn patch_mark(
+    ctx: &egui::Context,
+    pos: egui::Pos2,
+    problem: Option<egui::Color32>,
+) -> bool {
+    egui::Area::new(egui::Id::new("gantz-patch-mark"))
+        .order(egui::Order::Middle)
+        .fixed_pos(pos)
+        .show(ctx, |ui| {
+            let side = ui.spacing().interact_size.y;
+            let (rect, resp) =
+                ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::click());
+            let visuals = ui.visuals();
+            let color = match resp.hovered() {
+                true => visuals.text_color(),
+                false => visuals.weak_text_color().gamma_multiply(0.6),
+            };
+            let mark = crate::logo::mark(side * 0.7, color);
+            let size = mark.size().unwrap_or(egui::Vec2::splat(side * 0.7));
+            mark.paint_at(ui, egui::Rect::from_center_size(rect.center(), size));
+            if let Some(color) = problem {
+                let dot = rect.right_top() + egui::vec2(-2.0, 3.0);
+                ui.painter().circle_filled(dot, 3.0, color);
+            }
+            let hint = match crate::keybind::shortcut_text(ctx, crate::Action::TogglePatchOnly) {
+                Some(keys) => format!("show the panes ({keys})"),
+                None => "show the panes".to_string(),
+            };
+            resp.on_hover_text(hint).clicked()
+        })
+        .inner
+}

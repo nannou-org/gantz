@@ -61,8 +61,9 @@ pub(super) fn head_scene<Access>(
 
     // The camera rides out for overlays that map graph-space positions to
     // the scene, such as peer pointers.
-    let (graph_response, camera) = match cx.access.with_head_mut(head, |data| {
+    let (graph_response, camera, empty) = match cx.access.with_head_mut(head, |data| {
         let camera = data.view.camera;
+        let empty = data.graph.node_count() == 0;
         let res = graph_scene(
             id,
             cx.gantz.env,
@@ -84,10 +85,10 @@ pub(super) fn head_scene<Access>(
             data.vm,
             ui,
         );
-        (res, camera)
+        (res, camera, empty)
     }) {
-        Some((res, camera)) => (res, Some(camera)),
-        None => (None, None),
+        Some((res, camera, empty)) => (res, Some(camera), empty),
+        None => (None, None, false),
     };
 
     if let Some(response) = graph_response {
@@ -111,6 +112,18 @@ pub(super) fn head_scene<Access>(
         cx.response.responses.extend(Some(head), response.responses);
     }
 
+    // An empty graph shows how to start, unless a join is still filling it.
+    let awaiting = match (cx.gantz.collab, head) {
+        (Some(collab), gantz_ca::Head::Branch(name)) => collab
+            .sessions
+            .get(name)
+            .is_some_and(|d| d.awaiting_snapshot),
+        _ => false,
+    };
+    if empty && !awaiting {
+        empty_hint(ui, rect, cx.state.view_toggles.patch_only);
+    }
+
     // While a join is still connecting or has failed, the graph is only a
     // placeholder, so dim the scene and say what is happening. Peers' live
     // pointers paint beneath it.
@@ -132,15 +145,14 @@ pub(super) fn head_scene<Access>(
 /// The tab strip: a pill floating over the top-left of the scene, with a tab
 /// per open graph and a button for a new one. The main graph's tab is filled.
 /// A nested main graph shows its ancestors before its tab, each a step up.
-///
-/// Returns the height of the strip, so other overlays can clear it.
+/// The gantz mark leads the strip and opens the app menu.
 pub(super) fn tab_strip<Access>(
     cx: &mut PaneCtx<'_, '_, Access>,
     ui: &egui::Ui,
     anchor: egui::Pos2,
     main: Option<&gantz_ca::Head>,
-) -> f32
-where
+    ext_panes: &[widget::ExtPaneEntry],
+) where
     Access: HeadAccess,
 {
     let rename_id = egui::Id::new(RENAME_ID);
@@ -151,13 +163,14 @@ where
         .fill(style::color(ui, Role::Panel))
         .corner_radius(shape.window_corner())
         .inner_margin(egui::Margin::same(4));
-    let area = egui::Area::new(egui::Id::new("gantz-tab-strip"))
+    egui::Area::new(egui::Id::new("gantz-tab-strip"))
         .order(egui::Order::Middle)
         .fixed_pos(anchor)
         .show(ui.ctx(), |ui| {
             frame.show(ui, |ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 2.0;
+                    app_menu(cx, ui, ext_panes);
                     if let Some(main) = main {
                         let crumbs = breadcrumb(main, ui);
                         cx.response.responses.extend(Some(main), crumbs);
@@ -178,7 +191,68 @@ where
             });
         });
     ui.data_mut(|d| d.insert_temp(rename_id, rename));
-    area.response.rect.height()
+}
+
+/// The gantz mark, which opens the app menu: a new graph, the sidebar, the
+/// panes and the settings. The menu leads with the wordmark.
+fn app_menu<Access>(
+    cx: &mut PaneCtx<'_, '_, Access>,
+    ui: &mut egui::Ui,
+    ext_panes: &[widget::ExtPaneEntry],
+) where
+    Access: HeadAccess,
+{
+    let height = ui.spacing().interact_size.y;
+    let (rect, resp) =
+        ui.allocate_exact_size(egui::vec2(height + 8.0, height), egui::Sense::click());
+    let visuals = ui.visuals();
+    let color = match resp.hovered() {
+        true => visuals.strong_text_color(),
+        false => visuals.text_color(),
+    };
+    if resp.hovered() {
+        let radius = style::shape(ui.ctx()).widget_corner(height);
+        ui.painter()
+            .rect_filled(rect, radius, visuals.widgets.hovered.weak_bg_fill);
+    }
+    let mark = crate::logo::mark(height * 0.7, color);
+    mark.paint_at(
+        ui,
+        egui::Rect::from_center_size(rect.center(), egui::vec2(height * 0.6, height * 0.7)),
+    );
+    let resp = resp.on_hover_text("menu");
+    egui::Popup::menu(&resp).show(|ui| {
+        let strong = ui.visuals().strong_text_color();
+        ui.add(crate::logo::wordmark(14.0, strong));
+        ui.add_space(4.0);
+        let ctx = ui.ctx().clone();
+        let keys = |action| crate::keybind::shortcut_text(&ctx, action);
+        if widget::kit::menu_item(ui, "new graph", keys(crate::Action::NewGraph)).clicked() {
+            cx.response.responses.push(None, crate::NewGraph);
+            ui.close();
+        }
+        ui.separator();
+        let view = &mut cx.state.view_toggles;
+        ui.checkbox(&mut view.sidebar_open, "sidebar");
+        let patch_only = keys(crate::Action::TogglePatchOnly);
+        if widget::kit::menu_item(ui, "patch only", patch_only).clicked() {
+            view.patch_only = true;
+            ui.close();
+        }
+        ui.menu_button("panes", |ui| {
+            widget::panes_config(view, ext_panes, ui);
+            ui.separator();
+            if widget::reset_layout_button(ui) {
+                cx.response.responses.push(None, crate::ResetTilesLayout);
+                ui.close();
+            }
+        });
+        if ui.button("settings").clicked() {
+            view.settings = true;
+            view.sidebar_open = true;
+            ui.close();
+        }
+    });
 }
 
 /// One graph's tab. A click shows the graph on the scene, or focuses its
@@ -369,6 +443,56 @@ fn paint_peer_pointers(
             pointer.color,
         );
     }
+}
+
+/// A quiet hint over an empty graph in `rect`: the outline mark, and the keys
+/// that add a node and that show or hide the panes. Each key sits left of the
+/// centre line and its meaning right of it.
+fn empty_hint(ui: &mut egui::Ui, rect: egui::Rect, patch_only: bool) {
+    // egui_graph draws the scene in a sublayer of this pane's layer, so the
+    // hint takes a later sublayer. Windows over the pane still cover it.
+    let parent = ui.layer_id();
+    let layer = egui::LayerId::new(parent.order, ui.id().with("empty_hint"));
+    ui.ctx().set_sublayer(parent, layer);
+    let builder = egui::UiBuilder::new().layer_id(layer).max_rect(rect);
+    ui.scope_builder(builder, |ui| {
+        let ctx = ui.ctx().clone();
+        let faint = ui.visuals().weak_text_color().gamma_multiply(0.35);
+        let mark_height = (rect.height() * 0.18).clamp(48.0, 120.0);
+        let mark = crate::logo::mark_outline(mark_height, faint);
+        let size = mark.size().unwrap_or(egui::Vec2::splat(mark_height));
+        let center = rect.center() - egui::vec2(0.0, mark_height * 0.5);
+        mark.paint_at(ui, egui::Rect::from_center_size(center, size));
+        let panes = match patch_only {
+            true => "show the panes",
+            false => "hide the panes",
+        };
+        let hints = [
+            (crate::Action::ToggleNodePalette, "add a node"),
+            (crate::Action::TogglePatchOnly, panes),
+        ];
+        let row = ui.spacing().interact_size.y + 4.0;
+        let gap = 6.0;
+        let mut y = center.y + size.y / 2.0 + 20.0;
+        for (action, text) in hints {
+            let Some(keys) = crate::keybind::shortcut_text(&ctx, action) else {
+                continue;
+            };
+            let key_rect =
+                egui::Rect::from_x_y_ranges(rect.left()..=rect.center().x - gap, y..=y + row);
+            let key_ui = egui::UiBuilder::new()
+                .max_rect(key_rect)
+                .layout(egui::Layout::right_to_left(egui::Align::Center));
+            ui.scope_builder(key_ui, |ui| widget::kit::keycap(ui, &keys, false));
+            let text_rect =
+                egui::Rect::from_x_y_ranges(rect.center().x + gap..=rect.right(), y..=y + row);
+            let text_ui = egui::UiBuilder::new()
+                .max_rect(text_rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center));
+            ui.scope_builder(text_ui, |ui| ui.weak(text));
+            y += row;
+        }
+    });
 }
 
 /// Dim a joining session's still-empty scene with its sync progress, or the

@@ -2,7 +2,7 @@
 //! button. Shared between the Settings pane's Panes subtab and the graph-area
 //! context menu's "panes" submenu.
 
-use super::gantz::ViewToggles;
+use super::gantz::{StatusStyle, ViewToggles};
 
 /// Render the per-pane visibility checkboxes.
 ///
@@ -74,6 +74,15 @@ pub fn panes_config(view: &mut ViewToggles, ext: &[super::ExtPaneEntry], ui: &mu
         ui.checkbox(on, entry.title.to_lowercase())
             .on_hover_text(entry.description.as_str());
     }
+    let options = [
+        (StatusStyle::Gutter, "line"),
+        (StatusStyle::Pill, "pill"),
+        (StatusStyle::Hidden, "off"),
+    ];
+    super::kit::pill_row(ui, "status", &mut view.status, &options).on_hover_text(
+        "Show the focused graph, its session, the VM time and the log's problems in a line \
+         under the panes, or in a pill over the scene.",
+    );
 }
 
 /// Render the "reset all" layout button. Returns `true` when clicked.

@@ -1,6 +1,12 @@
 //! A generic node palette widget adapted from rerun's command palette.
+//!
+//! The palette floats over the scene. A search field leads it. Below, the
+//! matching commands are listed by group on the left, and the details of the
+//! highlighted or hovered command sit in a card on the right. A footer names
+//! the keys the palette understands.
 
-use egui::{Align2, Key, NumExt as _};
+use crate::{style, widget::kit};
+use egui::{Key, NumExt as _};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
 
@@ -12,11 +18,12 @@ pub trait Command: Copy + Sized {
     fn description(&self) -> Option<Cow<'static, str>> {
         None
     }
-    /// Detailed information for this command, rendered within the per-entry
-    /// hover tooltip. Default renders nothing.
+    /// Detailed information for this command, rendered in the details card.
+    /// Default renders nothing.
     fn info_ui(&self, _ui: &mut egui::Ui) {}
-    /// Optional keyboard shortcut for the command.
-    fn formatted_kb_shortcut(&self, _ctx: &egui::Context) -> Option<String> {
+    /// The group the command is listed under, such as "signal". Commands
+    /// without one are listed under no heading.
+    fn group(&self) -> Option<Cow<'static, str>> {
         None
     }
 }
@@ -30,6 +37,15 @@ pub struct NodePalette {
     /// navigation sets it.
     selected_alternative: Option<usize>,
 }
+
+/// The size of the palette, before it is fitted to the scene.
+const SIZE: egui::Vec2 = egui::vec2(700.0, 440.0);
+
+/// The share of the palette's width that the list takes.
+const LIST_SHARE: f32 = 0.48;
+
+/// The height of a row in the list.
+const ROW_HEIGHT: f32 = 24.0;
 
 impl NodePalette {
     pub fn new() -> Self {
@@ -72,27 +88,24 @@ impl NodePalette {
         }
 
         let commands: Vec<T> = commands.into_iter().collect();
-
-        // A modest widening fits each entry's inline description. The full
-        // details remain available via the entry's hover tooltip.
-        let width = 400.0.at_most(area.width());
-        let max_height = 320.0.at_most(area.height());
-
+        let size = egui::vec2(
+            SIZE.x.at_most(area.width() - 16.0),
+            SIZE.y.at_most(area.height() - 16.0),
+        );
+        let shape = style::shape(egui_ctx);
         let window_response = egui::Window::new("Node Palette")
-            .fixed_pos(area.center() - 0.5 * max_height * egui::Vec2::Y)
-            .fixed_size([width, max_height])
-            .pivot(egui::Align2::CENTER_TOP)
+            .fixed_pos(area.center() - 0.5 * size)
+            .fixed_size(size)
             .resizable(false)
             .scroll(false)
             .title_bar(false)
-            .show(egui_ctx, |ui| {
-                egui::Frame {
-                    inner_margin: 2.0.into(),
-                    ..Default::default()
-                }
-                .show(ui, |ui| self.window_content_ui(ui, &commands))
-                .inner
-            });
+            .frame(
+                egui::Frame::window(&egui_ctx.global_style())
+                    .stroke(egui::Stroke::NONE)
+                    .corner_radius(shape.window_corner())
+                    .inner_margin(egui::Margin::same(10)),
+            )
+            .show(egui_ctx, |ui| self.window_content_ui(ui, &commands));
 
         // Close on a click outside the palette. `clicked_elsewhere` tests the
         // window's rect geometrically, so interacting with inner widgets never
@@ -112,180 +125,203 @@ impl NodePalette {
         // Consume Enter before adding the `TextEdit`, so it does not steal it.
         let enter_pressed = ui.input_mut(|i| i.consume_key(Default::default(), Key::Enter));
 
-        let text_response = ui.add(
-            egui::TextEdit::singleline(&mut self.query)
-                .desired_width(f32::INFINITY)
-                .lock_focus(true),
-        );
+        let matches = commands_that_match(&self.query.to_lowercase(), commands);
+        let mut text_response = None;
+        ui.horizontal(|ui| {
+            let count = format!("{} found", matches.len());
+            let count_w = ui.painter().layout_no_wrap(
+                count.clone(),
+                egui::TextStyle::Small.resolve(ui.style()),
+                egui::Color32::PLACEHOLDER,
+            );
+            let edit = egui::TextEdit::singleline(&mut self.query)
+                .hint_text("search nodes")
+                .desired_width(ui.available_width() - count_w.size().x - 12.0)
+                .lock_focus(true);
+            text_response = Some(ui.add(edit));
+            ui.label(egui::RichText::new(count).small().weak());
+        });
+        let text_response = text_response.expect("the search field is drawn");
         text_response.request_focus();
-        let mut scroll_to_selected_alternative = false;
+        let mut scroll_to_selected = false;
         if text_response.changed() {
             // Highlight the top match while filtering so Enter works. Show no
             // highlight for an empty query, since that is a browse-and-click
             // list.
             self.selected_alternative = (!self.query.is_empty()).then_some(0);
-            scroll_to_selected_alternative = self.selected_alternative.is_some();
+            scroll_to_selected = self.selected_alternative.is_some();
         }
+        ui.add_space(6.0);
 
-        let selected_command = egui::ScrollArea::vertical()
-            .auto_shrink([false, true])
-            .show(ui, |ui| {
-                self.alternatives_ui(ui, commands, enter_pressed, scroll_to_selected_alternative)
-            })
-            .inner;
+        let footer_height = ui.spacing().interact_size.y + 6.0;
+        let body_height = (ui.available_height() - footer_height).at_least(0.0);
+        let list_width = ui.available_width() * LIST_SHARE;
+        let mut chosen = None;
+        let mut shown = None;
+        ui.horizontal_top(|ui| {
+            let down = egui::Layout::top_down(egui::Align::Min);
+            ui.allocate_ui_with_layout(egui::vec2(list_width, body_height), down, |ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("node-palette-list")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        let (c, s) =
+                            self.alternatives_ui(ui, &matches, enter_pressed, scroll_to_selected);
+                        chosen = c;
+                        shown = s;
+                    });
+            });
+            let details_width = ui.available_width();
+            ui.allocate_ui_with_layout(egui::vec2(details_width, body_height), down, |ui| {
+                ui.set_min_size(egui::vec2(details_width, body_height));
+                if let Some(command) = shown {
+                    kit::card(ui, None, None, |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("node-palette-details")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| command.info_ui(ui));
+                    });
+                }
+            });
+        });
 
-        if selected_command.is_some() {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            kit::keycap(ui, "↑", false);
+            kit::keycap(ui, "↓", false);
+            ui.weak("choose");
+            ui.add_space(10.0);
+            kit::keycap(ui, "enter", false);
+            ui.weak("add");
+            ui.add_space(10.0);
+            kit::keycap(ui, "esc", false);
+            ui.weak("close");
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.weak("adds at the pointer");
+            });
+        });
+
+        if chosen.is_some() {
             *self = Self::new();
         }
-
-        selected_command
+        chosen
     }
 
-    /// Render the matching entries. Returns the command chosen by click or
-    /// Enter, which closes the palette.
+    /// Render the matching entries under their group headings. Returns the
+    /// command chosen by click or Enter, which closes the palette, and the
+    /// command whose details to show: the hovered one, else the highlighted
+    /// one, else the first.
     fn alternatives_ui<T: Command>(
         &mut self,
         ui: &mut egui::Ui,
-        commands: &[T],
+        matches: &[FuzzyMatch<T>],
         enter_pressed: bool,
-        mut scroll_to_selected_alternative: bool,
-    ) -> Option<T> {
-        scroll_to_selected_alternative |= ui.input(|i| i.key_pressed(Key::ArrowUp));
-        scroll_to_selected_alternative |= ui.input(|i| i.key_pressed(Key::ArrowDown));
+        mut scroll_to_selected: bool,
+    ) -> (Option<T>, Option<T>) {
+        scroll_to_selected |= ui.input(|i| i.key_pressed(Key::ArrowUp));
+        scroll_to_selected |= ui.input(|i| i.key_pressed(Key::ArrowDown));
 
-        let query = self.query.to_lowercase();
-
-        let item_height = 16.0;
         let font_id = egui::TextStyle::Button.resolve(ui.style());
+        let small = egui::TextStyle::Small.resolve(ui.style());
+        let shape = style::shape(ui.ctx());
+        let mut chosen = None;
+        let mut hovered = None;
+        let mut group: Option<Cow<'static, str>> = None;
 
-        let mut num_alternatives: usize = 0;
-        let mut selected_command = None;
+        for (i, m) in matches.iter().enumerate() {
+            let command = m.command;
+            let next_group = command.group();
+            if next_group != group {
+                if let Some(heading) = &next_group {
+                    ui.add_space(if i == 0 { 0.0 } else { 6.0 });
+                    ui.label(egui::RichText::new(heading.as_ref()).small().weak());
+                }
+                group = next_group;
+            }
 
-        let matches = commands_that_match(&query, commands);
-
-        // Align descriptions into a single column just past the widest name, so
-        // names align at the left and descriptions align at `desc_x`. The cap
-        // keeps at least about half the row for the description.
-        let row_width = ui.available_width();
-        let name_col_w = matches
-            .iter()
-            .map(|m| {
-                ui.painter()
-                    .layout_no_wrap(
-                        m.command.text().to_owned(),
-                        font_id.clone(),
-                        egui::Color32::WHITE,
-                    )
-                    .size()
-                    .x
-            })
-            .fold(0.0_f32, f32::max);
-        let desc_x = (name_col_w + 12.0).at_most(row_width * 0.55);
-
-        for (i, fuzzy_match) in matches.iter().enumerate() {
-            let command = fuzzy_match.command;
-            let kb_shortcut_text = command.formatted_kb_shortcut(ui.ctx()).unwrap_or_default();
-
-            let (rect, response) = ui.allocate_at_least(
-                egui::vec2(ui.available_width(), item_height),
+            let (rect, response) = ui.allocate_exact_size(
+                egui::vec2(ui.available_width(), ROW_HEIGHT),
                 egui::Sense::click(),
             );
-
-            let response = response.on_hover_ui(|ui| {
-                // Re-assert the wrap width every frame so the tooltip widens as
-                // content grows. See the note in `graph_scene::socket_hover`.
-                let max_width = ui.spacing().tooltip_width;
-                ui.set_max_width(max_width);
-                command.info_ui(ui);
-            });
-
             if response.clicked() {
-                selected_command = Some(command);
+                chosen = Some(command);
             }
-
+            if response.hovered() {
+                hovered = Some(command);
+            }
             let selected = self.selected_alternative == Some(i);
-            let style = ui.style().interact_selectable(&response, selected);
+            if selected && enter_pressed {
+                chosen = Some(command);
+            }
+            if selected && scroll_to_selected {
+                ui.scroll_to_rect(rect, None);
+            }
 
-            if selected {
+            let visuals = ui.visuals();
+            let radius = shape.widget_corner(rect.height());
+            let (name_color, desc_color) = if selected {
+                let ink = style::color(ui, style::Role::Panel);
                 ui.painter()
-                    .rect_filled(rect, style.corner_radius, ui.visuals().selection.bg_fill);
-
-                if enter_pressed {
-                    selected_command = Some(command);
+                    .rect_filled(rect, radius, visuals.strong_text_color());
+                (ink, ink.gamma_multiply(0.75))
+            } else {
+                if response.hovered() {
+                    ui.painter()
+                        .rect_filled(rect, radius, visuals.widgets.hovered.weak_bg_fill);
                 }
+                (visuals.strong_text_color(), visuals.weak_text_color())
+            };
 
-                if scroll_to_selected_alternative {
-                    ui.scroll_to_rect(rect, None);
-                }
-            }
-
-            let text = format_match(fuzzy_match, ui, &font_id, style.text_color());
-
-            let galley = text.into_galley(
-                ui,
-                Some(egui::TextWrapMode::Extend),
-                f32::INFINITY,
-                egui::FontSelection::default(),
-            );
-            let text_rect = Align2::LEFT_CENTER
-                .anchor_rect(egui::Rect::from_min_size(rect.left_center(), galley.size()));
-            ui.painter()
-                .galley(text_rect.min, galley, style.text_color());
-
-            ui.painter().text(
-                rect.right_center(),
-                Align2::RIGHT_CENTER,
-                kb_shortcut_text,
-                font_id.clone(),
-                if selected {
-                    style.text_color()
-                } else {
-                    ui.visuals().weak_text_color()
-                },
-            );
-
-            // The description, aligned in its own column right of the name and
-            // dimmed. The scroll area clips overflow. The hover tooltip carries
-            // the full text.
+            let name = name_job(m, &font_id, name_color);
+            let name = ui.painter().layout_job(name);
+            let pad = 8.0;
+            let name_pos = egui::pos2(rect.left() + pad, rect.center().y - name.size().y / 2.0);
+            let name_w = name.size().x;
+            ui.painter().galley(name_pos, name, name_color);
             if let Some(desc) = command.description() {
-                ui.painter().text(
-                    egui::pos2(rect.left() + desc_x, rect.center().y),
-                    Align2::LEFT_CENTER,
-                    desc.as_ref(),
-                    font_id.clone(),
-                    if selected {
-                        style.text_color()
-                    } else {
-                        ui.visuals().weak_text_color()
-                    },
+                let x = rect.left() + pad + name_w + 10.0;
+                let max_w = (rect.right() - pad - x).at_least(0.0);
+                let mut job = egui::text::LayoutJob::simple_singleline(
+                    desc.into_owned(),
+                    small.clone(),
+                    desc_color,
                 );
+                job.wrap = egui::text::TextWrapping::truncate_at_width(max_w);
+                let galley = ui.painter().layout_job(job);
+                let pos = egui::pos2(x, rect.center().y - galley.size().y / 2.0);
+                ui.painter().galley(pos, galley, desc_color);
             }
-
-            num_alternatives += 1;
         }
 
-        if num_alternatives == 0 {
-            ui.weak("No matching results");
+        if matches.is_empty() {
+            ui.weak("no matching nodes");
         }
 
         // Move up or down in the list. From no highlight, the first arrow press
         // starts at the top. Otherwise step and keep the highlight in range.
+        let n = matches.len();
         let up = ui.input_mut(|i| i.count_and_consume_key(Default::default(), Key::ArrowUp));
         let down = ui.input_mut(|i| i.count_and_consume_key(Default::default(), Key::ArrowDown));
-        self.selected_alternative = if num_alternatives == 0 {
+        self.selected_alternative = if n == 0 {
             None
         } else if up == 0 && down == 0 {
-            self.selected_alternative
-                .map(|sel| sel.min(num_alternatives - 1))
+            self.selected_alternative.map(|sel| sel.min(n - 1))
         } else {
             let next = match self.selected_alternative {
                 None => 0,
                 Some(cur) => (cur + down).saturating_sub(up),
             };
-            Some(next.min(num_alternatives - 1))
+            Some(next.min(n - 1))
         };
 
-        selected_command
+        let highlighted = self
+            .selected_alternative
+            .and_then(|i| matches.get(i))
+            .map(|m| m.command);
+        let shown = hovered
+            .or(highlighted)
+            .or_else(|| matches.first().map(|m| m.command));
+        (chosen, shown)
     }
 }
 
@@ -295,8 +331,11 @@ struct FuzzyMatch<T> {
     fuzzy_match: Option<sublime_fuzzy::Match>,
 }
 
+/// The commands that match `query`, each group together. Groups keep the
+/// order of their best match, and so do the commands within a group. An
+/// empty query matches every command, in the given order.
 fn commands_that_match<T: Command>(query: &str, commands: &[T]) -> Vec<FuzzyMatch<T>> {
-    if query.is_empty() {
+    let mut matches: Vec<_> = if query.is_empty() {
         commands
             .iter()
             .map(|&command| FuzzyMatch {
@@ -319,38 +358,42 @@ fn commands_that_match<T: Command>(query: &str, commands: &[T]) -> Vec<FuzzyMatc
             .collect();
         matches.sort_by_key(|m| -m.score); // highest score first
         matches
+    };
+    // Gather each group at the place of its first, so best, member. The sort
+    // is stable, so order within a group holds.
+    let mut groups: Vec<Option<Cow<'static, str>>> = vec![];
+    for m in &matches {
+        let g = m.command.group();
+        if !groups.contains(&g) {
+            groups.push(g);
+        }
     }
+    matches.sort_by_key(|m| {
+        let g = m.command.group();
+        groups.iter().position(|x| *x == g).unwrap_or(usize::MAX)
+    });
+    matches
 }
 
-fn format_match<T: Command>(
+/// The command's name, with the letters that matched the query underlined.
+fn name_job<T: Command>(
     m: &FuzzyMatch<T>,
-    ui: &egui::Ui,
     font_id: &egui::FontId,
-    default_text_color: egui::Color32,
-) -> egui::WidgetText {
+    color: egui::Color32,
+) -> egui::text::LayoutJob {
     let target_text = m.command.text();
-
-    if let Some(fm) = &m.fuzzy_match {
-        let matched_indices: BTreeSet<_> = fm.matched_indices().collect();
-
-        let mut job = egui::text::LayoutJob::default();
-        for (i, c) in target_text.chars().enumerate() {
-            let color = if matched_indices.contains(&i) {
-                ui.visuals().strong_text_color()
-            } else {
-                default_text_color
-            };
-            job.append(
-                &c.to_string(),
-                0.0,
-                egui::text::TextFormat::simple(font_id.clone(), color),
-            );
+    let matched: BTreeSet<usize> = m
+        .fuzzy_match
+        .as_ref()
+        .map(|fm| fm.matched_indices().copied().collect())
+        .unwrap_or_default();
+    let mut job = egui::text::LayoutJob::default();
+    for (i, c) in target_text.chars().enumerate() {
+        let mut format = egui::text::TextFormat::simple(font_id.clone(), color);
+        if matched.contains(&i) {
+            format.underline = egui::Stroke::new(1.5f32, color);
         }
-
-        job.into()
-    } else {
-        egui::RichText::new(target_text)
-            .color(default_text_color)
-            .into()
+        job.append(&c.to_string(), 0.0, format);
     }
+    job
 }

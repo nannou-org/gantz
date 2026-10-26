@@ -4,7 +4,7 @@ use crate::{
     node::NodeCodec,
     response::Responses,
     style::{self, Role, StyleConfig},
-    widget::{self, graph_scene},
+    widget::{self, graph_scene, toast},
 };
 use std::collections::{HashMap, HashSet};
 
@@ -12,6 +12,7 @@ mod chrome;
 mod graph_tabs;
 mod panes;
 mod state;
+mod status;
 mod tiles;
 mod windowing;
 
@@ -25,6 +26,7 @@ use state::{
     clear_egui_memory_id, default_sidebar_width, default_tray_height, load_ron, load_tree,
     store_ron, store_tree,
 };
+pub use status::StatusStyle;
 pub use tiles::{NodeViewPane, Pane};
 use tiles::{
     add_graph_pane, add_node_view_pane, capture_fixed_sizes, create_tree, impose_fixed_sizes,
@@ -448,6 +450,22 @@ impl<'a> Gantz<'a> {
         }
 
         style::apply(ui.ctx(), &state.style);
+        state.keymap.publish(ui.ctx());
+
+        // Toggle patch-only. While a widget has the keyboard focus, its
+        // binding (Tab by default) moves the focus on instead.
+        let focused = ui.ctx().memory(|m| m.focused().is_some());
+        if !focused && state.keymap.consume(ui, crate::Action::TogglePatchOnly) {
+            state.view_toggles.patch_only = !state.view_toggles.patch_only;
+            // egui reads Tab as a focus move before any widget runs.
+            ui.ctx()
+                .memory_mut(|m| m.move_focus(egui::FocusDirection::None));
+        }
+        let patch_only = state.view_toggles.patch_only;
+        let status_style = match patch_only {
+            true => StatusStyle::Hidden,
+            false => state.view_toggles.status,
+        };
 
         // The persisted outer tree. The version suffix invalidates any tree
         // persisted before the latest default-layout change, forcing a
@@ -477,12 +495,22 @@ impl<'a> Gantz<'a> {
 
         // `available_rect_before_wrap` matches the root rect `Tree::ui` uses.
         let widget_area = ui.available_rect_before_wrap();
+        // The status gutter takes the bottom of the area and the panes the
+        // rest.
+        let tree_area = match status_style {
+            StatusStyle::Gutter => {
+                let mut rect = widget_area;
+                rect.max.y = (rect.max.y - status::GUTTER_HEIGHT).max(rect.min.y);
+                rect
+            }
+            StatusStyle::Pill | StatusStyle::Hidden => widget_area,
+        };
         // Raise any pane below its minimum before the fixed sizes are imposed,
         // so a clamped minimum is not captured as a shrunken sidebar or tray.
-        impose_min_sizes(&mut tree, state.style.shape.separator_width, widget_area);
+        impose_min_sizes(&mut tree, state.style.shape.separator_width, tree_area);
         // Maintain a fixed sidebar width and tray height across window resizes
         // by imposing the stored pixel sizes on the share splits before layout.
-        impose_fixed_sizes(&mut tree, state, widget_area);
+        impose_fixed_sizes(&mut tree, state, tree_area);
 
         let mut response = GantzResponse::new(focused_head);
 
@@ -496,13 +524,14 @@ impl<'a> Gantz<'a> {
             },
             windowed: &mut windowed,
             actions: vec![],
-            focus: chrome::update_focus(ui.ctx(), &tree, widget_area),
+            focus: chrome::update_focus(ui.ctx(), &tree, tree_area),
             headers: chrome::headers(&tree.tiles),
         };
         // Reserve the bottom layer for the scene colour and the pane
         // grounds. They are painted once the tree has laid out its rects.
         let grounds = ui.painter().add(egui::Shape::Noop);
-        tree.ui(&mut behaviour, ui);
+        let tree_ui = egui::UiBuilder::new().max_rect(tree_area);
+        ui.scope_builder(tree_ui, |ui| tree.ui(&mut behaviour, ui));
 
         let focused_head = behaviour.cx.focused_head;
         let actions = std::mem::take(&mut behaviour.actions);
@@ -511,6 +540,63 @@ impl<'a> Gantz<'a> {
         let theme = style::theme_of(ui.visuals());
         let shapes = chrome::ground_shapes(&tree, &state.style, theme, widget_area, focus);
         ui.painter().set(grounds, egui::Shape::Vec(shapes));
+
+        // The status line, and the toasts over the scene.
+        let scene_rect = tree
+            .tiles
+            .find_pane(&Pane::GraphScene)
+            .and_then(|id| tree.tiles.rect(id))
+            .unwrap_or(tree_area);
+        let head = access.heads().get(focused_head);
+        let session = match (self.collab, head) {
+            (Some(collab), Some(gantz_ca::Head::Branch(name))) => collab.sessions.get(name),
+            _ => None,
+        };
+        let status = status::Status {
+            graph: head.map(ToString::to_string),
+            session,
+            vm: self.perf_vm.as_deref().and_then(status::vm_mean),
+            problems: status::scan_log(ui.ctx(), self.log_source.as_ref()),
+        };
+        let inset = chrome::HEADER_INSET;
+        let open_logs = match status_style {
+            StatusStyle::Gutter => {
+                let gap = state.style.shape.separator_width;
+                let rect = egui::Rect::from_min_max(
+                    egui::pos2(widget_area.min.x + gap + inset, tree_area.max.y),
+                    egui::pos2(widget_area.max.x - gap - inset, widget_area.max.y),
+                );
+                status::gutter(ui, rect, &status)
+            }
+            StatusStyle::Pill => {
+                let anchor = scene_rect.right_bottom() - egui::Vec2::splat(inset);
+                status::pill(ui.ctx(), anchor, &status)
+            }
+            StatusStyle::Hidden => false,
+        };
+        if open_logs {
+            state.view_toggles.logs = true;
+        }
+        if patch_only {
+            let visuals = ui.visuals();
+            let problem = match status.problems {
+                p if p.errors > 0 => Some(visuals.error_fg_color),
+                p if p.warnings > 0 => Some(visuals.warn_fg_color),
+                _ => None,
+            };
+            let pos = scene_rect.min + egui::Vec2::splat(inset * 1.5);
+            if chrome::patch_mark(ui.ctx(), pos, problem) {
+                state.view_toggles.patch_only = false;
+            }
+        }
+        let toast_margin = match status_style {
+            StatusStyle::Pill => inset * 2.0 + ui.spacing().interact_size.y,
+            StatusStyle::Gutter | StatusStyle::Hidden => inset * 2.0,
+        };
+        toast::show(
+            ui.ctx(),
+            scene_rect.center_bottom() - egui::vec2(0.0, toast_margin),
+        );
         for action in actions {
             match action {
                 chrome::PaneAction::Hide(pane) => {
@@ -543,7 +629,7 @@ impl<'a> Gantz<'a> {
 
         // Capture the sidebar width and tray height from the laid-out tree,
         // which reflects any manual divider drag, to re-impose next frame.
-        capture_fixed_sizes(&tree, state, widget_area);
+        capture_fixed_sizes(&tree, state, tree_area);
 
         // Detect .gantz file drops globally rather than per pane, since the
         // pointer position may be unavailable during OS file drags on some
@@ -733,6 +819,7 @@ impl<'a> Gantz<'a> {
         Access: HeadAccess,
     {
         style::apply(ui.ctx(), &state.style);
+        state.keymap.publish(ui.ctx());
         let mut response = GantzResponse::new(focused_head);
         let mut cx = PaneCtx {
             gantz: &mut self,
@@ -996,6 +1083,24 @@ impl widget::node_palette::Command for NodeTyCmd<'_> {
 
     fn info_ui(&self, ui: &mut egui::Ui) {
         crate::node_info_ui(&self.env.command_info(self.name), ui);
+    }
+
+    fn group(&self) -> Option<std::borrow::Cow<'static, str>> {
+        let name = self.name;
+        let group = if name == NESTED_GRAPH_TYPE {
+            "new graph"
+        } else if name.starts_with('~') {
+            "signal"
+        } else if name.starts_with("pat.") {
+            "pattern"
+        } else if name.starts_with("ui.") {
+            "gui"
+        } else if name.starts_with("demo.") {
+            "demos"
+        } else {
+            "nodes"
+        };
+        Some(group.into())
     }
 }
 

@@ -257,13 +257,13 @@ where
         let id = egui::Id::new("gantz-main-scene");
         head_scene(cx, ui, main, id, &ext_panes);
     }
-    let margin = scene_overlay_margin(ui.style());
-    let strip_height = tab_strip(
-        cx,
-        ui,
-        rect.left_top() + egui::vec2(margin, margin),
-        main.as_ref(),
-    );
+    // Patch-only shows the graphs alone. `Gantz::show` draws a mark in the
+    // tab strip's place.
+    if !cx.state.view_toggles.patch_only {
+        let margin = scene_overlay_margin(ui.style());
+        let anchor = rect.left_top() + egui::vec2(margin, margin);
+        tab_strip(cx, ui, anchor, main.as_ref(), &ext_panes);
+    }
 
     let PaneCtx {
         gantz,
@@ -385,11 +385,6 @@ where
             }
         }
     }
-
-    // Floating hamburger over the top-left corner of the graph scene, just
-    // below the tab strip, that opens and closes the sidebar.
-    let anchor = rect.left_top() + egui::vec2(margin, margin * 2.0 + strip_height);
-    sidebar_toggle(ui.ctx(), anchor, &mut state.view_toggles.sidebar_open);
 }
 
 /// Render a graph pane: its graph's scene, inset in the pane. See
@@ -1236,51 +1231,6 @@ pub(super) fn pane_frame(style: &egui::Style) -> egui::Frame {
 /// sidebar toggle and the nested-graph breadcrumb.
 fn scene_overlay_margin(style: &egui::Style) -> f32 {
     style.interaction.interact_radius * 2.0
-}
-
-/// The size of the floating sidebar toggle glyph.
-const SIDEBAR_TOGGLE_ICON_SIZE: f32 = 18.0;
-
-/// A floating hamburger button that toggles the sidebar.
-///
-/// Anchored to the given top-left position over the graph scene, so it tracks
-/// the scene's corner rather than the whole window.
-fn sidebar_toggle(ctx: &egui::Context, anchor_pos: egui::Pos2, open: &mut bool) {
-    let id = egui::Id::new("gantz-sidebar-toggle");
-    egui::Area::new(id)
-        .pivot(egui::Align2::LEFT_TOP)
-        .fixed_pos(anchor_pos)
-        .order(egui::Order::Foreground)
-        .show(ctx, |ui| {
-            egui::Frame::NONE.show(ui, |ui| {
-                // Idle, the hamburger matches the faint colour of egui_graph's
-                // dot grid. On hover it brightens a little to signal it is
-                // interactive. There is no selection colour when open. Laid
-                // out manually so the colour can depend on hover.
-                let font = egui::FontId::proportional(SIDEBAR_TOGGLE_ICON_SIZE);
-                let galley =
-                    ui.painter()
-                        .layout_no_wrap("☰".to_owned(), font, egui::Color32::PLACEHOLDER);
-                let (rect, response) = ui.allocate_exact_size(galley.size(), egui::Sense::click());
-                let color = if response.hovered() {
-                    ui.visuals().weak_text_color()
-                } else {
-                    ui.style().noninteractive().bg_stroke.color
-                };
-                ui.painter().galley(rect.min, galley, color);
-                if response.clicked() {
-                    *open = !*open;
-                }
-                let hint = if *open {
-                    "close sidebar"
-                } else {
-                    "open sidebar"
-                };
-                response
-                    .on_hover_cursor(egui::CursorIcon::PointingHand)
-                    .on_hover_text(hint);
-            });
-        });
 }
 
 fn graph_select(

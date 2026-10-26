@@ -1,6 +1,6 @@
 use crate::{
     Env, InspectorRowsResponse, NodeCtx, NodeUi, NodeUiResponse, NodeViewResponse, SocketDoc,
-    SocketKind,
+    SocketKind, style, widget::kit,
 };
 
 /// A widget for editing and parsing a Steel expression.
@@ -16,6 +16,8 @@ pub struct ExprEdit<'a> {
 struct ExprEditState {
     expr_hash: u64,
     code: String,
+    /// Why the working code does not parse, if it does not.
+    error: Option<String>,
 }
 
 impl<'a> egui::Widget for ExprEdit<'a> {
@@ -32,6 +34,7 @@ impl<'a> egui::Widget for ExprEdit<'a> {
         if expr_hash != state.expr_hash {
             state.expr_hash = expr_hash;
             state.code = expr.src().to_string();
+            state.error = None;
         }
 
         let language = "scm";
@@ -77,10 +80,14 @@ impl<'a> egui::Widget for ExprEdit<'a> {
                 .layouter(&mut layouter),
         );
         if response.changed() {
-            if let Ok(new_expr) = gantz_core::node::expr(&state.code) {
-                // Preserve the user-set output count across text edits. Only the
-                // source, and thus the `$var` inputs, follows the edit.
-                *expr = new_expr.with_outputs(expr.outputs());
+            match gantz_core::node::expr(&state.code) {
+                Ok(new_expr) => {
+                    // Preserve the user-set output count across text edits. Only
+                    // the source, and thus the `$var` inputs, follows the edit.
+                    *expr = new_expr.with_outputs(expr.outputs());
+                    state.error = None;
+                }
+                Err(e) => state.error = Some(e.to_string()),
             }
         }
 
@@ -104,10 +111,12 @@ impl NodeUi for gantz_core::node::Expr {
         // the node before and after the editor. A keystroke that fails to parse
         // changes the buffer but not the node, so it must not mark `changed`.
         let before = expr_hash(self);
-        let framed = uictx.framed(|ui, _sockets| {
-            let id = egui::Id::new("ExprEdit").with(ctx.path());
-            ui.add(ExprEdit::new(self, id))
-        });
+        let id = egui::Id::new("ExprEdit").with(ctx.path());
+        let framed = uictx.framed(|ui, _sockets| ui.add(ExprEdit::new(self, id)));
+        let node = &framed.inner.response;
+        if let Some(error) = ExprEdit::error(&node.ctx, id) {
+            unparsed_tag(node, &error);
+        }
         let mut resp = NodeUiResponse::new(framed);
         resp.set_changed(expr_hash(self) != before);
         resp
@@ -195,6 +204,13 @@ impl<'a> ExprEdit<'a> {
         self.fill = fill;
         self
     }
+
+    /// Why the working code of the editor `id` does not parse, if it does
+    /// not.
+    pub fn error(ctx: &egui::Context, id: egui::Id) -> Option<String> {
+        ctx.data(|d| d.get_temp::<ExprEditState>(id.with("code")))
+            .and_then(|state| state.error)
+    }
 }
 
 fn expr_hash(expr: &gantz_core::node::Expr) -> u64 {
@@ -202,4 +218,29 @@ fn expr_hash(expr: &gantz_core::node::Expr) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::default();
     expr.hash(&mut hasher);
     hasher.finish()
+}
+
+/// Hang a tag under the expr `node` that says why its working code does not
+/// parse. The node keeps its last code that parsed until then.
+fn unparsed_tag(node: &egui::Response, error: &str) {
+    let mut painter = node.ctx.layer_painter(node.layer_id);
+    // Node layers are transformed, so their clip is layer-local.
+    painter.set_clip_rect(node.rect.expand2(egui::vec2(320.0, 40.0)));
+    let style = node.ctx.global_style();
+    let text = style::color_of(
+        &node.ctx,
+        style::theme_of(&style.visuals),
+        style::Role::Panel,
+    );
+    let pos = node.rect.left_bottom() + egui::vec2(0.0, kit::TAG_GAP);
+    let fill = style.visuals.warn_fg_color;
+    kit::paint_tag(
+        &painter,
+        &style,
+        pos,
+        &kit::elide(error, kit::TAG_CHARS),
+        fill,
+        text,
+    );
+    node.clone().on_hover_text(format!("not applied: {error}"));
 }

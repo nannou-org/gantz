@@ -313,7 +313,7 @@ impl Walk<'_> {
                     widgets.inactive.weak_bg_fill = egui::Color32::TRANSPARENT;
                     widgets.inactive.bg_fill = egui::Color32::TRANSPARENT;
                 }
-                let drag = |ui: &mut egui::Ui, val: &mut SteelVal| match val {
+                let drag_value = |ui: &mut egui::Ui, val: &mut SteelVal| match val {
                     SteelVal::NumV(f) => {
                         let mut dv = egui::DragValue::new(f);
                         if d.min.is_some() || d.max.is_some() {
@@ -350,6 +350,17 @@ impl Walk<'_> {
                         ui.add(dv)
                     }
                     _ => err_label(ui, "bound state is not a number"),
+                };
+                // A bounded dialer fills from the left to show where its value
+                // sits in the range. The fill goes in a slot behind the
+                // dialer, whose own fill is translucent.
+                let drag = |ui: &mut egui::Ui, val: &mut SteelVal| {
+                    let slot = ui.painter().add(egui::Shape::Noop);
+                    let r = drag_value(ui, val);
+                    if let Some(t) = range_fraction(d, val) {
+                        ui.painter().set(slot, range_fill(ui, r.rect, t));
+                    }
+                    r
                 };
                 match &d.label {
                     Some(label) => {
@@ -711,6 +722,37 @@ fn seq_rebuild(seq: Seq, items: Vec<SteelVal>) -> SteelVal {
 }
 
 /// An inline chip for a control missing its `bind` attr.
+/// Where `val` sits between the dialer's bounds, from 0 to 1. `None` unless
+/// both bounds are set, finite and apart, and the value is a number.
+fn range_fraction(d: &Dialer, val: &SteelVal) -> Option<f32> {
+    let (lo, hi) = (d.min?, d.max?);
+    let v = match val {
+        SteelVal::NumV(f) => *f,
+        SteelVal::IntV(i) => *i as f64,
+        _ => return None,
+    };
+    let span = hi - lo;
+    (span.is_finite() && span > 0.0).then(|| ((v - lo) / span).clamp(0.0, 1.0) as f32)
+}
+
+/// The fill of a bounded dialer in `rect`, from its left edge to the
+/// fraction `t` of its width.
+fn range_fill(ui: &egui::Ui, rect: egui::Rect, t: f32) -> egui::Shape {
+    let mut fill = rect;
+    fill.set_width(rect.width() * t);
+    let radius = ui.visuals().widgets.inactive.corner_radius;
+    // The fill ends square, unless it reaches the dialer's rounded end.
+    let radius = match t < 1.0 {
+        true => egui::CornerRadius {
+            ne: 0,
+            se: 0,
+            ..radius
+        },
+        false => radius,
+    };
+    egui::Shape::rect_filled(fill, radius, ui.visuals().selection.bg_fill)
+}
+
 fn unbound_chip(ui: &mut egui::Ui, tag: &str) -> egui::Response {
     weak_chip(ui, tag).on_hover_text("no `bind` attribute")
 }
@@ -734,6 +776,24 @@ fn weak_chip(ui: &mut egui::Ui, text: &str) -> egui::Response {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn range_fraction_needs_finite_apart_bounds() {
+        let bounded = |min, max| Dialer {
+            min,
+            max,
+            ..Default::default()
+        };
+        let d = bounded(Some(0.0), Some(10.0));
+        assert_eq!(range_fraction(&d, &SteelVal::NumV(2.5)), Some(0.25));
+        assert_eq!(range_fraction(&d, &SteelVal::IntV(20)), Some(1.0));
+        assert_eq!(range_fraction(&d, &SteelVal::NumV(-1.0)), Some(0.0));
+        assert_eq!(range_fraction(&d, &SteelVal::BoolV(true)), None);
+        let open = bounded(Some(0.0), None);
+        assert_eq!(range_fraction(&open, &SteelVal::NumV(1.0)), None);
+        let flat = bounded(Some(1.0), Some(1.0));
+        assert_eq!(range_fraction(&flat, &SteelVal::NumV(1.0)), None);
+    }
 
     #[test]
     fn resolve_path_concatenates_prefix_scopes_and_bind() {

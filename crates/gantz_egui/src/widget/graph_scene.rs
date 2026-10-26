@@ -1,10 +1,10 @@
+use super::kit;
 use crate::{
     CopyNodes, Env, InspectEdge, NestNodes, NodeUi, OpenHead, OpenNodePalette, OpenNodeView,
     OpenReplacePalette, Paste, PastePos, ResetTilesLayout, SocketDoc,
     node::{NodeCodec, NodeInstances},
     response::DynResponse,
 };
-use egui::emath::GuiRounding;
 use egui_graph::{self, SocketKind, node::EdgeEvent};
 use gantz_ca::{DataGraph, NodeData};
 use gantz_core::{Edge, Node, node};
@@ -415,11 +415,14 @@ impl<'a> GraphScene<'a> {
                     // user clicked. Convert that to graph space for paste
                     // positioning.
                     let menu_screen_pos = ui.min_rect().left_top();
-                    if ui.button("add node").clicked() {
+                    let ctx = ui.ctx().clone();
+                    let keys = |action| crate::keybind::shortcut_text(&ctx, action);
+                    let palette = keys(crate::Action::ToggleNodePalette);
+                    if kit::menu_item(ui, "add node", palette).clicked() {
                         responses.push(DynResponse::new(OpenNodePalette));
                         ui.close();
                     }
-                    if ui.button("paste").clicked() {
+                    if kit::menu_item(ui, "paste", keys(crate::Action::Paste)).clicked() {
                         let graph_pos = ui
                             .ctx()
                             .layer_transform_from_global(layer_id)
@@ -429,6 +432,7 @@ impl<'a> GraphScene<'a> {
                         responses.push(DynResponse::new(Paste { text: None, pos }));
                         ui.close();
                     }
+                    ui.separator();
                     if ui
                         .button("auto-layout")
                         .on_hover_text(
@@ -440,13 +444,14 @@ impl<'a> GraphScene<'a> {
                         ui.close();
                     }
                     if ui
-                        .button("center-view")
+                        .button("center view")
                         .on_hover_text("frame the whole graph in the view")
                         .clicked()
                     {
                         request_center = true;
                         ui.close();
                     }
+                    ui.separator();
                 }
                 if let Some(view) = view_toggles {
                     ui.menu_button("panes", |ui| {
@@ -838,14 +843,19 @@ fn nodes(
             // Whether the action target is a multi-node selection. Captured
             // before `target` may be moved.
             let multi = target.len() > 1;
-            if ui.button("copy").clicked() {
-                responses.push(DynResponse::new(CopyNodes(target.clone())));
-                ui.close();
-            }
+            let ctx = ui.ctx().clone();
+            let keys = |action| crate::keybind::shortcut_text(&ctx, action);
+            // The menu leads with what it acts on, then groups its items by
+            // what they do: view, edit and state. Delete comes last.
             if let Some(entry) = &instance {
+                let heading = match multi {
+                    true => format!("{} nodes", target.len()),
+                    false => entry.inst.node.name(registry).to_string(),
+                };
+                kit::menu_heading(ui, &heading);
                 // Demo graph, if the node has one.
                 let demo_name = entry.inst.node.demo_graph(registry);
-                let demo_btn = ui.add_enabled(demo_name.is_some(), egui::Button::new("demo"));
+                let demo_btn = ui.add_enabled(demo_name.is_some(), egui::Button::new("open demo"));
                 if let Some(name) = demo_name {
                     if demo_btn.on_hover_text(format!("opens {name}")).clicked() {
                         responses.push(DynResponse::new(OpenHead(gantz_ca::Head::Branch(
@@ -856,10 +866,10 @@ fn nodes(
                 } else {
                     demo_btn.on_disabled_hover_text("no associated demo");
                 }
-                // "open in new tab" for nodes that reference a named graph.
+                // "open graph" for nodes that reference a named graph.
                 if let Some(head) = entry.inst.node.nav_head(registry) {
                     if ui
-                        .button("open tab")
+                        .button("open graph")
                         .on_hover_text("open the referenced graph in a new tab")
                         .clicked()
                     {
@@ -867,13 +877,12 @@ fn nodes(
                         ui.close();
                     }
                 }
-                // Detach the right-clicked node's UI into a tile in the Node
-                // Views pane as a live mirror sharing VM state. Always
-                // available, even for immutable graphs, since it only observes
-                // the node.
+                // Detach the right-clicked node's UI into a pane of its own as
+                // a live mirror sharing VM state. Always available, even for
+                // immutable graphs, since it only observes the node.
                 if ui
                     .button("open view")
-                    .on_hover_text("open this node's view in the Node Views pane")
+                    .on_hover_text("open this node's view in a pane of its own")
                     .clicked()
                 {
                     let ty_name = entry.inst.node.name(registry).to_string();
@@ -883,8 +892,18 @@ fn nodes(
                     }));
                     ui.close();
                 }
+                ui.separator();
+            }
+            if kit::menu_item(ui, "copy", keys(crate::Action::Copy)).clicked() {
+                responses.push(DynResponse::new(CopyNodes(target.clone())));
+                ui.close();
             }
             if !immutable {
+                let duplicate = kit::menu_item(ui, "duplicate", keys(crate::Action::Duplicate));
+                if duplicate.clicked() {
+                    responses.push(DynResponse::new(crate::DuplicateNodes(target.clone())));
+                    ui.close();
+                }
                 // Nest the selected nodes into a new nested graph. Only
                 // meaningful for a multi-node selection.
                 if multi
@@ -896,35 +915,6 @@ fn nodes(
                     responses.push(DynResponse::new(NestNodes(target.clone())));
                     ui.close();
                 }
-                // The reset target may include other selected nodes. Peek each
-                // one's cached instance to ask whether any is stateful. A miss
-                // reifies transiently. This node's own entry always misses,
-                // since it is taken out for the duration of the iteration.
-                let stateful = target.iter().any(|&n| {
-                    graph
-                        .node_weight(n)
-                        .is_some_and(|w| match instances_ref.peek(n.index(), w) {
-                            Some(inst) => inst.node.stateful(meta_ctx),
-                            None => codec
-                                .reify(w)
-                                .is_ok_and(|inst| inst.node.stateful(meta_ctx)),
-                        })
-                });
-                let reset_btn = ui.add_enabled(stateful, egui::Button::new("reset"));
-                if reset_btn
-                    .on_hover_text("reset the node to its default state")
-                    .on_disabled_hover_text("no state to reset")
-                    .clicked()
-                {
-                    nodes_to_reset.extend(target.iter().copied());
-                    ui.close();
-                }
-                // Drop the settings of a locked node that this build does not
-                // recognise. See `InstanceEntry::lost`.
-                if locked && super::discard_button(ui) {
-                    responses.push(DynResponse::new(crate::DropUnknownData { node: n_id }));
-                    ui.close();
-                }
                 // Replace the right-clicked node via the node palette. Only
                 // for a single node.
                 if !multi
@@ -934,10 +924,6 @@ fn nodes(
                         .clicked()
                 {
                     responses.push(DynResponse::new(OpenReplacePalette(n_id)));
-                    ui.close();
-                }
-                if ui.button("delete").clicked() {
-                    nodes_to_delete.extend(target);
                     ui.close();
                 }
                 // Auto-layout the selection. Only meaningful for more than one
@@ -981,6 +967,38 @@ fn nodes(
                         );
                     });
                 }
+                // The reset target may include other selected nodes. Peek each
+                // one's cached instance to ask whether any is stateful. A miss
+                // reifies transiently. This node's own entry always misses,
+                // since it is taken out for the duration of the iteration.
+                let stateful = target.iter().any(|&n| {
+                    graph
+                        .node_weight(n)
+                        .is_some_and(|w| match instances_ref.peek(n.index(), w) {
+                            Some(inst) => inst.node.stateful(meta_ctx),
+                            None => codec
+                                .reify(w)
+                                .is_ok_and(|inst| inst.node.stateful(meta_ctx)),
+                        })
+                });
+                if stateful || locked {
+                    ui.separator();
+                }
+                if stateful
+                    && ui
+                        .button("reset state")
+                        .on_hover_text("reset the node to its default state")
+                        .clicked()
+                {
+                    nodes_to_reset.extend(target.iter().copied());
+                    ui.close();
+                }
+                // Drop the settings of a locked node that this build does not
+                // recognise. See `InstanceEntry::lost`.
+                if locked && super::discard_button(ui) {
+                    responses.push(DynResponse::new(crate::DropUnknownData { node: n_id }));
+                    ui.close();
+                }
             }
             // Node-specific items, for example the log node's "open logs".
             if let Some(entry) = instance.as_mut() {
@@ -999,6 +1017,13 @@ fn nodes(
                 let cm = entry.inst.node.context_menu(&mut node_ctx, ui);
                 node_changed |= cm.changed;
                 responses.extend(cm.payloads);
+            }
+            if !immutable {
+                ui.separator();
+                if kit::danger_item(ui, "delete", Some("del".to_string())).clicked() {
+                    nodes_to_delete.extend(target);
+                    ui.close();
+                }
             }
         });
 
@@ -1063,17 +1088,32 @@ fn lock_badge(ui: &egui::Ui, node: &egui::Response, lost: &[String]) {
     let mut painter = ui.ctx().layer_painter(node.layer_id);
     // Node layers are transformed, so their clip is layer-local.
     painter.set_clip_rect(node.rect.expand(32.0));
-    let font = egui::TextStyle::Body.resolve(ui.style());
-    let pos = node.rect.right_top() + egui::vec2(2.0, -2.0);
-    let color = ui.visuals().warn_fg_color;
-    painter.text(
-        pos,
-        egui::Align2::LEFT_BOTTOM,
-        super::LOCK_GLYPH,
-        font,
-        color,
+    let size = ui.text_style_height(&egui::TextStyle::Body) * 0.8;
+    let rect = egui::Rect::from_min_size(
+        node.rect.right_top() + egui::vec2(3.0, -size - 1.0),
+        egui::Vec2::splat(size),
     );
+    paint_padlock(&painter, rect, ui.visuals().warn_fg_color);
     node.clone().on_hover_text(super::locked_text(lost));
+}
+
+/// Paint a padlock that fills `rect`: a rounded body under a shackle.
+fn paint_padlock(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    let body = egui::Rect::from_min_max(
+        egui::pos2(rect.left(), rect.top() + rect.height() * 0.45),
+        rect.max,
+    );
+    painter.rect_filled(body, rect.height() * 0.12, color);
+    let radius = rect.width() * 0.3;
+    let center = egui::pos2(rect.center().x, body.top() - rect.height() * 0.05);
+    let points: Vec<egui::Pos2> = (0..=12)
+        .map(|i| {
+            let angle = std::f32::consts::PI * (1.0 + i as f32 / 12.0);
+            center + radius * egui::vec2(angle.cos(), angle.sin())
+        })
+        .collect();
+    let stroke = egui::Stroke::new(rect.width() * 0.14, color);
+    painter.add(egui::Shape::line(points, stroke));
 }
 
 /// Render the opaque placeholder for a node whose tag is unknown to the
@@ -1389,77 +1429,84 @@ fn diagnostic_node_at_level(diag_path: &[node::Id], level: &[node::Id]) -> Optio
     diag_path.strip_prefix(level)?.first().copied()
 }
 
-/// Paint a glow and hover message over the nodes implicated by diagnostics,
-/// and tint the scene border when any diagnostic cannot be attributed to a
-/// node visible at this level, for example a whole-graph error.
+/// Mark the nodes implicated by diagnostics with an outline in the error
+/// colour and a tag under the node with the first message. Hovering the node
+/// shows every message. A diagnostic that no node visible at this level can
+/// take, for example a whole-graph error, becomes a toast.
 pub fn paint_diagnostics(
     diagnostics: &[gantz_core::Diagnostic],
     level: &[node::Id],
     response: &GraphSceneResponse,
     ui: &egui::Ui,
 ) {
-    if diagnostics.is_empty() {
-        return;
-    }
-    let color = ui.visuals().error_fg_color;
-    let mut unattributed = false;
+    let mut flagged: Vec<(&NodeResponse, Vec<&str>)> = vec![];
+    let mut unattributed = vec![];
     for diag in diagnostics {
-        let flagged = diagnostic_node_at_level(&diag.path, level).and_then(|flag| {
-            let ix = response
-                .nodes
-                .iter()
-                .position(|(ix, _)| ix.index() == flag)?;
-            Some(&response.nodes[ix].1)
+        let node_response = diagnostic_node_at_level(&diag.path, level).and_then(|flag| {
+            let (_, node) = response.nodes.iter().find(|(ix, _)| ix.index() == flag)?;
+            Some(node)
         });
-        let Some(node_response) = flagged else {
-            unattributed = true;
+        let Some(node_response) = node_response else {
+            unattributed.push(diag.message.as_str());
             continue;
         };
-        // Paint on the node's own layer so the scene transform applies.
-        // Everything the painter receives must be in layer-local
-        // coordinates. egui maps a transformed layer's clip rects through
-        // its transform at tessellation, so the pane's global clip is
-        // mapped into local space rather than intersected as-is.
-        let to_global = ui
-            .ctx()
-            .layer_transform_to_global(node_response.layer_id)
-            .unwrap_or(egui::emath::TSTransform::IDENTITY);
-        let inv = to_global.inverse();
-        // The tessellator's `round_rects_to_pixels` snaps each rect to
-        // physical pixels independently. At fractional transforms the rings
-        // can land one pixel off the frame's own snapped edges. Snap the frame
-        // rect the same way the frame's shape will be, derive the rings from
-        // it, and disable their re-rounding so the gap stays even.
-        let ppp = ui.ctx().pixels_per_point();
-        let frame = inv.mul_rect(to_global.mul_rect(node_response.rect).round_to_pixels(ppp));
-        let mut painter = ui.ctx().layer_painter(node_response.layer_id);
-        let local_clip = inv.mul_rect(ui.clip_rect());
-        painter.set_clip_rect(local_clip.intersect(frame.expand(16.0)));
-        // A soft glow of thin rings hugging the frame and fading quickly. Ring
-        // corners grow from the node frame's radius so the arcs stay
-        // concentric. See `egui_graph::node::default_frame`.
-        let frame_radius = ui.visuals().window_corner_radius;
-        let rings = [(1.0f32, 1.5f32, 0.45), (3.0, 2.0, 0.16), (5.5, 2.5, 0.06)];
-        for (expand, width, alpha) in rings {
-            painter.add(
-                egui::epaint::RectShape::stroke(
-                    frame.expand(expand),
-                    frame_radius + expand.round() as u8,
-                    egui::Stroke::new(width, color.gamma_multiply(alpha)),
-                    egui::StrokeKind::Outside,
-                )
-                .with_round_to_pixels(false),
-            );
+        match flagged.iter_mut().find(|(n, _)| n.id == node_response.id) {
+            Some((_, messages)) => messages.push(&diag.message),
+            None => flagged.push((node_response, vec![&diag.message])),
         }
-        (**node_response).clone().on_hover_text(&diag.message);
     }
-    if unattributed {
-        ui.painter().rect_stroke(
-            response.scene.rect,
-            0,
-            egui::Stroke::new(2.0f32, color.gamma_multiply(0.6)),
-            egui::StrokeKind::Inside,
-        );
+    for (node_response, messages) in flagged {
+        error_tag(ui, node_response, &messages);
+        (**node_response)
+            .clone()
+            .on_hover_text(messages.join("\n\n"));
+    }
+    toast_unattributed(ui.ctx(), response.scene.id, &unattributed);
+}
+
+/// The outline and tag of a node with errors. See [`paint_diagnostics`].
+fn error_tag(ui: &egui::Ui, node: &egui::Response, messages: &[&str]) {
+    let color = ui.visuals().error_fg_color;
+    // Paint on the node's own layer so the scene transform applies.
+    // Everything the painter receives must be in layer-local coordinates.
+    // egui maps a transformed layer's clip rects through its transform at
+    // tessellation, so the pane's global clip is mapped into local space
+    // rather than intersected as-is.
+    let to_global = ui
+        .ctx()
+        .layer_transform_to_global(node.layer_id)
+        .unwrap_or(egui::emath::TSTransform::IDENTITY);
+    let inv = to_global.inverse();
+    let mut painter = ui.ctx().layer_painter(node.layer_id);
+    painter.set_clip_rect(inv.mul_rect(ui.clip_rect()));
+    let frame = node.rect;
+    let radius = ui.visuals().window_corner_radius;
+    painter.rect_stroke(
+        frame,
+        radius,
+        egui::Stroke::new(kit::OUTLINE, color),
+        egui::StrokeKind::Outside,
+    );
+    let mut text = kit::elide(messages.first().copied().unwrap_or(""), kit::TAG_CHARS);
+    if messages.len() > 1 {
+        text.push_str(&format!(" +{}", messages.len() - 1));
+    }
+    let text_color = crate::style::color(ui, crate::style::Role::Panel);
+    let pos = frame.left_bottom() + egui::vec2(0.0, kit::TAG_GAP);
+    kit::paint_tag(&painter, ui.style(), pos, &text, color, text_color);
+}
+
+/// Toast each diagnostic of the scene `id` that no node takes, once per
+/// change of the set. See [`paint_diagnostics`].
+fn toast_unattributed(ctx: &egui::Context, id: egui::Id, messages: &[&str]) {
+    let id = id.with("unattributed-diagnostics");
+    let hash = egui::util::hash(messages);
+    if ctx.data(|d| d.get_temp::<u64>(id)) == Some(hash) {
+        return;
+    }
+    ctx.data_mut(|d| d.insert_temp(id, hash));
+    for message in messages {
+        super::toast::push(ctx, super::toast::Severity::Error, *message);
     }
 }
 
