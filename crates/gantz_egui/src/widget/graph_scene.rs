@@ -261,13 +261,19 @@ impl<'a> GraphScene<'a> {
         ui: &mut egui::Ui,
     ) -> GraphSceneResponse {
         // egui_graph rounds each node with the window corner radius and takes
-        // twice that from a node's minimum size. Keep the scene's radius small
-        // so a small node keeps a positive size.
-        let node_radius = crate::style::shape(ui.ctx())
-            .widget_corner(ui.spacing().interact_size.y)
-            .min(MAX_NODE_RADIUS);
+        // twice that from a node's minimum size, which is the interact height.
+        let node_radius = crate::style::shape(ui.ctx()).node_corner(ui.spacing().interact_size.y);
         ui.style_mut().visuals.window_corner_radius =
             egui::CornerRadius::same(node_radius.round() as u8);
+        // Nodes take their own fill and outline, opaque over the scene, and
+        // egui_graph draws a node's outline as wide as the selection outline.
+        let scene = crate::style::color(ui, crate::style::Role::Scene);
+        let fill = crate::style::over(crate::style::color(ui, crate::style::Role::Node), scene);
+        let border = crate::style::color(ui, crate::style::Role::NodeBorder);
+        let visuals = &mut ui.style_mut().visuals;
+        visuals.window_fill = fill;
+        visuals.window_stroke.color = crate::style::over(border, fill);
+        visuals.selection.stroke.width = kit::OUTLINE;
 
         // Materialise the viewport-dependent `egui_graph::View` from the
         // viewport-independent camera. The viewport must match the size
@@ -1292,9 +1298,6 @@ fn edges(
 /// stripes overlay them so they read as a thick bound bundle rather than
 /// ever-thinner strands. The exact count is left to the hover tooltip.
 const STRAND_CAP: usize = 4;
-
-/// The largest node corner radius. See the note in [`GraphScene::show`].
-const MAX_NODE_RADIUS: f32 = 8.0;
 
 /// Extra width the notch overlay adds over the base stroke so its opaque core
 /// swallows the base line's anti-aliased edge. See [`EdgeStyling::notch`].

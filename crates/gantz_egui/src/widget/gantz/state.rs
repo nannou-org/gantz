@@ -102,7 +102,7 @@ pub struct PaneWindowGeometry {
 }
 
 pub(super) fn default_sidebar_width() -> f32 {
-    270.0
+    300.0
 }
 
 pub(super) fn default_tray_height() -> f32 {

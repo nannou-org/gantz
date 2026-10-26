@@ -26,7 +26,7 @@ use state::{
     clear_egui_memory_id, default_sidebar_width, default_tray_height, load_ron, load_tree,
     store_ron, store_tree,
 };
-pub use status::StatusStyle;
+pub use status::{StatusAction, StatusIcon, StatusItem, StatusStyle};
 pub use tiles::{NodeViewPane, Pane};
 use tiles::{
     add_graph_pane, add_node_view_pane, capture_fixed_sizes, create_tree, impose_fixed_sizes,
@@ -90,6 +90,8 @@ pub struct Gantz<'a> {
     /// egui alone cannot read the clipboard. `None` hides them.
     clipboard: Option<&'a dyn Fn() -> Option<String>>,
     audio_heads: Option<&'a HashSet<gantz_ca::Head>>,
+    /// The host's items for the status line.
+    status_items: &'a [StatusItem],
 }
 
 /// Base-source authoring context for the graph config pane's "source"
@@ -131,8 +133,8 @@ enum LogSource {
 
 /// The `egui_tiles::Behavior::resize_stroke` shared by both tile trees.
 ///
-/// An idle gap shows the scene in the separator colour. A hovered or dragged
-/// gap draws a thin line down its middle, to show it resizes.
+/// An idle gap draws nothing, so the scene shows through it. A hovered or
+/// dragged gap draws a thin line down its middle, to show it resizes.
 fn separator_stroke(
     cfg: &StyleConfig,
     style: &egui::Style,
@@ -140,10 +142,7 @@ fn separator_stroke(
 ) -> egui::Stroke {
     let theme = style::theme_of(&style.visuals);
     match resize_state {
-        egui_tiles::ResizeState::Idle => egui::Stroke::new(
-            cfg.shape.separator_width,
-            cfg.resolve(theme, Role::Separator),
-        ),
+        egui_tiles::ResizeState::Idle => egui::Stroke::NONE,
         egui_tiles::ResizeState::Hovering | egui_tiles::ResizeState::Dragging => egui::Stroke::new(
             (cfg.shape.separator_width * 0.25).max(1.5),
             cfg.resolve(theme, Role::SeparatorHover),
@@ -278,6 +277,7 @@ impl<'a> Gantz<'a> {
             collab: None,
             clipboard: None,
             audio_heads: None,
+            status_items: &[],
         }
     }
 
@@ -285,6 +285,14 @@ impl<'a> Gantz<'a> {
     /// speaker that toggles [`OpenHeadState::muted`].
     pub fn audio_heads(mut self, heads: &'a HashSet<gantz_ca::Head>) -> Self {
         self.audio_heads = Some(heads);
+        self
+    }
+
+    /// Add the host's items to the status line, such as the audio device's
+    /// rate and load. They sit after the focused graph's link and before the
+    /// VM time.
+    pub fn status_items(mut self, items: &'a [StatusItem]) -> Self {
+        self.status_items = items;
         self
     }
 
@@ -495,16 +503,13 @@ impl<'a> Gantz<'a> {
 
         // `available_rect_before_wrap` matches the root rect `Tree::ui` uses.
         let widget_area = ui.available_rect_before_wrap();
-        // The status gutter takes the bottom of the area and the panes the
-        // rest.
-        let tree_area = match status_style {
-            StatusStyle::Gutter => {
-                let mut rect = widget_area;
-                rect.max.y = (rect.max.y - status::GUTTER_HEIGHT).max(rect.min.y);
-                rect
-            }
-            StatusStyle::Pill | StatusStyle::Hidden => widget_area,
-        };
+        // The panes sit inside the window margin. The status gutter takes the
+        // bottom margin's place.
+        let margin = state.style.shape.window_margin;
+        let mut tree_area = widget_area.shrink(margin);
+        if status_style == StatusStyle::Gutter {
+            tree_area.max.y = (widget_area.max.y - status::GUTTER_HEIGHT).max(tree_area.min.y);
+        }
         // Raise any pane below its minimum before the fixed sizes are imposed,
         // so a clamped minimum is not captured as a shrunken sidebar or tray.
         impose_min_sizes(&mut tree, state.style.shape.separator_width, tree_area);
@@ -529,6 +534,7 @@ impl<'a> Gantz<'a> {
         };
         // Reserve the bottom layer for the scene colour and the pane
         // grounds. They are painted once the tree has laid out its rects.
+        chrome::set_bounds(ui.ctx(), tree_area, widget_area);
         let grounds = ui.painter().add(egui::Shape::Noop);
         let tree_ui = egui::UiBuilder::new().max_rect(tree_area);
         ui.scope_builder(tree_ui, |ui| tree.ui(&mut behaviour, ui));
@@ -538,7 +544,8 @@ impl<'a> Gantz<'a> {
         let focus = behaviour.focus;
         response.focused_head = focused_head;
         let theme = style::theme_of(ui.visuals());
-        let shapes = chrome::ground_shapes(&tree, &state.style, theme, widget_area, focus);
+        let shapes =
+            chrome::ground_shapes(ui.ctx(), &tree, &state.style, theme, widget_area, focus);
         ui.painter().set(grounds, egui::Shape::Vec(shapes));
 
         // The status line, and the toasts over the scene.
@@ -547,35 +554,64 @@ impl<'a> Gantz<'a> {
             .find_pane(&Pane::GraphScene)
             .and_then(|id| tree.tiles.rect(id))
             .unwrap_or(tree_area);
-        let head = access.heads().get(focused_head);
-        let session = match (self.collab, head) {
+        let head = access.heads().get(focused_head).cloned();
+        let session = match (self.collab, &head) {
             (Some(collab), Some(gantz_ca::Head::Branch(name))) => collab.sessions.get(name),
             _ => None,
         };
+        let vault = self.collab.and_then(|c| c.vault.as_ref());
+        let link = match (session, vault) {
+            (Some(session), _) => Some(status::Link::Session(session)),
+            (None, Some(vault)) => Some(status::Link::Vault(vault)),
+            (None, None) => None,
+        };
+        let saved = head
+            .as_ref()
+            .and_then(|h| self.env.registry.head_commit(h))
+            .and_then(|commit| status::since(commit.timestamp));
+        let muted = head
+            .as_ref()
+            .and_then(|h| state.open_heads.get(h))
+            .is_some_and(|s| s.muted);
         let status = status::Status {
-            graph: head.map(ToString::to_string),
-            session,
-            vm: self.perf_vm.as_deref().and_then(status::vm_mean),
+            graph: head.as_ref().map(ToString::to_string),
+            saved,
+            link,
+            items: self.status_items,
+            muted,
+            vm: self
+                .perf_vm
+                .as_deref()
+                .map(status::vm_recent)
+                .unwrap_or_default(),
             problems: status::scan_log(ui.ctx(), self.log_source.as_ref()),
         };
+        if saved.is_some() {
+            // "saved 2m ago" counts up by itself.
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs(30));
+        }
         let inset = chrome::HEADER_INSET;
-        let open_logs = match status_style {
+        let status_res = match status_style {
             StatusStyle::Gutter => {
-                let gap = state.style.shape.separator_width;
                 let rect = egui::Rect::from_min_max(
-                    egui::pos2(widget_area.min.x + gap + inset, tree_area.max.y),
-                    egui::pos2(widget_area.max.x - gap - inset, widget_area.max.y),
+                    egui::pos2(tree_area.min.x + inset, tree_area.max.y),
+                    egui::pos2(tree_area.max.x - inset, widget_area.max.y),
                 );
-                status::gutter(ui, rect, &status)
+                status::gutter(ui.ctx(), rect, &status)
             }
             StatusStyle::Pill => {
                 let anchor = scene_rect.right_bottom() - egui::Vec2::splat(inset);
                 status::pill(ui.ctx(), anchor, &status)
             }
-            StatusStyle::Hidden => false,
+            StatusStyle::Hidden => status::StatusResponse::default(),
         };
-        if open_logs {
+        if status_res.open_logs {
             state.view_toggles.logs = true;
+        }
+        if let (true, Some(head)) = (status_res.toggle_mute, &head) {
+            let head_state = state.open_heads.entry(head.clone()).or_default();
+            head_state.muted = !head_state.muted;
         }
         if patch_only {
             let visuals = ui.visuals();

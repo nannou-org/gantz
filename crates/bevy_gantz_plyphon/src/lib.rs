@@ -23,7 +23,7 @@
 //! `~out` fade gains at zero, see [`FadeSink`].
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::Duration;
 
 use bevy_app::{App, Plugin, PreUpdate, Update};
@@ -64,6 +64,7 @@ use bevy_gantz::{EntrypointSet, EvalEpoch, Registry, VmSet};
 use bevy_gantz_egui::GraphCache;
 use bevy_gantz_egui::{
     AudioHeads, EdgeStyles, ExtPanes, GuiState, RefExtUis, RegisterResponseExt, SettingsTabs,
+    StatusItems,
 };
 use gantz_plyphon::{
     Config, DeriveStatus, DspEdgeStyle, DspPane, DspPaneHead, DspRefExtUi, DspSettingsTab,
@@ -227,6 +228,7 @@ impl Plugin for PlyphonPlugin {
             .init_resource::<RefExtUis>()
             .init_resource::<EdgeStyles>()
             .init_resource::<AudioHeads>()
+            .init_resource::<StatusItems>()
             .init_resource::<GuiState>()
             .add_message::<DspSettingsChanged>()
             .register_response_with::<Config>(dispatch_dsp_settings)
@@ -240,6 +242,7 @@ impl Plugin for PlyphonPlugin {
                     provide_dsp_ref_ext,
                     provide_dsp_edge_style,
                     provide_dsp_audio_heads,
+                    provide_dsp_status_item,
                 ),
             );
         // The DSP domain's base graphs. See `bevy_gantz_egui::base`.
@@ -319,6 +322,10 @@ struct DspEngine {
     device: String,
     /// The output sample rate (Hz).
     sample_rate: f64,
+    /// The share of each audio buffer's time that the engine spends filling
+    /// it, smoothed, as `f32` bits. Measured on native only, since the web
+    /// audio thread has no clock.
+    load: std::sync::Arc<AtomicU32>,
     /// The cpal output stream. Held to keep audio running. Paused on mute and
     /// played on unmute.
     stream: cpal::Stream,
@@ -804,6 +811,45 @@ fn provide_dsp_audio_heads(
             .filter(|(_, dsp)| dsp.is_some_and(|d| d.outputs > 0))
             .map(|(head_ref, _)| head_ref.0.clone()),
     );
+}
+
+/// Provide this frame's status line item: the output's sample rate and the
+/// engine's load. A click on it mutes the focused graph. See
+/// [`StatusItems`].
+fn provide_dsp_status_item(dsp: Option<NonSend<DspEngine>>, mut items: ResMut<StatusItems>) {
+    let Some(dsp) = dsp else {
+        return;
+    };
+    let rate = format_rate(dsp.sample_rate);
+    let load = f32::from_bits(dsp.load.load(Ordering::Relaxed));
+    let (text, short) = match cfg!(target_arch = "wasm32") {
+        true => (String::new(), None),
+        false => {
+            let percent = (load * 100.0).round();
+            (format!("dsp {percent}%"), Some(format!("{percent}%")))
+        }
+    };
+    items.0.push(gantz_egui::widget::StatusItem {
+        icon: Some(gantz_egui::widget::StatusIcon::Speaker),
+        lead: Some(rate),
+        text,
+        short,
+        hover: Some(format!(
+            "{}. dsp is the share of each audio buffer's time spent filling it. \
+             click to mute the focused graph.",
+            dsp.device
+        )),
+        action: Some(gantz_egui::widget::StatusAction::ToggleMute),
+    });
+}
+
+/// A sample rate in kilohertz, such as `48 khz` or `44.1 khz`.
+fn format_rate(hz: f64) -> String {
+    let khz = hz / 1_000.0;
+    match khz.fract() == 0.0 {
+        true => format!("{khz:.0} khz"),
+        false => format!("{khz:.1} khz"),
+    }
 }
 
 /// Provide this frame's DSP `NamedRef` inspector extension. The `inline`
@@ -2079,6 +2125,7 @@ fn build_dsp_engine(epoch: EvalEpoch, unit_registrars: &[UnitRegistrar]) -> Opti
     // race the first callback because the worklet's async setup only runs once
     // this synchronous startup code returns to the JS event loop.
     let clock_offset = std::sync::Arc::new(AtomicU64::new(epoch.now_secs().to_bits()));
+    let load = std::sync::Arc::new(AtomicU32::new(0.0f32.to_bits()));
     let stream = build_stream(
         &device,
         config,
@@ -2087,6 +2134,7 @@ fn build_dsp_engine(epoch: EvalEpoch, unit_registrars: &[UnitRegistrar]) -> Opti
         world,
         epoch,
         clock_offset.clone(),
+        load.clone(),
     )?;
     stream.play().ok()?;
 
@@ -2098,6 +2146,7 @@ fn build_dsp_engine(epoch: EvalEpoch, unit_registrars: &[UnitRegistrar]) -> Opti
         private_channels,
         device: device_name,
         sample_rate,
+        load,
         stream,
         #[cfg(target_arch = "wasm32")]
         clock_offset,
@@ -2114,16 +2163,17 @@ fn build_stream(
     world: World,
     epoch: EvalEpoch,
     clock_offset: std::sync::Arc<AtomicU64>,
+    load: std::sync::Arc<AtomicU32>,
 ) -> Option<cpal::Stream> {
     match format {
         cpal::SampleFormat::F32 => {
-            build_typed::<f32>(device, config, channels, world, epoch, clock_offset)
+            build_typed::<f32>(device, config, channels, world, epoch, clock_offset, load)
         }
         cpal::SampleFormat::I16 => {
-            build_typed::<i16>(device, config, channels, world, epoch, clock_offset)
+            build_typed::<i16>(device, config, channels, world, epoch, clock_offset, load)
         }
         cpal::SampleFormat::U16 => {
-            build_typed::<u16>(device, config, channels, world, epoch, clock_offset)
+            build_typed::<u16>(device, config, channels, world, epoch, clock_offset, load)
         }
         other => {
             log::error!("bevy_gantz_plyphon: unsupported sample format {other:?}");
@@ -2141,6 +2191,7 @@ fn build_typed<T>(
     mut world: World,
     epoch: EvalEpoch,
     clock_offset: std::sync::Arc<AtomicU64>,
+    load: std::sync::Arc<AtomicU32>,
 ) -> Option<cpal::Stream>
 where
     T: SizedSample + FromSample<f32>,
@@ -2148,6 +2199,7 @@ where
     // Reused interleaved `f32` scratch. The engine writes it, then it is
     // converted to `T`.
     let mut scratch: Vec<f32> = Vec::new();
+    let sample_rate = f64::from(config.sample_rate);
     device
         .build_output_stream(
             config,
@@ -2166,7 +2218,10 @@ where
                     let ts = info.timestamp();
                     let ahead = ts.playback.duration_since(ts.callback).as_secs_f64();
                     let buffer_time = osc(epoch.now_secs() + ahead);
+                    let start = Instant::now();
                     world.fill_at(&mut scratch, channels, buffer_time);
+                    let frames = output.len() / channels.max(1);
+                    record_load(&load, start.elapsed(), frames, sample_rate);
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -2175,14 +2230,13 @@ where
                     // `AudioContext.currentTime` timeline instead, so heard-time
                     // is the playback instant shifted onto the epoch by the
                     // main-thread-refreshed `clock_offset`.
-                    let _ = &epoch;
+                    let _ = (&epoch, &load, sample_rate);
                     let playback_secs = info
                         .timestamp()
                         .playback
                         .duration_since(cpal::StreamInstant::ZERO)
                         .as_secs_f64();
-                    let offset =
-                        f64::from_bits(clock_offset.load(std::sync::atomic::Ordering::Relaxed));
+                    let offset = f64::from_bits(clock_offset.load(Ordering::Relaxed));
                     world.fill_at(&mut scratch, channels, osc(playback_secs + offset));
                 }
                 for (o, s) in output.iter_mut().zip(scratch.iter()) {
@@ -2195,11 +2249,36 @@ where
         .ok()
 }
 
+/// Fold the time `busy` that filling `frames` frames at `sample_rate` took
+/// into the smoothed `load`, the share of the buffer's time spent filling it.
+#[cfg(not(target_arch = "wasm32"))]
+fn record_load(load: &AtomicU32, busy: Duration, frames: usize, sample_rate: f64) {
+    /// How much of each new measure the smoothed load takes.
+    const SMOOTHING: f32 = 0.05;
+    let budget = frames as f64 / sample_rate;
+    if !(budget > 0.0) {
+        return;
+    }
+    let now = (busy.as_secs_f64() / budget) as f32;
+    let prev = f32::from_bits(load.load(Ordering::Relaxed));
+    load.store(
+        (prev + (now - prev) * SMOOTHING).to_bits(),
+        Ordering::Relaxed,
+    );
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     mod plugin_order;
+
+    #[test]
+    fn format_rate_shows_khz() {
+        assert_eq!(format_rate(48_000.0), "48 khz");
+        assert_eq!(format_rate(44_100.0), "44.1 khz");
+        assert_eq!(format_rate(96_000.0), "96 khz");
+    }
 
     /// A fading entry with no scope streams, due at `deadline`.
     fn fade(entity: Entity, deadline: Instant) -> FadingSynth {

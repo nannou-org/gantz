@@ -37,6 +37,22 @@ pub struct CollabSettingsTab {
     pub vault: Option<VaultDisplay>,
 }
 
+/// The labels of the settings' rows, which set the width of the label column.
+const LABELS: &[&str] = &[
+    "identity",
+    "vault",
+    "versions",
+    "not synced",
+    "locked",
+    "username",
+    "action rate",
+    "pointers",
+    "relay",
+];
+
+/// The gap between the grid's columns and rows.
+const GRID_GAP: egui::Vec2 = egui::vec2(8.0, 6.0);
+
 impl crate::widget::SettingsTab for CollabSettingsTab {
     fn title(&self) -> &str {
         "Collab"
@@ -75,10 +91,22 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> Responses {
         relays,
         vault,
     } = settings;
-    let control_w = (ui.available_width() - 64.0).max(64.0);
+    // The controls take the width left of the widest label, so that rows
+    // wrap within the pane rather than run past its edge.
+    let label_w = LABELS
+        .iter()
+        .map(|label| super::kit::text_width(ui, label))
+        .fold(0.0, f32::max);
+    let control_w = (ui.available_width() - label_w - GRID_GAP.x).max(64.0);
+    // A field with a button after it leaves the button its room.
+    let field_w = |button: &str| {
+        let button_w = super::kit::text_width(ui, button) + 2.0 * ui.spacing().button_padding.x;
+        (control_w - button_w - ui.spacing().item_spacing.x).max(48.0)
+    };
+    let (ticket_w, relay_w) = (field_w("link"), field_w("reset"));
     egui::Grid::new("collab_config_grid")
         .num_columns(2)
-        .spacing([8.0, 6.0])
+        .spacing(GRID_GAP)
         .show(ui, |ui| {
             // The public identity that peers see and can allowlist.
             ui.label("identity");
@@ -142,7 +170,7 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> Responses {
                         ui.add(
                             egui::TextEdit::singleline(&mut ticket)
                                 .hint_text("paste a vault ticket")
-                                .desired_width((control_w - 48.0).max(48.0)),
+                                .desired_width(ticket_w),
                         )
                         .on_hover_text(
                             "sync all your named graphs with a vault. \
@@ -227,7 +255,7 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> Responses {
                 let edit = super::buffered_edit(ui, relay_id, &current, |relay| {
                     egui::TextEdit::singleline(relay)
                         .hint_text("n0 public relays (default)")
-                        .desired_width((control_w - 48.0).max(48.0))
+                        .desired_width(relay_w)
                 });
                 edit.response.on_hover_text(
                     "a custom relay server URL (e.g. a self-hosted iroh-relay). \
@@ -252,6 +280,8 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> Responses {
             if !relays.is_empty() {
                 ui.label("");
                 ui.vertical(|ui| {
+                    // A long url ends in an ellipsis inside the pane.
+                    ui.set_max_width(control_w);
                     for (url, connected) in relays {
                         ui.horizontal(|ui| {
                             let (role, label) = if *connected {
@@ -261,7 +291,8 @@ pub fn collab_config(settings: CollabSettings, ui: &mut egui::Ui) -> Responses {
                             };
                             super::status_dot(ui, crate::style::color(ui, role))
                                 .on_hover_text(label);
-                            ui.label(egui::RichText::new(url).weak());
+                            ui.add(egui::Label::new(egui::RichText::new(url).weak()).truncate())
+                                .on_hover_text(url);
                         });
                     }
                 });

@@ -7,6 +7,12 @@ use std::collections::HashSet;
 /// The glyph for the filter-options button. Swap it if it does not render.
 const FILTER_GLYPH: &str = "⛭";
 
+/// The gap between the filter, the list and the buttons below it.
+const SECTION_GAP: f32 = 6.0;
+
+/// The gap between the rows of the list.
+const ROW_GAP: f32 = 6.0;
+
 /// A widget for selecting between, naming, and creating new graphs.
 pub struct GraphSelect<'a> {
     id: egui::Id,
@@ -119,6 +125,7 @@ impl<'a> GraphSelect<'a> {
 
         let mut response = GraphSelectResponse::default();
 
+        ui.add_space(SECTION_GAP);
         // A name filter text field, with a filter-options button on the right
         // that opens a menu of `base`/`demo` visibility checkboxes.
         ui.horizontal(|ui| {
@@ -137,9 +144,11 @@ impl<'a> GraphSelect<'a> {
                             .on_hover_text("show demos");
                     });
                 // The name filter fills the remaining width.
+                super::kit::field_visuals(ui);
                 egui::TextEdit::singleline(&mut state.name_filter)
                     .desired_width(ui.available_width())
-                    .hint_text("🔎 Name Filter")
+                    .hint_text("filter graphs")
+                    .margin(super::kit::FIELD_MARGIN)
                     .show(ui);
             });
         });
@@ -149,13 +158,18 @@ impl<'a> GraphSelect<'a> {
         // input/output docs on hover.
         let registry = self.registry;
 
+        ui.add_space(SECTION_GAP);
         // List all the graphs, named then unnamed.
         egui::ScrollArea::vertical()
             // Limit the scroll height to allow for the `+` button below.
             .max_height(
-                ui.available_height() - ui.spacing().interact_size.y - ui.spacing().item_spacing.y,
+                ui.available_height()
+                    - ui.spacing().interact_size.y
+                    - ui.spacing().item_spacing.y
+                    - SECTION_GAP,
             )
             .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = ROW_GAP;
                 // Names fall into three groups.
                 // 1. User-named, non-demo
                 // 2. Base-named, non-demo
@@ -344,6 +358,7 @@ impl<'a> GraphSelect<'a> {
                 }
             });
 
+        ui.add_space(SECTION_GAP);
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui

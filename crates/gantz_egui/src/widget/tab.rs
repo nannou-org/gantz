@@ -160,10 +160,8 @@ impl Tab {
         let galley = ui.painter().layout_job(job);
         let badge_galley = badge.map(|b| b.into_galley(ui, wrap, f32::INFINITY, font_id));
 
-        let x_margin = match look {
-            TabLook::Pill => ui.spacing().button_padding.x + 2.0,
-            TabLook::Text | TabLook::Title => ui.spacing().button_padding.x,
-        };
+        // Tabs sit tighter than buttons, so a narrow pane's header fits them.
+        let x_margin = (ui.spacing().button_padding.x * 0.75).round();
         let close_btn_width = if closable {
             ui.spacing().icon_width
         } else {
@@ -188,7 +186,10 @@ impl Tab {
                 + badge_width
                 + dot_width
                 + close_btn_width,
-            ui.available_height(),
+            match look {
+                TabLook::Pill => ui.available_height().max(super::kit::pill_height(ui)),
+                TabLook::Text | TabLook::Title => ui.available_height(),
+            },
         );
 
         let (rect, _) = ui.allocate_exact_size(desired_size, egui::Sense::hover());
@@ -215,7 +216,7 @@ impl Tab {
                 _ => visuals.weak_text_color(),
             };
             if look == TabLook::Pill && (active || hovered) {
-                let height = ui.spacing().interact_size.y.min(rect.height());
+                let height = super::kit::pill_height(ui).min(rect.height());
                 let pill =
                     egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width(), height));
                 let radius = crate::style::shape(ui.ctx()).widget_corner(height);

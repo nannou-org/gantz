@@ -185,7 +185,11 @@ where
                 if let Some(session) = session {
                     config = config.collab(session);
                 }
-                config.show(ui)
+                // A short pane scrolls rather than cut off its last rows.
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, true])
+                    .show(ui, |ui| config.show(ui))
+                    .inner
             });
             if let Some((original, new_name)) = res.inner.new_branch {
                 let branch = crate::BranchHead { original, new_name };
@@ -254,15 +258,19 @@ where
         .graphs
         .resolve_main(cx.access.heads(), cx.focused_head);
     if let Some(main) = &main {
-        let id = egui::Id::new("gantz-main-scene");
-        head_scene(cx, ui, main, id, &ext_panes);
+        let id = super::chrome::main_scene_id();
+        let bounds = super::chrome::reach_window(ui.ctx(), rect);
+        ui.scope_builder(egui::UiBuilder::new().max_rect(bounds), |ui| {
+            ui.set_clip_rect(bounds);
+            head_scene(cx, ui, main, id, &ext_panes);
+        });
     }
     // Patch-only shows the graphs alone. `Gantz::show` draws a mark in the
     // tab strip's place.
     if !cx.state.view_toggles.patch_only {
-        let margin = scene_overlay_margin(ui.style());
-        let anchor = rect.left_top() + egui::vec2(margin, margin);
-        tab_strip(cx, ui, anchor, main.as_ref(), &ext_panes);
+        // The strip sits at the scene tile's corner, so its top meets the side
+        // panes' tops and the pane gap sits between them.
+        tab_strip(cx, ui, rect.left_top(), main.as_ref(), &ext_panes);
     }
 
     let PaneCtx {
@@ -399,14 +407,10 @@ where
         return;
     };
     let ext_panes = ext_pane_entries(cx.gantz);
-    // The pane's chrome paints the inset's rounded ground, so the scene
-    // draws no fill of its own.
+    // The pane's chrome paints the inset's rounded ground.
     let rect = ui.max_rect().shrink(super::chrome::GRAPH_INSET);
     ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
-        let widgets = &mut ui.style_mut().visuals.widgets.noninteractive;
-        widgets.bg_fill = egui::Color32::TRANSPARENT;
-        widgets.weak_bg_fill = egui::Color32::TRANSPARENT;
-        let scene_id = egui::Id::new(("gantz-graph-pane", id));
+        let scene_id = super::chrome::graph_pane_scene_id(id);
         head_scene(cx, ui, &head, scene_id, &ext_panes);
     });
 }
@@ -595,7 +599,9 @@ fn render_node_view<Access>(
         .unwrap_or(false);
     let mut frame = pane_frame(ui.style());
     if no_margin {
-        frame.inner_margin = egui::Margin::ZERO;
+        // An edge-to-edge view still keeps clear of the pane's rounded corners.
+        let inset = super::chrome::corner_inset(ui.ctx()) as i8;
+        frame.inner_margin = egui::Margin::same(inset);
     }
     egui::CentralPanel::default()
         .frame(frame)
@@ -889,6 +895,9 @@ where
 
 /// The egui ID used to store the Graphs pane rect for file drop targeting.
 const GRAPHS_PANE_RECT_ID: &str = "gantz-graphs-pane-rect";
+
+/// How far past its margin a pane's content may paint. See [`pane_ui`].
+const CLIP_BLEED: f32 = 2.0;
 
 /// Paint a hover overlay when `.gantz` files are being dragged over this pane.
 ///
@@ -1211,7 +1220,13 @@ pub(super) fn pane_ui<R>(
 ) -> egui::InnerResponse<R> {
     egui::CentralPanel::default()
         .frame(pane_frame(ui.style()))
-        .show_inside(ui, pane)
+        .show_inside(ui, |ui| {
+            // Content keeps to the pane's margin. The small bleed leaves room
+            // for the outline of a field that fills the width.
+            let clip = ui.max_rect().expand(CLIP_BLEED).intersect(ui.clip_rect());
+            ui.set_clip_rect(clip);
+            pane(ui)
+        })
 }
 
 /// The frame of a pane's body. It has no fill, since the pane's rounded
@@ -1225,12 +1240,6 @@ pub(super) fn pane_frame(style: &egui::Style) -> egui::Frame {
             top: 0,
             bottom: 10,
         })
-}
-
-/// The margin between the scene's edges and its floating overlays, e.g. the
-/// sidebar toggle and the nested-graph breadcrumb.
-fn scene_overlay_margin(style: &egui::Style) -> f32 {
-    style.interaction.interact_radius * 2.0
 }
 
 fn graph_select(
@@ -1303,12 +1312,7 @@ fn push_graph_select(responses: &mut Responses, res: widget::graph_select::Graph
 }
 
 fn perf_view(title: &str, capture: &mut widget::PerfCapture, ui: &mut egui::Ui) {
-    // Use Frame::NONE to fill the entire pane with no padding.
-    egui::CentralPanel::default()
-        .frame(egui::Frame::NONE)
-        .show_inside(ui, |ui| {
-            widget::PerfView::new(title, capture).show(ui);
-        });
+    pane_ui(ui, |ui| widget::PerfView::new(title, capture).show(ui));
 }
 
 /// Returns the response from the graph scene if it was shown.
@@ -1531,11 +1535,8 @@ pub(super) fn node_inspector<'a>(
                 // drain per node into `StateWritten` payloads.
                 let mut writes = Vec::new();
                 for id in ids {
-                    let mut frame = egui::Frame::group(ui.style());
                     let is_selected = head_state.scene.interaction.selection.nodes.contains(&id);
-                    if is_selected {
-                        frame.stroke.color = ui.visuals().selection.stroke.color;
-                    }
+                    let frame = widget::kit::card_frame(ui, is_selected);
                     // Each node gets its own id scope, so its table, grids and
                     // popups keep their state apart from the other nodes.
                     let frame_resp = ui

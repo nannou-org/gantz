@@ -47,8 +47,15 @@ pub(super) fn head_scene<Access>(
 
     // Global layout params combined with this head's flow.
     let layout_config = cx.state.layout_config;
-    // Global grid, snap and align options, applied to every head.
-    let scene_config = cx.state.scene_config;
+    // Global grid, snap and align options, applied to every head. The
+    // ground under the panes draws the scene and its grid, so the scene
+    // draws neither. See `chrome::ground_shapes`.
+    let mut scene_config = cx.state.scene_config;
+    let grid = scene_config.grid;
+    scene_config.grid.show = false;
+    let widgets = &mut ui.style_mut().visuals.widgets.noninteractive;
+    widgets.bg_fill = egui::Color32::TRANSPARENT;
+    widgets.weak_bg_fill = egui::Color32::TRANSPARENT;
     let head_state = cx.state.open_heads.entry(head.clone()).or_default();
     let layout_params = layout_config.to_params(head_state.layout_flow);
     // Disjoint borrows of sibling fields for the scene's context menu and
@@ -85,6 +92,7 @@ pub(super) fn head_scene<Access>(
             data.vm,
             ui,
         );
+        super::chrome::record_ground(ui.ctx(), id, rect, data.view.camera, grid);
         (res, camera, empty)
     }) {
         Some((res, camera, empty)) => (res, Some(camera), empty),

@@ -9,6 +9,13 @@
 use super::Pane;
 use crate::style::{self, GraphPaneStyle, Role, StyleConfig};
 
+/// The radius of a ground dot, in points.
+const DOT_RADIUS: f32 = 1.0;
+
+/// The least gap between ground dots, in points. A zoomed-out grid doubles
+/// its step until its dots are at least this far apart.
+const MIN_DOT_GAP: f32 = 10.0;
+
 /// The height of a pane's header, where its tabs or its title sit.
 pub(super) const HEADER_HEIGHT: f32 = 34.0;
 
@@ -21,12 +28,28 @@ pub(super) const GRAPH_INSET: f32 = 6.0;
 /// The id under which the focused pane's tile is kept.
 const FOCUS_ID: &str = "gantz-pane-focus";
 
+/// The id under which the pane tree's bounds are kept. See [`set_bounds`].
+const BOUNDS_ID: &str = "gantz-pane-bounds";
+
 /// An action from a pane header's buttons, applied once the tree is drawn.
 pub(super) enum PaneAction {
     Hide(Pane),
     PopOut(egui_tiles::TileId, Pane),
     /// Show a graph pane's graph on the scene. See [`Icon::Scene`].
     ShowOnScene(egui_tiles::TileId, u64),
+}
+
+/// Where a graph scene sat this pass and how its camera mapped graph space
+/// onto it, so that its grid can be dotted across the ground. See
+/// [`record_ground`].
+#[derive(Clone, Copy)]
+pub(super) struct Ground {
+    /// The pass in which the scene was drawn.
+    pass: u64,
+    /// The scene's rect on the screen.
+    rect: egui::Rect,
+    camera: gantz_edit::Camera,
+    grid: super::GridConfig,
 }
 
 /// A painted icon for a header button.
@@ -51,10 +74,13 @@ pub(super) fn grounds(tree: &egui_tiles::Tree<Pane>) -> Vec<egui_tiles::TileId> 
     out
 }
 
-/// The shapes under the pane tree. The scene colour fills `area`, and each
-/// pane in [`grounds`] is a rounded tile in the pane colour. The focused pane
-/// takes a quiet outline.
+/// The shapes under the pane tree. The scene colour fills `area`, with the
+/// main scene's grid dotted across it, so the scene seems to run on under
+/// the panes, the gaps and the window margin. Each pane in [`grounds`] is a
+/// rounded tile in the pane colour, and a graph pane's inset carries its own
+/// scene's grid. The focused pane takes a quiet outline.
 pub(super) fn ground_shapes(
+    ctx: &egui::Context,
     tree: &egui_tiles::Tree<Pane>,
     cfg: &StyleConfig,
     theme: egui::Theme,
@@ -65,8 +91,12 @@ pub(super) fn ground_shapes(
     let pane = cfg.resolve(theme, Role::Panel);
     let border = cfg.resolve(theme, Role::Border);
     let weak = cfg.resolve(theme, Role::WeakText);
+    let dot = style::over(cfg.resolve(theme, Role::Dot), scene);
     let radius = cfg.shape.window_corner();
     let mut shapes = vec![egui::Shape::rect_filled(area, 0.0, scene)];
+    if let Some(ground) = ground_of(ctx, main_scene_id()) {
+        dots(&mut shapes, area, &ground, dot, |_| true);
+    }
     for id in grounds(tree) {
         let Some(rect) = tree.tiles.rect(id) else {
             continue;
@@ -83,41 +113,41 @@ pub(super) fn ground_shapes(
             stroke,
             egui::StrokeKind::Inside,
         )));
-        if let Some(inset) = graph_inset(tree, id, rect, cfg.shape.graph_panes) {
+        if let Some((inset, pane_id)) = graph_inset(tree, id, rect, cfg.shape.graph_panes) {
             let inset_radius = (radius - GRAPH_INSET).max(0.0);
             shapes.push(egui::Shape::rect_filled(inset, inset_radius, scene));
+            if let Some(ground) = ground_of(ctx, graph_pane_scene_id(pane_id)) {
+                let within = |p| in_rounded_rect(inset, inset_radius, p);
+                dots(&mut shapes, inset, &ground, dot, within);
+            }
         }
     }
     shapes
 }
 
-/// The scene inset of a ground whose active pane is a graph pane. A framed
-/// pane insets the scene below its header. An open pane runs the scene up
-/// under its header.
+/// The scene inset of a ground whose active pane is a graph pane, and the
+/// graph pane's id. A framed pane insets the scene below its header. An open
+/// pane runs the scene up under its header.
 fn graph_inset(
     tree: &egui_tiles::Tree<Pane>,
     id: egui_tiles::TileId,
     rect: egui::Rect,
     style: GraphPaneStyle,
-) -> Option<egui::Rect> {
-    let pane_id = match tree.tiles.get(id)? {
+) -> Option<(egui::Rect, u64)> {
+    let tile_id = match tree.tiles.get(id)? {
         egui_tiles::Tile::Pane(Pane::Graph(_)) => id,
-        egui_tiles::Tile::Container(egui_tiles::Container::Tabs(tabs)) => {
-            let active = tabs.active?;
-            let graph = matches!(
-                tree.tiles.get(active)?,
-                egui_tiles::Tile::Pane(Pane::Graph(_))
-            );
-            graph.then_some(active)?
-        }
+        egui_tiles::Tile::Container(egui_tiles::Container::Tabs(tabs)) => tabs.active?,
         _ => return None,
     };
-    let body = tree.tiles.rect(pane_id)?;
+    let Some(Pane::Graph(pane_id)) = tree.tiles.get_pane(&tile_id) else {
+        return None;
+    };
+    let body = tree.tiles.rect(tile_id)?;
     let inset = match style {
         GraphPaneStyle::Framed => body,
         GraphPaneStyle::Open => body.with_min_y(rect.top()),
     };
-    Some(inset.shrink(GRAPH_INSET))
+    Some((inset.shrink(GRAPH_INSET), *pane_id))
 }
 
 /// The focused pane's tile. A press inside a pane focuses it, and a press on
@@ -308,4 +338,115 @@ pub(super) fn patch_mark(
             resp.on_hover_text(hint).clicked()
         })
         .inner
+}
+
+/// The id of the main graph's scene.
+pub(super) fn main_scene_id() -> egui::Id {
+    egui::Id::new("gantz-main-scene")
+}
+
+/// The id of the scene in the graph pane `id`.
+pub(super) fn graph_pane_scene_id(id: u64) -> egui::Id {
+    egui::Id::new(("gantz-graph-pane", id))
+}
+
+/// Record that the scene `id` sat in `rect` this pass, seen through `camera`
+/// with `grid`. [`ground_shapes`] dots its grid across the ground.
+pub(super) fn record_ground(
+    ctx: &egui::Context,
+    id: egui::Id,
+    rect: egui::Rect,
+    camera: gantz_edit::Camera,
+    grid: super::GridConfig,
+) {
+    let pass = ctx.cumulative_pass_nr();
+    let ground = Ground {
+        pass,
+        rect,
+        camera,
+        grid,
+    };
+    ctx.data_mut(|d| d.insert_temp(id.with("ground"), ground));
+}
+
+/// The ground of the scene `id`, if the scene was drawn this pass.
+fn ground_of(ctx: &egui::Context, id: egui::Id) -> Option<Ground> {
+    let ground: Ground = ctx.data(|d| d.get_temp(id.with("ground")))?;
+    (ground.pass == ctx.cumulative_pass_nr()).then_some(ground)
+}
+
+/// Push a dot in `color` for each point of the grid of `ground` that falls in
+/// `area` and that `within` keeps.
+fn dots(
+    shapes: &mut Vec<egui::Shape>,
+    area: egui::Rect,
+    ground: &Ground,
+    color: egui::Color32,
+    within: impl Fn(egui::Pos2) -> bool,
+) {
+    let (camera, center) = (ground.camera, ground.rect.center());
+    let valid = |x: f32| x.is_finite() && x > 0.0;
+    if !ground.grid.show || !valid(ground.grid.step) || !valid(camera.zoom) {
+        return;
+    }
+    let mut step = ground.grid.step;
+    while step * camera.zoom < MIN_DOT_GAP {
+        step *= 2.0;
+    }
+    let to_graph = |p: egui::Pos2| camera.center + (p - center) / camera.zoom;
+    let (lo, hi) = (to_graph(area.min), to_graph(area.max));
+    let cells = |lo: f32, hi: f32| (lo / step).ceil() as i64..=(hi / step).floor() as i64;
+    for i in cells(lo.x, hi.x) {
+        for j in cells(lo.y, hi.y) {
+            let point = egui::pos2(i as f32 * step, j as f32 * step);
+            let p = center + (point - camera.center) * camera.zoom;
+            if within(p) {
+                shapes.push(egui::Shape::circle_filled(p, DOT_RADIUS, color));
+            }
+        }
+    }
+}
+
+/// Whether `p` lies in `rect` with its corners rounded by `radius`.
+fn in_rounded_rect(rect: egui::Rect, radius: f32, p: egui::Pos2) -> bool {
+    let inner = rect.shrink(radius);
+    rect.contains(p) && (inner.clamp(p) - p).length() <= radius
+}
+
+/// Record that the pane tree fills `tree` this pass, inside the window's
+/// `window` area. See [`reach_window`].
+pub(super) fn set_bounds(ctx: &egui::Context, tree: egui::Rect, window: egui::Rect) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(BOUNDS_ID), (tree, window)));
+}
+
+/// `tile` with each edge that lies on the pane tree's edge moved out to the
+/// window's edge, so that the main scene runs on under the window margin and
+/// the status gutter. See [`set_bounds`].
+pub(super) fn reach_window(ctx: &egui::Context, tile: egui::Rect) -> egui::Rect {
+    let Some((tree, window)) =
+        ctx.data(|d| d.get_temp::<(egui::Rect, egui::Rect)>(egui::Id::new(BOUNDS_ID)))
+    else {
+        return tile;
+    };
+    let reach = |edge: f32, tree: f32, window: f32| match (edge - tree).abs() < 0.5 {
+        true => window,
+        false => edge,
+    };
+    egui::Rect::from_min_max(
+        egui::pos2(
+            reach(tile.min.x, tree.min.x, window.min.x),
+            reach(tile.min.y, tree.min.y, window.min.y),
+        ),
+        egui::pos2(
+            reach(tile.max.x, tree.max.x, window.max.x),
+            reach(tile.max.y, tree.max.y, window.max.y),
+        ),
+    )
+}
+
+/// The least inset that keeps a square view inside a pane's rounded corners:
+/// the corner of a square inset this far touches the corner's curve.
+pub(super) fn corner_inset(ctx: &egui::Context) -> f32 {
+    let radius = style::shape(ctx).window_corner();
+    (radius * (1.0 - std::f32::consts::FRAC_1_SQRT_2)).ceil()
 }

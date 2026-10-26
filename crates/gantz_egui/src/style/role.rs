@@ -71,93 +71,99 @@ macro_rules! roles {
 }
 
 roles! {
-    scene, Scene, Surface, "Scene",
+    scene, Scene, Surface, "scene",
         "The ground under the panes: the graph and the gaps between panes.",
         c(N0);
-    canvas, Canvas, Surface, "Canvas",
+    canvas, Canvas, Surface, "canvas",
         "The background of text fields, plots and inspect views.",
         c(N0);
-    panel, Panel, Surface, "Pane",
+    panel, Panel, Surface, "pane",
         "The background of panes and tab bars.",
         c(N1);
-    card, Card, Surface, "Card",
+    card, Card, Surface, "card",
         "The background of a group card, when group cards are nested.",
         c(N2);
-    window, Window, Surface, "Window",
-        "The background of windows, menus, popups and nodes.",
+    window, Window, Surface, "window",
+        "The background of windows, menus and popups.",
         c(N1);
-    faint, Faint, Surface, "Faint",
+    faint, Faint, Surface, "faint",
         "A barely visible tint, for striped rows.",
         c(N7).with_opacity(0.02);
-    code, Code, Surface, "Code",
+    code, Code, Surface, "code",
         "The background of inline code.",
         c(N2);
-    border, Border, Surface, "Border",
-        "Outlines of cards, fields, windows and nodes.",
+    border, Border, Surface, "border",
+        "Outlines of cards, fields and windows.",
         c(N3);
+    node, Node, Surface, "node",
+        "The background of nodes, a step from the scene toward the panes.",
+        c(N1).with_opacity(0.6);
+    node_border, NodeBorder, Surface, "node outline",
+        "The outline of nodes that are not selected.",
+        c(N4).with_opacity(0.55);
+    dot, Dot, Surface, "dot",
+        "The dots of the scene grid.",
+        c(N7).with_opacity(0.14);
 
-    text, Text, Text, "Text",
+    text, Text, Text, "text",
         "Labels and other plain text.",
         c(N5);
-    weak_text, WeakText, Text, "Weak text",
+    weak_text, WeakText, Text, "weak text",
         "Hints, inactive tabs and other secondary text.",
         c(N4);
-    strong_text, StrongText, Text, "Strong text",
+    strong_text, StrongText, Text, "strong text",
         "Headings, the active tab, and widgets while pressed.",
         c(N7);
 
-    widget_fill, WidgetFill, Widget, "Widget fill",
+    widget_fill, WidgetFill, Widget, "widget fill",
         "The background of buttons, dials and checkboxes.",
         c(N7).with_opacity(0.07);
-    widget_text, WidgetText, Widget, "Widget text",
+    widget_text, WidgetText, Widget, "widget text",
         "The text and marks of buttons, dials and checkboxes.",
         c(N6);
-    hover_fill, HoverFill, Widget, "Hovered fill",
+    hover_fill, HoverFill, Widget, "hovered fill",
         "The background of a widget under the pointer.",
         c(N7).with_opacity(0.12);
-    hover_stroke, HoverStroke, Widget, "Hovered outline",
+    hover_stroke, HoverStroke, Widget, "hovered outline",
         "The outline of a widget under the pointer.",
         c(N4);
-    hover_text, HoverText, Widget, "Hovered text",
+    hover_text, HoverText, Widget, "hovered text",
         "The text of a widget under the pointer or with an open menu.",
         c(N7);
-    active_fill, ActiveFill, Widget, "Pressed fill",
+    active_fill, ActiveFill, Widget, "pressed fill",
         "The background of a widget while pressed, or with an open menu.",
         c(N7).with_opacity(0.18);
 
-    selection, Selection, Accent, "Selection",
+    selection, Selection, Accent, "selection",
         "The background of selected text and selected items.",
         c(N7).with_opacity(0.14);
-    selection_stroke, SelectionStroke, Accent, "Selection outline",
+    selection_stroke, SelectionStroke, Accent, "selection outline",
         "The outline of selected nodes and items, and the text cursor.",
         c(N7);
-    hyperlink, Hyperlink, Accent, "Link",
+    hyperlink, Hyperlink, Accent, "link",
         "Hyperlinks.",
         c(Blue);
 
-    error, Error, Status, "Error",
+    error, Error, Status, "error",
         "Errors and missing references.",
         c(Red);
-    warning, Warning, Status, "Warning",
+    warning, Warning, Status, "warning",
         "Warnings and outdated references.",
         c(Orange);
-    success, Success, Status, "Success",
+    success, Success, Status, "success",
         "A live session or vault link.",
         c(Green);
-    pending, Pending, Status, "Pending",
+    pending, Pending, Status, "pending",
         "A session or vault link while it connects.",
         c(Yellow);
-    attention, Attention, Status, "Attention",
+    attention, Attention, Status, "attention",
         "A vault link that only the user can fix.",
         c(Purple);
 
-    scrim, Scrim, Chrome, "Scrim",
+    scrim, Scrim, Chrome, "scrim",
         "The dimming layer over a scene that is busy or awaits a drop.",
         c(N0).with_opacity(0.5);
-    separator, Separator, Chrome, "Separator",
-        "The gap between panes. Match the scene so panes float on it.",
-        c(N0);
-    separator_hover, SeparatorHover, Chrome, "Hovered separator",
+    separator_hover, SeparatorHover, Chrome, "hovered separator",
         "The gap between panes while hovered or dragged.",
         c(N4);
 }
@@ -216,12 +222,12 @@ impl Group {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Surface => "Surfaces",
-            Self::Text => "Text",
-            Self::Widget => "Widgets",
-            Self::Accent => "Accents",
-            Self::Status => "Status",
-            Self::Chrome => "Chrome",
+            Self::Surface => "surfaces",
+            Self::Text => "text",
+            Self::Widget => "widgets",
+            Self::Accent => "accents",
+            Self::Status => "status",
+            Self::Chrome => "chrome",
         }
     }
 }

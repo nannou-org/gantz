@@ -21,6 +21,9 @@ pub const TAG_GAP: f32 = 8.0;
 /// The most chars of a message that a tag shows. See [`elide`].
 pub const TAG_CHARS: usize = 40;
 
+/// The space between a field's outline and its text. See [`field_visuals`].
+pub const FIELD_MARGIN: egui::Margin = egui::Margin::symmetric(8, 3);
+
 /// A group card: an optional title, optional context to its right, and
 /// `add_contents` below. [`Shape::cards`][crate::style::Shape::cards] chooses whether it is shaded or
 /// outlined.
@@ -33,7 +36,11 @@ pub fn card<R>(
     let frame = card_frame(ui, false);
     frame
         .show(ui, |ui| {
-            ui.set_min_width(ui.available_width().max(0.0));
+            // A card fills the width it is given and no more, so that it keeps
+            // to the margin of the pane it sits in.
+            let width = ui.available_width().max(0.0);
+            ui.set_min_width(width);
+            ui.set_max_width(width);
             if title.is_some() || context.is_some() {
                 ui.horizontal(|ui| {
                     if let Some(title) = title {
@@ -64,8 +71,11 @@ pub fn card_frame(ui: &egui::Ui, selected: bool) -> egui::Frame {
             egui::Stroke::new(OUTLINE, visuals.widgets.noninteractive.bg_stroke.color),
         ),
     };
+    // Every card keeps an outline's width, clear when not drawn, so that a
+    // selection outline never shifts its contents.
     let stroke = match selected {
         true => egui::Stroke::new(OUTLINE, visuals.strong_text_color()),
+        false if stroke.is_empty() => egui::Stroke::new(OUTLINE, egui::Color32::TRANSPARENT),
         false => stroke,
     };
     egui::Frame::new()
@@ -322,8 +332,53 @@ pub fn elide(text: &str, max: usize) -> String {
     }
 }
 
-/// The height of a [`pill`]: a line of button text with a little room.
-fn pill_height(ui: &egui::Ui) -> f32 {
+/// The height of a [`pill`]: a line of button text with a little room. Tabs
+/// take it too, so that every pill in the app is the same height.
+pub fn pill_height(ui: &egui::Ui) -> f32 {
     let text = ui.text_style_height(&egui::TextStyle::Button);
     (text + 4.0).max(ui.spacing().interact_size.y - 2.0)
+}
+
+/// The width of `text` in the body font.
+pub fn text_width(ui: &egui::Ui, text: &str) -> f32 {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let color = ui.visuals().text_color();
+    ui.painter()
+        .layout_no_wrap(text.to_string(), font, color)
+        .size()
+        .x
+}
+
+/// Size the sliders of `ui` to fill the rest of a row, once `beside` points
+/// of other widgets and each slider's value box, as wide as `widest`, have
+/// their room. A wider slider would push its card past the pane's margin.
+/// Their rails take the opaque outline colour, so that they read on a card.
+pub fn fit_sliders(ui: &mut egui::Ui, beside: f32, widest: &str) {
+    let rail = ui.visuals().widgets.noninteractive.bg_stroke.color;
+    ui.visuals_mut().widgets.inactive.bg_fill = rail;
+    let value = text_width(ui, widest) + 2.0 * ui.spacing().button_padding.x;
+    let gaps = ui.spacing().item_spacing.x;
+    ui.spacing_mut().slider_width = (ui.available_width() - beside - value - gaps).max(32.0);
+}
+
+/// Draw the text fields of `ui` outlined on the pane, in place of egui's
+/// dark fill. The outline keeps one width in every state, so that hover and
+/// focus only recolour it and never move the text. Buttons in `ui` take the
+/// outline too, so scope it to the fields.
+pub fn field_visuals(ui: &mut egui::Ui) {
+    let v = ui.visuals_mut();
+    let line = v.widgets.noninteractive.bg_stroke.color;
+    let hover = v.widgets.hovered.bg_stroke.color;
+    let focus = v.strong_text_color();
+    v.text_edit_bg_color = Some(egui::Color32::TRANSPARENT);
+    let w = &mut v.widgets;
+    for (w, color) in [
+        (&mut w.inactive, line),
+        (&mut w.hovered, hover),
+        (&mut w.active, focus),
+    ] {
+        w.bg_stroke = egui::Stroke::new(OUTLINE, color);
+        w.expansion = 0.0;
+    }
+    v.selection.stroke = egui::Stroke::new(OUTLINE, focus);
 }
