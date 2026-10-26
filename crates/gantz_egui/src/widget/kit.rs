@@ -1,0 +1,237 @@
+//! Small widgets that the panes, settings and menus share: group cards,
+//! option pills, switches, keycaps and wells.
+//!
+//! They draw with the applied style's roles and [`Shape`][crate::style::Shape], so a theme or
+//! roundness change reaches every one of them.
+
+use crate::style::{self, CardStyle, Role};
+
+/// The width of a card, pill group or keycap outline.
+pub const OUTLINE: f32 = 1.5;
+
+/// The size of a [`switch`], as multiples of the interact height.
+const SWITCH: egui::Vec2 = egui::vec2(1.65, 1.0);
+
+/// A group card: an optional title, optional context to its right, and
+/// `add_contents` below. [`Shape::cards`][crate::style::Shape::cards] chooses whether it is shaded or
+/// outlined.
+pub fn card<R>(
+    ui: &mut egui::Ui,
+    title: Option<&str>,
+    context: Option<&str>,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> R {
+    let frame = card_frame(ui, false);
+    frame
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width().max(0.0));
+            if title.is_some() || context.is_some() {
+                ui.horizontal(|ui| {
+                    if let Some(title) = title {
+                        let color = ui.visuals().strong_text_color();
+                        ui.label(style::font::strong_text(ui, title).color(color));
+                    }
+                    if let Some(context) = context {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.label(egui::RichText::new(context).small().weak());
+                        });
+                    }
+                });
+            }
+            add_contents(ui)
+        })
+        .inner
+}
+
+/// The frame of a group card. A `selected` card takes the strong outline in
+/// either style.
+pub fn card_frame(ui: &egui::Ui, selected: bool) -> egui::Frame {
+    let shape = style::shape(ui.ctx());
+    let visuals = ui.visuals();
+    let (fill, stroke) = match shape.cards {
+        CardStyle::Nested => (style::color(ui, Role::Card), egui::Stroke::NONE),
+        CardStyle::Outline => (
+            egui::Color32::TRANSPARENT,
+            egui::Stroke::new(OUTLINE, visuals.widgets.noninteractive.bg_stroke.color),
+        ),
+    };
+    let stroke = match selected {
+        true => egui::Stroke::new(OUTLINE, visuals.strong_text_color()),
+        false => stroke,
+    };
+    egui::Frame::new()
+        .fill(fill)
+        .stroke(stroke)
+        .corner_radius(shape.card_corner())
+        .inner_margin(egui::Margin::symmetric(10, 8))
+}
+
+/// A row of option pills, one per `(value, label)` in `options`. The pill of
+/// the current value is filled in the strong text colour. Clicking a pill
+/// selects its value.
+pub fn pills<T: Copy + PartialEq>(
+    ui: &mut egui::Ui,
+    value: &mut T,
+    options: &[(T, &str)],
+) -> egui::Response {
+    let shape = style::shape(ui.ctx());
+    let height = ui.spacing().interact_size.y;
+    let stroke = egui::Stroke::new(OUTLINE, ui.visuals().widgets.noninteractive.bg_stroke.color);
+    let inner = egui::Frame::new()
+        .stroke(stroke)
+        .corner_radius(shape.widget_corner(height + 4.0))
+        .inner_margin(egui::Margin::same(1))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            ui.horizontal(|ui| {
+                let mut changed: Option<egui::Response> = None;
+                for &(option, label) in options {
+                    let resp = pill(ui, *value == option, label);
+                    if resp.clicked() && *value != option {
+                        *value = option;
+                        let mut resp = resp;
+                        resp.mark_changed();
+                        changed = Some(resp);
+                    }
+                }
+                changed
+            })
+            .inner
+        });
+    match inner.inner {
+        Some(resp) => resp,
+        None => inner.response,
+    }
+}
+
+/// One pill: a label that is filled in the strong text colour while
+/// `selected`, and weak otherwise.
+pub fn pill(
+    ui: &mut egui::Ui,
+    selected: bool,
+    text: impl Into<egui::WidgetText>,
+) -> egui::Response {
+    let pad = egui::vec2(ui.spacing().button_padding.x + 2.0, 2.0);
+    let galley = text.into().into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Button,
+    );
+    let size = egui::vec2(
+        galley.size().x + pad.x * 2.0,
+        (galley.size().y + pad.y * 2.0).max(ui.spacing().interact_size.y - 2.0),
+    );
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let shape = style::shape(ui.ctx());
+        let radius = shape.widget_corner(rect.height());
+        let visuals = ui.visuals();
+        let (fill, text_color) = match (selected, resp.hovered()) {
+            (true, _) => (visuals.strong_text_color(), style::color(ui, Role::Panel)),
+            (false, true) => (
+                visuals.widgets.hovered.weak_bg_fill,
+                visuals.strong_text_color(),
+            ),
+            (false, false) => (egui::Color32::TRANSPARENT, visuals.weak_text_color()),
+        };
+        ui.painter().rect_filled(rect, radius, fill);
+        let pos = rect.center() - galley.size() / 2.0;
+        ui.painter().galley(pos, galley, text_color);
+    }
+    resp
+}
+
+/// An on and off switch. A click flips `on`.
+pub fn switch(ui: &mut egui::Ui, on: &mut bool) -> egui::Response {
+    let size = ui.spacing().interact_size.y * SWITCH;
+    let (rect, mut resp) = ui.allocate_exact_size(size, egui::Sense::click());
+    if resp.clicked() {
+        *on = !*on;
+        resp.mark_changed();
+    }
+    resp.widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Checkbox, true, *on, ""));
+    if ui.is_rect_visible(rect) {
+        let t = ui.ctx().animate_bool(resp.id, *on);
+        let visuals = ui.visuals();
+        let radius = rect.height() / 2.0;
+        let track = match *on {
+            true => visuals.strong_text_color(),
+            false => visuals.widgets.inactive.weak_bg_fill,
+        };
+        let knob = match *on {
+            true => style::color(ui, Role::Panel),
+            false => visuals.weak_text_color(),
+        };
+        let knob = match resp.hovered() && !*on {
+            true => visuals.text_color(),
+            false => knob,
+        };
+        ui.painter().rect_filled(rect, radius, track);
+        let r = radius - 3.0;
+        let x = egui::lerp((rect.left() + radius)..=(rect.right() - radius), t);
+        ui.painter()
+            .circle_filled(egui::pos2(x, rect.center().y), r, knob);
+    }
+    resp
+}
+
+/// A switch with a label to its left that fills the row, as in a settings
+/// card.
+pub fn switch_row(ui: &mut egui::Ui, on: &mut bool, label: &str) -> egui::Response {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            switch(ui, on)
+        })
+        .inner
+    })
+    .inner
+}
+
+/// A key or key combination drawn as a keycap, such as "ctrl c".
+pub fn keycap(ui: &mut egui::Ui, text: &str, strong: bool) -> egui::Response {
+    let font = egui::FontId::monospace(ui.style().text_styles[&egui::TextStyle::Body].size * 0.88);
+    let visuals = ui.visuals();
+    let color = match strong {
+        true => visuals.strong_text_color(),
+        false => visuals.weak_text_color(),
+    };
+    let stroke = egui::Stroke::new(OUTLINE, visuals.widgets.noninteractive.bg_stroke.color);
+    let galley = ui.painter().layout_no_wrap(text.to_string(), font, color);
+    let pad = egui::vec2(6.0, 1.0);
+    let size = galley.size() + pad * 2.0;
+    let (rect, resp) = ui.allocate_exact_size(size, egui::Sense::hover());
+    if ui.is_rect_visible(rect) {
+        let shape = style::shape(ui.ctx());
+        ui.painter().rect_stroke(
+            rect,
+            shape.widget_corner(rect.height()) * 0.7,
+            stroke,
+            egui::StrokeKind::Inside,
+        );
+        ui.painter().galley(rect.min + pad, galley, color);
+    }
+    resp
+}
+
+/// The keycaps of every binding in `chords`, side by side.
+pub fn keycaps(ui: &mut egui::Ui, chords: &[String]) {
+    ui.spacing_mut().item_spacing.x = 3.0;
+    for chord in chords {
+        keycap(ui, chord, false);
+    }
+}
+
+/// A dark inset that holds a node's value, code or plot, so that every node
+/// keeps the same frame around its own content.
+pub fn well<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
+    let shape = style::shape(ui.ctx());
+    let height = ui.spacing().interact_size.y;
+    egui::Frame::new()
+        .fill(ui.visuals().extreme_bg_color)
+        .corner_radius(shape.widget_corner(height))
+        .inner_margin(egui::Margin::symmetric(6, 2))
+        .show(ui, add_contents)
+        .inner
+}

@@ -15,70 +15,70 @@ pub fn panes_config(view: &mut ViewToggles, ext: &[super::ExtPaneEntry], ui: &mu
         ui,
         &mut view.sidebar_open,
         &mut view.graphs,
-        "Graphs",
+        "graphs",
         "Browse, create and import graphs.",
     );
     sidebar_pane(
         ui,
         &mut view.sidebar_open,
         &mut view.history,
-        "History",
+        "history",
         "Browse the commit history.",
     );
     sidebar_pane(
         ui,
         &mut view.sidebar_open,
         &mut view.settings,
-        "Settings",
-        "Global / Style / Panes settings (also reachable from this menu).",
+        "settings",
+        "Global, style, keybind and pane settings.",
     );
     sidebar_pane(
         ui,
         &mut view.sidebar_open,
         &mut view.graph_config,
-        "Graph Config",
-        "Per-graph layout settings and rename.",
+        "graph",
+        "The focused graph's name, layout and sharing.",
     );
     sidebar_pane(
         ui,
         &mut view.sidebar_open,
         &mut view.node_inspector,
-        "Node Inspector",
+        "inspector",
         "Inspect and edit the selected node(s).",
     );
     sidebar_pane(
         ui,
         &mut view.sidebar_open,
         &mut view.perf_vm,
-        "VM Perf",
+        "vm perf",
         "Virtual machine evaluation timing.",
     );
     sidebar_pane(
         ui,
         &mut view.sidebar_open,
         &mut view.perf_gui,
-        "GUI Perf",
+        "gui perf",
         "GUI rendering timing.",
     );
     // Tray panes are independent of the sidebar.
-    ui.checkbox(&mut view.logs, "Logs")
+    ui.checkbox(&mut view.logs, "logs")
         .on_hover_text("Log output from the running graphs.");
-    ui.checkbox(&mut view.steel, "Steel")
+    ui.checkbox(&mut view.steel, "steel")
         .on_hover_text("The compiled Steel code for the focused graph.");
-    ui.checkbox(&mut view.gui_preview, "GUI Preview")
+    ui.checkbox(&mut view.gui_preview, "gui preview")
         .on_hover_text("The focused graph's GUI, rendered live from its gui marker.");
-    ui.checkbox(&mut view.gui_tree, "GUI Tree")
+    ui.checkbox(&mut view.gui_tree, "gui tree")
         .on_hover_text("The stored gui marker tree as scheme text, with decode warnings.");
     for entry in ext {
         let on = view.ext.entry(entry.key.clone()).or_insert(false);
-        ui.checkbox(on, entry.title.as_str())
+        ui.checkbox(on, entry.title.to_lowercase())
             .on_hover_text(entry.description.as_str());
     }
 }
 
 /// Render the "reset all" layout button. Returns `true` when clicked.
 pub fn reset_layout_button(ui: &mut egui::Ui) -> bool {
-    ui.button("reset all")
+    ui.button("reset layout")
         .on_hover_text("Reset all top-level panes to their default arrangement and size.")
         .clicked()
 }

@@ -1,7 +1,8 @@
 //! A custom tab widget shared by the inner graph tree and the outer pane tree.
 //!
-//! It renders a tab as plain text coloured by state, with no background box
-//! and a small close button, so all tabs look consistent. An optional
+//! A tab takes one of three looks, see [`TabLook`]. Plain text coloured by
+//! state, a pill that fills while active, or a pane title in the semibold
+//! weight. Each may have a small close button. An optional
 //! speaker leads the title as a mute toggle. An optional badge follows it
 //! as a small clickable text, for a per-tab picker.
 
@@ -31,6 +32,21 @@ pub struct Tab {
     audio: Option<bool>,
     /// Optional clickable text after the title.
     badge: Option<egui::WidgetText>,
+    /// Optional quieter text after the title, such as the focused head.
+    sub: Option<String>,
+    look: TabLook,
+}
+
+/// How a [`Tab`] draws its title.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TabLook {
+    /// Plain text, strong while active and weak otherwise.
+    #[default]
+    Text,
+    /// A pill, filled in the strong text colour while active.
+    Pill,
+    /// A pane title in the semibold weight, for a pane with no sibling tabs.
+    Title,
 }
 
 impl Tab {
@@ -44,7 +60,21 @@ impl Tab {
             status: None,
             audio: None,
             badge: None,
+            sub: None,
+            look: TabLook::Text,
         }
+    }
+
+    /// Draw the title with `look`.
+    pub fn look(mut self, look: TabLook) -> Self {
+        self.look = look;
+        self
+    }
+
+    /// Show `sub` after the title in the weak text colour.
+    pub fn sub(mut self, sub: Option<String>) -> Self {
+        self.sub = sub;
+        self
     }
 
     /// Show a small painted speaker before the title, struck through when
@@ -100,14 +130,40 @@ impl Tab {
             status,
             audio,
             badge,
+            sub,
+            look,
         } = self;
 
         let font_id = egui::TextStyle::Button.resolve(ui.style());
         let wrap = Some(egui::TextWrapMode::Extend);
-        let galley = text.into_galley(ui, wrap, f32::INFINITY, font_id.clone());
+        let title_font = match look {
+            TabLook::Title => crate::style::font::strong(ui, egui::TextStyle::Button),
+            TabLook::Text | TabLook::Pill => font_id.clone(),
+        };
+        // The title takes the state colour when painted. The sub keeps the
+        // weak colour.
+        let mut job = egui::text::LayoutJob::default();
+        let placeholder = egui::Color32::PLACEHOLDER;
+        job.append(
+            text.text(),
+            0.0,
+            egui::TextFormat::simple(title_font, placeholder),
+        );
+        if let Some(sub) = &sub {
+            let weak = ui.visuals().weak_text_color();
+            job.append(
+                &format!(" {sub}"),
+                0.0,
+                egui::TextFormat::simple(font_id.clone(), weak),
+            );
+        }
+        let galley = ui.painter().layout_job(job);
         let badge_galley = badge.map(|b| b.into_galley(ui, wrap, f32::INFINITY, font_id));
 
-        let x_margin = ui.spacing().button_padding.x;
+        let x_margin = match look {
+            TabLook::Pill => ui.spacing().button_padding.x + 2.0,
+            TabLook::Text | TabLook::Title => ui.spacing().button_padding.x,
+        };
         let close_btn_width = if closable {
             ui.spacing().icon_width
         } else {
@@ -149,14 +205,26 @@ impl Tab {
         let mut badge_response = None;
 
         if ui.is_rect_visible(rect) {
-            // Only the text colour responds to state. There is no background.
-            let text_color = if active {
-                ui.visuals().strong_text_color()
-            } else if tab_response.hovered() {
-                ui.visuals().text_color()
-            } else {
-                ui.visuals().weak_text_color()
+            let visuals = ui.visuals();
+            let hovered = tab_response.hovered();
+            let text_color = match look {
+                TabLook::Pill if active => crate::style::color(ui, crate::style::Role::Panel),
+                TabLook::Title => visuals.strong_text_color(),
+                _ if active => visuals.strong_text_color(),
+                _ if hovered => visuals.text_color(),
+                _ => visuals.weak_text_color(),
             };
+            if look == TabLook::Pill && (active || hovered) {
+                let height = ui.spacing().interact_size.y.min(rect.height());
+                let pill =
+                    egui::Rect::from_center_size(rect.center(), egui::vec2(rect.width(), height));
+                let radius = crate::style::shape(ui.ctx()).widget_corner(height);
+                let fill = match active {
+                    true => visuals.strong_text_color(),
+                    false => visuals.widgets.hovered.weak_bg_fill,
+                };
+                ui.painter().rect_filled(pill, radius, fill);
+            }
 
             if let Some(muted) = audio {
                 let audio_rect = egui::Rect::from_min_max(

@@ -1,7 +1,7 @@
 //! The panes and the tile tree that lays them out, including its sizing.
 
-use super::state::{GantzState, ViewToggles};
-use super::{Gantz, LogSource};
+use super::Gantz;
+use super::state::{GantzState, GraphPlacement, ViewToggles};
 use crate::{
     HeadAccess,
     widget::{self},
@@ -16,8 +16,15 @@ pub enum Pane {
     /// while no provider supplies the key.
     Ext(String),
     GraphConfig,
-    /// Contains the inner graph tree with all open graph tabs.
+    /// The main graph, drawn across the scene with the open graphs' tabs
+    /// floating over it.
     GraphScene,
+    /// A graph in a pane of its own, beside the main graph. Its graph is kept
+    /// in [`GraphPlacement`] under this id, so the pane follows the graph
+    /// across identity changes.
+    ///
+    /// [`GraphPlacement`]: super::GraphPlacement
+    Graph(u64),
     Graphs,
     GuiPerf,
     /// The focused head's GUI, rendered live through the
@@ -118,45 +125,66 @@ fn node_view_title(pane: &NodeViewPane) -> String {
     s
 }
 
-/// The display title for a pane, shared by the tab bar, floating windows and
-/// the `windowed_panes` report. Panes tied to the focused head suffix it,
-/// for example `Steel - main`.
+/// The display title for a pane, shared by floating windows and the
+/// `windowed_panes` report. Panes tied to the focused head follow it with the
+/// head, for example `steel · main`. See [`pane_label`].
 pub(super) fn pane_title<Access>(
     gantz: &Gantz<'_>,
     access: &Access,
+    graphs: &GraphPlacement,
     focused_head: usize,
     pane: &Pane,
 ) -> String
 where
     Access: HeadAccess,
 {
-    let with_head = |label: &str| match access.heads().get(focused_head) {
-        Some(head) => format!("{label} - {head}"),
-        None => label.to_string(),
-    };
+    match pane_label(gantz, access, graphs, focused_head, pane) {
+        (title, Some(sub)) => format!("{title} · {sub}"),
+        (title, None) => title,
+    }
+}
+
+/// A pane's title, and the focused head's name for a pane tied to it. A tab
+/// shows the head as quieter text after the title. A graph pane's title is
+/// its graph's name.
+pub(super) fn pane_label<Access>(
+    gantz: &Gantz<'_>,
+    access: &Access,
+    graphs: &GraphPlacement,
+    focused_head: usize,
+    pane: &Pane,
+) -> (String, Option<String>)
+where
+    Access: HeadAccess,
+{
+    let head = access.heads().get(focused_head).map(|h| h.to_string());
+    let with_head = |label: &str| (label.to_string(), head.clone());
+    let plain = |label: &str| (label.to_string(), None);
     match pane {
         Pane::Ext(key) => match gantz.ext_panes.iter().find(|p| p.key() == *key) {
-            Some(p) => with_head(p.title()),
-            None => key.clone(),
+            Some(p) => with_head(&p.title().to_lowercase()),
+            None => plain(key),
         },
-        Pane::GraphConfig => with_head("Graph"),
-        Pane::GraphScene => "Graphs".to_string(),
-        Pane::Graphs => "Graphs".to_string(),
-        Pane::GuiPerf => "GUI Perf".to_string(),
-        Pane::History => "History".to_string(),
-        Pane::Settings => "Settings".to_string(),
+        Pane::GraphConfig => with_head("graph"),
+        Pane::GraphScene => plain("scene"),
+        Pane::Graph(id) => match graphs.panes.get(id) {
+            Some(head) => plain(&head.to_string()),
+            None => plain("graph"),
+        },
+        Pane::Graphs => plain("graphs"),
+        Pane::GuiPerf => plain("gui perf"),
+        Pane::History => plain("history"),
+        Pane::Settings => plain("settings"),
         Pane::Logs => match gantz.log_source {
-            None => "Logs (No Source)".to_string(),
-            Some(LogSource::Logger(_)) => "Logs".to_string(),
-            #[cfg(feature = "tracing")]
-            Some(LogSource::TraceCapture(..)) => "Tracing".to_string(),
+            None => ("logs".to_string(), Some("no source".to_string())),
+            Some(_) => plain("logs"),
         },
-        Pane::NodeInspector => with_head("Node Inspector"),
-        Pane::NodeView(p) => node_view_title(p),
-        Pane::Steel => with_head("Steel"),
-        Pane::GuiPreview => with_head("GUI Preview"),
-        Pane::GuiTree => with_head("GUI Tree"),
-        Pane::VmPerf => with_head("VM Perf"),
+        Pane::NodeInspector => with_head("inspector"),
+        Pane::NodeView(p) => plain(&node_view_title(p)),
+        Pane::Steel => with_head("steel"),
+        Pane::GuiPreview => with_head("gui preview"),
+        Pane::GuiTree => with_head("gui tree"),
+        Pane::VmPerf => with_head("vm perf"),
     }
 }
 
@@ -261,6 +289,84 @@ pub(super) fn add_node_view_pane(
         ty_name,
     });
     insert_tray_pane(tree, pane);
+}
+
+/// Insert the graph pane `id` into the top-level `tree`, or activate it if it
+/// is there. A new pane joins the tabs of an existing graph pane. Otherwise
+/// it opens beside the scene, which then shares its column with it.
+pub(super) fn add_graph_pane(tree: &mut egui_tiles::Tree<Pane>, id: u64) {
+    let pane = Pane::Graph(id);
+    if let Some(existing) = tree.tiles.find_pane(&pane) {
+        tree.make_active(|tile_id, _| tile_id == existing);
+        return;
+    }
+    let sibling_tabs = tree
+        .tiles
+        .iter()
+        .find_map(|(tile_id, tile)| match tile {
+            egui_tiles::Tile::Pane(Pane::Graph(_)) => Some(*tile_id),
+            _ => None,
+        })
+        .and_then(|t| tree.tiles.parent_of(t))
+        .filter(|&p| {
+            matches!(
+                tree.tiles.get(p),
+                Some(egui_tiles::Tile::Container(egui_tiles::Container::Tabs(_)))
+            )
+        });
+    if let Some(tabs) = sibling_tabs {
+        let pane_id = tree.tiles.insert_pane(pane);
+        tree.move_tile_to_container(pane_id, tabs, usize::MAX, true);
+        return;
+    }
+    let Some(scene) = tree.tiles.find_pane(&Pane::GraphScene) else {
+        insert_tray_pane(tree, pane);
+        return;
+    };
+    let pane_id = tree.tiles.insert_pane(pane);
+    let tabs = tree.tiles.insert_tab_tile(vec![pane_id]);
+    let parent = tree.tiles.parent_of(scene);
+    let split = tree.tiles.insert_container(egui_tiles::Linear::new_binary(
+        egui_tiles::LinearDir::Horizontal,
+        [scene, tabs],
+        GRAPH_PANE_SPLIT,
+    ));
+    match parent.and_then(|p| tree.tiles.get_mut(p)) {
+        Some(egui_tiles::Tile::Container(container)) => {
+            replace_child(container, scene, split);
+        }
+        _ => tree.root = Some(split),
+    }
+}
+
+/// Put `new` in place of the child `old` of `container`, keeping its share.
+fn replace_child(
+    container: &mut egui_tiles::Container,
+    old: egui_tiles::TileId,
+    new: egui_tiles::TileId,
+) {
+    match container {
+        egui_tiles::Container::Linear(linear) => {
+            for child in linear.children.iter_mut().filter(|c| **c == old) {
+                *child = new;
+            }
+            linear.shares.replace_with(old, new);
+        }
+        egui_tiles::Container::Tabs(tabs) => {
+            for child in tabs.children.iter_mut().filter(|c| **c == old) {
+                *child = new;
+            }
+            if tabs.active == Some(old) {
+                tabs.active = Some(new);
+            }
+        }
+        egui_tiles::Container::Grid(grid) => {
+            let found = grid.children().position(|&c| c == old);
+            if let Some(i) = found {
+                let _ = grid.replace_at(i, new);
+            }
+        }
+    }
 }
 
 /// Insert a new tile for `pane`, defaulting to the tray. If the layout is no
@@ -389,6 +495,10 @@ const MIN_PANE_SIZE: f32 = 80.0;
 /// sliver.
 const DEFAULT_PANE_MIN_SIZE: f32 = 32.0;
 
+/// The share of its row that the scene keeps when a first graph pane opens
+/// beside it.
+const GRAPH_PANE_SPLIT: f32 = 0.6;
+
 /// The minimum width of the log pane, in points. The log table needs room for
 /// its time, level and message columns.
 const LOG_MIN_WIDTH: f32 = 200.0;
@@ -398,6 +508,7 @@ pub(super) fn pane_min_size(pane: &Pane) -> egui::Vec2 {
     match pane {
         Pane::Logs => egui::vec2(LOG_MIN_WIDTH, DEFAULT_PANE_MIN_SIZE),
         Pane::GraphScene => egui::vec2(200.0, 150.0),
+        Pane::Graph(_) => egui::vec2(160.0, 120.0),
         _ => egui::Vec2::splat(DEFAULT_PANE_MIN_SIZE),
     }
 }
@@ -418,8 +529,15 @@ struct LayoutAnchors {
 /// top-level shape, for example mid-drag or after the user rearranged panes.
 /// In that case the proportional layout is left untouched.
 fn layout_anchors(tree: &egui_tiles::Tree<Pane>) -> Option<LayoutAnchors> {
-    let graph_scene = tree.tiles.find_pane(&Pane::GraphScene)?;
-    let right_column = tree.tiles.parent_of(graph_scene)?;
+    // The scene may share its row with graph panes. Then the row stands in
+    // for the scene.
+    let scene = tree.tiles.find_pane(&Pane::GraphScene)?;
+    let parent = tree.tiles.parent_of(scene)?;
+    let (graph_scene, right_column) =
+        match linear_children(tree, parent, egui_tiles::LinearDir::Horizontal) {
+            Some(_) => (parent, tree.tiles.parent_of(parent)?),
+            None => (scene, parent),
+        };
     let root = tree.root()?;
     let &[a, b] = linear_children(tree, root, egui_tiles::LinearDir::Horizontal)?.as_slice() else {
         return None;
@@ -797,7 +915,7 @@ pub(super) fn ext_pane_entries(gantz: &Gantz) -> Vec<widget::ExtPaneEntry> {
 /// Whether a tab's pane can be hidden via its right-click menu. The main graph
 /// scene is not hideable. Node views are closed and removed, not hidden.
 pub(super) fn pane_is_hideable(pane: &Pane) -> bool {
-    !matches!(pane, Pane::GraphScene | Pane::NodeView(_))
+    !matches!(pane, Pane::GraphScene | Pane::Graph(_) | Pane::NodeView(_))
 }
 
 /// Set a pane's visibility toggle. No-op for panes without one.
@@ -819,7 +937,7 @@ pub(super) fn set_pane_visible(view: &mut ViewToggles, pane: &Pane, visible: boo
         Pane::GuiTree => view.gui_tree = visible,
         // No visibility toggle. The scene is always visible and node views
         // are closable.
-        Pane::GraphScene | Pane::NodeView(_) => {}
+        Pane::GraphScene | Pane::Graph(_) | Pane::NodeView(_) => {}
     }
 }
 
@@ -839,7 +957,7 @@ pub(super) fn pane_is_visible(view: &ViewToggles, pane: &Pane) -> bool {
         Pane::Steel => view.steel,
         Pane::GuiPreview => view.gui_preview,
         Pane::GuiTree => view.gui_tree,
-        Pane::GraphScene | Pane::NodeView(_) => true,
+        Pane::GraphScene | Pane::Graph(_) | Pane::NodeView(_) => true,
     }
 }
 
@@ -872,7 +990,7 @@ pub(super) fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &View
                 Pane::GuiPreview => tree.set_visible(id, view.gui_preview),
                 Pane::GuiTree => tree.set_visible(id, view.gui_tree),
                 // Always visible. A node view is removed by closing, not hiding.
-                Pane::NodeView(_) => tree.set_visible(id, true),
+                Pane::Graph(_) | Pane::NodeView(_) => tree.set_visible(id, true),
             }
         }
     }

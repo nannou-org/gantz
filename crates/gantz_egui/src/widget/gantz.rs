@@ -1,5 +1,6 @@
 use crate::{
-    Env, HeadAccess, OpenLogs, OpenNodePalette, OpenNodeView, OpenReplacePalette, ResetTilesLayout,
+    Env, HeadAccess, OpenGraphPane, OpenLogs, OpenNodePalette, OpenNodeView, OpenReplacePalette,
+    ResetTilesLayout,
     node::NodeCodec,
     response::Responses,
     style::{self, Role, StyleConfig},
@@ -7,6 +8,7 @@ use crate::{
 };
 use std::collections::{HashMap, HashSet};
 
+mod chrome;
 mod graph_tabs;
 mod panes;
 mod state;
@@ -15,9 +17,9 @@ mod windowing;
 
 use panes::{collect_gantz_file_drops, gui_role_badge, render_pane, set_gui_role};
 pub use state::{
-    AlignConfig, EdgeConfig, FollowSelectionConfig, GantzState, GridConfig, LayoutConfig,
-    OpenHeadState, OpenHeadStates, PaneWindowGeometry, SceneConfig, SnapConfig, SnapMode,
-    ViewToggles, request_clear_egui_memory,
+    AlignConfig, EdgeConfig, FollowSelectionConfig, GantzState, GraphPlacement, GridConfig,
+    LayoutConfig, OpenHeadState, OpenHeadStates, PaneWindowGeometry, SceneConfig, SnapConfig,
+    SnapMode, ViewToggles, request_clear_egui_memory,
 };
 use state::{
     clear_egui_memory_id, default_sidebar_width, default_tray_height, load_ron, load_tree,
@@ -25,10 +27,10 @@ use state::{
 };
 pub use tiles::{NodeViewPane, Pane};
 use tiles::{
-    add_node_view_pane, capture_fixed_sizes, create_tree, impose_fixed_sizes, impose_min_sizes,
-    migrate_node_view_paths, pane_is_hideable, pane_is_poppable, pane_is_visible, pane_min_size,
-    pane_title, set_pane_visible, set_tile_visibility, simplify_tree, sync_ext_panes,
-    sync_singleton_pane,
+    add_graph_pane, add_node_view_pane, capture_fixed_sizes, create_tree, impose_fixed_sizes,
+    impose_min_sizes, migrate_node_view_paths, pane_is_hideable, pane_is_poppable, pane_is_visible,
+    pane_label, pane_min_size, pane_title, set_pane_visible, set_tile_visibility, simplify_tree,
+    sync_ext_panes, sync_singleton_pane,
 };
 pub use windowing::{close_windowed_pane, pane_key, redock_windowed_pane};
 use windowing::{
@@ -126,19 +128,25 @@ enum LogSource {
 }
 
 /// The `egui_tiles::Behavior::resize_stroke` shared by both tile trees.
+///
+/// An idle gap shows the scene in the separator colour. A hovered or dragged
+/// gap draws a thin line down its middle, to show it resizes.
 fn separator_stroke(
     cfg: &StyleConfig,
     style: &egui::Style,
     resize_state: egui_tiles::ResizeState,
 ) -> egui::Stroke {
-    let role = match resize_state {
-        egui_tiles::ResizeState::Idle => Role::Separator,
-        egui_tiles::ResizeState::Hovering | egui_tiles::ResizeState::Dragging => {
-            Role::SeparatorHover
-        }
-    };
     let theme = style::theme_of(&style.visuals);
-    egui::Stroke::new(cfg.shape.separator_width, cfg.resolve(theme, role))
+    match resize_state {
+        egui_tiles::ResizeState::Idle => egui::Stroke::new(
+            cfg.shape.separator_width,
+            cfg.resolve(theme, Role::Separator),
+        ),
+        egui_tiles::ResizeState::Hovering | egui_tiles::ResizeState::Dragging => egui::Stroke::new(
+            (cfg.shape.separator_width * 0.25).max(1.5),
+            cfg.resolve(theme, Role::SeparatorHover),
+        ),
+    }
 }
 
 /// The data a single pane needs to render, independent of where the pane lives.
@@ -166,6 +174,14 @@ where
     /// Panes detached into windows. The tab context menu pushes to this when a
     /// pane is popped out.
     windowed: &'a mut Vec<Pane>,
+    /// Actions from the pane headers' buttons, applied after the tree is
+    /// drawn.
+    actions: Vec<chrome::PaneAction>,
+    /// The focused pane, whose header shows its buttons.
+    focus: Option<egui_tiles::TileId>,
+    /// Each tabbed pane's header tab count and whether it leads. See
+    /// [`chrome::headers`].
+    headers: HashMap<egui_tiles::TileId, (usize, bool)>,
 }
 
 /// Response from the top-level gantz widget.
@@ -479,10 +495,51 @@ impl<'a> Gantz<'a> {
                 response: &mut response,
             },
             windowed: &mut windowed,
+            actions: vec![],
+            focus: chrome::update_focus(ui.ctx(), &tree, widget_area),
+            headers: chrome::headers(&tree.tiles),
         };
+        // Reserve the bottom layer for the scene colour and the pane
+        // grounds. They are painted once the tree has laid out its rects.
+        let grounds = ui.painter().add(egui::Shape::Noop);
         tree.ui(&mut behaviour, ui);
 
-        response.focused_head = behaviour.cx.focused_head;
+        let focused_head = behaviour.cx.focused_head;
+        let actions = std::mem::take(&mut behaviour.actions);
+        let focus = behaviour.focus;
+        response.focused_head = focused_head;
+        let theme = style::theme_of(ui.visuals());
+        let shapes = chrome::ground_shapes(&tree, &state.style, theme, widget_area, focus);
+        ui.painter().set(grounds, egui::Shape::Vec(shapes));
+        for action in actions {
+            match action {
+                chrome::PaneAction::Hide(pane) => {
+                    set_pane_visible(&mut state.view_toggles, &pane, false);
+                }
+                chrome::PaneAction::PopOut(tile_id, pane) => {
+                    let view = &mut state.view_toggles;
+                    detach_pane(view, &mut windowed, &mut tree.tiles, tile_id, &pane);
+                }
+                chrome::PaneAction::ShowOnScene(tile_id, id) => {
+                    // The pane's graph moves to the scene. The scene's graph
+                    // takes its place in the pane, or the pane closes.
+                    let Some(head) = state.graphs.panes.remove(&id) else {
+                        continue;
+                    };
+                    match state.graphs.main.replace(head.clone()) {
+                        Some(old) => {
+                            state.graphs.panes.insert(id, old);
+                        }
+                        None => {
+                            tree.tiles.remove(tile_id);
+                        }
+                    }
+                    if let Some(ix) = access.heads().iter().position(|h| *h == head) {
+                        response.focused_head = ix;
+                    }
+                }
+            }
+        }
 
         // Capture the sidebar width and tray height from the laid-out tree,
         // which reflects any manual divider drag, to re-impose next frame.
@@ -523,6 +580,12 @@ impl<'a> Gantz<'a> {
         for _ in response.responses.take::<OpenLogs>() {
             state.view_toggles.logs = true;
         }
+        for (_, OpenGraphPane(head)) in response.responses.take() {
+            if access.heads().contains(&head) && !state.graphs.in_pane(&head) {
+                let id = state.graphs.open_pane(head);
+                add_graph_pane(&mut tree, id);
+            }
+        }
         // Migrate node-view tiles past this frame's node deletions. They were
         // collected during traversal, since the live top-level tree was not
         // reachable then.
@@ -547,8 +610,10 @@ impl<'a> Gantz<'a> {
         // Reconcile the windowed set. A singleton whose toggle was turned back
         // on re-docks, so drop it here. Node views stay windowed until their
         // window is closed.
-        windowed
-            .retain(|p| matches!(p, Pane::NodeView(_)) || !pane_is_visible(&state.view_toggles, p));
+        windowed.retain(|p| {
+            matches!(p, Pane::Graph(_) | Pane::NodeView(_))
+                || !pane_is_visible(&state.view_toggles, p)
+        });
 
         // Redock and close intents queued by a native host between frames.
         // Its OS-window buttons call `redock_windowed_pane` and
@@ -561,7 +626,7 @@ impl<'a> Gantz<'a> {
         // tree. Under `HostNative` the host draws them as OS windows instead.
         if self.pane_window_mode == PaneWindowMode::EguiWindow {
             for pane in &mut windowed {
-                let title = pane_title(&self, &*access, focused_head, pane);
+                let title = pane_title(&self, &*access, &state.graphs, focused_head, pane);
                 let mut open = true;
                 let min = pane_min_size(pane);
                 egui::Window::new(title)
@@ -598,7 +663,7 @@ impl<'a> Gantz<'a> {
         for pane in close {
             let key = pane_key(&pane);
             windowed.retain(|p| pane_key(p) != key);
-            if !matches!(pane, Pane::NodeView(_)) {
+            if !matches!(pane, Pane::Graph(_) | Pane::NodeView(_)) {
                 redock_pane(&mut state.view_toggles, &mut tree, pane);
             }
         }
@@ -608,9 +673,40 @@ impl<'a> Gantz<'a> {
             .iter()
             .map(|pane| WindowedPane {
                 pane: pane.clone(),
-                title: pane_title(&self, &*access, focused_head, pane),
+                title: pane_title(&self, &*access, &state.graphs, focused_head, pane),
             })
             .collect();
+
+        // Keep the graph panes and their placement in step. A pane closes with
+        // its graph, and a placement goes with its pane.
+        let docked: HashSet<u64> = tree
+            .tiles
+            .tiles()
+            .filter_map(|tile| match tile {
+                egui_tiles::Tile::Pane(Pane::Graph(id)) => Some(*id),
+                _ => None,
+            })
+            .collect();
+        let shown =
+            |id: u64| docked.contains(&id) || windowed.iter().any(|p| *p == Pane::Graph(id));
+        state.graphs.retain(access.heads(), shown);
+        let orphans: Vec<egui_tiles::TileId> = tree
+            .tiles
+            .iter()
+            .filter_map(|(tile_id, tile)| match tile {
+                egui_tiles::Tile::Pane(Pane::Graph(id)) if !state.graphs.panes.contains_key(id) => {
+                    Some(*tile_id)
+                }
+                _ => None,
+            })
+            .collect();
+        for tile_id in orphans {
+            tree.tiles.remove(tile_id);
+        }
+        windowed.retain(|p| match p {
+            Pane::Graph(id) => state.graphs.panes.contains_key(id),
+            _ => true,
+        });
 
         store_tree(ui.ctx(), tree_id, &tree);
         store_ron(ui.ctx(), windowed_panes_id(), &windowed);
@@ -655,7 +751,8 @@ where
     Access: HeadAccess,
 {
     fn tab_title_for_pane(&mut self, pane: &Pane) -> egui::WidgetText {
-        pane_title(self.cx.gantz, self.cx.access, self.cx.focused_head, pane).into()
+        let cx = &self.cx;
+        pane_title(cx.gantz, cx.access, &cx.state.graphs, cx.focused_head, pane).into()
     }
 
     fn on_tab_button(
@@ -702,7 +799,14 @@ where
         // are toggled via the Panes settings or the tab right-click menu.
         matches!(
             tiles.get_pane(&tile_id),
-            Some(Pane::Logs | Pane::Steel | Pane::GuiPreview | Pane::GuiTree | Pane::NodeView(_))
+            Some(
+                Pane::Logs
+                    | Pane::Steel
+                    | Pane::GuiPreview
+                    | Pane::GuiTree
+                    | Pane::Graph(_)
+                    | Pane::NodeView(_)
+            )
         )
     }
 
@@ -713,7 +817,7 @@ where
     ) -> bool {
         match tiles.get_pane(&tile_id) {
             // Node views are user-created tiles. Closing removes them entirely.
-            Some(Pane::NodeView(_)) => true,
+            Some(Pane::Graph(_) | Pane::NodeView(_)) => true,
             // Hide other panes via their toggle so they can be reopened, rather
             // than letting egui_tiles remove the tile from the tree.
             Some(pane) => {
@@ -733,10 +837,29 @@ where
         tile_id: egui_tiles::TileId,
         state: &egui_tiles::TabState,
     ) -> egui::Response {
-        // Render with the shared `Tab` widget so the sidebar and tray tabs and
-        // their small close button match the graph tabs.
-        let title = self.tab_title_for_tile(tiles, tile_id);
+        // A pane alone in its header shows its title. Panes that share a
+        // header show pills, the active one filled.
+        let (count, first) = self.headers.get(&tile_id).copied().unwrap_or((1, true));
+        if first {
+            ui.add_space(chrome::HEADER_INSET);
+        }
+        let (title, sub) = match tiles.get_pane(&tile_id) {
+            Some(pane) => {
+                let cx = &self.cx;
+                pane_label(cx.gantz, cx.access, &cx.state.graphs, cx.focused_head, pane)
+            }
+            None => (
+                self.tab_title_for_tile(tiles, tile_id).text().to_string(),
+                None,
+            ),
+        };
+        let (look, sub) = match count > 1 {
+            true => (widget::tab::TabLook::Pill, None),
+            false => (widget::tab::TabLook::Title, sub),
+        };
         let mut tab = widget::Tab::new(title, id)
+            .look(look)
+            .sub(sub)
             .active(state.active)
             .closable(state.closable);
         // The GUI panes pick the `gui` role they show from a badge on their
@@ -770,10 +893,57 @@ where
         self.on_tab_button(tiles, tile_id, res.tab)
     }
 
-    fn tab_bar_color(&self, visuals: &egui::Visuals) -> egui::Color32 {
-        // This matches the `CentralPanel` fill so that the color looks
-        // continuous.
-        visuals.panel_fill
+    fn tab_bar_color(&self, _visuals: &egui::Visuals) -> egui::Color32 {
+        // The header sits on the pane's rounded ground. See `chrome`.
+        egui::Color32::TRANSPARENT
+    }
+
+    fn tab_bar_height(&self, _style: &egui::Style) -> f32 {
+        chrome::HEADER_HEIGHT
+    }
+
+    fn tab_bar_hline_stroke(&self, _visuals: &egui::Visuals) -> egui::Stroke {
+        egui::Stroke::NONE
+    }
+
+    fn top_bar_right_ui(
+        &mut self,
+        tiles: &egui_tiles::Tiles<Pane>,
+        ui: &mut egui::Ui,
+        tile_id: egui_tiles::TileId,
+        tabs: &egui_tiles::Tabs,
+        _scroll_offset: &mut f32,
+    ) {
+        // The active pane's actions show while its pane is hovered or
+        // focused, so a quiet header stays quiet.
+        let Some(active) = tabs.active else { return };
+        let Some(pane) = tiles.get_pane(&active) else {
+            return;
+        };
+        let hovered = tiles
+            .rect(tile_id)
+            .zip(ui.ctx().pointer_hover_pos())
+            .is_some_and(|(rect, pos)| rect.contains(pos));
+        if !hovered && self.focus != Some(tile_id) {
+            return;
+        }
+        ui.add_space(chrome::HEADER_INSET - 2.0);
+        if pane_is_hideable(pane) && chrome::icon_button(ui, chrome::Icon::Hide, "hide").clicked() {
+            self.actions.push(chrome::PaneAction::Hide(pane.clone()));
+        }
+        if pane_is_poppable(pane)
+            && chrome::icon_button(ui, chrome::Icon::PopOut, "pop out to a window").clicked()
+        {
+            self.actions
+                .push(chrome::PaneAction::PopOut(active, pane.clone()));
+        }
+        if let Pane::Graph(id) = pane {
+            let hint = "show on the scene, in place of the graph there";
+            if chrome::icon_button(ui, chrome::Icon::Scene, hint).clicked() {
+                self.actions
+                    .push(chrome::PaneAction::ShowOnScene(active, *id));
+            }
+        }
     }
 
     fn resize_stroke(

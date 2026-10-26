@@ -23,6 +23,46 @@ pub enum ParseError {
     BadColor { key: String, value: String },
 }
 
+/// gantz's own dark palette. Warm ink and paper greys with egui's accents.
+pub const GANTZ_DARK: Scheme = Scheme {
+    name: "gantz Dark",
+    colors: [
+        0x0e0e0d, 0x1d1d1b, 0x292927, 0x3d3d3a, 0x82817a, 0xc9c8c1, 0xe6e5de, 0xf3f3ef, 0xe86464,
+        0xf0902a, 0xd4aa3a, 0x5cbf5c, 0x4cc2c2, 0x5aaaff, 0xb070e0, 0xe070b8,
+    ],
+};
+
+/// gantz's own light palette. The scene is a mid paper grey and panes sit a
+/// step above it, so the window does not glare. The accents are dark enough
+/// to read on the panes.
+pub const GANTZ_LIGHT: Scheme = Scheme {
+    name: "gantz Light",
+    colors: [
+        0xcfcec7, 0xe2e1da, 0xe9e8e1, 0xb9b8b0, 0x6a6963, 0x2c2c29, 0x1a1a18, 0x0d0d0d, 0xb3261e,
+        0x9a4a00, 0x7a5700, 0x1d6a35, 0x086868, 0x1d5fb0, 0x7038a8, 0x9a2a70,
+    ],
+};
+
+/// A dark palette of ink and paper with no greys between, for high-contrast
+/// and e-ink displays. Panes share the scene's ink, so pair it with a pane
+/// outline.
+pub const GANTZ_INKED_DARK: Scheme = Scheme {
+    name: "gantz Inked Dark",
+    colors: [
+        0x0d0d0d, 0x0d0d0d, 0x0d0d0d, 0xf3f3ef, 0xa8a7a1, 0xf3f3ef, 0xf3f3ef, 0xf3f3ef, 0xff6b6b,
+        0xffa040, 0xf0c040, 0x70d070, 0x50d0d0, 0x70b0ff, 0xc080f0, 0xf080c8,
+    ],
+};
+
+/// The light counterpart of [`GANTZ_INKED_DARK`].
+pub const GANTZ_INKED_LIGHT: Scheme = Scheme {
+    name: "gantz Inked Light",
+    colors: [
+        0xf3f3ef, 0xf3f3ef, 0xf3f3ef, 0x0d0d0d, 0x55544f, 0x0d0d0d, 0x0d0d0d, 0x0d0d0d, 0xa01810,
+        0x8a3e00, 0x6a4c00, 0x145a28, 0x045858, 0x14509a, 0x602c98, 0x8a2060,
+    ],
+};
+
 pub const EGUI_DARK: Scheme = Scheme {
     name: "egui Dark",
     colors: [
@@ -41,6 +81,10 @@ pub const EGUI_LIGHT: Scheme = Scheme {
 
 /// The built-in palettes.
 pub const PRESETS: &[Scheme] = &[
+    GANTZ_DARK,
+    GANTZ_LIGHT,
+    GANTZ_INKED_DARK,
+    GANTZ_INKED_LIGHT,
     EGUI_DARK,
     EGUI_LIGHT,
     Scheme {
@@ -207,7 +251,10 @@ mod tests {
                     base09: \"fe8019\"\nbase0A: \"fabd2f\"\nbase0B: \"b8bb26\"\n\
                     base0C: \"8ec07c\"\nbase0D: \"83a598\"\nbase0E: \"d3869b\"\n\
                     base0F: \"d65d0e\"\n";
-        assert_eq!(parse(text), Ok(Palette::from(&PRESETS[2])));
+        assert_eq!(
+            parse(text),
+            Ok(Palette::from(preset("Gruvbox Dark").expect("preset")))
+        );
     }
 
     #[test]
@@ -215,11 +262,19 @@ mod tests {
         let mut text = String::from(
             "system: \"base24\"\nname: \"Solarized Dark\"\nvariant: \"dark\"\npalette:\n",
         );
-        for (i, color) in PRESETS[4].colors.iter().enumerate() {
+        for (i, color) in preset("Solarized Dark")
+            .expect("preset")
+            .colors
+            .iter()
+            .enumerate()
+        {
             text.push_str(&format!("  base{i:02X}: \"#{color:06x}\" # comment\n"));
         }
         text.push_str("  base10: \"#000000\"\n");
-        assert_eq!(parse(&text), Ok(Palette::from(&PRESETS[4])));
+        assert_eq!(
+            parse(&text),
+            Ok(Palette::from(preset("Solarized Dark").expect("preset")))
+        );
     }
 
     #[test]
