@@ -114,6 +114,12 @@ pub struct GraphSceneState {
     /// chooses the min edge, centre or max edge. Orientation is inferred.
     #[serde(default, skip)]
     pub pending_align: Option<egui_graph::AlignBy>,
+    /// One-shot request to place the nodes at once, without easing toward
+    /// their places, consumed by [`GraphScene::show`]. A scene that comes to
+    /// show another graph sets it. Its nodes share egui ids with the last
+    /// graph's nodes, and would ease from their places.
+    #[serde(default, skip)]
+    pub pending_jump: bool,
 }
 
 #[derive(Default, serde::Deserialize, serde::Serialize)]
@@ -280,6 +286,18 @@ impl<'a> GraphScene<'a> {
         // `egui_graph` reads from `available_rect_before_wrap` so the fit
         // reproduces the camera's zoom exactly. `restore_egui` recovers the
         // camera after the pass.
+        // A right-drag on the background pans the scene, as a middle-drag does.
+        // It pans before the scene shows, so the nodes and the ground's dots
+        // keep up with the pointer. A right-click without a drag still opens
+        // the scene's menu.
+        let background_id = self.id.with("background");
+        let background = ui.data(|d| d.get_temp::<egui::Id>(background_id));
+        let panning = background.is_some_and(|id| ui.ctx().is_being_dragged(id))
+            && ui.input(|i| i.pointer.button_down(egui::PointerButton::Secondary));
+        if panning && scene_view.camera.zoom > 0.0 {
+            let delta = ui.input(|i| i.pointer.delta());
+            scene_view.camera.center -= delta / scene_view.camera.zoom;
+        }
         let viewport = ui.available_rect_before_wrap().size();
         let mut egui_view = crate::view::take_egui(scene_view, viewport);
         let view = &mut egui_view;
@@ -287,6 +305,7 @@ impl<'a> GraphScene<'a> {
         // during this pass applies on the next pass.
         let do_layout = std::mem::take(&mut state.pending_auto_layout);
         let do_center = std::mem::take(&mut state.pending_center_view);
+        let jump = std::mem::take(&mut state.pending_jump);
         if do_layout {
             // Lay out the selection, or the whole graph when nothing is
             // selected. The whole-graph case centers at the origin. A subset
@@ -359,6 +378,7 @@ impl<'a> GraphScene<'a> {
                         &mut to_delete,
                         immutable,
                         validate,
+                        jump,
                         ui,
                     );
                 })
@@ -485,6 +505,7 @@ impl<'a> GraphScene<'a> {
         // which egui may have panned or zoomed this pass, and write back the
         // possibly relaid-out node layout.
         crate::view::restore_egui(scene_view, egui_view, viewport);
+        ui.data_mut(|d| d.insert_temp(background_id, graph_response.response.id));
 
         // Apply deferred deletes now the scene no longer borrows the view.
         // Removal swap-removes nodes, so this migrates the swapped node's
@@ -715,6 +736,7 @@ fn nodes(
     nodes_to_delete: &mut Vec<NodeIndex>,
     immutable: bool,
     validate: bool,
+    jump: bool,
     ui: &mut egui::Ui,
 ) -> Vec<(NodeIndex, NodeResponse)> {
     let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
@@ -755,35 +777,38 @@ fn nodes(
         // Whether this node's UI or context menu marked a CA-affecting change.
         // See the `changed` contract on `NodeUi`.
         let mut node_changed = false;
-        let response = egui_graph::node::Node::from_id(node_id)
+        let mut node = egui_graph::node::Node::from_id(node_id)
             .inputs(inputs)
             .outputs(outputs)
             .flow(flow)
             .max_width(f32::INFINITY)
-            .content_enabled(!locked)
-            .show(nctx, ui, |nui_ctx| match instance.as_mut() {
-                Some(entry) => {
-                    // A node at this root level has the single-element state
-                    // path `[n_ix]`.
-                    let node_path = [n_ix];
-                    let node_ctx = crate::NodeCtx::new(
-                        registry,
-                        graph,
-                        &node_path,
-                        &inlets,
-                        &outlets,
-                        &[],
-                        vm,
-                        &mut writes,
-                    )
-                    .read_only(locked);
-                    let r = entry.inst.node.ui(node_ctx, nui_ctx);
-                    node_changed |= r.changed;
-                    responses.extend(r.payloads);
-                    r.framed
-                }
-                None => placeholder_ui(&graph[n_id], nui_ctx),
-            });
+            .content_enabled(!locked);
+        if jump {
+            node = node.animation_time(0.0);
+        }
+        let response = node.show(nctx, ui, |nui_ctx| match instance.as_mut() {
+            Some(entry) => {
+                // A node at this root level has the single-element state
+                // path `[n_ix]`.
+                let node_path = [n_ix];
+                let node_ctx = crate::NodeCtx::new(
+                    registry,
+                    graph,
+                    &node_path,
+                    &inlets,
+                    &outlets,
+                    &[],
+                    vm,
+                    &mut writes,
+                )
+                .read_only(locked);
+                let r = entry.inst.node.ui(node_ctx, nui_ctx);
+                node_changed |= r.changed;
+                responses.extend(r.payloads);
+                r.framed
+            }
+            None => placeholder_ui(&graph[n_id], nui_ctx),
+        });
         if locked {
             lock_badge(ui, &response, &lost);
         }

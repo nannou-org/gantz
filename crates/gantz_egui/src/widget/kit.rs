@@ -148,7 +148,7 @@ pub fn pill(
     selected: bool,
     text: impl Into<egui::WidgetText>,
 ) -> egui::Response {
-    let pad_x = ui.spacing().button_padding.x + 2.0;
+    let pad_x = pill_pad(ui);
     let galley = text.into().into_galley(
         ui,
         Some(egui::TextWrapMode::Extend),
@@ -337,6 +337,22 @@ pub fn elide(text: &str, max: usize) -> String {
 pub fn pill_height(ui: &egui::Ui) -> f32 {
     let text = ui.text_style_height(&egui::TextStyle::Button);
     (text + 4.0).max(ui.spacing().interact_size.y - 2.0)
+}
+
+/// The width of a [`pill`] that shows `text`.
+pub fn pill_width(ui: &egui::Ui, text: &str) -> f32 {
+    let galley = egui::WidgetText::from(text).into_galley(
+        ui,
+        Some(egui::TextWrapMode::Extend),
+        f32::INFINITY,
+        egui::TextStyle::Button,
+    );
+    galley.size().x + 2.0 * pill_pad(ui)
+}
+
+/// The space between a pill's sides and its text.
+fn pill_pad(ui: &egui::Ui) -> f32 {
+    ui.spacing().button_padding.x + 2.0
 }
 
 /// The width of `text` in the body font.

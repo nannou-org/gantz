@@ -9,6 +9,7 @@ use crate::{
 use std::collections::{HashMap, HashSet};
 
 mod chrome;
+mod decor;
 mod graph_tabs;
 mod panes;
 mod state;
@@ -16,6 +17,8 @@ mod status;
 mod tiles;
 mod windowing;
 
+pub(crate) use decor::decorates;
+pub use decor::{NativeWindow, WindowAction, WindowEdge, WindowStyle};
 use panes::{collect_gantz_file_drops, gui_role_badge, render_pane, set_gui_role};
 pub use state::{
     AlignConfig, EdgeConfig, FollowSelectionConfig, GantzState, GraphPlacement, GridConfig,
@@ -29,10 +32,10 @@ use state::{
 pub use status::{StatusAction, StatusIcon, StatusItem, StatusStyle};
 pub use tiles::{NodeViewPane, Pane};
 use tiles::{
-    add_graph_pane, add_node_view_pane, capture_fixed_sizes, create_tree, impose_fixed_sizes,
-    impose_min_sizes, migrate_node_view_paths, pane_is_hideable, pane_is_poppable, pane_is_visible,
-    pane_label, pane_min_size, pane_title, set_pane_visible, set_tile_visibility, simplify_tree,
-    sync_ext_panes, sync_singleton_pane,
+    add_graph_pane, add_node_view_pane, capture_fixed_sizes, create_tree, ext_pane_entries,
+    impose_fixed_sizes, impose_min_sizes, migrate_node_view_paths, pane_is_hideable,
+    pane_is_poppable, pane_is_visible, pane_label, pane_min_size, pane_title, set_pane_visible,
+    set_tile_visibility, simplify_tree, sync_ext_panes, sync_singleton_pane,
 };
 pub use windowing::{close_windowed_pane, pane_key, redock_windowed_pane};
 use windowing::{
@@ -92,6 +95,11 @@ pub struct Gantz<'a> {
     audio_heads: Option<&'a HashSet<gantz_ca::Head>>,
     /// The host's items for the status line.
     status_items: &'a [StatusItem],
+    /// The app's version, shown on hovering the wordmark.
+    version: Option<&'a str>,
+    /// The window the widget decorates, when the host draws it without the
+    /// system's decorations.
+    native_window: Option<NativeWindow>,
 }
 
 /// Base-source authoring context for the graph config pane's "source"
@@ -180,9 +188,19 @@ where
     actions: Vec<chrome::PaneAction>,
     /// The focused pane, whose header shows its buttons.
     focus: Option<egui_tiles::TileId>,
-    /// Each tabbed pane's header tab count and whether it leads. See
-    /// [`chrome::headers`].
-    headers: HashMap<egui_tiles::TileId, (usize, bool)>,
+    /// Each tabbed pane's header tab count, whether it leads, and its
+    /// container. See [`chrome::headers`].
+    headers: HashMap<egui_tiles::TileId, (usize, bool, egui_tiles::TileId)>,
+    /// The pane whose header leads with the logo: the one in the tree's
+    /// top-left corner, unless the window's header holds the logo.
+    logo_tile: Option<egui_tiles::TileId>,
+    /// The pane whose header ends with the window's controls: the one in the
+    /// tree's top-right corner, when the window has floating controls.
+    controls_tile: Option<egui_tiles::TileId>,
+    /// The window the widget decorates, if any.
+    window: Option<NativeWindow>,
+    /// Actions on the window from the panes' headers.
+    window_actions: Vec<WindowAction>,
 }
 
 /// Response from the top-level gantz widget.
@@ -278,6 +296,8 @@ impl<'a> Gantz<'a> {
             clipboard: None,
             audio_heads: None,
             status_items: &[],
+            version: None,
+            native_window: None,
         }
     }
 
@@ -288,11 +308,26 @@ impl<'a> Gantz<'a> {
         self
     }
 
+    /// Decorate the host's window, drawn without the system's decorations,
+    /// as the [`WindowStyle`] in the view settings says. The widget emits
+    /// [`WindowAction`] payloads for the host to apply.
+    pub fn native_window(mut self, window: NativeWindow) -> Self {
+        self.native_window = Some(window);
+        self
+    }
+
     /// Add the host's items to the status line, such as the audio device's
     /// rate and load. They sit after the focused graph's link and before the
     /// VM time.
     pub fn status_items(mut self, items: &'a [StatusItem]) -> Self {
         self.status_items = items;
+        self
+    }
+
+    /// The app's version, such as its release and commit. It shows on hovering
+    /// the wordmark over the scene.
+    pub fn version(mut self, version: &'a str) -> Self {
+        self.version = Some(version);
         self
     }
 
@@ -474,6 +509,16 @@ impl<'a> Gantz<'a> {
             true => StatusStyle::Hidden,
             false => state.view_toggles.status,
         };
+        // The window decorations the widget draws: the host's window, when the
+        // host lets the widget decorate it and the system's are not asked for.
+        decor::set_decorates(ui.ctx(), self.native_window.is_some());
+        let window_style = state.view_toggles.window;
+        let window = self
+            .native_window
+            .filter(|_| window_style != WindowStyle::Native);
+        let header = window.is_some() && window_style == WindowStyle::Header;
+        let problems = status::scan_log(ui.ctx(), self.log_source.as_ref());
+        status::set_last(ui.ctx(), problems);
 
         // The persisted outer tree. The version suffix invalidates any tree
         // persisted before the latest default-layout change, forcing a
@@ -507,6 +552,12 @@ impl<'a> Gantz<'a> {
         // bottom margin's place.
         let margin = state.style.shape.window_margin;
         let mut tree_area = widget_area.shrink(margin);
+        // The window's header takes the top margin's place.
+        let header_rect = header.then(|| {
+            let rect = widget_area.with_max_y(widget_area.min.y + chrome::HEADER_HEIGHT);
+            tree_area.min.y = rect.max.y;
+            rect
+        });
         if status_style == StatusStyle::Gutter {
             tree_area.max.y = (widget_area.max.y - status::GUTTER_HEIGHT).max(tree_area.min.y);
         }
@@ -516,6 +567,10 @@ impl<'a> Gantz<'a> {
         // Maintain a fixed sidebar width and tray height across window resizes
         // by imposing the stored pixel sizes on the share splits before layout.
         impose_fixed_sizes(&mut tree, state, tree_area);
+
+        // The panes in the tree's top corners take the logo and the window's
+        // controls.
+        let (logo_tile, controls_tile) = chrome::corner_grounds(&tree);
 
         let mut response = GantzResponse::new(focused_head);
 
@@ -531,6 +586,11 @@ impl<'a> Gantz<'a> {
             actions: vec![],
             focus: chrome::update_focus(ui.ctx(), &tree, tree_area),
             headers: chrome::headers(&tree.tiles),
+            logo_tile: logo_tile.filter(|_| !header),
+            controls_tile: controls_tile
+                .filter(|_| window.is_some() && window_style == WindowStyle::Controls),
+            window,
+            window_actions: vec![],
         };
         // Reserve the bottom layer for the scene colour and the pane
         // grounds. They are painted once the tree has laid out its rects.
@@ -541,11 +601,24 @@ impl<'a> Gantz<'a> {
 
         let focused_head = behaviour.cx.focused_head;
         let actions = std::mem::take(&mut behaviour.actions);
+        let mut window_actions = std::mem::take(&mut behaviour.window_actions);
         let focus = behaviour.focus;
         response.focused_head = focused_head;
         let theme = style::theme_of(ui.visuals());
-        let shapes =
-            chrome::ground_shapes(ui.ctx(), &tree, &state.style, theme, widget_area, focus);
+        // The window's corners take the pane radius, unless it fills the screen.
+        let window_radius = match window {
+            Some(w) if !w.maximized => state.style.shape.window_corner(),
+            _ => 0.0,
+        };
+        let shapes = chrome::ground_shapes(
+            ui.ctx(),
+            &tree,
+            &state.style,
+            theme,
+            widget_area,
+            window_radius,
+            focus,
+        );
         ui.painter().set(grounds, egui::Shape::Vec(shapes));
 
         // The status line, and the toasts over the scene.
@@ -584,7 +657,7 @@ impl<'a> Gantz<'a> {
                 .as_deref()
                 .map(status::vm_recent)
                 .unwrap_or_default(),
-            problems: status::scan_log(ui.ctx(), self.log_source.as_ref()),
+            problems,
         };
         if saved.is_some() {
             // "saved 2m ago" counts up by itself.
@@ -613,17 +686,26 @@ impl<'a> Gantz<'a> {
             let head_state = state.open_heads.entry(head.clone()).or_default();
             head_state.muted = !head_state.muted;
         }
-        if patch_only {
-            let visuals = ui.visuals();
-            let problem = match status.problems {
-                p if p.errors > 0 => Some(visuals.error_fg_color),
-                p if p.warnings > 0 => Some(visuals.warn_fg_color),
-                _ => None,
-            };
-            let pos = scene_rect.min + egui::Vec2::splat(inset * 1.5);
-            if chrome::patch_mark(ui.ctx(), pos, problem) {
-                state.view_toggles.patch_only = false;
-            }
+        if let Some(rect) = header_rect {
+            let title = head.as_ref().map(ToString::to_string).unwrap_or_default();
+            let dot = patch_only
+                .then(|| status::color(problems, ui.visuals()))
+                .flatten();
+            let ext_panes = ext_pane_entries(&self);
+            let view = &mut state.view_toggles;
+            let responses = &mut response.responses;
+            let w = window.unwrap_or_default();
+            let action = decor::header(ui.ctx(), rect, &title, w, dot, view, responses, &ext_panes);
+            window_actions.extend(action);
+        }
+        if window.is_some_and(|w| !w.maximized) {
+            window_actions.extend(decor::resize_edges(ui.ctx(), widget_area, window_radius));
+            let color = style::color(ui, Role::WindowOutline);
+            let stroke = egui::Stroke::new(state.style.shape.window_outline, color);
+            decor::outline(ui.ctx(), widget_area, window_radius, stroke);
+        }
+        for action in window_actions {
+            response.responses.push(None, action);
         }
         let toast_margin = match status_style {
             StatusStyle::Pill => inset * 2.0 + ui.spacing().interact_size.y,
@@ -962,9 +1044,22 @@ where
     ) -> egui::Response {
         // A pane alone in its header shows its title. Panes that share a
         // header show pills, the active one filled.
-        let (count, first) = self.headers.get(&tile_id).copied().unwrap_or((1, true));
+        let (count, first, parent) = self
+            .headers
+            .get(&tile_id)
+            .map_or((1, true, None), |&(count, first, parent)| {
+                (count, first, Some(parent))
+            });
         if first {
             ui.add_space(chrome::HEADER_INSET);
+            // The pane in the tree's top-left corner leads with the logo.
+            if parent.is_some() && parent == self.logo_tile {
+                let ext_panes = ext_pane_entries(self.cx.gantz);
+                let cx = &mut self.cx;
+                let view = &mut cx.state.view_toggles;
+                decor::logo_button(ui, None, view, &mut cx.response.responses, &ext_panes);
+                ui.add_space(4.0);
+            }
         }
         let (title, sub) = match tiles.get_pane(&tile_id) {
             Some(pane) => {
@@ -1037,36 +1132,49 @@ where
         tabs: &egui_tiles::Tabs,
         _scroll_offset: &mut f32,
     ) {
-        // The active pane's actions show while its pane is hovered or
-        // focused, so a quiet header stays quiet.
+        // The pane in the tree's top-right corner ends with the window's
+        // controls, which always show.
+        if let Some(window) = self.window.filter(|_| self.controls_tile == Some(tile_id)) {
+            ui.add_space(chrome::HEADER_INSET - 2.0);
+            self.window_actions.extend(decor::controls(ui, window));
+        }
         let Some(active) = tabs.active else { return };
         let Some(pane) = tiles.get_pane(&active) else {
             return;
         };
+        // The active pane's actions show while its pane is hovered or
+        // focused, so a quiet header stays quiet. They keep their space while
+        // hidden, so the tabs beside them stay still.
         let hovered = tiles
             .rect(tile_id)
             .zip(ui.ctx().pointer_hover_pos())
             .is_some_and(|(rect, pos)| rect.contains(pos));
-        if !hovered && self.focus != Some(tile_id) {
-            return;
-        }
+        let shown = hovered || self.focus == Some(tile_id);
         ui.add_space(chrome::HEADER_INSET - 2.0);
-        if pane_is_hideable(pane) && chrome::icon_button(ui, chrome::Icon::Hide, "hide").clicked() {
-            self.actions.push(chrome::PaneAction::Hide(pane.clone()));
-        }
-        if pane_is_poppable(pane)
-            && chrome::icon_button(ui, chrome::Icon::PopOut, "pop out to a window").clicked()
-        {
-            self.actions
-                .push(chrome::PaneAction::PopOut(active, pane.clone()));
-        }
-        if let Pane::Graph(id) = pane {
-            let hint = "show on the scene, in place of the graph there";
-            if chrome::icon_button(ui, chrome::Icon::Scene, hint).clicked() {
-                self.actions
-                    .push(chrome::PaneAction::ShowOnScene(active, *id));
+        let actions = match shown {
+            true => egui::UiBuilder::new(),
+            false => egui::UiBuilder::new().invisible(),
+        };
+        ui.scope_builder(actions, |ui| {
+            if pane_is_hideable(pane)
+                && chrome::icon_button(ui, chrome::Icon::Hide, "hide").clicked()
+            {
+                self.actions.push(chrome::PaneAction::Hide(pane.clone()));
             }
-        }
+            if pane_is_poppable(pane)
+                && chrome::icon_button(ui, chrome::Icon::PopOut, "pop out to a window").clicked()
+            {
+                self.actions
+                    .push(chrome::PaneAction::PopOut(active, pane.clone()));
+            }
+            if let Pane::Graph(id) = pane {
+                let hint = "show on the scene, in place of the graph there";
+                if chrome::icon_button(ui, chrome::Icon::Scene, hint).clicked() {
+                    self.actions
+                        .push(chrome::PaneAction::ShowOnScene(active, *id));
+                }
+            }
+        });
     }
 
     fn resize_stroke(

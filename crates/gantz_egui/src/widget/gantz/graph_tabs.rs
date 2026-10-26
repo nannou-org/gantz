@@ -14,8 +14,24 @@ use crate::{
     widget,
 };
 
+/// What the tab strip holds besides its tabs.
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Strip {
+    /// Lead with the logo, with a dot in this colour when there are
+    /// problems. `None` leaves the logo out, for a pane or the window's
+    /// header holds it.
+    pub logo: Option<Option<egui::Color32>>,
+    /// Show the graphs' tabs. Patch-only shows the logo alone.
+    pub tabs: bool,
+    /// Let the strip's empty space move the window.
+    pub drag: bool,
+}
+
 /// The id under which the tab strip keeps a rename in progress.
 const RENAME_ID: &str = "gantz-tab-rename";
+
+/// The id under which the tab strip keeps the main graph it last showed.
+const MAIN_ID: &str = "gantz-tab-strip-main";
 
 /// A rename of a graph from its tab.
 #[derive(Clone, Default)]
@@ -57,6 +73,12 @@ pub(super) fn head_scene<Access>(
     widgets.bg_fill = egui::Color32::TRANSPARENT;
     widgets.weak_bg_fill = egui::Color32::TRANSPARENT;
     let head_state = cx.state.open_heads.entry(head.clone()).or_default();
+    // A scene that comes to show another head places its nodes at once.
+    let shown_id = id.with("shown-head");
+    if ui.data(|d| d.get_temp::<gantz_ca::Head>(shown_id)).as_ref() != Some(head) {
+        head_state.scene.pending_jump = true;
+        ui.data_mut(|d| d.insert_temp(shown_id, head.clone()));
+    }
     let layout_params = layout_config.to_params(head_state.layout_flow);
     // Disjoint borrows of sibling fields for the scene's context menu and
     // its select-all shortcut.
@@ -153,114 +175,119 @@ pub(super) fn head_scene<Access>(
 /// The tab strip: a pill floating over the top-left of the scene, with a tab
 /// per open graph and a button for a new one. The main graph's tab is filled.
 /// A nested main graph shows its ancestors before its tab, each a step up.
-/// The gantz mark leads the strip and opens the app menu.
+/// See [`Strip`] for what else it holds.
+///
+/// The strip ends before `max_right`. Tabs that do not fit scroll, and the
+/// main graph's tab scrolls into view when it changes. Returns the strip's
+/// rect.
 pub(super) fn tab_strip<Access>(
     cx: &mut PaneCtx<'_, '_, Access>,
     ui: &egui::Ui,
     anchor: egui::Pos2,
+    max_right: f32,
     main: Option<&gantz_ca::Head>,
     ext_panes: &[widget::ExtPaneEntry],
-) where
+    strip: Strip,
+) -> egui::Rect
+where
     Access: HeadAccess,
 {
     let rename_id = egui::Id::new(RENAME_ID);
     let mut rename: Rename = ui.data(|d| d.get_temp(rename_id)).unwrap_or_default();
+    let main_id = egui::Id::new(MAIN_ID);
+    let last_main = ui.data(|d| d.get_temp::<Option<gantz_ca::Head>>(main_id));
+    let reveal = last_main.as_ref().map(Option::as_ref) != Some(main);
     let heads: Vec<gantz_ca::Head> = cx.access.heads().to_vec();
     let shape = style::shape(ui.ctx());
+    // A strip that leads with the logo sets it where a pane's header would,
+    // so the logo stays still as the panes show and hide.
+    let pad = 4.0;
+    let lead = match strip.logo {
+        Some(_) => super::chrome::HEADER_INSET,
+        None => pad,
+    };
     let frame = egui::Frame::new()
         .fill(style::color(ui, Role::Panel))
         .corner_radius(shape.window_corner())
-        .inner_margin(egui::Margin::same(4));
-    egui::Area::new(egui::Id::new("gantz-tab-strip"))
+        .inner_margin(egui::Margin {
+            left: lead as i8,
+            right: pad as i8,
+            top: pad as i8,
+            bottom: pad as i8,
+        });
+    let drag_id = egui::Id::new("gantz-tab-strip-drag");
+    let strip_rect = egui::Area::new(egui::Id::new("gantz-tab-strip"))
         .order(egui::Order::Middle)
         .fixed_pos(anchor)
         .show(ui.ctx(), |ui| {
-            frame.show(ui, |ui| {
+            // The strip's empty space moves the window. It takes the strip's
+            // rect from the last pass, so the tabs drawn after it stay on top.
+            let last = ui.data(|d| d.get_temp::<egui::Rect>(drag_id));
+            if let Some(rect) = last.filter(|_| strip.drag) {
+                if let (Some(action), _) = super::decor::drag_area(ui, rect, drag_id) {
+                    cx.response.responses.push(None, action);
+                }
+            }
+            let framed = frame.show(ui, |ui| {
                 ui.horizontal(|ui| {
+                    // The strip is as tall as a pane's header, with its row
+                    // centred.
+                    ui.set_height(super::chrome::HEADER_HEIGHT - 2.0 * pad);
                     ui.spacing_mut().item_spacing.x = 2.0;
-                    app_menu(cx, ui, ext_panes);
-                    if let Some(main) = main {
-                        let crumbs = breadcrumb(main, ui);
-                        cx.response.responses.extend(Some(main), crumbs);
+                    if let Some(dot) = strip.logo {
+                        let view = &mut cx.state.view_toggles;
+                        let responses = &mut cx.response.responses;
+                        super::decor::logo_button(ui, dot, view, responses, ext_panes);
                     }
-                    let closable = heads.len() > 1;
-                    for (ix, head) in heads.iter().enumerate() {
-                        if rename.head.as_ref() == Some(head) {
-                            rename_tab(cx, ui, head, &mut rename);
-                        } else {
-                            graph_tab(cx, ui, head, ix, main, closable, &mut rename);
-                        }
+                    if !strip.tabs {
+                        return;
                     }
+                    // The tabs scroll in the room left beside the new graph
+                    // button. Wheel or drag them.
+                    let spacing = ui.spacing().item_spacing.x;
+                    let new_width = widget::kit::pill_width(ui, "+");
+                    let room = max_right - pad - new_width - spacing - ui.cursor().min.x;
+                    ui.spacing_mut().scroll.fade.strength = 1.0;
+                    ui.style_mut().always_scroll_the_only_direction = true;
+                    egui::ScrollArea::horizontal()
+                        .id_salt("gantz-tab-strip-scroll")
+                        .max_width(room.max(0.0))
+                        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                if let Some(main) = main {
+                                    let crumbs = breadcrumb(main, ui);
+                                    cx.response.responses.extend(Some(main), crumbs);
+                                }
+                                let closable = heads.len() > 1;
+                                for (ix, head) in heads.iter().enumerate() {
+                                    if rename.head.as_ref() == Some(head) {
+                                        rename_tab(cx, ui, head, &mut rename);
+                                        continue;
+                                    }
+                                    let tab =
+                                        graph_tab(cx, ui, head, ix, main, closable, &mut rename);
+                                    if reveal && main == Some(head) {
+                                        tab.scroll_to_me(None);
+                                    }
+                                }
+                            });
+                        });
                     let new = widget::kit::pill(ui, false, "+").on_hover_text("new graph");
                     if new.clicked() {
                         cx.response.responses.push(None, crate::NewGraph);
                     }
                 });
             });
-        });
-    ui.data_mut(|d| d.insert_temp(rename_id, rename));
-}
-
-/// The gantz mark, which opens the app menu: a new graph, the sidebar, the
-/// panes and the settings. The menu leads with the wordmark.
-fn app_menu<Access>(
-    cx: &mut PaneCtx<'_, '_, Access>,
-    ui: &mut egui::Ui,
-    ext_panes: &[widget::ExtPaneEntry],
-) where
-    Access: HeadAccess,
-{
-    let height = ui.spacing().interact_size.y;
-    let (rect, resp) =
-        ui.allocate_exact_size(egui::vec2(height + 8.0, height), egui::Sense::click());
-    let visuals = ui.visuals();
-    let color = match resp.hovered() {
-        true => visuals.strong_text_color(),
-        false => visuals.text_color(),
-    };
-    if resp.hovered() {
-        let radius = style::shape(ui.ctx()).widget_corner(height);
-        ui.painter()
-            .rect_filled(rect, radius, visuals.widgets.hovered.weak_bg_fill);
-    }
-    let mark = crate::logo::mark(height * 0.7, color);
-    mark.paint_at(
-        ui,
-        egui::Rect::from_center_size(rect.center(), egui::vec2(height * 0.6, height * 0.7)),
-    );
-    let resp = resp.on_hover_text("menu");
-    egui::Popup::menu(&resp).show(|ui| {
-        let strong = ui.visuals().strong_text_color();
-        ui.add(crate::logo::wordmark(14.0, strong));
-        ui.add_space(4.0);
-        let ctx = ui.ctx().clone();
-        let keys = |action| crate::keybind::shortcut_text(&ctx, action);
-        if widget::kit::menu_item(ui, "new graph", keys(crate::Action::NewGraph)).clicked() {
-            cx.response.responses.push(None, crate::NewGraph);
-            ui.close();
-        }
-        ui.separator();
-        let view = &mut cx.state.view_toggles;
-        ui.checkbox(&mut view.sidebar_open, "sidebar");
-        let patch_only = keys(crate::Action::TogglePatchOnly);
-        if widget::kit::menu_item(ui, "patch only", patch_only).clicked() {
-            view.patch_only = true;
-            ui.close();
-        }
-        ui.menu_button("panes", |ui| {
-            widget::panes_config(view, ext_panes, ui);
-            ui.separator();
-            if widget::reset_layout_button(ui) {
-                cx.response.responses.push(None, crate::ResetTilesLayout);
-                ui.close();
-            }
-        });
-        if ui.button("settings").clicked() {
-            view.settings = true;
-            view.sidebar_open = true;
-            ui.close();
-        }
+            ui.data_mut(|d| d.insert_temp(drag_id, framed.response.rect));
+            framed.response.rect
+        })
+        .inner;
+    ui.data_mut(|d| {
+        d.insert_temp(rename_id, rename);
+        d.insert_temp(main_id, main.cloned());
     });
+    strip_rect
 }
 
 /// One graph's tab. A click shows the graph on the scene, or focuses its
@@ -273,7 +300,8 @@ fn graph_tab<Access>(
     main: Option<&gantz_ca::Head>,
     closable: bool,
     rename: &mut Rename,
-) where
+) -> egui::Response
+where
     Access: HeadAccess,
 {
     let id = ui.id().with(("tab", ix));
@@ -347,6 +375,7 @@ fn graph_tab<Access>(
             ui.close();
         }
     });
+    res.tab
 }
 
 /// A tab while its graph is renamed: a name field that commits on Enter or

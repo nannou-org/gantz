@@ -340,7 +340,8 @@ fn release_row(body: &mut egui_extras::TableBody, path: &[usize], env: &mut Enve
     })
 }
 
-/// One row per segment with its level, time, shape and curve.
+/// Two rows per segment, so a segment fits a narrow inspector: its level and
+/// time, then its shape and curve.
 fn segment_rows(body: &mut egui_extras::TableBody, path: &[usize], env: &mut Envelope) -> bool {
     let mut changed = false;
     for (i, seg) in env.segments.iter_mut().enumerate() {
@@ -351,15 +352,21 @@ fn segment_rows(body: &mut egui_extras::TableBody, path: &[usize], env: &mut Env
         );
         changed |= row(body, &name, &doc, |ui| {
             ui.horizontal(|ui| {
-                let mut changed = false;
                 let level = egui::DragValue::new(&mut seg.level).speed(0.01);
-                changed |= ui.add(level).on_hover_text("level").changed();
+                let level = ui.add(level).on_hover_text("level").changed();
                 let time = egui::DragValue::new(&mut seg.time)
                     .range(0.0..=f32::MAX)
                     .speed(0.001)
                     .fixed_decimals(2)
                     .suffix(" s");
-                changed |= ui.add(time).on_hover_text("time").changed();
+                let time = ui.add(time).on_hover_text("time").changed();
+                level | time
+            })
+            .inner
+        });
+        changed |= row(body, "", &doc, |ui| {
+            ui.horizontal(|ui| {
+                let mut changed = false;
                 let width = ui.spacing().combo_width * 0.6;
                 egui::ComboBox::from_id_salt(("envgen-shape", path, i))
                     .width(width)
@@ -370,7 +377,9 @@ fn segment_rows(body: &mut egui_extras::TableBody, path: &[usize], env: &mut Env
                                 .selectable_value(&mut seg.shape, shape, shape.label())
                                 .changed();
                         }
-                    });
+                    })
+                    .response
+                    .on_hover_text("shape");
                 let curve = egui::DragValue::new(&mut seg.curve)
                     .speed(0.05)
                     .fixed_decimals(2);

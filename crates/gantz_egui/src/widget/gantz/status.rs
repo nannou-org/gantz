@@ -19,9 +19,9 @@ use web_time::SystemTime;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub enum StatusStyle {
     /// A line in a gutter under the panes, on the scene.
-    #[default]
     Gutter,
     /// A pill over the bottom-right corner of the scene.
+    #[default]
     Pill,
     /// No status line. Toasts still show.
     Hidden,
@@ -106,6 +106,9 @@ pub(super) const GUTTER_HEIGHT: f32 = 30.0;
 /// The id under which the context keeps the timestamp of the newest log
 /// entry already seen, so that only newer entries become toasts.
 const SEEN_ID: &str = "gantz-status-seen";
+
+/// The id under which the context keeps this pass's problem counts.
+const PROBLEMS_ID: &str = "gantz-status-problems";
 
 /// The number of recent VM samples the status line averages.
 const VM_SAMPLES: usize = 30;
@@ -420,6 +423,27 @@ fn sensed(
     sense: egui::Sense,
 ) -> egui::Response {
     ui.interact(res.rect, ui.id().with(key), sense)
+}
+
+/// Keep `problems` as this pass's counts, for parts drawn before the status
+/// line, such as the logo's dot.
+pub(super) fn set_last(ctx: &egui::Context, problems: Problems) {
+    ctx.data_mut(|d| d.insert_temp(egui::Id::new(PROBLEMS_ID), problems));
+}
+
+/// The counts kept by [`set_last`].
+pub(super) fn last(ctx: &egui::Context) -> Problems {
+    ctx.data(|d| d.get_temp(egui::Id::new(PROBLEMS_ID)))
+        .unwrap_or_default()
+}
+
+/// The colour of the worst problem in `problems`, if any.
+pub(super) fn color(problems: Problems, visuals: &egui::Visuals) -> Option<egui::Color32> {
+    match problems {
+        p if p.errors > 0 => Some(visuals.error_fg_color),
+        p if p.warnings > 0 => Some(visuals.warn_fg_color),
+        _ => None,
+    }
 }
 
 /// The mean of `samples`.

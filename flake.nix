@@ -31,6 +31,7 @@
 
         gantz-unwrapped = prev.callPackage ./pkgs/gantz-unwrapped.nix {
           craneLib = final.gantzCraneLib;
+          rev = inputs.self.shortRev or inputs.self.dirtyShortRev or null;
         };
         gantz = final.callPackage ./pkgs/gantz.nix { };
         gantz-website = final.callPackage ./pkgs/gantz-website.nix {

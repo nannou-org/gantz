@@ -34,6 +34,8 @@ pub mod storage;
 pub mod sugar;
 #[cfg(test)]
 mod tests;
+#[cfg(not(target_arch = "wasm32"))]
+mod theme;
 mod view;
 pub mod vm;
 
@@ -80,6 +82,8 @@ use response::{
 };
 use settings::{on_compile_config, on_validate_change_tracking};
 pub use sugar::BevySugar;
+#[cfg(not(target_arch = "wasm32"))]
+pub use theme::SystemTheme;
 pub use view::{
     LayoutCommittedEvent, LayoutEdited, ViewPersistSet, persist_camera_and_seed, settle_layout,
 };
@@ -121,6 +125,10 @@ impl GantzEguiPlugin {
 
 impl Plugin for GantzEguiPlugin {
     fn build(&self, app: &mut App) {
+        // Follow the system's light or dark preference.
+        #[cfg(not(target_arch = "wasm32"))]
+        theme::build(app);
+
         // Push the entrypoint providers. See `vm::EntrypointFns`.
         app.world_mut()
             .get_resource_or_init::<vm::EntrypointFns>()
@@ -171,6 +179,7 @@ impl Plugin for GantzEguiPlugin {
             .register_response_with::<gantz_egui::ImportPalette>(dispatch_import_palette)
             .register_response_with::<gantz_egui::ExportPalette>(dispatch_export_palette)
             .register_app_response::<gantz_egui::NewGraph>()
+            .register_app_response::<gantz_egui::widget::WindowAction>()
             .register_app_response::<gantz_egui::RemoveName>()
             .register_app_response::<gantz_egui::Import>()
             .register_app_response::<gantz_egui::SetDemo>()
@@ -453,6 +462,19 @@ pub struct EdgeStyles(pub Vec<Box<dyn gantz_egui::widget::EdgeStyle + Send + Syn
 /// toggle. Same contract as [`SettingsTabs`].
 #[derive(Default, Resource)]
 pub struct AudioHeads(pub HashSet<ca::Head>);
+
+/// The primary window, drawn without the system's decorations when the GUI
+/// asks for its own. A host that can draw its window so inserts it and keeps
+/// it up to date. The GUI then decorates the window and emits
+/// [`gantz_egui::widget::WindowAction`] payloads as [`ForApp`] events for the
+/// host to apply.
+#[derive(Default, Resource)]
+pub struct DecoratedWindow(pub gantz_egui::widget::NativeWindow);
+
+/// The app's version, such as its release and commit. The GUI shows it on
+/// hovering the wordmark. See [`gantz_egui::widget::Gantz::version`].
+#[derive(Resource)]
+pub struct AppVersion(pub String);
 
 /// The host's items for the status line, such as the audio device's rate
 /// and load. Same contract as [`SettingsTabs`].

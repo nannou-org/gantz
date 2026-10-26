@@ -61,6 +61,14 @@ pub(super) enum Icon {
     Hide,
     /// Show a graph pane's graph on the scene, in place of the graph there.
     Scene,
+    /// Minimise the window.
+    Minimize,
+    /// Maximise the window.
+    Maximize,
+    /// Restore a maximised window.
+    Restore,
+    /// Close the window.
+    Close,
 }
 
 /// The tiles drawn as panes: each visible tabs container, and each pane that
@@ -74,7 +82,8 @@ pub(super) fn grounds(tree: &egui_tiles::Tree<Pane>) -> Vec<egui_tiles::TileId> 
     out
 }
 
-/// The shapes under the pane tree. The scene colour fills `area`, with the
+/// The shapes under the pane tree. The scene colour fills `area`, rounded by
+/// `window_radius` when the window is drawn without the system's frame, with the
 /// main scene's grid dotted across it, so the scene seems to run on under
 /// the panes, the gaps and the window margin. Each pane in [`grounds`] is a
 /// rounded tile in the pane colour, and a graph pane's inset carries its own
@@ -85,6 +94,7 @@ pub(super) fn ground_shapes(
     cfg: &StyleConfig,
     theme: egui::Theme,
     area: egui::Rect,
+    window_radius: f32,
     focus: Option<egui_tiles::TileId>,
 ) -> Vec<egui::Shape> {
     let scene = cfg.resolve(theme, Role::Scene);
@@ -93,9 +103,15 @@ pub(super) fn ground_shapes(
     let weak = cfg.resolve(theme, Role::WeakText);
     let dot = style::over(cfg.resolve(theme, Role::Dot), scene);
     let radius = cfg.shape.window_corner();
-    let mut shapes = vec![egui::Shape::rect_filled(area, 0.0, scene)];
+    let mut shapes = vec![egui::Shape::rect_filled(area, window_radius, scene)];
     if let Some(ground) = ground_of(ctx, main_scene_id()) {
-        dots(&mut shapes, area, &ground, dot, |_| true);
+        // The dots keep within the window's rounded corners.
+        let (inner, inner_radius) = (
+            area.shrink(DOT_RADIUS),
+            (window_radius - DOT_RADIUS).max(0.0),
+        );
+        let within = |p| in_rounded_rect(inner, inner_radius, p);
+        dots(&mut shapes, area, &ground, dot, within);
     }
     for id in grounds(tree) {
         let Some(rect) = tree.tiles.rect(id) else {
@@ -232,7 +248,7 @@ pub(super) fn paint_icon(
                 stroke,
             ));
         }
-        Icon::Hide => {
+        Icon::Hide | Icon::Minimize => {
             let y = rect.center().y;
             painter.line_segment(
                 [egui::pos2(rect.left(), y), egui::pos2(rect.right(), y)],
@@ -244,6 +260,35 @@ pub(super) fn paint_icon(
             let radius = rect.width() * 0.25;
             painter.rect_stroke(rect, radius, stroke, egui::StrokeKind::Middle);
             painter.rect_filled(rect.shrink(rect.width() * 0.3), radius * 0.4, color);
+        }
+        Icon::Maximize => {
+            painter.rect_stroke(rect, rect.width() * 0.2, stroke, egui::StrokeKind::Middle);
+        }
+        Icon::Restore => {
+            // Two boxes, the front one low and to the left.
+            let side = rect.width() * 0.75;
+            let back = egui::Rect::from_min_size(
+                egui::pos2(rect.right() - side, rect.top()),
+                egui::Vec2::splat(side),
+            );
+            let front = egui::Rect::from_min_size(
+                egui::pos2(rect.left(), rect.bottom() - side),
+                egui::Vec2::splat(side),
+            );
+            painter.rect_stroke(front, side * 0.2, stroke, egui::StrokeKind::Middle);
+            // The back box shows only where the front one does not cover it.
+            let back_edge = vec![
+                egui::pos2(back.left(), front.top()),
+                back.left_top(),
+                back.right_top(),
+                back.right_bottom(),
+                egui::pos2(front.right(), back.bottom()),
+            ];
+            painter.add(egui::Shape::line(back_edge, stroke));
+        }
+        Icon::Close => {
+            painter.line_segment([rect.left_top(), rect.right_bottom()], stroke);
+            painter.line_segment([rect.right_top(), rect.left_bottom()], stroke);
         }
     }
 }
@@ -279,15 +324,15 @@ fn collect_grounds(
 }
 
 /// For each pane in a tabs container, the number of visible tabs in its
-/// header and whether it is the first of them.
+/// header, whether it is the first of them, and the header's container.
 ///
 /// Taken before the tree is drawn, since `egui_tiles` lifts a container out
 /// of the tree while drawing it.
 pub(super) fn headers(
     tiles: &egui_tiles::Tiles<Pane>,
-) -> std::collections::HashMap<egui_tiles::TileId, (usize, bool)> {
+) -> std::collections::HashMap<egui_tiles::TileId, (usize, bool, egui_tiles::TileId)> {
     let mut out = std::collections::HashMap::new();
-    for (_, tile) in tiles.iter() {
+    for (&parent, tile) in tiles.iter() {
         let egui_tiles::Tile::Container(egui_tiles::Container::Tabs(tabs)) = tile else {
             continue;
         };
@@ -298,46 +343,10 @@ pub(super) fn headers(
             .filter(|&c| tiles.is_visible(c))
             .collect();
         for (i, &child) in visible.iter().enumerate() {
-            out.insert(child, (visible.len(), i == 0));
+            out.insert(child, (visible.len(), i == 0, parent));
         }
     }
     out
-}
-
-/// The mark that stands in for the hidden panes while patch-only is on, with
-/// its top-left corner at `pos`. A dot in `problem`'s colour shows there are
-/// problems in the log. Returns whether the mark was clicked.
-pub(super) fn patch_mark(
-    ctx: &egui::Context,
-    pos: egui::Pos2,
-    problem: Option<egui::Color32>,
-) -> bool {
-    egui::Area::new(egui::Id::new("gantz-patch-mark"))
-        .order(egui::Order::Middle)
-        .fixed_pos(pos)
-        .show(ctx, |ui| {
-            let side = ui.spacing().interact_size.y;
-            let (rect, resp) =
-                ui.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::click());
-            let visuals = ui.visuals();
-            let color = match resp.hovered() {
-                true => visuals.text_color(),
-                false => visuals.weak_text_color().gamma_multiply(0.6),
-            };
-            let mark = crate::logo::mark(side * 0.7, color);
-            let size = mark.size().unwrap_or(egui::Vec2::splat(side * 0.7));
-            mark.paint_at(ui, egui::Rect::from_center_size(rect.center(), size));
-            if let Some(color) = problem {
-                let dot = rect.right_top() + egui::vec2(-2.0, 3.0);
-                ui.painter().circle_filled(dot, 3.0, color);
-            }
-            let hint = match crate::keybind::shortcut_text(ctx, crate::Action::TogglePatchOnly) {
-                Some(keys) => format!("show the panes ({keys})"),
-                None => "show the panes".to_string(),
-            };
-            resp.on_hover_text(hint).clicked()
-        })
-        .inner
 }
 
 /// The id of the main graph's scene.
@@ -449,4 +458,104 @@ pub(super) fn reach_window(ctx: &egui::Context, tile: egui::Rect) -> egui::Rect 
 pub(super) fn corner_inset(ctx: &egui::Context) -> f32 {
     let radius = style::shape(ctx).window_corner();
     (radius * (1.0 - std::f32::consts::FRAC_1_SQRT_2)).ceil()
+}
+
+/// The pane tree's rect this pass. See [`set_bounds`].
+pub(super) fn tree_bounds(ctx: &egui::Context) -> Option<egui::Rect> {
+    ctx.data(|d| d.get_temp::<(egui::Rect, egui::Rect)>(egui::Id::new(BOUNDS_ID)))
+        .map(|(tree, _)| tree)
+}
+
+/// The grounds in [`grounds`] at the tree's top-left and top-right corners.
+/// They come from the tree's structure, so they are known before the tree is
+/// laid out. The scene is not a ground, so a corner the scene holds has none.
+pub(super) fn corner_grounds(
+    tree: &egui_tiles::Tree<Pane>,
+) -> (Option<egui_tiles::TileId>, Option<egui_tiles::TileId>) {
+    let corner = |right| {
+        tree.root()
+            .and_then(|root| corner_ground(&tree.tiles, root, right))
+            .flatten()
+    };
+    (corner(false), corner(true))
+}
+
+/// The ground at the top-left corner of the tile `id`, or at its top-right
+/// corner when `right`. `None` when the tile is hidden. `Some(None)` when the
+/// scene holds the corner, or a grid, whose columns are only known once it is
+/// laid out.
+fn corner_ground(
+    tiles: &egui_tiles::Tiles<Pane>,
+    id: egui_tiles::TileId,
+    right: bool,
+) -> Option<Option<egui_tiles::TileId>> {
+    if !tiles.is_visible(id) {
+        return None;
+    }
+    let child = |&c: &egui_tiles::TileId| corner_ground(tiles, c, right);
+    match tiles.get(id)? {
+        egui_tiles::Tile::Pane(Pane::GraphScene) => Some(None),
+        egui_tiles::Tile::Pane(_) => Some(Some(id)),
+        egui_tiles::Tile::Container(egui_tiles::Container::Tabs(tabs)) => {
+            let scene = tabs.children.iter().any(|c| {
+                matches!(
+                    tiles.get(*c),
+                    Some(egui_tiles::Tile::Pane(Pane::GraphScene))
+                )
+            });
+            Some((!scene).then_some(id))
+        }
+        egui_tiles::Tile::Container(egui_tiles::Container::Linear(linear)) => {
+            match (linear.dir, right) {
+                (egui_tiles::LinearDir::Horizontal, true) => {
+                    linear.children.iter().rev().find_map(child)
+                }
+                _ => linear.children.iter().find_map(child),
+            }
+        }
+        egui_tiles::Tile::Container(egui_tiles::Container::Grid(_)) => Some(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn corner_grounds_follow_the_visible_columns() {
+        let mut tiles = egui_tiles::Tiles::default();
+        let graphs = tiles.insert_pane(Pane::Graphs);
+        let left = tiles.insert_tab_tile(vec![graphs]);
+        let scene = tiles.insert_pane(Pane::GraphScene);
+        let logs = tiles.insert_pane(Pane::Logs);
+        let tray = tiles.insert_tab_tile(vec![logs]);
+        let middle = tiles.insert_vertical_tile(vec![scene, tray]);
+        let steel = tiles.insert_pane(Pane::Steel);
+        let right = tiles.insert_tab_tile(vec![steel]);
+        let root = tiles.insert_horizontal_tile(vec![left, middle, right]);
+        let mut tree = egui_tiles::Tree::new("corners", root, tiles);
+        assert_eq!(corner_grounds(&tree), (Some(left), Some(right)));
+        // With the right column hidden, the scene holds the top-right corner.
+        tree.set_visible(right, false);
+        assert_eq!(corner_grounds(&tree), (Some(left), None));
+        // With the left column hidden too, the scene holds both.
+        tree.set_visible(left, false);
+        assert_eq!(corner_grounds(&tree), (None, None));
+    }
+
+    #[test]
+    fn corner_grounds_take_the_top_of_a_column() {
+        let mut tiles = egui_tiles::Tiles::default();
+        let graphs = tiles.insert_pane(Pane::Graphs);
+        let top = tiles.insert_tab_tile(vec![graphs]);
+        let history = tiles.insert_pane(Pane::History);
+        let bottom = tiles.insert_tab_tile(vec![history]);
+        let left = tiles.insert_vertical_tile(vec![top, bottom]);
+        let scene = tiles.insert_pane(Pane::GraphScene);
+        let root = tiles.insert_horizontal_tile(vec![left, scene]);
+        let mut tree = egui_tiles::Tree::new("corners", root, tiles);
+        assert_eq!(corner_grounds(&tree), (Some(top), None));
+        tree.set_visible(top, false);
+        assert_eq!(corner_grounds(&tree), (Some(bottom), None));
+    }
 }

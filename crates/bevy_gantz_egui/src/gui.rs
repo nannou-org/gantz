@@ -1,10 +1,10 @@
 //! The GUI pass and the handling of its response.
 
 use crate::{
-    AudioHeads, BaseImmutable, BaseNames, BuiltinNodes, CollabUi, EdgeStyles, ExtPanes, GraphCache,
-    GuiState, HeadAccess, HostNativePaneWindows, NodeCodecRes, OpenHeadViews, PerfGui, PerfVm,
-    RefExtUis, ResponseDispatchers, SettingsTabs, StatusItems, TraceCapture,
-    WindowedPanesRequested, base, env, refresh_cache,
+    AppVersion, AudioHeads, BaseImmutable, BaseNames, BuiltinNodes, CollabUi, DecoratedWindow,
+    EdgeStyles, ExtPanes, GraphCache, GuiState, HeadAccess, HostNativePaneWindows, NodeCodecRes,
+    OpenHeadViews, PerfGui, PerfVm, RefExtUis, ResponseDispatchers, SettingsTabs, StatusItems,
+    TraceCapture, WindowedPanesRequested, base, env, refresh_cache,
 };
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
@@ -39,6 +39,8 @@ pub struct GantzInputs<'w, 's> {
     edge_styles: Res<'w, EdgeStyles>,
     audio_heads: Res<'w, AudioHeads>,
     status_items: Res<'w, StatusItems>,
+    decorated_window: Option<Res<'w, DecoratedWindow>>,
+    app_version: Option<Res<'w, AppVersion>>,
     host_native: Option<Res<'w, HostNativePaneWindows>>,
     export_paths: Option<Res<'w, base::ExportPaths>>,
     base_sources: Res<'w, base::BaseSources>,
@@ -169,6 +171,8 @@ pub(crate) fn show_gantz(
         edge_styles,
         audio_heads,
         status_items,
+        decorated_window,
+        app_version,
         host_native,
         export_paths,
         base_sources,
@@ -238,6 +242,12 @@ pub(crate) fn show_gantz(
     // Base-source authoring context. Present only where the per-source
     // write-back runs, since `update-base` inserts ExportPaths. The main app
     // never shows a non-durable source dropdown.
+    if let Some(window) = decorated_window {
+        widget = widget.native_window(window.0);
+    }
+    if let Some(version) = &app_version {
+        widget = widget.version(&version.0);
+    }
     if let Some(paths) = export_paths {
         widget = widget.base_sources(gantz_egui::widget::BaseSourcesCtx {
             sources: &source_names,

@@ -9,9 +9,10 @@ pub use edge_style::{EdgeStyle, EdgeStyleCtx, EdgeStyling};
 pub use ext_pane::{ExtPane, ExtPaneCtx, ExtPaneEntry};
 pub use gantz::{
     AlignConfig, BaseSourcesCtx, EdgeConfig, FollowSelectionConfig, Gantz, GantzState,
-    GraphPlacement, GridConfig, LayoutConfig, NodeViewPane, Pane, PaneWindowGeometry,
+    GraphPlacement, GridConfig, LayoutConfig, NativeWindow, NodeViewPane, Pane, PaneWindowGeometry,
     PaneWindowMode, SceneConfig, SnapConfig, SnapMode, StatusAction, StatusIcon, StatusItem,
-    StatusStyle, WindowedPane, close_windowed_pane, pane_key, redock_windowed_pane,
+    StatusStyle, WindowAction, WindowEdge, WindowStyle, WindowedPane, close_windowed_pane,
+    pane_key, redock_windowed_pane,
 };
 pub use global_config::{GlobalConfigResponse, global_config};
 pub use graph_config::{GraphConfig, GraphConfigResponse};
@@ -100,6 +101,9 @@ pub(crate) const OPTIONS_GLYPH: &str = "⛭";
 /// The glyph that marks a locked node. See [`locked_text`].
 pub(crate) const LOCK_GLYPH: &str = "🔒";
 
+/// The least width of a log table's message column.
+pub(crate) const MESSAGE_MIN_WIDTH: f32 = 100.0;
+
 /// The button that discards a locked node's unrecognised settings. Returns
 /// whether it was clicked. See [`crate::DropUnknownData`].
 pub(crate) fn discard_button(ui: &mut egui::Ui) -> bool {
@@ -148,6 +152,24 @@ pub(crate) fn format_local_time(system_time: std::time::SystemTime) -> String {
 /// A log row's message galley, wrapped at `width` when `wrap` is set, else on
 /// one line cut with an ellipsis at `width`. A count above one is prefixed as
 /// a dim `×count`.
+/// The width that a log table in `ui` lays its columns out across. See
+/// [`message_width`].
+pub(crate) fn table_width(ui: &egui::Ui) -> f32 {
+    ui.available_rect_before_wrap().width() - ui.spacing().scroll.allocated_width()
+}
+
+/// The width of a log table's trailing message column: what the table's
+/// `table_width` leaves after its other columns and the `spacing` between
+/// them. It does not come from the column's own width, which an egui table
+/// never shrinks below the widest message of the last pass. A message laid
+/// out at that width would hold the column wide as its pane narrows.
+pub(crate) fn message_width(table_width: f32, widths: &[f32], spacing: f32) -> f32 {
+    let others = widths.split_last().map_or(0.0, |(_, others)| {
+        others.iter().sum::<f32>() + spacing * others.len() as f32
+    });
+    (table_width - others).max(MESSAGE_MIN_WIDTH)
+}
+
 pub(crate) fn message_galley(
     painter: &egui::Painter,
     font: &egui::FontId,

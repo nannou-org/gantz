@@ -1,9 +1,11 @@
 //! Rendering of each pane, and the helpers the panes share.
 
-use super::graph_tabs::{head_scene, tab_strip};
+use super::graph_tabs::{Strip, head_scene, tab_strip};
 use super::state::{OpenHeadState, SceneConfig, ViewToggles};
 use super::tiles::{NodeViewPane, Pane, ext_pane_entries};
-use super::{FileDrop, FileDropTarget, LogSource, NESTED_GRAPH_TYPE, NodeTyCmd, PaneCtx};
+use super::{
+    FileDrop, FileDropTarget, LogSource, NESTED_GRAPH_TYPE, NodeTyCmd, PaneCtx, WindowStyle,
+};
 use crate::{
     Action, CopyNodes, CreateNestedGraph, CreateNode, CutNodes, DuplicateNodes, Env,
     ExportAllNamed, ExportHead, ExportPalette, ExportStyle, HeadAccess, ImportPalette, ImportStyle,
@@ -265,12 +267,76 @@ where
             head_scene(cx, ui, main, id, &ext_panes);
         });
     }
-    // Patch-only shows the graphs alone. `Gantz::show` draws a mark in the
-    // tab strip's place.
-    if !cx.state.view_toggles.patch_only {
-        // The strip sits at the scene tile's corner, so its top meets the side
-        // panes' tops and the pane gap sits between them.
-        tab_strip(cx, ui, rect.left_top(), main.as_ref(), &ext_panes);
+    // The scene's tile holds the tree's top-left corner when no pane does,
+    // and the strip then leads with the logo, unless the window's header
+    // holds it. Patch-only shows the logo alone.
+    let tree = super::chrome::tree_bounds(ui.ctx()).unwrap_or(rect);
+    let at = |a: egui::Pos2, b: egui::Pos2| (a - b).length() < 0.5;
+    let window_style = cx.state.view_toggles.window;
+    let window = cx
+        .gantz
+        .native_window
+        .filter(|_| window_style != WindowStyle::Native);
+    let header = window.is_some() && window_style == WindowStyle::Header;
+    let controls = window.filter(|_| window_style == WindowStyle::Controls);
+    let patch_only = cx.state.view_toggles.patch_only;
+    let dot = patch_only
+        .then(|| super::status::color(super::status::last(ui.ctx()), ui.visuals()))
+        .flatten();
+    let strip = Strip {
+        logo: (at(rect.left_top(), tree.left_top()) && !header).then_some(dot),
+        tabs: !patch_only,
+        drag: controls.is_some(),
+    };
+    // The scene's top-right corner holds the window's controls when no pane
+    // does, and the wordmark sits left of them. The header holds both when
+    // it shows, and patch-only hides the wordmark. `right` is the left edge of
+    // what the top-right corner holds.
+    let mut right = rect.right_top();
+    if let Some(w) = controls.filter(|_| at(rect.right_top(), tree.right_top())) {
+        let (shown, action) = super::decor::floating_controls(ui.ctx(), right, w);
+        if let Some(action) = action {
+            cx.response.responses.push(None, action);
+        }
+        right.x = shown.left();
+    }
+    if !header && !patch_only {
+        let version = cx.gantz.version;
+        let (shown, action) = super::decor::wordmark(ui.ctx(), right, version, strip.drag);
+        if let Some(action) = action {
+            cx.response.responses.push(None, action);
+        }
+        right.x = shown.left();
+    }
+    // The strip sits at the scene tile's corner, so its top meets the side
+    // panes' tops and the pane gap sits between them.
+    let gap = cx.state.style.shape.separator_width;
+    let strip_right = match strip.logo.is_some() || strip.tabs {
+        true => {
+            let max_right = right.x - gap;
+            let shown = tab_strip(
+                cx,
+                ui,
+                rect.left_top(),
+                max_right,
+                main.as_ref(),
+                &ext_panes,
+                strip,
+            );
+            shown.right() + gap
+        }
+        false => rect.left(),
+    };
+    // The scene's top between the strip and the corner moves the window.
+    if strip.drag {
+        let band = egui::Rect::from_x_y_ranges(
+            strip_right..=right.x,
+            rect.top()..=rect.top() + super::chrome::HEADER_HEIGHT,
+        );
+        let action = super::decor::drag_band(ui.ctx(), band);
+        if let Some(action) = action {
+            cx.response.responses.push(None, action);
+        }
     }
 
     let PaneCtx {

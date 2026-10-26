@@ -91,6 +91,9 @@ pub struct Shape {
     /// The width of the outline around each pane. 0 draws none. An outline
     /// suits a palette whose panes share the scene's colour.
     pub pane_outline: f32,
+    /// The width of the outline around the app's window, when gantz draws its
+    /// decorations. 0 draws none.
+    pub window_outline: f32,
     /// How a graph pane frames its graph's scene.
     pub graph_panes: GraphPaneStyle,
     /// The gap between neighbouring widgets, across and down.
@@ -164,6 +167,7 @@ impl Default for Shape {
             button_padding: egui::vec2(8.0, 2.0),
             cards: CardStyle::Nested,
             pane_outline: 0.0,
+            window_outline: 1.0,
             graph_panes: GraphPaneStyle::Open,
             item_spacing: egui::vec2(8.0, 3.0),
             control_height: 18.0,
