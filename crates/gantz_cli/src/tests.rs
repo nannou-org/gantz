@@ -67,5 +67,6 @@ fn conf() -> Conf {
         org: "nannou-org",
         app: "gantz",
         build: concat!("gantz ", env!("CARGO_PKG_VERSION")),
+        live: None,
     }
 }

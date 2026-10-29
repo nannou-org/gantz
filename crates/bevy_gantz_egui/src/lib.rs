@@ -94,14 +94,27 @@ pub use vm::{EntrypointFn, EntrypointFns};
 /// Plugin providing egui-based UI for gantz.
 ///
 /// This plugin:
+/// - Adds the [`RuntimePlugin`]
 /// - Initializes the GUI resources such as `GuiState` and `TraceCapture`
-/// - Owns the typed side of the registry, [`GraphCache`] and [`BuiltinNodes`],
-///   and keeps head VMs in sync with their compile inputs via [`vm::sync`]
 /// - Registers the GUI state and response payload observers
 /// - Runs the main GUI update system
 pub struct GantzEguiPlugin {
     base_immutable: bool,
 }
+
+/// Plugin that runs the graphs of open heads, with no GUI.
+///
+/// This plugin:
+/// - Owns the typed side of the registry, [`GraphCache`] and [`BuiltinNodes`],
+///   and keeps head VMs in sync with their compile inputs via [`vm::sync`]
+/// - Mirrors the node entities of each head, see [`entities`]
+/// - Drives the `load!`, `update!`, `tick!` and `await` nodes
+///
+/// The app inserts the [`BuiltinNodes`] of its node set and a
+/// [`NodeCodecRes`], and calls [`refresh_cache`] after it adds graphs to the
+/// registry.
+#[derive(Default)]
+pub struct RuntimePlugin;
 
 impl Default for GantzEguiPlugin {
     fn default() -> Self {
@@ -125,17 +138,57 @@ impl GantzEguiPlugin {
     }
 }
 
+impl Plugin for RuntimePlugin {
+    fn build(&self, app: &mut App) {
+        // Push the entrypoint providers. See `vm::EntrypointFns`.
+        app.world_mut()
+            .get_resource_or_init::<vm::EntrypointFns>()
+            .0
+            .push(Box::new(node::entrypoints));
+        app.init_resource::<GraphCache>()
+            .init_resource::<BuiltinNodes>()
+            .init_resource::<NodeKinds>()
+            .add_node_kind::<node::Await>()
+            .add_node_kind::<node::LoadBang>()
+            .add_node_kind::<node::TickBang>()
+            .add_node_kind::<node::UpdateBang>()
+            // The drivers in `EntrypointSet` evaluate head VMs. The set runs
+            // after `VmSet` and `NodeSet`, so the drivers never observe the
+            // gap between a head pointing at a new graph and `vm::sync`
+            // reinitializing its VM, or the mirror updating its node
+            // entities.
+            .add_systems(
+                Update,
+                (
+                    // Recompiles whenever a head's compile inputs change.
+                    vm::sync.in_set(bevy_gantz::VmSet),
+                    // Mirrors the node entities of each head's graph.
+                    entities::mirror.in_set(bevy_gantz::NodeSet),
+                    // Runs before the other drivers so a loaded graph
+                    // evaluates its `load!` nodes before its first `update!`
+                    // and `tick!` passes.
+                    node::load_bang::drive_load_bangs
+                        .before(node::update_bang::drive_update_bangs)
+                        .before(node::tick_bang::drive_tick_bangs)
+                        .before(node::await_::drive_awaits)
+                        .in_set(bevy_gantz::EntrypointSet),
+                    node::update_bang::drive_update_bangs.in_set(bevy_gantz::EntrypointSet),
+                    node::tick_bang::drive_tick_bangs.in_set(bevy_gantz::EntrypointSet),
+                    node::await_::drive_awaits.in_set(bevy_gantz::EntrypointSet),
+                ),
+            );
+    }
+}
+
 impl Plugin for GantzEguiPlugin {
     fn build(&self, app: &mut App) {
         // Follow the system's light or dark preference.
         #[cfg(not(target_arch = "wasm32"))]
         theme::build(app);
 
-        // Push the entrypoint providers. See `vm::EntrypointFns`.
-        app.world_mut()
-            .get_resource_or_init::<vm::EntrypointFns>()
-            .0
-            .push(Box::new(node::entrypoints));
+        if !app.is_plugin_added::<RuntimePlugin>() {
+            app.add_plugins(RuntimePlugin);
+        }
 
         // The core base source. Domain plugins push their own the same way.
         app.world_mut()
@@ -192,14 +245,7 @@ impl Plugin for GantzEguiPlugin {
             .register_app_response::<gantz_egui::ValidateChangeTracking>();
 
         app.insert_resource(BaseImmutable(self.base_immutable))
-            .init_resource::<GraphCache>()
-            .init_resource::<BuiltinNodes>()
             .init_resource::<BaseNames>()
-            .init_resource::<NodeKinds>()
-            .add_node_kind::<node::Await>()
-            .add_node_kind::<node::LoadBang>()
-            .add_node_kind::<node::TickBang>()
-            .add_node_kind::<node::UpdateBang>()
             .init_resource::<base::BaseNameSources>()
             .init_resource::<GuiState>()
             .init_resource::<TraceCapture>()
@@ -259,29 +305,9 @@ impl Plugin for GantzEguiPlugin {
             .add_observer(on_reset_all_demos)
             .add_observer(on_compile_config)
             .add_observer(on_validate_change_tracking)
-            // Systems. The drivers in `EntrypointSet` evaluate head VMs. The
-            // set runs after `VmSet` and `NodeSet`, so the drivers never
-            // observe the gap between a head pointing at a new graph and
-            // `vm::sync` reinitializing its VM, or the mirror updating its
-            // node entities.
             .add_systems(
                 Update,
                 (
-                    // Recompiles whenever a head's compile inputs change.
-                    vm::sync.in_set(bevy_gantz::VmSet),
-                    // Mirrors the node entities of each head's graph.
-                    entities::mirror.in_set(bevy_gantz::NodeSet),
-                    // Runs before the other drivers so a loaded graph
-                    // evaluates its `load!` nodes before its first `update!`
-                    // and `tick!` passes.
-                    node::load_bang::drive_load_bangs
-                        .before(node::update_bang::drive_update_bangs)
-                        .before(node::tick_bang::drive_tick_bangs)
-                        .before(node::await_::drive_awaits)
-                        .in_set(bevy_gantz::EntrypointSet),
-                    node::update_bang::drive_update_bangs.in_set(bevy_gantz::EntrypointSet),
-                    node::tick_bang::drive_tick_bangs.in_set(bevy_gantz::EntrypointSet),
-                    node::await_::drive_awaits.in_set(bevy_gantz::EntrypointSet),
                     // Re-pulls gui markers of dirty or recompiled heads. Runs
                     // after the entrypoint drivers so their pushes refresh
                     // markers the same frame.

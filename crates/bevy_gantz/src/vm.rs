@@ -37,6 +37,13 @@ pub struct CompileConfig(pub core_compile::Config);
 #[derive(Default, Resource)]
 pub struct SteelModules(pub Vec<gantz_core::vm::SteelModule>);
 
+/// Fns that set up each new head VM before its graph registers, such as a
+/// sink for the values of `log` nodes.
+///
+/// Contribute via `get_resource_or_init` and push, as for [`SteelModules`].
+#[derive(Default, Resource)]
+pub struct VmSetups(pub Vec<Box<dyn Fn(&mut steel::steel_vm::engine::Engine) + Send + Sync>>);
+
 /// The inputs that determine a head's compiled module.
 #[derive(Clone, Copy, PartialEq)]
 pub struct Inputs {

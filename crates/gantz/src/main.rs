@@ -15,6 +15,8 @@ use clap::Parser;
 use storage::Pkv;
 
 mod app;
+#[cfg(not(target_arch = "wasm32"))]
+mod live;
 mod node;
 mod persist;
 mod storage;
@@ -154,6 +156,7 @@ fn conf() -> gantz_cli::Conf {
         org: "nannou-org",
         app: "gantz",
         build: BUILD,
+        live: Some(live::run),
     }
 }
 

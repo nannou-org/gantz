@@ -7,7 +7,7 @@ use crate::reg::{BuiltinNodes, GraphCache, lookup_node};
 use bevy_ecs::prelude::*;
 use bevy_gantz::Registry;
 use bevy_gantz::head;
-use bevy_gantz::vm::{CompileConfig, Inputs, SteelModules};
+use bevy_gantz::vm::{CompileConfig, Inputs, SteelModules, VmSetups};
 use bevy_log as log;
 use gantz_ca as ca;
 use gantz_core::node::{GetNode, graph::Graph};
@@ -91,6 +91,7 @@ pub fn sync(
     ep_fns: Res<EntrypointFns>,
     config: Res<CompileConfig>,
     modules: Res<SteelModules>,
+    setups: Res<VmSetups>,
     mut vms: NonSendMut<head::HeadVms>,
     mut heads_query: Query<head::OpenHeadData, With<head::OpenHead>>,
 ) {
@@ -149,17 +150,17 @@ pub fn sync(
         let get_node = |ca: &ca::ContentAddr| lookup_node(&cache, &builtins.instances, ca);
         let entrypoints = collect_entrypoints(&ep_fns, &get_node, graph);
         let result = match vms.get_mut(&data.entity) {
-            None => gantz_core::vm::init_with_modules(
-                &get_node,
-                graph,
-                &entrypoints,
-                &config.0,
-                &modules.0,
-            )
-            .map(|(vm, module)| {
-                vms.insert(data.entity, vm);
-                module
-            }),
+            None => {
+                let mut vm = gantz_core::vm::new_engine(&modules.0);
+                setups.0.iter().for_each(|setup| setup(&mut vm));
+                gantz_core::graph::register(&get_node, graph, &[], &mut vm);
+                gantz_core::vm::compile(&get_node, graph, &mut vm, &entrypoints, &config.0).map(
+                    |module| {
+                        vms.insert(data.entity, vm);
+                        module
+                    },
+                )
+            }
             Some(vm) => {
                 gantz_core::graph::register(&get_node, graph, &[], vm);
                 gantz_core::vm::compile(&get_node, graph, vm, &entrypoints, &config.0)
