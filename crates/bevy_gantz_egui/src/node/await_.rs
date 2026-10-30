@@ -18,6 +18,7 @@
 
 use bevy_ecs::prelude::*;
 use bevy_egui::egui;
+use bevy_gantz::node::{NodeState, PushEval};
 use bevy_gantz::task::{TASK_CANCEL_FN, TASK_PREDICATE, TaskHandle};
 use gantz_core::node::{self, Conns, EvalConf, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_nodetag::NodeTag;
@@ -45,7 +46,9 @@ const PENDING_ARM: isize = 2;
 /// The node's state is always a `(list arm payload)` branch pair. It is the
 /// pending arm holding the stashed task or nothing, or the value or error
 /// arm written by the driver just before it fires the entrypoint.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, NodeTag)]
+#[derive(
+    Clone, Component, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, NodeTag,
+)]
 pub struct Await;
 
 impl gantz_core::Node for Await {
@@ -199,74 +202,36 @@ pub fn pending_handle(state: &SteelVal) -> Option<TaskHandle> {
 
 /// Drives `await` nodes every update, independent of GUI visibility.
 ///
-/// For each open head and each `await` node whose state is a pending pair,
-/// checks the stashed task in place. On completion it writes the result pair
-/// into the node's state and triggers the node's push entrypoint.
-/// Overwriting the pair releases the handle.
+/// For each `await` node whose state is a pending pair, checks the stashed
+/// task in place. On completion it writes the result pair into the node's
+/// state and triggers the node's push evaluation. Overwriting the pair
+/// releases the handle.
 ///
 /// Pending tasks live entirely in node state, so nothing here needs pruning
 /// or remapping. Deleting a node, closing a head, or navigating to a graph
 /// without the node drops the state and cancels the task. Reindexing edits
 /// and head navigation migrate it with the node.
-pub fn drive_awaits(
-    registry: Res<crate::Registry>,
-    index: Res<super::DriverIndex>,
-    mut vms: NonSendMut<bevy_gantz::head::HeadVms>,
-    heads: Query<(Entity, &bevy_gantz::head::HeadRef), With<bevy_gantz::head::OpenHead>>,
-    mut cmds: Commands,
-) {
-    for (entity, head_ref) in heads.iter() {
-        let Some(graph_ca) = registry.head_commit(&head_ref.0).map(|c| c.graph) else {
+pub fn drive_awaits(awaits: Query<Entity, With<Await>>, mut state: NodeState, mut cmds: Commands) {
+    for node in awaits.iter() {
+        let pending = match state.get(node) {
+            Ok(Some(state)) => pending_handle(&state),
+            Ok(None) => None,
+            Err(e) => {
+                bevy_log::error!("await state read failed: {e}");
+                None
+            }
+        };
+        let Some(result) = pending.and_then(|handle| handle.check()) else {
             continue;
         };
-        let Some(paths) = index.get(&graph_ca).map(|driven| &driven.awaits) else {
-            continue;
+        let pair = match result {
+            Ok(val) => value_pair(val),
+            Err(err) => error_pair(err),
         };
-        if paths.is_empty() {
+        if let Err(e) = state.set(node, pair) {
+            bevy_log::error!("await result write failed: {e}");
             continue;
         }
-
-        let Some(vm) = vms.get_mut(&entity) else {
-            continue;
-        };
-
-        for path in paths {
-            let state = match node::state::extract_value(vm, path) {
-                Ok(Some(state)) => state,
-                Ok(None) => continue,
-                Err(e) => {
-                    bevy_log::error!("await state read failed: {e}");
-                    continue;
-                }
-            };
-            let Some(handle) = pending_handle(&state) else {
-                continue;
-            };
-            let Some(result) = handle.check() else {
-                continue;
-            };
-            let pair = match result {
-                Ok(val) => value_pair(val),
-                Err(err) => error_pair(err),
-            };
-            if let Err(e) = node::state::update_value(vm, path, pair) {
-                bevy_log::error!("await result write failed: {e}");
-                continue;
-            }
-            let n_outputs = 2;
-            let entrypoint = gantz_core::compile::entrypoint::push(path.clone(), n_outputs);
-            // The current module may not compile this entry fn. For example,
-            // the task resolved in the same update as a graph edit.
-            let fn_name = gantz_core::compile::entry_fn_name(&entrypoint.id());
-            if vm.extract_value(&fn_name).is_err() {
-                bevy_log::debug!("await eval skipped: entry fn {fn_name} not compiled");
-                continue;
-            }
-            cmds.trigger(bevy_gantz::vm::EvalEntryEvent {
-                head: entity,
-                entrypoint,
-                time: None,
-            });
-        }
+        cmds.trigger(PushEval::now(node));
     }
 }

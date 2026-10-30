@@ -1,21 +1,22 @@
+use crate::NodeKindAppExt;
 use bevy_app::{App, TaskPoolPlugin, Update};
 use bevy_ecs::prelude::IntoScheduleConfigs;
 use bevy_ecs::system::ScheduleSystem;
-use bevy_gantz::{EntrypointSet, GantzPlugin, VmSet};
+use bevy_gantz::{EntrypointSet, GantzPlugin, NodeSet, VmSet};
 
 mod app_response;
 mod await_;
-mod driver_index;
 mod drop_unknown;
+mod entities;
 mod layout_settle;
 mod load_bang;
 mod undo_resync;
 
 /// The test app's `.gantz` sugar carrier. The codec macro requires it. The
 /// tests never parse text.
-struct NodeSet;
+struct TestNodes;
 
-impl gantz_format::NodeSugar for NodeSet {
+impl gantz_format::NodeSugar for TestNodes {
     fn sugar() -> gantz_format::Sugars<'static> {
         gantz_format::Sugars(vec![&gantz_format::CoreSugar])
     }
@@ -25,7 +26,7 @@ impl gantz_format::NodeSugar for NodeSet {
 /// reified-graph cache serves stored graphs as typed nodes.
 fn codec() -> gantz_egui::node::NodeCodec {
     gantz_egui::ui_node_codec! {
-        NodeSet {
+        TestNodes {
             crate::node::Await,
             crate::node::LoadBang,
             crate::node::Sleep,
@@ -36,9 +37,8 @@ fn codec() -> gantz_egui::node::NodeCodec {
 }
 
 /// A headless app with the gantz plugin, the test codec, the `vm::sync`
-/// system over the crate's entrypoints, the driven-node index and the given
-/// entrypoint driver. The
-/// minimal plumbing a driver needs.
+/// system over the crate's entrypoints, the node entity mirror and the given
+/// entrypoint driver. The minimal plumbing a driver needs.
 fn test_app<M>(driver: impl IntoScheduleConfigs<ScheduleSystem, M>) -> App {
     let mut app = App::new();
     app.add_plugins(TaskPoolPlugin::default())
@@ -46,15 +46,15 @@ fn test_app<M>(driver: impl IntoScheduleConfigs<ScheduleSystem, M>) -> App {
         .insert_resource(crate::NodeCodecRes(codec()))
         .init_resource::<crate::GraphCache>()
         .init_resource::<crate::BuiltinNodes>()
-        .init_resource::<crate::node::DriverIndex>()
+        .init_resource::<crate::NodeKinds>()
+        .add_node_kind::<crate::node::Await>()
+        .add_node_kind::<crate::node::LoadBang>()
         .add_systems(
             Update,
             (
                 crate::vm::sync.in_set(VmSet),
-                crate::node::index_driven_nodes
-                    .after(VmSet)
-                    .before(EntrypointSet),
-                driver.after(VmSet).in_set(EntrypointSet),
+                crate::entities::mirror.in_set(NodeSet),
+                driver.in_set(EntrypointSet),
             ),
         );
     app.world_mut()

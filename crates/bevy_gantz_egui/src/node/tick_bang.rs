@@ -1,24 +1,24 @@
 //! A self-driven node that fires once per configurable tick duration.
 //!
-//! `update!` bangs once per update. `tick!` owns its own time accumulator fed
-//! from Bevy `Time` and fires once for every whole tick duration elapsed since
-//! the last update. This keeps the tick count correct even when the app
-//! updates more slowly than the tick rate. The [`drive_tick_bangs`] Bevy
-//! system drives evaluation, not the node's `ui()` method, so it continues
-//! when the graph tab is not visible.
+//! `update!` bangs once per update. Each `tick!` node entity has a repeating
+//! [`TickTimer`] fed from Bevy `Time`, and fires once for every whole tick
+//! duration elapsed since the last update. This keeps the tick count correct
+//! even when the app updates more slowly than the tick rate. The
+//! [`drive_tick_bangs`] Bevy system drives evaluation, not the node's `ui()`
+//! method, so it continues when the graph tab is not visible.
 
 use bevy_ecs::prelude::*;
 use bevy_egui::egui;
+use bevy_gantz::node::PushEval;
 use bevy_time::prelude::*;
-use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
-use gantz_egui::node::DynNode;
+use gantz_core::node::{self, EvalConf, ExprCtx, ExprResult, MetaCtx};
 use gantz_egui::widget::kit;
 use gantz_egui::widget::node_inspector::radio_option;
 use gantz_format::{Datum, FormatError, SugarArgs, node_datum};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 use std::hash::{Hash, Hasher};
-use steel::SteelVal;
+use std::time::Duration;
 
 /// The default tick duration in seconds when unconfigured.
 const DEFAULT_DURATION: f64 = 1.0;
@@ -33,7 +33,7 @@ const MIN_RATE: f64 = 0.001;
 ///
 /// Caps fixed-timestep catch-up so a long stall cannot trigger an unbounded
 /// burst of evaluations. Any backlog beyond this many ticks is discarded.
-const MAX_CATCHUP_TICKS: f64 = 64.0;
+const MAX_CATCHUP_TICKS: u32 = 64;
 
 /// How a [`TickBang`]'s tick interval is specified.
 ///
@@ -150,11 +150,17 @@ impl Hash for Interval {
 /// effective tick duration in seconds as `f64` on each tick. The driver fires
 /// it once for every whole interval elapsed since the last update, so the
 /// tick count stays correct even when updates are slower than the tick rate.
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, NodeTag)]
+#[derive(Clone, Component, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, NodeTag)]
+#[require(TickTimer)]
 pub struct TickBang {
     #[serde(default, skip_serializing_if = "is_default_interval")]
     interval: Interval,
 }
+
+/// The repeating timer of a `tick!` node entity. [`drive_tick_bangs`] keeps
+/// its duration equal to the node's.
+#[derive(Component, Debug)]
+pub struct TickTimer(pub Timer);
 
 fn is_default_interval(interval: &Interval) -> bool {
     *interval == Interval::default()
@@ -186,27 +192,28 @@ impl Default for TickBang {
     }
 }
 
+impl Default for TickTimer {
+    fn default() -> Self {
+        let duration = Duration::from_secs_f64(DEFAULT_DURATION);
+        TickTimer(Timer::new(duration, TimerMode::Repeating))
+    }
+}
+
 impl gantz_core::Node for TickBang {
     fn n_outputs(&self, _ctx: MetaCtx) -> usize {
         1
     }
 
-    fn stateful(&self, _ctx: MetaCtx) -> bool {
-        true
+    fn push_eval(&self, _ctx: MetaCtx) -> Vec<EvalConf> {
+        // The entry fn that `drive_tick_bangs` fires once per tick.
+        vec![EvalConf::All]
     }
 
     fn expr(&self, _ctx: ExprCtx<'_, '_>) -> ExprResult {
-        // The per-tick output is the constant tick duration. The time
-        // accumulator also lives in this node's state but `drive_tick_bangs`
-        // owns it. Eval reads `state` and writes it back untouched. `{:?}`
-        // formats the float with a `.` or exponent so Steel parses it as a
-        // number rather than an integer.
+        // The per-tick output is the constant tick duration. `{:?}` formats
+        // the float with a `.` or exponent so Steel parses it as a number
+        // rather than an integer.
         node::parse_expr(&format!("(begin {:?})", self.duration()))
-    }
-
-    fn register(&self, mut ctx: RegCtx<'_, '_>) {
-        let path = ctx.path();
-        node::state::init_value_if_absent(ctx.vm(), path, || SteelVal::NumV(0.0)).unwrap()
     }
 }
 
@@ -330,99 +337,104 @@ impl gantz_egui::NodeUi for TickBang {
     }
 }
 
-/// Return one push entrypoint per `TickBang` node in the graph.
-///
-/// `update!` nodes all fire together every update and share a single
-/// multi-source entrypoint. `tick!` nodes fire independently, each on its own
-/// duration, so each gets its own single-source entrypoint that
-/// [`drive_tick_bangs`] can trigger the right number of times.
-pub fn entrypoints(
-    get_node: node::GetNode<'_>,
-    graph: &gantz_core::node::graph::Graph<DynNode>,
-) -> Vec<gantz_core::compile::Entrypoint> {
-    super::find_nodes::<TickBang>(get_node, graph)
-        .into_iter()
-        .map(|(path, _)| {
-            let source = gantz_core::compile::entrypoint::push_source(path, 1);
-            gantz_core::compile::entrypoint::from_sources([source])
-        })
-        .collect()
-}
-
 /// Drives `tick!` nodes every update, independent of GUI visibility.
 ///
-/// For each open head and each `tick!` node, advances the node's time
-/// accumulator by the update delta time and triggers one push evaluation for
-/// every whole tick duration elapsed. Catch-up is capped by
-/// `MAX_CATCHUP_TICKS`.
+/// Advances each `tick!` node's timer by the update delta time and triggers
+/// one push evaluation for every whole tick duration elapsed. Catch-up is
+/// capped by `MAX_CATCHUP_TICKS`. Any backlog beyond the cap is dropped.
 pub fn drive_tick_bangs(
     time: Res<Time>,
     epoch: Res<bevy_gantz::EvalEpoch>,
-    registry: Res<crate::Registry>,
-    index: Res<super::DriverIndex>,
-    mut vms: NonSendMut<bevy_gantz::head::HeadVms>,
-    heads: Query<(Entity, &bevy_gantz::head::HeadRef), With<bevy_gantz::head::OpenHead>>,
+    mut ticks: Query<(Entity, Ref<TickBang>, &mut TickTimer)>,
     mut cmds: Commands,
 ) {
-    let dt = time.delta_secs_f64();
     // The frame's monotonic now. Each tick's exact firing time derives from it.
     let now = epoch.now_secs();
-
-    for (entity, head_ref) in heads.iter() {
-        let Some(graph_ca) = registry.head_commit(&head_ref.0).map(|c| c.graph) else {
+    for (node, tick, mut timer) in ticks.iter_mut() {
+        // The inspector clamps to `MIN_DURATION`, but stored data may hold
+        // any duration.
+        let dur = tick.duration();
+        let Some(duration) = Duration::try_from_secs_f64(dur)
+            .ok()
+            .filter(|d| !d.is_zero())
+        else {
             continue;
         };
-        let Some(ticks) = index.get(&graph_ca).map(|driven| &driven.tick) else {
-            continue;
-        };
-        if ticks.is_empty() {
-            continue;
+        if tick.is_changed() {
+            timer.0.set_duration(duration);
         }
-
-        let Some(vm) = vms.get_mut(&entity) else {
-            continue;
-        };
-
-        for (path, dur) in ticks {
-            // The inspector clamps to `MIN_DURATION`, but never divide by a
-            // non-positive duration.
-            if !(*dur > 0.0) {
-                continue;
-            }
-
-            // Advance this node's accumulator and count whole ticks elapsed.
-            // Cap catch-up so a long stall cannot burst.
-            let mut acc = node::state::extract::<f64>(vm, path)
-                .ok()
-                .flatten()
-                .unwrap_or(0.0);
-            acc += dt;
-            let full = (acc / dur).floor();
-            let n = full.min(MAX_CATCHUP_TICKS) as u32;
-            // Subtract the full elapsed so the remainder is less than dur. Any
-            // backlog beyond the cap is dropped, not carried forward. The
-            // remainder `acc` is the time since the most recent tick boundary,
-            // so the latest tick fired `acc` seconds ago.
-            acc -= full * dur;
-            if let Err(e) = node::state::update_value(vm, path, SteelVal::NumV(acc)) {
-                bevy_log::error!("tick! state update failed: {e}");
-            }
-
-            // Trigger one eval per elapsed tick, oldest first. Each is stamped
-            // with the exact monotonic time it should fire. The i-th most
-            // recent tick fired at `now - acc - i*dur`, with i = 0 the latest.
-            // Per-tick times let the dsp driver schedule them sample-accurately
-            // across the interval rather than bunched at the frame boundary.
-            for i in (0..n).rev() {
-                let t = now - acc - i as f64 * *dur;
-                let source = gantz_core::compile::entrypoint::push_source(path.clone(), 1);
-                let entrypoint = gantz_core::compile::entrypoint::from_sources([source]);
-                cmds.trigger(bevy_gantz::vm::EvalEntryEvent {
-                    head: entity,
-                    entrypoint,
-                    time: Some(t),
-                });
-            }
+        timer.0.tick(time.delta());
+        let n = timer.0.times_finished_this_tick().min(MAX_CATCHUP_TICKS);
+        // The time since the most recent tick boundary.
+        let since = timer.0.elapsed_secs_f64();
+        // Trigger one eval per elapsed tick, oldest first. Each is stamped
+        // with the exact monotonic time it should fire. The i-th most recent
+        // tick fired at `now - since - i*dur`, with i = 0 the latest.
+        // Per-tick times let the dsp driver schedule them sample-accurately
+        // across the interval rather than bunched at the frame boundary.
+        for i in (0..n).rev() {
+            let time = Some(now - since - f64::from(i) * dur);
+            cmds.trigger(PushEval { entity: node, time });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy_app::{App, Update};
+    use bevy_time::TimeUpdateStrategy;
+
+    /// The times of the push evaluations of the update.
+    #[derive(Default, Resource)]
+    struct Pushes(Vec<f64>);
+
+    /// An app that drives one `tick!` node of `secs` per tick, and records
+    /// its pushes.
+    fn app(secs: f64) -> App {
+        let mut app = App::new();
+        app.add_plugins(bevy_time::TimePlugin)
+            .insert_resource(bevy_gantz::EvalEpoch(web_time::Instant::now()))
+            .init_resource::<Pushes>()
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO))
+            .add_systems(Update, drive_tick_bangs)
+            .add_observer(|on: On<PushEval>, mut pushes: ResMut<Pushes>| {
+                pushes.0.extend(on.time);
+            });
+        let mut tick = TickBang::default();
+        tick.set_interval(Interval::Duration(secs));
+        app.world_mut().spawn(tick);
+        app.update();
+        app
+    }
+
+    /// The pushes of one update that advances the clock by `secs`.
+    fn advance(app: &mut App, secs: f64) -> Vec<f64> {
+        let step = Duration::from_secs_f64(secs);
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(step));
+        app.update();
+        std::mem::take(&mut app.world_mut().resource_mut::<Pushes>().0)
+    }
+
+    /// An update fires once per whole tick that it passes, each at the time
+    /// of its own tick, oldest first.
+    #[test]
+    fn ticks_fire_once_each_at_their_times() {
+        let mut app = app(0.05);
+        let times = advance(&mut app, 0.175);
+        assert_eq!(times.len(), 3, "{times:?}");
+        let gaps: Vec<f64> = times.windows(2).map(|w| w[1] - w[0]).collect();
+        assert!(gaps.iter().all(|g| (g - 0.05).abs() < 1e-9), "{gaps:?}");
+        assert_eq!(advance(&mut app, 0.03).len(), 1, "the remainder carries");
+    }
+
+    /// An update that passes more ticks than `MAX_CATCHUP_TICKS` fires that
+    /// many, and drops the rest. Bevy clamps the delta of an update to a
+    /// quarter second, so the ticks are short.
+    #[test]
+    fn a_stall_catches_up_to_the_cap() {
+        let mut app = app(MIN_DURATION);
+        assert_eq!(advance(&mut app, 0.2).len(), MAX_CATCHUP_TICKS as usize);
+        assert!(advance(&mut app, 0.0).is_empty());
     }
 }
