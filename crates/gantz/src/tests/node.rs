@@ -912,7 +912,7 @@ fn node_set_addr_pins() {
     );
 }
 
-/// `PlyphonSugar` is composed into the app's `NodeSugar`, so the DSP nodes
+/// `PlyphonSugar` is composed into the app's `sugars`, so the DSP nodes
 /// serialize as their `~`-prefixed keyword forms rather than the generic
 /// `(node ...)` fallback. Guards that the sugar stays wired in.
 #[test]
@@ -929,7 +929,7 @@ fn dsp_nodes_use_plyphon_keyword_sugar() {
     }
 
     let unit = |name: &str| gantz_plyphon::UnitNode::from_unit(name).expect("table row");
-    let sugar = crate::node::codec().sugars();
+    let sugar = crate::node::sugars();
     let cases: [(gantz_ca::NodeData, &str, &str); 12] = [
         (erased(&unit("SinOsc")), "Unit", "~sinosc"),
         (erased(&unit("Lag")), "Unit", "~lag"),

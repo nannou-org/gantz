@@ -72,7 +72,7 @@ pub fn app(live: gantz_cli::Live, print: impl Fn(String) + Clone + Send + Sync +
         bevy_gantz_plyphon::PlyphonPlugin::default(),
     ))
     .insert_resource(builtins)
-    .insert_resource(NodeCodecRes(codec))
+    .insert_resource(NodeCodecRes(codec.clone()))
     .insert_resource(Registry(registry))
     .insert_resource(Fire {
         entry,

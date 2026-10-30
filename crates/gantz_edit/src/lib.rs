@@ -15,14 +15,6 @@
 //!   reference current, and [`cycle`] refuses references that would form a
 //!   cycle.
 
-#[doc(hidden)]
-pub use gantz_ca;
-#[doc(hidden)]
-pub use gantz_core;
-#[doc(hidden)]
-pub use gantz_format;
-#[doc(hidden)]
-pub use gantz_nodetag;
 pub use named_ref::NamedRef;
 pub use view::{Camera, Layout, NodeId, SceneView};
 

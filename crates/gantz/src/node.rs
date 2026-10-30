@@ -1,20 +1,3 @@
-/// The `.gantz` keyword sugar carrier composing
-/// every domain's node sugar.
-pub struct NodeSet;
-
-impl gantz_format::NodeSugar for NodeSet {
-    fn sugar() -> gantz_format::Sugars<'static> {
-        gantz_format::Sugars(vec![
-            &gantz_format::CoreSugar,
-            &gantz_io::IoSugar,
-            &gantz_egui::EguiSugar,
-            &bevy_gantz_egui::BevySugar,
-            &gantz_plyphon::PlyphonSugar,
-            &gantz_pattern::PatternSugar,
-        ])
-    }
-}
-
 /// The value-level codec for the app's node set. It maps typed nodes to and
 /// from the registry's erased `NodeData` form and carries the set's `.gantz`
 /// sugar.
@@ -23,47 +6,60 @@ impl gantz_format::NodeSugar for NodeSet {
 /// is one line here. The `codec_covers_every_node_set_case` and
 /// `node_set_addr_pins` gate tests enforce it.
 pub fn codec() -> gantz_egui::node::NodeCodec {
-    gantz_egui::ui_node_codec! {
-        NodeSet {
-            gantz_core::node::Apply,
-            gantz_core::node::Branch,
-            gantz_core::node::Delay,
-            gantz_core::node::Expr,
-            gantz_core::node::Identity,
-            gantz_core::node::List,
-            gantz_core::node::graph::Inlet,
-            gantz_core::node::graph::Outlet,
-            gantz_egui::node::Bang,
-            gantz_io::Log,
-            gantz_io::MainBang,
-            gantz_egui::node::Number,
-            gantz_egui::node::FnNamedRef,
-            gantz_edit::NamedRef,
-            gantz_egui::node::Bind,
-            gantz_egui::node::Comment,
-            bevy_gantz_egui::node::LoadBang,
-            bevy_gantz_egui::node::UpdateBang,
-            bevy_gantz_egui::node::TickBang,
-            bevy_gantz_egui::node::Await,
-            bevy_gantz_egui::node::Sleep,
-            gantz_egui::node::Gui,
-            gantz_egui::node::Inspect,
-            gantz_egui::node::State,
-            gantz_egui::node::Plot,
-            gantz_plyphon::UnitNode,
-            gantz_plyphon::Out,
-            gantz_plyphon::ScopeOut,
-            gantz_plyphon::Pack,
-            gantz_plyphon::Sum,
-            gantz_plyphon::Unpack,
-            gantz_plyphon::Bus,
-            gantz_plyphon::Sample,
-            gantz_plyphon::Buffer,
-            gantz_plyphon::Envgen,
-            gantz_pattern::Pmini,
-            gantz_pattern::Pplot,
-        }
-    }
+    use gantz_egui::node::kind;
+    gantz_egui::node::NodeCodec::new(
+        sugars(),
+        [
+            kind::<gantz_core::node::Apply>(),
+            kind::<gantz_core::node::Branch>(),
+            kind::<gantz_core::node::Delay>(),
+            kind::<gantz_core::node::Expr>(),
+            kind::<gantz_core::node::Identity>(),
+            kind::<gantz_core::node::List>(),
+            kind::<gantz_core::node::graph::Inlet>(),
+            kind::<gantz_core::node::graph::Outlet>(),
+            kind::<gantz_egui::node::Bang>(),
+            kind::<gantz_io::Log>(),
+            kind::<gantz_io::MainBang>(),
+            kind::<gantz_egui::node::Number>(),
+            kind::<gantz_egui::node::FnNamedRef>(),
+            kind::<gantz_edit::NamedRef>(),
+            kind::<gantz_egui::node::Bind>(),
+            kind::<gantz_egui::node::Comment>(),
+            kind::<bevy_gantz_egui::node::LoadBang>(),
+            kind::<bevy_gantz_egui::node::UpdateBang>(),
+            kind::<bevy_gantz_egui::node::TickBang>(),
+            kind::<bevy_gantz_egui::node::Await>(),
+            kind::<bevy_gantz_egui::node::Sleep>(),
+            kind::<gantz_egui::node::Gui>(),
+            kind::<gantz_egui::node::Inspect>(),
+            kind::<gantz_egui::node::State>(),
+            kind::<gantz_egui::node::Plot>(),
+            kind::<gantz_plyphon::UnitNode>(),
+            kind::<gantz_plyphon::Out>(),
+            kind::<gantz_plyphon::ScopeOut>(),
+            kind::<gantz_plyphon::Pack>(),
+            kind::<gantz_plyphon::Sum>(),
+            kind::<gantz_plyphon::Unpack>(),
+            kind::<gantz_plyphon::Bus>(),
+            kind::<gantz_plyphon::Sample>(),
+            kind::<gantz_plyphon::Buffer>(),
+            kind::<gantz_plyphon::Envgen>(),
+            kind::<gantz_pattern::Pmini>(),
+            kind::<gantz_pattern::Pplot>(),
+        ],
+    )
+}
+
+/// The `.gantz` keyword sugar of every domain's nodes.
+pub fn sugars() -> gantz_format::Sugars {
+    gantz_format::Sugars::default()
+        .with(gantz_format::CoreSugar)
+        .with(gantz_io::IoSugar)
+        .with(gantz_egui::EguiSugar)
+        .with(bevy_gantz_egui::BevySugar)
+        .with(gantz_plyphon::PlyphonSugar)
+        .with(gantz_pattern::PatternSugar)
 }
 
 /// The app's full builtin node set, composed from every domain's builtin

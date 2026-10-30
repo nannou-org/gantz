@@ -83,7 +83,7 @@ impl Peer {
             handle,
             sessions: Sessions::default(),
             registry,
-            mirror: Mirror::new(dir, conf.codec),
+            mirror: Mirror::new(dir, conf.codec.clone()),
             peer,
             branch: None,
             joined: false,

@@ -4,7 +4,7 @@
 //! self-sufficient working-graph weight. One erased value serves rendering,
 //! compilation and evaluation. The [`NodeCodec`] is the
 //! [`gantz_edit::codec::NodeCodec`] over [`DynNode`]. An application composes
-//! one with [`crate::ui_node_codec!`].
+//! one from the [`kind`] of each of its node types.
 
 use crate::NodeUi;
 use std::any::Any;
@@ -21,7 +21,10 @@ pub type DynNode = Box<dyn NodeUi>;
 /// The codec between the app's node set and its stored form.
 pub type NodeCodec = gantz_edit::codec::NodeCodec<DynNode>;
 
-/// A reified UI node paired with its concrete type's eraser.
+/// One node type of the app's node set. See [`kind`].
+pub type Kind = gantz_edit::codec::Kind<DynNode>;
+
+/// A reified UI node paired with the eraser of its kind.
 pub type NodeUiInstance = gantz_edit::codec::NodeInstance<DynNode>;
 
 /// The reified builtin palette. One [`DynNode`] instance per builtin.
@@ -46,40 +49,27 @@ impl gantz_core::node::AsRefNode for DynNode {
     }
 }
 
-/// Compose a [`crate::node::NodeCodec`] over a node set.
-///
-/// Takes the node set's `gantz_format::NodeSugar` carrier type and the list
-/// of node types. Each listed type must implement [`crate::NodeUi`] as well.
-/// See [`gantz_edit::node_codec!`].
+/// The [`Kind`] of the UI node type `T`.
 ///
 /// ```ignore
-/// pub struct NodeSet;
-///
-/// impl gantz_format::NodeSugar for NodeSet {
-///     fn sugar() -> gantz_format::Sugars<'static> {
-///         gantz_format::Sugars(vec![&gantz_format::CoreSugar])
-///     }
-/// }
-///
-/// pub fn codec() -> gantz_egui::node::NodeCodec {
-///     gantz_egui::ui_node_codec! {
-///         NodeSet {
-///             gantz_core::node::Expr,
-///             gantz_egui::node::Comment,
-///             // ...
-///         }
-///     }
-/// }
+/// let sugars = gantz_format::Sugars::default().with(gantz_format::CoreSugar);
+/// let codec = gantz_egui::node::NodeCodec::new(
+///     sugars,
+///     [
+///         gantz_egui::node::kind::<gantz_core::node::Expr>(),
+///         gantz_egui::node::kind::<gantz_egui::node::Comment>(),
+///     ],
+/// );
 /// ```
-#[macro_export]
-macro_rules! ui_node_codec {
-    ($carrier:ty { $($ty:ty),+ $(,)? }) => {
-        $crate::gantz_edit::node_codec! {
-            $crate::node::DynNode, |node| {
-                let node: &dyn $crate::gantz_core::Node = &**node;
-                node as &dyn ::std::any::Any
-            };
-            $carrier { $($ty),+ }
-        }
-    };
+pub fn kind<T>() -> Kind
+where
+    T: NodeUi + gantz_nodetag::NodeTag + serde::Serialize + serde::de::DeserializeOwned + 'static,
+{
+    Kind::typed::<T>(|node| Box::new(node), as_any)
+}
+
+/// The node of `node` as `Any`, for a downcast to its concrete type.
+fn as_any(node: &DynNode) -> &dyn Any {
+    let node: &dyn gantz_core::Node = &**node;
+    node
 }

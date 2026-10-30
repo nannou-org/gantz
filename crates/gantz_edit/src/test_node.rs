@@ -3,33 +3,25 @@
 //! build graphs in their stored data form.
 
 use crate::NamedRef;
-use crate::codec::DataCodec;
+use crate::codec::{DataCodec, Kind, NodeCodec};
 use gantz_ca::{DataGraph, NodeData};
-
-/// The node set's sugar carrier. See [`codec`].
-pub struct TestNodes;
+use std::any::Any;
 
 pub type TestGraph = DataGraph;
 
-impl gantz_format::NodeSugar for TestNodes {
-    fn sugar() -> gantz_format::Sugars<'static> {
-        gantz_format::Sugars(vec![&gantz_format::CoreSugar])
-    }
-}
-
 /// The data codec for the test node set.
 pub fn codec() -> DataCodec {
-    let codec: crate::codec::NodeCodec<Box<dyn gantz_core::Node>> = crate::node_codec! {
-        Box<dyn gantz_core::Node>, |node| {
-            let node: &dyn gantz_core::Node = &**node;
-            node as &dyn std::any::Any
-        };
-        TestNodes {
-            gantz_core::node::Expr,
-            NamedRef,
-        }
-    };
-    *codec.data()
+    type Node = Box<dyn gantz_core::Node>;
+    let as_any: fn(&Node) -> &dyn Any = |node| &**node as &dyn Any;
+    let sugars = gantz_format::Sugars::default().with(gantz_format::CoreSugar);
+    let codec: NodeCodec<Node> = NodeCodec::new(
+        sugars,
+        [
+            Kind::typed::<gantz_core::node::Expr>(|node| Box::new(node), as_any),
+            Kind::typed::<NamedRef>(|node| Box::new(node), as_any),
+        ],
+    );
+    codec.data().clone()
 }
 
 pub fn expr(src: &str) -> NodeData {

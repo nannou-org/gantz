@@ -23,9 +23,6 @@ fn main() -> eframe::Result {
     eframe::run_native(name, options, Box::new(|_cc| Ok(Box::new(App::new()))))
 }
 
-/// The `.gantz` keyword sugar for the demo's node set.
-struct NodeSet;
-
 struct App {
     codec: NodeCodec,
     registry: Registry,
@@ -99,16 +96,6 @@ impl App {
             logger,
             config,
         }
-    }
-}
-
-impl gantz_format::NodeSugar for NodeSet {
-    fn sugar() -> gantz_format::Sugars<'static> {
-        gantz_format::Sugars(vec![
-            &gantz_format::CoreSugar,
-            &gantz_io::IoSugar,
-            &gantz_egui::EguiSugar,
-        ])
     }
 }
 
@@ -229,17 +216,23 @@ impl HeadAccess for Open {
 /// The value-level codec for the demo's node set. This is the node set's
 /// manifest.
 fn codec() -> NodeCodec {
-    gantz_egui::ui_node_codec! {
-        NodeSet {
-            gantz_core::node::Expr,
-            gantz_egui::node::Bang,
-            gantz_egui::node::Comment,
-            gantz_egui::node::Inspect,
-            gantz_egui::node::Number,
-            gantz_egui::node::Plot,
-            gantz_io::Log,
-        }
-    }
+    use gantz_egui::node::kind;
+    let sugars = gantz_format::Sugars::default()
+        .with(gantz_format::CoreSugar)
+        .with(gantz_io::IoSugar)
+        .with(gantz_egui::EguiSugar);
+    NodeCodec::new(
+        sugars,
+        [
+            kind::<gantz_core::node::Expr>(),
+            kind::<gantz_egui::node::Bang>(),
+            kind::<gantz_egui::node::Comment>(),
+            kind::<gantz_egui::node::Inspect>(),
+            kind::<gantz_egui::node::Number>(),
+            kind::<gantz_egui::node::Plot>(),
+            kind::<gantz_io::Log>(),
+        ],
+    )
 }
 
 /// The node palette, as data. Each node type is in the codec.

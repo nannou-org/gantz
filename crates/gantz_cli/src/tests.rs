@@ -10,47 +10,38 @@ mod mirror;
 #[cfg(feature = "collab")]
 mod vault;
 
-/// The `.gantz` keyword sugar carrier of the test node set.
-struct NodeSet;
-
-impl gantz_format::NodeSugar for NodeSet {
-    fn sugar() -> gantz_format::Sugars<'static> {
-        gantz_format::Sugars(vec![
-            &gantz_format::CoreSugar,
-            &gantz_io::IoSugar,
-            &gantz_egui::EguiSugar,
-        ])
-    }
-}
-
 /// The core, std and egui node sets with the core base source. This is the
 /// smallest node set that the core base graphs parse and compile with.
 fn conf() -> Conf {
     Conf {
-        codec: gantz_egui::ui_node_codec! {
-            NodeSet {
-                gantz_core::node::Apply,
-                gantz_core::node::Branch,
-                gantz_core::node::Delay,
-                gantz_core::node::Expr,
-                gantz_core::node::Identity,
-                gantz_core::node::List,
-                gantz_core::node::graph::Inlet,
-                gantz_core::node::graph::Outlet,
-                gantz_egui::node::Bang,
-                gantz_io::Log,
-                gantz_io::MainBang,
-                gantz_egui::node::Number,
-                gantz_egui::node::FnNamedRef,
-                gantz_edit::NamedRef,
-                gantz_egui::node::Bind,
-                gantz_egui::node::Comment,
-                gantz_egui::node::Gui,
-                gantz_egui::node::Inspect,
-                gantz_egui::node::State,
-                gantz_egui::node::Plot,
-            }
-        },
+        codec: gantz_egui::node::NodeCodec::new(
+            gantz_format::Sugars::default()
+                .with(gantz_format::CoreSugar)
+                .with(gantz_io::IoSugar)
+                .with(gantz_egui::EguiSugar),
+            [
+                gantz_egui::node::kind::<gantz_core::node::Apply>(),
+                gantz_egui::node::kind::<gantz_core::node::Branch>(),
+                gantz_egui::node::kind::<gantz_core::node::Delay>(),
+                gantz_egui::node::kind::<gantz_core::node::Expr>(),
+                gantz_egui::node::kind::<gantz_core::node::Identity>(),
+                gantz_egui::node::kind::<gantz_core::node::List>(),
+                gantz_egui::node::kind::<gantz_core::node::graph::Inlet>(),
+                gantz_egui::node::kind::<gantz_core::node::graph::Outlet>(),
+                gantz_egui::node::kind::<gantz_egui::node::Bang>(),
+                gantz_egui::node::kind::<gantz_io::Log>(),
+                gantz_egui::node::kind::<gantz_io::MainBang>(),
+                gantz_egui::node::kind::<gantz_egui::node::Number>(),
+                gantz_egui::node::kind::<gantz_egui::node::FnNamedRef>(),
+                gantz_egui::node::kind::<gantz_edit::NamedRef>(),
+                gantz_egui::node::kind::<gantz_egui::node::Bind>(),
+                gantz_egui::node::kind::<gantz_egui::node::Comment>(),
+                gantz_egui::node::kind::<gantz_egui::node::Gui>(),
+                gantz_egui::node::kind::<gantz_egui::node::Inspect>(),
+                gantz_egui::node::kind::<gantz_egui::node::State>(),
+                gantz_egui::node::kind::<gantz_egui::node::Plot>(),
+            ],
+        ),
         builtins: gantz_core::Builtins::from_specs(
             gantz_core::node::builtins()
                 .into_iter()
