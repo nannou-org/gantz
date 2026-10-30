@@ -11,12 +11,15 @@
 
 use bevy_ecs::prelude::*;
 use bevy_egui::egui;
+use bevy_gantz::node::{NodeOf, NodePath, NodeState};
 use bevy_time::prelude::*;
+use gantz_core::compile::EvalSource;
 use gantz_core::node::{self, ExprCtx, ExprResult, MetaCtx, RegCtx};
 use gantz_egui::node::DynNode;
 use gantz_egui::widget::kit;
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use steel::SteelVal;
 
 /// A node that drives continuous evaluation every update.
@@ -24,7 +27,9 @@ use steel::SteelVal;
 /// Outputs the update's delta time in seconds as `f64`. This fires once per
 /// update, which may be more frequent than rendered frames under presentation
 /// modes like Mailbox.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, NodeTag)]
+#[derive(
+    Clone, Component, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, NodeTag,
+)]
 pub struct UpdateBang;
 
 impl gantz_core::Node for UpdateBang {
@@ -107,47 +112,27 @@ pub fn entrypoints(
 
 /// Drives `update!` nodes every update, independent of GUI visibility.
 ///
-/// For each open head, reads the `UpdateBang` nodes of the head's committed
-/// graph from the [`DriverIndex`](super::DriverIndex). Sets their state to the
-/// current update delta time and triggers a single push evaluation for all of
-/// them.
+/// Sets the state of each `update!` node to the update's delta time. Then it
+/// triggers a single push evaluation per head for all of its `update!` nodes.
 pub fn drive_update_bangs(
     time: Res<Time>,
-    registry: Res<crate::Registry>,
-    index: Res<super::DriverIndex>,
-    mut vms: NonSendMut<bevy_gantz::head::HeadVms>,
-    heads: Query<(Entity, &bevy_gantz::head::HeadRef), With<bevy_gantz::head::OpenHead>>,
+    nodes: Query<(Entity, &NodeOf, &NodePath), With<UpdateBang>>,
+    mut state: NodeState,
     mut cmds: Commands,
 ) {
-    let dt = time.delta_secs_f64();
-
-    for (entity, head_ref) in heads.iter() {
-        let Some(graph_ca) = registry.head_commit(&head_ref.0).map(|c| c.graph) else {
-            continue;
-        };
-        let Some(paths) = index.get(&graph_ca).map(|driven| &driven.update) else {
-            continue;
-        };
-        if paths.is_empty() {
-            continue;
+    let dt = SteelVal::NumV(time.delta_secs_f64());
+    let mut heads: HashMap<Entity, Vec<EvalSource>> = HashMap::new();
+    for (node, &NodeOf(head), path) in nodes.iter() {
+        if let Err(e) = state.set(node, dt.clone()) {
+            bevy_log::error!("update! state update failed: {e}");
         }
-
-        let Some(vm) = vms.get_mut(&entity) else {
-            continue;
-        };
-        for path in paths {
-            if let Err(e) = node::state::update_value(vm, path, SteelVal::NumV(dt)) {
-                bevy_log::error!("update! state update failed: {e}");
-            }
-        }
-
-        let sources = paths
-            .iter()
-            .map(|path| gantz_core::compile::entrypoint::push_source(path.clone(), 1));
-        let entrypoint = gantz_core::compile::entrypoint::from_sources(sources);
+        let source = gantz_core::compile::entrypoint::push_source(path.0.clone(), 1);
+        heads.entry(head).or_default().push(source);
+    }
+    for (head, sources) in heads {
         cmds.trigger(bevy_gantz::vm::EvalEntryEvent {
-            head: entity,
-            entrypoint,
+            head,
+            entrypoint: gantz_core::compile::entrypoint::from_sources(sources),
             // An update represents "now".
             time: None,
         });

@@ -1602,11 +1602,8 @@ fn output_is_valid_steel() {
 }
 
 /// A `tick!` node compiles to valid, runnable Steel. `base.gantz` does not
-/// use `tick!`, so this is the only coverage of its constant-duration
-/// expr, its stateful accumulator slot, and the per-node push entrypoint
-/// registered by `tick_bang::entrypoints`. `push_pull_entrypoints` does
-/// not discover that entrypoint, because `tick!` is driven externally
-/// rather than via `Node::push_eval`.
+/// use `tick!`, so this is the only coverage of its constant-duration expr
+/// and the push entrypoint that its `Node::push_eval` declares.
 #[test]
 fn tick_node_compiles() {
     use std::time::Duration;
@@ -1628,7 +1625,7 @@ fn tick_node_compiles() {
     let reg_env = env(&registry, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
 
-    let entrypoints = bevy_gantz_egui::node::tick_bang::entrypoints(&get_node, graph);
+    let entrypoints = gantz_core::compile::push_pull_entrypoints(&get_node, graph);
     assert_eq!(
         entrypoints.len(),
         1,
@@ -2789,10 +2786,7 @@ fn demo_pattern_partial_evals_are_silent() {
     let head = gantz_ca::Head::Branch(name("demo.pat"));
     let graph = head_graph(&reified, &merged, &head).expect("demo.pat graph");
 
-    let mut eps = push_pull_entrypoints(&get_node, graph);
-    eps.extend(bevy_gantz_egui::node::tick_bang::entrypoints(
-        &get_node, graph,
-    ));
+    let eps = push_pull_entrypoints(&get_node, graph);
 
     let (mut vm, _c) = gantz_core::vm::init_with_modules(
         &get_node,

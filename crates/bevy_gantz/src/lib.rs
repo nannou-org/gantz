@@ -10,7 +10,7 @@
 //!
 //! - Request events ask for an operation. They are [`head::OpenEvent`],
 //!   [`head::CloseEvent`], [`head::ReplaceEvent`], [`head::BranchHeadEvent`],
-//!   [`head::MoveHeadEvent`] and [`vm::EvalEntryEvent`].
+//!   [`head::MoveHeadEvent`], [`vm::EvalEntryEvent`] and [`node::PushEval`].
 //! - Hook events announce that one happened. They decouple this crate from
 //!   downstream UI crates. They are [`head::OpenedEvent`],
 //!   [`head::ClosedEvent`], [`head::ChangedEvent`],
@@ -23,6 +23,7 @@
 
 pub mod debounced_input;
 pub mod head;
+pub mod node;
 pub mod reg;
 pub mod storage;
 pub mod task;
@@ -49,8 +50,17 @@ pub use vm::{
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
 pub struct VmSet;
 
+/// The `Update` system set that mirrors the [`node`] entities of each open
+/// head from its graph. It runs after [`VmSet`].
+///
+/// Systems that query node entities should run `.after(NodeSet)`. Then they
+/// see the nodes of each head's current graph.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, SystemSet)]
+pub struct NodeSet;
+
 /// The `Update` system set that groups the entrypoint drivers for host-driven
-/// evaluations such as `load!`, `tick!` and `update!`.
+/// evaluations such as `load!`, `tick!` and `update!`. It runs after
+/// [`NodeSet`].
 ///
 /// Consumers that read state written by those evaluations should run
 /// `.after(EntrypointSet)`. The dsp driver is one such consumer. It drains the
@@ -112,6 +122,8 @@ impl Plugin for GantzPlugin {
             .add_observer(head::on_branch_head)
             .add_observer(head::on_move_head)
             .add_observer(vm::on_eval_entry)
+            .add_observer(node::on_push_eval)
+            .configure_sets(Update, (VmSet, NodeSet, EntrypointSet).chain())
             .add_systems(Update, vm::validate_committed.after(VmSet));
     }
 }

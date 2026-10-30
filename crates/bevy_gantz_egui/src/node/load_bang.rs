@@ -11,6 +11,7 @@
 use bevy_ecs::prelude::*;
 use bevy_egui::egui;
 use bevy_gantz::head::{HeadRef, Module, OpenHead, PendingLoad};
+use bevy_gantz::node::{HeadNodes, NodePath};
 use bevy_gantz::vm::{CompileConfig, CompiledInputs, Inputs};
 use gantz_core::node::{self, EvalConf, ExprCtx, ExprResult, MetaCtx};
 use gantz_egui::node::DynNode;
@@ -21,7 +22,9 @@ use serde::{Deserialize, Serialize};
 /// A node that emits a bang when its graph loads.
 ///
 /// Double-click the node to fire it again by hand.
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, NodeTag)]
+#[derive(
+    Clone, Component, Debug, Default, Eq, Hash, PartialEq, Deserialize, Serialize, NodeTag,
+)]
 pub struct LoadBang;
 
 impl gantz_core::Node for LoadBang {
@@ -111,12 +114,20 @@ pub fn entrypoint(
 pub fn drive_load_bangs(
     config: Res<CompileConfig>,
     registry: Res<crate::Registry>,
-    cache: Res<crate::GraphCache>,
-    builtins: Res<crate::BuiltinNodes>,
-    heads: Query<(Entity, &HeadRef, &CompiledInputs, &Module), (With<OpenHead>, With<PendingLoad>)>,
+    heads: Query<
+        (
+            Entity,
+            &HeadRef,
+            &CompiledInputs,
+            &Module,
+            Option<&HeadNodes>,
+        ),
+        (With<OpenHead>, With<PendingLoad>),
+    >,
+    loads: Query<&NodePath, With<LoadBang>>,
     mut cmds: Commands,
 ) {
-    for (entity, head_ref, compiled_inputs, module) in heads.iter() {
+    for (entity, head_ref, compiled_inputs, module, nodes) in heads.iter() {
         let Some(graph_ca) = registry.head_commit(&head_ref.0).map(|c| c.graph) else {
             continue;
         };
@@ -128,18 +139,18 @@ pub fn drive_load_bangs(
             continue;
         }
         cmds.entity(entity).remove::<PendingLoad>();
-
-        let Some(graph) = cache.get(&graph_ca) else {
+        let sources: Vec<_> = nodes
+            .into_iter()
+            .flat_map(|nodes| loads.iter_many(nodes.iter()))
+            .map(|path| gantz_core::compile::entrypoint::push_source(path.0.clone(), 1))
+            .collect();
+        if sources.is_empty() {
             continue;
-        };
-        let get_node =
-            |ca: &gantz_ca::ContentAddr| crate::lookup_node(&cache, &builtins.instances, ca);
-        if let Some(entrypoint) = entrypoint(&get_node, graph) {
-            cmds.trigger(bevy_gantz::vm::EvalEntryEvent {
-                head: entity,
-                entrypoint,
-                time: None,
-            });
         }
+        cmds.trigger(bevy_gantz::vm::EvalEntryEvent {
+            head: entity,
+            entrypoint: gantz_core::compile::entrypoint::from_sources(sources),
+            time: None,
+        });
     }
 }

@@ -108,29 +108,38 @@ struct EntrypointCollector<'a> {
 
 impl visit::Visitor for EntrypointCollector<'_> {
     fn visit_pre(&mut self, ctx: visit::Ctx<'_, '_>, node: &dyn Node) {
-        let meta_ctx = node::MetaCtx::new(self.get_node);
-        let path = ctx.path().to_vec();
-        let n_outputs = node.n_outputs(meta_ctx);
-        for conf in node.push_eval(meta_ctx) {
-            let conns = super::meta::conns_from_eval_conf(&conf, n_outputs)
-                .expect("push_eval conf exceeds output count");
-            self.eps.push(from_source(EvalSource {
-                path: path.clone(),
-                kind: EvalKind::Push,
-                conns,
-            }));
-        }
-        let n_inputs = node.n_inputs(meta_ctx);
-        for conf in node.pull_eval(meta_ctx) {
-            let conns = super::meta::conns_from_eval_conf(&conf, n_inputs)
-                .expect("pull_eval conf exceeds input count");
-            self.eps.push(from_source(EvalSource {
-                path: path.clone(),
-                kind: EvalKind::Pull,
-                conns,
-            }));
+        for kind in [EvalKind::Push, EvalKind::Pull] {
+            let eps = node_entrypoints(self.get_node, ctx.path(), node, kind);
+            self.eps.extend(eps);
         }
     }
+}
+
+/// The singleton entrypoints of the node at `path`, one per conf of its
+/// [`Node::push_eval`] or [`Node::pull_eval`].
+pub fn node_entrypoints(
+    get_node: node::GetNode<'_>,
+    path: &[node::Id],
+    node: &dyn Node,
+    kind: EvalKind,
+) -> Vec<Entrypoint> {
+    let meta_ctx = node::MetaCtx::new(get_node);
+    let (confs, n_conns) = match kind {
+        EvalKind::Push => (node.push_eval(meta_ctx), node.n_outputs(meta_ctx)),
+        EvalKind::Pull => (node.pull_eval(meta_ctx), node.n_inputs(meta_ctx)),
+    };
+    confs
+        .iter()
+        .map(|conf| {
+            let conns = super::meta::conns_from_eval_conf(conf, n_conns)
+                .expect("eval conf exceeds the node's connection count");
+            from_source(EvalSource {
+                path: path.to_vec(),
+                kind,
+                conns,
+            })
+        })
+        .collect()
 }
 
 /// Collect one singleton entrypoint per push or pull eval node.

@@ -17,6 +17,7 @@ use std::ops::{Deref, DerefMut};
 mod access;
 pub mod base;
 mod edit;
+pub mod entities;
 mod graphs;
 mod gui;
 mod history;
@@ -45,6 +46,7 @@ pub use edit::{
     on_drop_unknown_data, on_duplicate_nodes, on_inspect_edge, on_nest_nodes, on_paste,
     on_replace_node,
 };
+pub use entities::{NodeKindAppExt, NodeKinds};
 use graphs::{on_new_graph, on_remove_name, on_set_demo, on_set_description};
 pub(crate) use gui::handle_gantz_response;
 pub use gui::{GantzInputs, update};
@@ -193,7 +195,11 @@ impl Plugin for GantzEguiPlugin {
             .init_resource::<GraphCache>()
             .init_resource::<BuiltinNodes>()
             .init_resource::<BaseNames>()
-            .init_resource::<node::DriverIndex>()
+            .init_resource::<NodeKinds>()
+            .add_node_kind::<node::Await>()
+            .add_node_kind::<node::LoadBang>()
+            .add_node_kind::<node::TickBang>()
+            .add_node_kind::<node::UpdateBang>()
             .init_resource::<base::BaseNameSources>()
             .init_resource::<GuiState>()
             .init_resource::<TraceCapture>()
@@ -253,41 +259,33 @@ impl Plugin for GantzEguiPlugin {
             .add_observer(on_reset_all_demos)
             .add_observer(on_compile_config)
             .add_observer(on_validate_change_tracking)
-            // Systems. `drive_update_bangs` evaluates head VMs, so it must not
+            // Systems. The drivers in `EntrypointSet` evaluate head VMs. The
+            // set runs after `VmSet` and `NodeSet`, so the drivers never
             // observe the gap between a head pointing at a new graph and
-            // `vm::sync` reinitializing its VM.
+            // `vm::sync` reinitializing its VM, or the mirror updating its
+            // node entities.
             .add_systems(
                 Update,
                 (
                     // Recompiles whenever a head's compile inputs change.
                     vm::sync.in_set(bevy_gantz::VmSet),
-                    // The drivers read the driven nodes from the index.
-                    node::index_driven_nodes
-                        .after(bevy_gantz::VmSet)
-                        .before(bevy_gantz::EntrypointSet),
+                    // Mirrors the node entities of each head's graph.
+                    entities::mirror.in_set(bevy_gantz::NodeSet),
                     // Runs before the other drivers so a loaded graph
                     // evaluates its `load!` nodes before its first `update!`
                     // and `tick!` passes.
                     node::load_bang::drive_load_bangs
-                        .after(bevy_gantz::VmSet)
                         .before(node::update_bang::drive_update_bangs)
                         .before(node::tick_bang::drive_tick_bangs)
                         .before(node::await_::drive_awaits)
                         .in_set(bevy_gantz::EntrypointSet),
-                    node::update_bang::drive_update_bangs
-                        .after(bevy_gantz::VmSet)
-                        .in_set(bevy_gantz::EntrypointSet),
-                    node::tick_bang::drive_tick_bangs
-                        .after(bevy_gantz::VmSet)
-                        .in_set(bevy_gantz::EntrypointSet),
-                    node::await_::drive_awaits
-                        .after(bevy_gantz::VmSet)
-                        .in_set(bevy_gantz::EntrypointSet),
+                    node::update_bang::drive_update_bangs.in_set(bevy_gantz::EntrypointSet),
+                    node::tick_bang::drive_tick_bangs.in_set(bevy_gantz::EntrypointSet),
+                    node::await_::drive_awaits.in_set(bevy_gantz::EntrypointSet),
                     // Re-pulls gui markers of dirty or recompiled heads. Runs
                     // after the entrypoint drivers so their pushes refresh
                     // markers the same frame.
                     node::gui_refresh::refresh_gui_markers
-                        .after(bevy_gantz::VmSet)
                         .after(node::load_bang::drive_load_bangs)
                         .after(node::update_bang::drive_update_bangs)
                         .after(node::tick_bang::drive_tick_bangs)
