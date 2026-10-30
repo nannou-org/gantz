@@ -81,6 +81,27 @@ pub struct Conf {
     /// This build: the app and its version, such as `gantz 0.4.0`. Peers see
     /// it for display.
     pub build: &'static str,
+    /// Keeps a graph running with the systems of the app, for `run --live`,
+    /// and gives the exit code. `None` when the app runs no graph live.
+    pub live: Option<fn(Live) -> i32>,
+}
+
+/// A graph to keep running, for [`Conf::live`].
+pub struct Live {
+    /// Every loaded graph: the base graphs, the dependencies and the file.
+    pub registry: gantz_ca::Registry,
+    /// The graph to run.
+    pub name: gantz_ca::Name,
+    /// The evaluation to fire once the graph compiles: the main! nodes, or
+    /// the push source of `--push`. `None` for a graph with neither, which
+    /// its own nodes drive, such as `tick!`.
+    pub entry: Option<gantz_core::compile::Entrypoint>,
+    /// The paths of the main! nodes, whose state takes `args`.
+    pub main: Vec<Vec<gantz_core::node::Id>>,
+    /// The program arguments.
+    pub args: Vec<String>,
+    /// How long to run, else until interrupted.
+    pub duration: Option<std::time::Duration>,
 }
 
 #[derive(Subcommand)]
@@ -266,6 +287,14 @@ pub struct RunArgs {
     /// or `-` for a node with no label.
     #[arg(long, conflicts_with = "push")]
     list: bool,
+    /// Keep the graph running with the systems of the app, so that nodes
+    /// such as `tick!` and the nodes of plugin domains run. Log values print
+    /// as they come. It runs until interrupted, or for the `--for` time.
+    #[arg(long, conflicts_with = "list")]
+    live: bool,
+    /// With `--live`, stop after this many seconds.
+    #[arg(long = "for", value_name = "SECS", requires = "live")]
+    duration: Option<f64>,
     /// The program arguments. Each main! node outputs them as a list of
     /// strings.
     #[arg(last = true, value_name = "ARGS")]
@@ -301,6 +330,16 @@ struct Ready {
     loaded: headless::Loaded,
     reified: headless::Reified,
     builtins: headless::Builtins,
+}
+
+/// The graph that `run` runs, and the evaluation that it fires.
+struct Run<'a> {
+    target: Target<'a>,
+    /// The main! nodes, or the push source of `--push`. `None` when the
+    /// graph has neither and the run allows it.
+    entry: Option<gantz_core::compile::Entrypoint>,
+    /// The main! nodes, whose state takes the program arguments.
+    main: Option<gantz_core::compile::Entrypoint>,
 }
 
 /// The one graph that a `compile` or `run` target names.
@@ -357,6 +396,7 @@ pub fn run(command: Command, conf: &Conf) -> i32 {
             });
             (files, output)
         }
+        Command::Run(args) if args.live => return run_live(conf, args),
         Command::Run(args) => {
             let files = vec![args.file];
             let output = with_sources(conf, &args.seed, &files, |s, t| {
@@ -753,45 +793,26 @@ pub fn run_graph(
     args: &[String],
 ) -> Output {
     let (ready, mut output) = ready(conf, sources, target..target + 1);
-    let Target {
-        label,
-        name,
-        labels,
-        graph,
-    } = match target_graph(&ready, sources, target, name) {
-        Ok(target) => target,
-        Err(diagnostic) => {
-            output.diagnostics.extend(diagnostic);
+    let Run {
+        target: Target {
+            label, name, graph, ..
+        },
+        entry,
+        main,
+    } = match resolve_run(&ready, sources, target, name, push, true) {
+        Ok(run) => run,
+        Err(diagnostics) => {
+            output.diagnostics.extend(diagnostics);
             return output;
         }
+    };
+    let Some(entry) = entry else {
+        let diagnostic = format!("{label}: graph `{name}`: nothing to fire");
+        output.diagnostics.push(diagnostic);
+        return output;
     };
     let env = ready.env();
     let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
-    let main = gantz_io::main_bang::entrypoint(graph);
-    let pushes = push_sources(&get_node, graph);
-    let entry = match (push, &main) {
-        (Some(node), _) => {
-            let path = node_path(labels, node);
-            match pushes.iter().find(|(p, _)| Some(p) == path.as_ref()) {
-                Some((_, ep)) => ep.clone(),
-                None => {
-                    output.diagnostics.push(format!(
-                        "{label}: graph `{name}`: no push source `{node}`. Push sources: {}",
-                        push_sources_text(&pushes, labels),
-                    ));
-                    return output;
-                }
-            }
-        }
-        (None, Some(main)) => main.clone(),
-        (None, None) => {
-            output.diagnostics.push(format!(
-                "{label}: graph `{name}`: no main! node, pass --push <NODE>. Push sources: {}",
-                push_sources_text(&pushes, labels),
-            ));
-            return output;
-        }
-    };
 
     // Compile as the app does, plus the entry if the app does not compile it.
     let mut entrypoints = (conf.entrypoints)(&get_node, graph);
@@ -834,6 +855,106 @@ pub fn run_graph(
             .push(diagnostic_line(label, &name, &diagnostic));
     }
     output
+}
+
+/// Keep the graph of `args` running through [`Conf::live`], and give the
+/// exit code.
+fn run_live(conf: &Conf, args: RunArgs) -> i32 {
+    let Some(live) = conf.live else {
+        eprintln!("this app runs no graph live");
+        return 2;
+    };
+    let duration = match args.duration.map(std::time::Duration::try_from_secs_f64) {
+        None => None,
+        Some(Ok(duration)) => Some(duration),
+        Some(Err(_)) => {
+            eprintln!("--for takes a number of seconds");
+            return 2;
+        }
+    };
+    let files = vec![args.file];
+    let mut given = None;
+    let output = with_sources(conf, &args.seed, &files, |sources, targets| {
+        let target = targets.start;
+        let (ready, mut output) = ready(conf, sources, targets);
+        let (graph, push) = (args.graph.as_deref(), args.push.as_deref());
+        match resolve_run(&ready, sources, target, graph, push, false) {
+            Ok(run) => {
+                let main = run.main.iter().flat_map(|ep| &ep.0);
+                given = Some(Live {
+                    registry: ready.loaded.registry.clone(),
+                    name: run.target.name.clone(),
+                    entry: run.entry,
+                    main: main.map(|source| source.path.clone()).collect(),
+                    args: args.args.clone(),
+                    duration,
+                });
+            }
+            Err(diagnostics) => output.diagnostics.extend(diagnostics),
+        }
+        output
+    });
+    for line in &output.warnings {
+        eprintln!("warning: {line}");
+    }
+    for line in &output.diagnostics {
+        eprintln!("{line}");
+    }
+    match given {
+        Some(given) if output.diagnostics.is_empty() => live(given),
+        _ => 1,
+    }
+}
+
+/// The graph that the target of `run` names, and the evaluation to fire: the
+/// push source `push`, else the main! nodes. With `need_entry`, a graph with
+/// neither is an error.
+fn resolve_run<'a>(
+    ready: &'a Ready,
+    sources: &'a [Source],
+    target: usize,
+    name: Option<&str>,
+    push: Option<&str>,
+    need_entry: bool,
+) -> Result<Run<'a>, Vec<String>> {
+    let target = target_graph(ready, sources, target, name).map_err(Vec::from_iter)?;
+    let Target {
+        label,
+        name,
+        labels,
+        graph,
+    } = &target;
+    let env = ready.env();
+    let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
+    let main = gantz_io::main_bang::entrypoint(graph);
+    let pushes = push_sources(&get_node, graph);
+    let entry = match (push, &main) {
+        (Some(node), _) => {
+            let path = node_path(*labels, node);
+            match pushes.iter().find(|(p, _)| Some(p) == path.as_ref()) {
+                Some((_, ep)) => Some(ep.clone()),
+                None => {
+                    return Err(vec![format!(
+                        "{label}: graph `{name}`: no push source `{node}`. Push sources: {}",
+                        push_sources_text(&pushes, *labels),
+                    )]);
+                }
+            }
+        }
+        (None, Some(main)) => Some(main.clone()),
+        (None, None) if !need_entry => None,
+        (None, None) => {
+            return Err(vec![format!(
+                "{label}: graph `{name}`: no main! node, pass --push <NODE>. Push sources: {}",
+                push_sources_text(&pushes, *labels),
+            )]);
+        }
+    };
+    Ok(Run {
+        target,
+        entry,
+        main,
+    })
 }
 
 /// The graph `name` names in the target, or else the target's unique root
