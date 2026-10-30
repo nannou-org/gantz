@@ -558,7 +558,7 @@ fn load(conf: &Conf, sources: &[Source], targets: Range<usize>) -> (headless::Lo
 ///
 /// Reify failures join the parse diagnostics.
 fn ready(conf: &Conf, sources: &[Source], targets: Range<usize>) -> (Ready, Output) {
-    let codec = conf.codec;
+    let codec = conf.codec.clone();
     let (loaded, mut output) = load(conf, sources, targets);
     let (reified, errs) = headless::reify_all(&loaded.registry, &codec);
     output
@@ -591,7 +591,7 @@ pub(crate) fn is_address_mode(text: &str) -> bool {
 /// in. Under `check`, targets that differ are diagnostics and nothing is
 /// written.
 pub fn fmt(conf: &Conf, sources: &[Source], targets: Range<usize>, check: bool) -> Output {
-    let codec = conf.codec;
+    let codec = &conf.codec;
     let (loaded, mut output) = load(conf, sources, targets.clone());
     for ix in targets {
         let Ok(parsed) = &loaded.parsed[ix] else {

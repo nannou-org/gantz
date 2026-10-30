@@ -12,15 +12,15 @@
 //! dependency on the concrete node crates and never sees the raw s-expression
 //! AST.
 //!
-//! Which sugars an application uses is a static property of its node-type
-//! universe. [`NodeSugar`] ties a top-level node type to its composite, and
-//! the convenience entry points read it via `N::sugar()`.
+//! An application composes the sugars of its node set into one [`Sugars`],
+//! which its node codec carries.
 
 use crate::datum::{Datum, node_datum};
 use crate::error::{ErrorKind, FormatError};
 use crate::sexpr::{self, as_keyword, as_string, as_symbol, err_at, quote, span_src};
 use gantz_core::node::List;
 use gantz_nodetag::NodeTag;
+use std::sync::Arc;
 use steel::parser::ast::ExprKind;
 
 /// The arguments of a list-headed sugar form `(<head> <args>...)`, with helpers
@@ -289,9 +289,18 @@ impl<S: Sugar + ?Sized> Sugar for &S {
 
 /// An ordered composition of sugars. For each query the first sugar to handle
 /// it wins, so earlier entries take precedence.
-pub struct Sugars<'a>(pub Vec<&'a dyn Sugar>);
+#[derive(Clone, Default)]
+pub struct Sugars(pub Vec<Arc<dyn Sugar + Send + Sync>>);
 
-impl Sugar for Sugars<'_> {
+impl Sugars {
+    /// Add `sugar` after the sugars that take precedence over it.
+    pub fn with(mut self, sugar: impl Sugar + Send + Sync + 'static) -> Self {
+        self.0.push(Arc::new(sugar));
+        self
+    }
+}
+
+impl Sugar for Sugars {
     fn read_spec(&self, head: &str, args: SugarArgs<'_>) -> Result<Option<Datum>, FormatError> {
         for sugar in &self.0 {
             if let Some(datum) = sugar.read_spec(head, args)? {
@@ -317,16 +326,6 @@ impl Sugar for Sugars<'_> {
         // Forwarded rather than defaulted, so each member's own override applies.
         self.0.iter().find_map(|s| s.label_stem(tag, node))
     }
-}
-
-/// The composite keyword sugar for a node-type universe.
-///
-/// Implemented once on a carrier type for an application's node set, to
-/// select which [`Sugar`]s the node set uses. The node set's codec reads it
-/// and passes the composite to the `_with` and `_normalized` entry points.
-pub trait NodeSugar {
-    /// The composed sugar for this node set.
-    fn sugar() -> Sugars<'static>;
 }
 
 /// The keyword sugars for `gantz_core`'s built-in node set. Those are `inlet`,
@@ -710,8 +709,7 @@ mod tests {
 
     #[test]
     fn sugars_compose_first_hit_wins() {
-        let (gain, core) = (GainSugar, CoreSugar);
-        let sugars = Sugars(vec![&gain, &core]);
+        let sugars = Sugars::default().with(GainSugar).with(CoreSugar);
 
         // The custom keyword is handled by GainSugar.
         let g = read_spec(&sugars, "(gain 3)").expect("gain recognised");

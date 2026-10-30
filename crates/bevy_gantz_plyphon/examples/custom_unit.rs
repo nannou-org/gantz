@@ -139,25 +139,16 @@ impl gantz_egui::NodeUi for SawNode {
 
 // 3. The node codec over the `~saw` source and the reused `~out` sink.
 
-/// The example's `.gantz` sugar carrier. The codec macro requires it. This
-/// example never parses or exports text.
-struct NodeSet;
-
-impl gantz_format::NodeSugar for NodeSet {
-    fn sugar() -> gantz_format::Sugars<'static> {
-        gantz_format::Sugars(vec![&gantz_format::CoreSugar])
-    }
-}
-
 /// The value-level codec over the example's node set. The seam through which
 /// the runtime's reified-graph cache serves the stored graph as typed nodes.
 fn codec() -> gantz_egui::node::NodeCodec {
-    gantz_egui::ui_node_codec! {
-        NodeSet {
-            SawNode,
-            gantz_plyphon::Out,
-        }
-    }
+    gantz_egui::node::NodeCodec::new(
+        gantz_format::Sugars::default(),
+        [
+            gantz_egui::node::kind::<SawNode>(),
+            gantz_egui::node::kind::<gantz_plyphon::Out>(),
+        ],
+    )
 }
 
 // 4. The headless bevy app.

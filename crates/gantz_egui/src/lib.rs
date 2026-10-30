@@ -27,19 +27,6 @@ pub mod ui_tree;
 pub mod view;
 pub mod widget;
 
-// Re-exported for `ui_node_codec!` expansions via `$crate::...` paths. Depend
-// on the crates directly to use them.
-#[doc(hidden)]
-pub use gantz_ca;
-#[doc(hidden)]
-pub use gantz_core;
-#[doc(hidden)]
-pub use gantz_edit;
-#[doc(hidden)]
-pub use gantz_format;
-#[doc(hidden)]
-pub use gantz_nodetag;
-
 pub use action::StateWritten;
 pub use egui_graph::SocketKind;
 pub use keybind::{Action, Keymap};

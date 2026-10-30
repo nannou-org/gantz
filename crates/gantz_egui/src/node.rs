@@ -5,7 +5,9 @@
 pub use bang::Bang;
 pub use bind::Bind;
 pub use comment::Comment;
-pub use dyn_node::{DynNode, NodeCodec, NodeUiInstance, NormalizeNodeError, UiBuiltins};
+pub use dyn_node::{
+    DynNode, Kind, NodeCodec, NodeUiInstance, NormalizeNodeError, UiBuiltins, kind,
+};
 pub use fn_named_ref::FnNamedRef;
 #[doc(inline)]
 pub use gantz_core::node::{Id, state};

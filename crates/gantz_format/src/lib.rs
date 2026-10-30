@@ -14,8 +14,7 @@
 //!
 //! Node keywords such as `expr` and `inlet` are pluggable [`Sugar`]. Each
 //! crate owns the sugar for its own nodes, and a node set composes them into
-//! one [`NodeSugar`]. [`CoreSugar`] covers `gantz_core`'s nodes. Compose
-//! sugars with [`Sugars`]. A node that no sugar recognises round-trips
+//! one [`Sugars`]. [`CoreSugar`] covers `gantz_core`'s nodes. A node that no sugar recognises round-trips
 //! through the generic `(node ...)` form.
 //!
 //! Reading takes a [`Normalize`] fn, which turns each parsed node into its
@@ -44,7 +43,7 @@ pub use gantz_core::datum::{Datum, DatumError, from_datum, node_datum, to_datum}
 pub use lower::{Loaded, Normalize};
 pub use model::{Addr, Document, Form};
 pub use raise::{Dumped, GraphLabels};
-pub use sugar::{CoreSugar, NodeSugar, Sugar, SugarArgs, Sugars};
+pub use sugar::{CoreSugar, Sugar, SugarArgs, Sugars};
 
 use gantz_ca::{Registry, Timestamp};
 
@@ -132,8 +131,8 @@ mod test_util {
 
 #[cfg(test)]
 mod tests {
-    //! `NodeSugar` and `Sugar` are both entirely optional for a node type. A
-    //! node whose tag no sugar recognises round-trips through the generic
+    //! A `Sugar` is entirely optional for a node type. A node whose tag no
+    //! sugar recognises round-trips through the generic
     //! `(node "Tag" ...)` form. This guards that property.
 
     use super::test_util::normalize_as;
@@ -143,8 +142,7 @@ mod tests {
     use serde::{Deserialize, Serialize};
     use std::collections::BTreeMap;
 
-    // A node type with neither a `NodeSugar` nor a `Sugar`. It carries no
-    // first-class keyword at all.
+    // A node type with no `Sugar`. It carries no first-class keyword at all.
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, NodeTag)]
     struct Knob {
         value: i64,
@@ -172,9 +170,9 @@ mod tests {
         // A graph with one node written in the generic form. `Knob` is unknown to
         // every sugar, so it must round-trip via `(node "Knob" ...)`.
         let text = "(graph g (k (node \"Knob\" (value 7))))";
-        let loaded = parse(text).expect("parse without NodeSugar");
+        let loaded = parse(text).expect("parse without sugar");
         let dumped =
-            to_string_with(&loaded.registry, &CoreSugar, &[]).expect("write without NodeSugar");
+            to_string_with(&loaded.registry, &CoreSugar, &[]).expect("write without sugar");
 
         assert!(
             dumped.text.contains("(node \"Knob\""),

@@ -12,28 +12,19 @@ mod layout_settle;
 mod load_bang;
 mod undo_resync;
 
-/// The test app's `.gantz` sugar carrier. The codec macro requires it. The
-/// tests never parse text.
-struct TestNodes;
-
-impl gantz_format::NodeSugar for TestNodes {
-    fn sugar() -> gantz_format::Sugars<'static> {
-        gantz_format::Sugars(vec![&gantz_format::CoreSugar])
-    }
-}
-
 /// The codec over the tests' node set, through which the runtime's
 /// reified-graph cache serves stored graphs as typed nodes.
 fn codec() -> gantz_egui::node::NodeCodec {
-    gantz_egui::ui_node_codec! {
-        TestNodes {
-            crate::node::Await,
-            crate::node::LoadBang,
-            crate::node::Sleep,
-            gantz_egui::node::Inspect,
-            gantz_edit::NamedRef,
-        }
-    }
+    gantz_egui::node::NodeCodec::new(
+        gantz_format::Sugars::default(),
+        [
+            gantz_egui::node::kind::<crate::node::Await>(),
+            gantz_egui::node::kind::<crate::node::LoadBang>(),
+            gantz_egui::node::kind::<crate::node::Sleep>(),
+            gantz_egui::node::kind::<gantz_egui::node::Inspect>(),
+            gantz_egui::node::kind::<gantz_edit::NamedRef>(),
+        ],
+    )
 }
 
 /// A headless app with the gantz plugin, the test codec, the `vm::sync`

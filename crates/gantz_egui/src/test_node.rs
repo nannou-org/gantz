@@ -2,27 +2,21 @@
 //! `Expr` and `Bang` leaves plus `NamedRef` for graph references. Tests build
 //! graphs in their stored data form.
 
+use crate::node::{NodeCodec, kind};
 use gantz_ca::NodeData;
 use gantz_edit::NamedRef;
 
-/// The node set's sugar carrier. See [`codec`].
-pub struct TestNodes;
-
-impl gantz_format::NodeSugar for TestNodes {
-    fn sugar() -> gantz_format::Sugars<'static> {
-        gantz_format::Sugars(vec![&gantz_format::CoreSugar])
-    }
-}
-
 /// The value-level codec for the test node set.
-pub fn codec() -> crate::node::NodeCodec {
-    crate::ui_node_codec! {
-        TestNodes {
-            gantz_core::node::Expr,
-            crate::node::Bang,
-            NamedRef,
-        }
-    }
+pub fn codec() -> NodeCodec {
+    let sugars = gantz_format::Sugars::default().with(gantz_format::CoreSugar);
+    NodeCodec::new(
+        sugars,
+        [
+            kind::<gantz_core::node::Expr>(),
+            kind::<crate::node::Bang>(),
+            kind::<NamedRef>(),
+        ],
+    )
 }
 
 pub fn expr(src: &str) -> NodeData {

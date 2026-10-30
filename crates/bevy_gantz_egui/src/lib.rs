@@ -406,7 +406,7 @@ pub struct GuiState(pub gantz_egui::widget::GantzState);
 /// The application inserts this alongside [`BuiltinNodes`], typically as
 /// `NodeCodecRes(node::codec())`. [`GantzEguiPlugin`]'s import, export and
 /// base systems read it.
-#[derive(Clone, Copy, Resource)]
+#[derive(Clone, Resource)]
 pub struct NodeCodecRes(pub gantz_egui::node::NodeCodec);
 
 /// The collaborative-session display state threaded into the Gantz widget.
