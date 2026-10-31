@@ -125,7 +125,7 @@ pub(crate) fn fitted_size(width: f32, height: f32) -> [u16; 2] {
 /// inset by the frame's regular margin with rounded corners. With it off,
 /// the content fills the frame edge-to-edge with square corners, so nothing
 /// is clipped.
-pub(crate) fn resizable_body(
+pub fn resizable_body(
     uictx: egui_graph::NodeCtx,
     size: &mut [u16; 2],
     margin: bool,

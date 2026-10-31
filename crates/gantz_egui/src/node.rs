@@ -5,6 +5,7 @@
 pub use bang::Bang;
 pub use bind::Bind;
 pub use comment::Comment;
+pub use def_node::{DefNode, ImportIntoNode, def_kind, dyn_def_kind};
 pub use dyn_node::{
     DynNode, Kind, NodeCodec, NodeUiInstance, NormalizeNodeError, UiBuiltins, kind,
 };
@@ -17,11 +18,13 @@ pub use instance_cache::{InstanceEntry, NodeInstances};
 pub use number::{Number, NumberInput};
 pub use plot::{F32, Plot, PlotLook, PlotMode, PlotStyle};
 pub use ref_ext::RefExtUi;
+pub use size_sync::resizable_body;
 pub use state_node::{Init, State};
 
 pub mod bang;
 pub mod bind;
 pub mod comment;
+pub mod def_node;
 pub mod dyn_node;
 pub mod fn_named_ref;
 pub mod gui;

@@ -312,7 +312,7 @@ pub trait NodeUi: gantz_core::Node + Send + Sync {
     /// documentation in the "Graphs" select widget. Builtins hardcode a short
     /// string. Nodes that reference a named graph resolve the graph's stored
     /// description via [`Env::command_info`].
-    fn description(&self) -> Option<&'static str> {
+    fn description(&self) -> Option<&str> {
         None
     }
 
@@ -342,7 +342,7 @@ pub trait NodeUi: gantz_core::Node + Send + Sync {
 /// the node. Used by any node that does not override `view_ui` with a richer
 /// visualisation. Also the final fallback for nodes whose richer view can be
 /// absent. `NamedRef` with no declared markers is one example.
-pub(crate) fn default_view_ui(ctx: &NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
+pub fn default_view_ui(ctx: &NodeCtx, ui: &mut egui::Ui) -> NodeViewResponse {
     let mut resp = NodeViewResponse::default();
     let text = match ctx.extract_value() {
         Ok(Some(val)) => format!("{val:?}"),
@@ -718,7 +718,7 @@ macro_rules! impl_node_ui_for_ptr {
                 (**self).name(env)
             }
 
-            fn description(&self) -> Option<&'static str> {
+            fn description(&self) -> Option<&str> {
                 (**self).description()
             }
 

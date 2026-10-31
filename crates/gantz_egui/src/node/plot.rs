@@ -488,7 +488,7 @@ impl NodeUi for Plot {
         "plot".into()
     }
 
-    fn description(&self) -> Option<&'static str> {
+    fn description(&self) -> Option<&str> {
         Some("Plot incoming values as a scrolling scope or a signal/array")
     }
 

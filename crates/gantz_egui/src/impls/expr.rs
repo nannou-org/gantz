@@ -163,7 +163,7 @@ impl NodeUi for gantz_core::node::Expr {
         "expr".into()
     }
 
-    fn description(&self) -> Option<&'static str> {
+    fn description(&self) -> Option<&str> {
         Some("Evaluate a Steel expression")
     }
 

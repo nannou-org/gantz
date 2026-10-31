@@ -4,8 +4,8 @@
 //! itself produces. The tree binds to node state by path. A host interprets
 //! it every frame. This crate defines the typed model of that tree
 //! ([`Element`]), a total decoder with inline diagnostics, a canonical
-//! encoder, and per-runtime codecs. It depends on no GUI toolkit. With no
-//! features enabled it depends on no runtime.
+//! encoder, and a Steel codec. It depends on no GUI toolkit. With no features
+//! enabled it depends on no runtime.
 //!
 //! # The form
 //!
@@ -73,18 +73,30 @@
 //!
 //! | element | state shape | attrs |
 //! |---|---|---|
-//! | `(dialer)` | number | `bind`, `min`, `max`, `step` (numbers), `precision` (int), `label` (string), `prefix` (string), `push` (bool, default `#t`), `style` (reserved: `slider`/`knob`) |
+//! | `(dialer)` | number | `bind`, `min`, `max`, `step` (numbers), `precision` (int), `label`, `prefix`, `suffix` (strings), `push` (bool, default `#t`), `style` (reserved: `slider`/`knob`) |
 //! | `(toggle)` | bool | `bind`, `label`, `push` (default `#t`) |
+//! | `(choice)` | one of its options | `bind`, `options` (list of symbols) |
+//! | `(text-input)` | string | `bind`, `hint` (string), `mono` (bool, default `#f`), `push` (default `#t`). An edit commits on focus loss, on enter or once typing pauses |
+//! | `(bound)` | number or `#f` | `bind`, `label` (string). A checkbox sets the state to the number beside it, or clears it to `#f` |
 //! | `(button)` | none | `bind`, `label`. A press queues a push eval, bang semantics stay in the node's expression |
+//! | `(file)` | none, it imports into the node that owns the tree | `on` (edit), `import` (an importer's name), `label`, `tip`. A press picks a file for the host's importer. See [`File`] |
 //! | `(matrix)` | list of rows of bool or number cells | `bind`, `cell-size` (number), `push` (default `#t`). Rows and columns come from the state shape, not attrs |
+//! | `(envelope)` | none, it edits the node that owns the tree | `on` (edit), `value` (an envelope, `(init ((level time shape curve) ...) release)`), `x-range`, `y-range` (lists of two numbers), `grid`, `axes` (bools, default `#f`), `w`, `h` (numbers). See [`EnvelopeElem`] |
+//!
+//! A `dialer`, `toggle`, `text-input`, `button` or `color` takes a `tip`
+//! (string) that shows while the pointer hovers the control. A `choice`
+//! takes `tips` (list of strings), one per option. A `color` takes `theme`
+//! (bool, default `#t`), whether a button shows that clears the colour back
+//! to the theme's colour.
 //!
 //! ## Display
 //!
 //! | element | state shape | attrs |
 //! |---|---|---|
-//! | `(label "text")` | none | positional text (required), `size` (number), `color` (`"#rrggbb"` or `"#rrggbbaa"`) |
-//! | `(value)` | any, rendered as its representation | `bind`, `wrap` (bool, default `#f`) |
+//! | `(label "text")` | none | positional text (required), `size` (number), `color` (`"#rrggbb"` or `"#rrggbbaa"`), `tone` (`weak`/`strong`/`warn`/`error`, a theme colour used without `color`), `mono` (bool, default `#f`), `tip` (string) |
+//! | `(value)` | any, rendered as its representation. A figure shows its summary | `bind`, `wrap` (bool, default `#f`) |
 //! | `(plot)` | scope buffer or signal, a list of lists renders as stacked channels | `bind`, `mode` (`scope`/`signal`), `style` (`bars`/`line`), `color`, `grid`, `axes`, `interactive` (bools, default `#f`), `y-min`, `y-max`, `w`, `h` (numbers) |
+//! | `(canvas)` | a list of panels of figures, see [`figure`] | `bind`, `grid`, `axes`, `interactive` (bools, default `#f`), `w`, `h` (numbers, the available size when absent) |
 //!
 //! ## Embedding
 //!
@@ -97,8 +109,8 @@
 //! ## Reserved
 //!
 //! Tag names reserved for later versions decode as visible errors:
-//! `tabs`, `page`, `canvas`, `paint`, `image`, `dropdown`, `text-input`,
-//! `xy-pad`, `meter`. See [`RESERVED_TAGS`].
+//! `tabs`, `page`, `paint`, `image`, `dropdown`, `xy-pad`,
+//! `meter`. See [`RESERVED_TAGS`].
 //!
 //! # Binding model
 //!
@@ -109,6 +121,23 @@
 //! runtime state at that path. `(scope id ...)` pushes `id` onto the prefix
 //! for its subtree. Widget fragments bake their own node id at codegen.
 //! Hosts insert scopes where a child's GUI crosses into a parent.
+//!
+//! A node can give a tree as its own view, and its controls can then edit
+//! the node itself in one of two ways:
+//!
+//! - A `field` binds a top-level field of the node, which the host reads and
+//!   sets. See [`Field`].
+//! - An `on` edit, with a `value` to show, sends the edit to the node, which
+//!   applies it. See [`Edit`].
+//!
+//! A control takes its `field` first, then its `on` edit, then its `bind`.
+//!
+//! A `dialer`, `toggle`, `choice`, `text-input`, `bound` or `color` with a
+//! `bind` takes `at`, a list of keys into the bound state, such as
+//! `(at freq value)`. The control reads and writes the value at those keys
+//! of the nested hash maps, and keeps the other entries. A `label` or
+//! `canvas` with a `bind` also takes `at`, and shows the value at those
+//! keys. See [`At`].
 //!
 //! # Identity and keys
 //!
@@ -158,11 +187,13 @@
 pub use decode::{Decoded, Limits, decode};
 pub use diag::{ErrorReason, TreePath, Warning, WarningKind};
 pub use elem::{
-    ATTRS_MARKER, Align, BindPath, Bound, Button, Choice, Col, Color, Dialer, DialerStyle, Element,
-    ErrorElem, Frame, Grid, Key, Label, Matrix, Plot, PlotMode, PlotStyle, RESERVED_TAGS, RefGui,
-    Rgba, Row, Scope, Sep, Space, Toggle, Value,
+    ATTRS_MARKER, Align, At, BindPath, Bound, Button, Canvas, Choice, Col, Color, Dialer,
+    DialerStyle, Edit, Element, EnvelopeElem, ErrorElem, Field, File, Frame, Grid, Key, Label,
+    Matrix, Plot, PlotMode, PlotStyle, RESERVED_TAGS, RefGui, Rgba, Row, Scope, Sep, Space,
+    TextInput, Toggle, Tone, Value,
 };
 pub use encode::encode;
+pub use figure::{Figures, decode_figures};
 pub use sexpr::{flat, pretty, summary};
 
 pub mod codec;
@@ -170,6 +201,8 @@ pub mod decode;
 pub mod diag;
 pub mod elem;
 pub mod encode;
+pub mod envelope;
+pub mod figure;
 pub mod sexpr;
 #[cfg(test)]
 mod tests;

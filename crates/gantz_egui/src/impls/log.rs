@@ -15,7 +15,7 @@ impl NodeUi for gantz_io::log::Log {
         .into()
     }
 
-    fn description(&self) -> Option<&'static str> {
+    fn description(&self) -> Option<&str> {
         Some(match self.level {
             log::Level::Error => "Log a value at error level",
             log::Level::Warn => "Log a value at warning level",

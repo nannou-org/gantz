@@ -9,7 +9,7 @@ impl NodeUi for gantz_core::node::graph::Outlet {
         "out".into()
     }
 
-    fn description(&self) -> Option<&'static str> {
+    fn description(&self) -> Option<&str> {
         Some("A graph output")
     }
 

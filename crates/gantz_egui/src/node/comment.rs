@@ -74,7 +74,7 @@ impl NodeUi for Comment {
         "comment".into()
     }
 
-    fn description(&self) -> Option<&'static str> {
+    fn description(&self) -> Option<&str> {
         Some("A free-floating text note")
     }
 

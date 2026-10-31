@@ -42,6 +42,10 @@ fn reader_output_decodes() {
                 children: vec![
                     Element::Dialer(Dialer {
                         bind: Some(BindPath(vec![0, 2])),
+                        at: None,
+                        field: None,
+                        on: None,
+                        value: None,
                         min: Some(0.0),
                         max: Some(20_000.0),
                         label: Some("cutoff".to_string()),
@@ -49,9 +53,14 @@ fn reader_output_decodes() {
                     }),
                     Element::Toggle(Toggle {
                         bind: Some(BindPath(vec![5])),
+                        at: None,
+                        field: None,
+                        on: None,
+                        value: false,
                         label: Some("drive".to_string()),
                         push: false,
                         pill: false,
+                        tip: None,
                         key: None,
                     }),
                 ],

@@ -4050,6 +4050,7 @@ dependencies = [
  "gantz_edit",
  "gantz_format",
  "gantz_io",
+ "gantz_nodedef",
  "gantz_nodetag",
  "gantz_ui",
  "hex",
@@ -4093,6 +4094,15 @@ dependencies = [
  "gantz_nodetag",
  "log",
  "petgraph",
+ "serde",
+]
+
+[[package]]
+name = "gantz_nodedef"
+version = "0.1.0"
+dependencies = [
+ "gantz_ca",
+ "gantz_ui",
  "serde",
 ]
 
@@ -4183,6 +4193,7 @@ version = "0.5.1"
 dependencies = [
  "gantz_ca",
  "gantz_core",
+ "serde",
  "steel-core",
  "thiserror 2.0.17",
 ]

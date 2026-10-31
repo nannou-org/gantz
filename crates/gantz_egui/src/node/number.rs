@@ -302,7 +302,7 @@ impl NodeUi for Number {
         "number".into()
     }
 
-    fn description(&self) -> Option<&'static str> {
+    fn description(&self) -> Option<&str> {
         Some("A numeric value")
     }
 
@@ -632,6 +632,9 @@ fn fragment(num: &Number, id: node::Id) -> gantz_ui::Element {
 fn dialer(num: &Number, id: node::Id) -> gantz_ui::Dialer {
     gantz_ui::Dialer {
         bind: Some(gantz_ui::BindPath(vec![id])),
+        field: None,
+        on: None,
+        value: None,
         min: num.min(),
         max: num.max(),
         precision: num.precision(),

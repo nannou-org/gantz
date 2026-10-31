@@ -317,7 +317,7 @@ impl Env<'_> {
             .content_addr(name)
             .and_then(|ca| self.instances.get(&ca))
             .and_then(|n| n.description())
-            .map(Cow::Borrowed)
+            .map(|d| Cow::Owned(d.to_string()))
     }
 }
 

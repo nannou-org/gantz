@@ -63,7 +63,7 @@ impl NodeUi for Bind {
         "bind".into()
     }
 
-    fn description(&self) -> Option<&'static str> {
+    fn description(&self) -> Option<&str> {
         Some(
             "A path to a node in this graph, for an element's bind inlet or ref-gui. \
              See the demo.gui graph",

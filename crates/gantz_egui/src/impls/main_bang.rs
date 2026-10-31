@@ -8,7 +8,7 @@ impl NodeUi for MainBang {
         "main!".into()
     }
 
-    fn description(&self) -> Option<&'static str> {
+    fn description(&self) -> Option<&str> {
         Some(
             "Fires when the graph runs as a program, for example with `gantz run`. \
              Every main! at the graph's root fires together. Outputs the program \
