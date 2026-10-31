@@ -399,3 +399,36 @@ fn name_job<T: Command>(
     }
     job
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone, Copy)]
+    struct TestCommand;
+
+    impl Command for TestCommand {
+        fn text(&self) -> &str {
+            "test"
+        }
+    }
+
+    /// The palette keeps a finite rect across frames. The window takes its
+    /// size from what the content measures on the frame before, so a details
+    /// card that measures infinite breaks the window on the next frame.
+    #[test]
+    fn the_palette_keeps_a_finite_rect_across_frames() {
+        let ctx = egui::Context::default();
+        let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1280.0, 720.0));
+        let mut palette = NodePalette::new();
+        palette.open();
+        for _ in 0..3 {
+            let _ = ctx.run_ui(Default::default(), |ui| {
+                let _ = palette.show(ui.ctx(), area, [TestCommand]);
+            });
+        }
+        let id = egui::Id::new("Node Palette");
+        let rect = ctx.memory(|m| m.area_rect(id));
+        assert!(rect.expect("the palette shows").is_finite());
+    }
+}

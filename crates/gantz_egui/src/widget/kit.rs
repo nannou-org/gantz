@@ -81,8 +81,9 @@ pub fn exact_width<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui
     /// control that fills the width.
     const BLEED: f32 = 2.0;
     let width = ui.available_width().max(0.0);
-    let top_left = ui.available_rect_before_wrap().min;
-    let max_rect = egui::Rect::from_min_size(top_left, egui::vec2(width, f32::INFINITY));
+    let available = ui.available_rect_before_wrap();
+    let top_left = available.min;
+    let max_rect = egui::Rect::from_min_size(top_left, egui::vec2(width, available.height()));
     let builder = egui::UiBuilder::new()
         .id_salt(ui.next_auto_id())
         .max_rect(max_rect)
