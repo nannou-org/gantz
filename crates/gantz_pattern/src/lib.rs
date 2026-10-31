@@ -13,14 +13,11 @@
 
 pub mod mini;
 pub mod node;
+pub mod plot;
 pub mod sugar;
 
-#[cfg(feature = "egui")]
-pub mod egui;
-
-#[cfg(feature = "egui")]
-pub use self::egui::Pplot;
 pub use node::{Pmini, builtins};
+pub use plot::Pplot;
 pub use sugar::PatternSugar;
 
 use gantz_core::vm::SteelModule;
@@ -33,9 +30,10 @@ use gantz_core::vm::SteelModule;
 /// provided names carry the `pat/` prefix.
 pub const MODULE: SteelModule = SteelModule::new("gantz/pattern", include_str!("pattern.scm"));
 
-/// The Steel modules this domain needs: `gantz/rng` and `gantz/pattern`.
+/// The Steel modules this domain needs: `gantz/rng`, `gantz/pattern` and the
+/// layout fn of `pat.plot`, `gantz/pattern-plot`.
 pub fn modules() -> &'static [SteelModule] {
-    const MODULES: &[SteelModule] = &[gantz_rng::MODULE, MODULE];
+    const MODULES: &[SteelModule] = &[gantz_rng::MODULE, MODULE, plot::MODULE];
     MODULES
 }
 

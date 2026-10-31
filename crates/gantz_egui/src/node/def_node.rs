@@ -203,6 +203,15 @@ impl Meta {
     }
 }
 
+impl std::fmt::Debug for DefNode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DefNode")
+            .field("tag", &self.tag())
+            .field("fields", &self.fields)
+            .finish()
+    }
+}
+
 impl gantz_core::Node for DefNode {
     fn n_inputs(&self, _ctx: MetaCtx) -> usize {
         self.desc.meta.inputs

@@ -282,6 +282,15 @@ pub fn encode<T: Serialize>(node: &T) -> Result<Datum, String> {
     }
 }
 
+/// The stored form of `node`: its fields under its tag, with the blobs that it
+/// uses.
+pub fn node_data<D: NodeDef>(node: &D) -> Result<gantz_ca::NodeData, String> {
+    let mut data = gantz_ca::NodeData::new(D::TAG, encode(node)?);
+    data.blobs = node.meta().blobs;
+    data.canonicalize();
+    Ok(data)
+}
+
 /// The node of type `D` with the fields `fields`.
 pub fn decode<D: NodeDef>(fields: &Datum) -> Result<D, String> {
     gantz_ca::datum::from_datum(fields.clone()).map_err(|e| format!("{}: {e}", D::TAG))

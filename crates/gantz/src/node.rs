@@ -45,8 +45,8 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
             kind::<gantz_plyphon::Sample>(),
             kind::<gantz_plyphon::Buffer>(),
             kind::<gantz_plyphon::Envgen>(),
-            kind::<gantz_pattern::Pmini>(),
-            kind::<gantz_pattern::Pplot>(),
+            gantz_egui::node::def_kind::<gantz_pattern::Pmini>(),
+            gantz_egui::node::def_kind::<gantz_pattern::Pplot>(),
         ],
     )
 }
