@@ -647,6 +647,17 @@ pub struct ResetBaseGraph(pub gantz_ca::Name);
 #[derive(Clone, Copy, Debug)]
 pub struct ResetAllDemos;
 
+/// Set whether a named graph keeps its node state. App-level.
+#[derive(Clone, Debug)]
+pub struct SetKeepState {
+    pub name: gantz_ca::Name,
+    pub keep: bool,
+}
+
+/// Reset the nodes of a head to their initial state. App-level.
+#[derive(Clone, Debug)]
+pub struct ResetState(pub gantz_ca::Head);
+
 /// Turn the per-node change-tracking validation on or off. App-level. See
 /// [`GraphScene::validate_change_tracking`](widget::GraphScene::validate_change_tracking).
 #[derive(Clone, Copy, Debug)]

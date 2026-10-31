@@ -115,6 +115,10 @@ pub struct CloseEvent(pub ca::Head);
 #[derive(Event)]
 pub struct ReplaceEvent(pub ca::Head);
 
+/// Event to reset the nodes of a head to their initial state.
+#[derive(Event)]
+pub struct ResetStateEvent(pub ca::Head);
+
 /// Event to create a new branch from an existing head.
 #[derive(Event)]
 pub struct BranchHeadEvent {
@@ -352,15 +356,18 @@ pub fn is_focused(
 /// Store the state of the open head `data` in the registry, as the snapshot of
 /// its commit. See [`state::Snapshots`].
 ///
-/// A VM that does not hold the state of the committed graph stores nothing.
-/// The registry changes only when the state did. A first snapshot of a commit
-/// replaces the one of its nearest ancestor, so the section does not grow with
-/// the history of a graph.
+/// A head that does not keep its state stores nothing, nor does a VM that does
+/// not hold the state of the committed graph. The registry changes only when
+/// the state did. A first snapshot of a commit replaces the one of its nearest
+/// ancestor, so the section does not grow with the history of a graph.
 pub fn save_state(
     registry: &mut impl DerefMut<Target = Registry>,
     vms: &HeadVms,
     data: OpenHeadDataReadOnlyItem<'_, '_>,
 ) {
+    if !state::keeps(&registry.0, &data.head_ref.0) {
+        return;
+    }
     let Some(vm) = vms.get(&data.entity) else {
         return;
     };
@@ -402,21 +409,48 @@ fn superseded_snapshot(registry: &ca::Registry, commit: ca::CommitAddr) -> Optio
     (!held).then_some(ancestor)
 }
 
-/// Set the nodes in `vm`, which registered the graph of `head`, to the state
-/// stored for its commit.
+/// Set the nodes in `vm`, which registered the graph of `head`, to its stored
+/// state. See [`state::restore_head`].
 pub fn restore_state(registry: &ca::Registry, head: &ca::Head, vm: &mut Engine) {
+    if let Err(e) = state::restore_head(registry, head, vm) {
+        log::error!("cannot restore the state of {head}: {e}");
+    }
+}
+
+/// Remove the stored state of `head`, and the state of the ancestor that its
+/// next snapshot would replace.
+pub fn forget_state(registry: &mut ca::Registry, head: &ca::Head) {
     let Some(commit) = registry.head_commit_ca(head) else {
         return;
     };
-    let Some(nodes) = ca::section_get::<state::Snapshots>(registry, &commit) else {
-        return;
-    };
-    if let Err(e) = state::restore(vm, &nodes) {
-        log::error!("cannot restore the state of {commit}: {e}");
+    let superseded = superseded_snapshot(registry, commit);
+    ca::section_remove::<state::Snapshots>(registry, &commit);
+    if let Some(ancestor) = superseded {
+        ca::section_remove::<state::Snapshots>(registry, &ancestor);
     }
 }
 
 // Observers
+
+/// Observer for [`ResetStateEvent`].
+///
+/// Removes the stored state of the head. An open head also drops its VM and
+/// its compile memo, so `vm::sync` starts it afresh, and its load is pending.
+pub fn on_reset_state(
+    trigger: On<ResetStateEvent>,
+    mut cmds: Commands,
+    mut registry: ResMut<Registry>,
+    mut vms: NonSendMut<HeadVms>,
+    heads: Query<(Entity, &HeadRef), With<OpenHead>>,
+) {
+    let ResetStateEvent(head) = trigger.event();
+    forget_state(&mut registry.0, head);
+    if let Some(entity) = find_entity(head, &heads) {
+        vms.remove(&entity);
+        cmds.entity(entity)
+            .insert((crate::vm::CompiledInputs::default(), PendingLoad));
+    }
+}
 
 /// Observer for [`OpenEvent`].
 pub fn on_open(

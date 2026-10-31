@@ -1824,7 +1824,7 @@ fn clipboard_round_trips_through_gantz_text() {
     layout.insert(gantz_edit::NodeId(1), egui::pos2(3.0, 4.0));
     let selected: HashSet<gantz_core::node::graph::NodeIx> = [a, b].into_iter().collect();
 
-    let copied = export::copy(&registry, &graph, &selected, &layout);
+    let copied = export::copy(&registry, &graph, &selected, &layout, &[]);
     let text =
         export::copied_to_string(&copied, crate::node::codec().data()).expect("copied to text");
     // The clipboard payload is itself reader-valid `.gantz` text.
@@ -1847,6 +1847,41 @@ fn clipboard_round_trips_through_gantz_text() {
             .map(|p| (p.x, p.y)),
         Some((3.0, 4.0)),
     );
+}
+
+/// A duplicate gives the new nodes the state of the nodes they copy, by their
+/// new paths, with the state of a nested graph by its nested paths. An
+/// unrelated node stays out.
+#[test]
+fn duplicate_carries_node_state_to_the_new_nodes() {
+    use gantz_ca::Datum;
+    use std::collections::HashSet;
+
+    let mut graph = data_graph([
+        erased(&gantz_core::node::Identity),
+        erased(&gantz_core::node::Identity),
+    ]);
+    let mut registry = DataReg::default();
+    let mut view = gantz_edit::SceneView::default();
+    let mut head_state = gantz_egui::widget::gantz::OpenHeadState::default();
+    let state = [
+        (vec![0], Datum::I64(1)),
+        (vec![1], Datum::I64(2)),
+        (vec![1, 3], Datum::I64(3)),
+    ];
+    let pasted = gantz_egui::ops::duplicate_nodes(
+        &mut registry,
+        None,
+        &mut graph,
+        &mut view,
+        &mut head_state,
+        &HashSet::from([1.into()]),
+        &state,
+        &crate::node::codec(),
+    );
+    let expected = vec![(vec![2], Datum::I64(2)), (vec![2, 3], Datum::I64(3))];
+    assert_eq!(pasted, Some(expected));
+    assert_eq!(graph.node_count(), 3);
 }
 
 /// Editing a nested child commits it to a new address. `resync::resync` must
@@ -1983,7 +2018,13 @@ fn clipboard_round_trips_nested_ref() {
     let selected: HashSet<_> = [nref].into_iter().collect();
 
     // Copy, then clipboard text, then paste.
-    let copied = export::copy(&registry, &graph, &selected, &gantz_edit::Layout::default());
+    let copied = export::copy(
+        &registry,
+        &graph,
+        &selected,
+        &gantz_edit::Layout::default(),
+        &[],
+    );
     let text =
         export::copied_to_string(&copied, crate::node::codec().data()).expect("copied to text");
     let back: export::Copied =

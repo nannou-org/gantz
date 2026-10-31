@@ -526,3 +526,18 @@ fn a_restore_ignores_entries_that_do_not_fit() {
     let before = node::state::snapshot(&vm_with(states));
     assert_eq!(node::state::snapshot(&vm), before);
 }
+
+/// A remap moves the root of each path, and a node with no new index drops
+/// out.
+#[test]
+fn a_snapshot_remap_moves_the_root_of_each_path() {
+    use gantz_core::datum::Datum;
+    let nodes = [
+        (vec![0], Datum::I64(1)),
+        (vec![1], Datum::I64(2)),
+        (vec![1, 4], Datum::I64(3)),
+    ];
+    let remapped = node::state::remap_snapshot(&nodes, [(1, 7)]);
+    let expected = vec![(vec![7], Datum::I64(2)), (vec![7, 4], Datum::I64(3))];
+    assert_eq!(remapped, expected);
+}

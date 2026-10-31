@@ -8,7 +8,7 @@
 
 use crate::codec::DataCodec;
 use gantz_ca::{DataGraph, GraphAddr, Name};
-use gantz_core::node;
+use gantz_core::node::{self, state};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -273,9 +273,12 @@ pub struct Copied {
     pub graph: DataGraph,
     /// Positions of nodes in the subgraph.
     pub positions: crate::Layout,
+    /// The state of the copied nodes, by their paths in `graph`.
+    pub state: state::Snapshot,
 }
 
-/// Build a [`Copied`] payload from the selected nodes in a graph.
+/// Build a [`Copied`] payload from the selected nodes in a graph. `state` is
+/// the state of the nodes of the graph, by their paths in the graph.
 ///
 /// The payload registry carries the transitive closure of the graphs the
 /// selected nodes reference. It also carries the heads whose tips point at
@@ -286,6 +289,7 @@ pub fn copy(
     graph: &DataGraph,
     selected: &HashSet<node::graph::NodeIx>,
     layout: &crate::Layout,
+    state: &[(Vec<node::Id>, gantz_ca::Datum)],
 ) -> Copied {
     let subgraph = gantz_core::graph::extract_subgraph(graph, selected);
 
@@ -294,7 +298,8 @@ pub fn copy(
     let sorted: std::collections::BTreeSet<_> = selected.iter().copied().collect();
     let pairs = sorted.iter().zip(subgraph.node_indices());
     let pairs = pairs.map(|(old, new)| (old.index(), new.index()));
-    let positions = crate::view::remap(layout, pairs).collect();
+    let positions = crate::view::remap(layout, pairs.clone()).collect();
+    let state = state::remap_snapshot(state, pairs);
 
     // Collect registry deps transitively. Include the graphs the selected
     // nodes reference, and the graphs those graphs reference in turn, so the
@@ -348,6 +353,7 @@ pub fn copy(
         registry: gantz_ca::export(registry, &live),
         graph: subgraph,
         positions,
+        state,
     }
 }
 
@@ -404,6 +410,13 @@ pub fn copied_to_string(
         layout: copied.positions.clone(),
     };
     crate::section::set_view(&mut registry, commit_ca, &view);
+    if !copied.state.is_empty() {
+        let stored =
+            gantz_ca::section_insert::<state::Snapshots>(&mut registry, commit_ca, &copied.state);
+        if let Err(e) = stored {
+            log::warn!("the clipboard leaves out the state of the copied nodes: {e}");
+        }
+    }
 
     crate::format::to_string(&registry, codec)
 }
@@ -426,6 +439,7 @@ pub fn copied_from_str(text: &str, codec: &DataCodec) -> Result<Copied, ParseCop
     let positions = crate::section::view(&registry, &clip_ca)
         .map(|view| view.layout)
         .unwrap_or_default();
+    let state = gantz_ca::section_get::<state::Snapshots>(&registry, &clip_ca).unwrap_or_default();
 
     // Everything reachable outside the clipboard commit is a dependency. The
     // export filters heads and views to the kept commits, so the `clipboard`
@@ -443,6 +457,7 @@ pub fn copied_from_str(text: &str, codec: &DataCodec) -> Result<Copied, ParseCop
         registry: deps,
         graph,
         positions,
+        state,
     })
 }
 
@@ -535,7 +550,7 @@ mod tests {
         layout.insert(crate::NodeId::from_index(b.index()), emath::pos2(3.0, 4.0));
         let selected: HashSet<_> = working.node_indices().collect();
 
-        let copied = copy(&reg, &working, &selected, &layout);
+        let copied = copy(&reg, &working, &selected, &layout, &[]);
         assert!(copied.registry.graph(&leaf_ga).is_some());
         assert!(copied.registry.head(&name("leaf")).is_some());
 
@@ -581,6 +596,36 @@ mod tests {
             target_layout.get(&crate::NodeId::from_index(new[0].index())),
             Some(&emath::pos2(11.0, 12.0)),
         );
+    }
+
+    /// The state of the copied nodes rides the clipboard by their paths in the
+    /// subgraph. The state of the other nodes stays behind.
+    #[test]
+    fn copied_nodes_carry_their_state() {
+        use crate::test_node::{TestGraph, codec, expr};
+        use gantz_ca::Datum;
+
+        let mut working = TestGraph::default();
+        working.add_node(expr("(+ 1 1)"));
+        let b = working.add_node(expr("(+ 2 2)"));
+        let c = working.add_node(expr("(+ 3 3)"));
+        let state = [
+            (vec![0], Datum::I64(1)),
+            (vec![1], Datum::I64(2)),
+            (vec![2, 4], Datum::Sym("bd".to_string())),
+        ];
+        let selected = HashSet::from([b, c]);
+        let reg = gantz_ca::Registry::default();
+        let copied = copy(&reg, &working, &selected, &crate::Layout::default(), &state);
+        let expected = vec![
+            (vec![0], Datum::I64(2)),
+            (vec![1, 4], Datum::Sym("bd".to_string())),
+        ];
+        assert_eq!(copied.state, expected);
+
+        let text = copied_to_string(&copied, &codec()).unwrap();
+        let back = copied_from_str(&text, &codec()).unwrap();
+        assert_eq!(back.state, expected);
     }
 
     /// Exporting heads as text carries transitive deps and sections through

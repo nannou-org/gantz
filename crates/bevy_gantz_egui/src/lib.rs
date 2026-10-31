@@ -48,7 +48,7 @@ pub use edit::{
     on_replace_node,
 };
 pub use entities::{NodeKindAppExt, NodeKinds};
-use graphs::{on_new_graph, on_remove_name, on_set_demo, on_set_description};
+use graphs::{on_new_graph, on_remove_name, on_set_demo, on_set_description, on_set_keep_state};
 pub(crate) use gui::handle_gantz_response;
 pub use gui::{GantzInputs, update};
 pub use history::{on_redo, on_undo};
@@ -81,7 +81,7 @@ use response::{
     dispatch_branch_head, dispatch_close_head, dispatch_eval_entry, dispatch_export_all_named,
     dispatch_export_head, dispatch_export_palette, dispatch_export_style, dispatch_file_drop,
     dispatch_import_palette, dispatch_import_style, dispatch_open_head, dispatch_replace_head,
-    dispatch_reset_base_graph, dispatch_state_written,
+    dispatch_reset_base_graph, dispatch_reset_state, dispatch_state_written,
 };
 use settings::{on_compile_config, on_validate_change_tracking};
 pub use sugar::BevySugar;
@@ -229,6 +229,7 @@ impl Plugin for GantzEguiPlugin {
             .register_response_with::<gantz_egui::BranchHead>(dispatch_branch_head)
             .register_response_with::<gantz_egui::widget::gantz::FileDrop>(dispatch_file_drop)
             .register_response_with::<gantz_egui::ResetBaseGraph>(dispatch_reset_base_graph)
+            .register_response_with::<gantz_egui::ResetState>(dispatch_reset_state)
             .register_response_with::<gantz_egui::ExportHead>(dispatch_export_head)
             .register_response_with::<gantz_egui::ExportAllNamed>(dispatch_export_all_named)
             .register_response_with::<gantz_egui::ExportStyle>(dispatch_export_style)
@@ -241,6 +242,7 @@ impl Plugin for GantzEguiPlugin {
             .register_app_response::<gantz_egui::Import>()
             .register_app_response::<gantz_egui::SetDemo>()
             .register_app_response::<gantz_egui::SetDescription>()
+            .register_app_response::<gantz_egui::SetKeepState>()
             .register_app_response::<gantz_egui::SetBaseSource>()
             .register_app_response::<gantz_egui::ResetAllDemos>()
             .register_app_response::<gantz_core::compile::Config>()
@@ -305,6 +307,7 @@ impl Plugin for GantzEguiPlugin {
             .add_observer(on_import)
             .add_observer(on_set_demo)
             .add_observer(on_set_description)
+            .add_observer(on_set_keep_state)
             .add_observer(on_set_base_source)
             .add_observer(on_reset_all_demos)
             .add_observer(on_compile_config)

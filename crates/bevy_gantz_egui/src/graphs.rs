@@ -5,6 +5,7 @@ use bevy_ecs::prelude::*;
 use bevy_gantz::Registry;
 use bevy_gantz::head;
 use gantz_ca as ca;
+use gantz_core::node::state;
 
 /// Create an empty graph and open it in a new tab.
 pub(crate) fn on_new_graph(
@@ -48,6 +49,22 @@ pub(crate) fn on_set_description(
 ) {
     let gantz_egui::SetDescription { name, description } = &trigger.event().0;
     gantz_edit::section::set_description(&mut registry.0, name.clone(), description.clone());
+}
+
+/// Set whether a named graph keeps its node state. A graph that stops keeping
+/// its state also loses the state it stored.
+pub(crate) fn on_set_keep_state(
+    trigger: On<ForApp<gantz_egui::SetKeepState>>,
+    mut registry: ResMut<Registry>,
+) {
+    let gantz_egui::SetKeepState { name, keep } = &trigger.event().0;
+    if *keep {
+        ca::section_remove::<state::Volatile>(&mut registry.0, name);
+    } else {
+        ca::section_insert::<state::Volatile>(&mut registry.0, name.clone(), &true)
+            .expect("a `bool` always encodes as a datum");
+        head::forget_state(&mut registry.0, &ca::Head::Branch(name.clone()));
+    }
 }
 
 /// Remove `name`, first detaching the open heads on it onto its current

@@ -825,6 +825,11 @@ pub fn run_graph(
         let _ = tx.send(val.to_string());
     });
     gantz_core::graph::register(&get_node, graph, &[], &mut vm);
+    let head = gantz_ca::Head::Branch(name.clone());
+    if let Err(e) = gantz_core::node::state::restore_head(&ready.loaded.registry, &head, &mut vm) {
+        let warning = format!("{label}: graph `{name}`: cannot restore node state: {e}");
+        output.warnings.push(warning);
+    }
     let config = gantz_core::compile::Config::default();
     let compiled = match gantz_core::vm::compile(&get_node, graph, &mut vm, &entrypoints, &config) {
         Ok(compiled) => compiled,

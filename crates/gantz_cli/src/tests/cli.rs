@@ -220,6 +220,36 @@ fn run_push_by_label_or_path() {
     assert!(output.stdout.is_empty());
 }
 
+/// A run starts from the node state that a file stores for the commit of the
+/// graph, unless the graph does not keep its state.
+#[test]
+fn run_restores_stored_state() {
+    use gantz_core::node::state::{Snapshots, Volatile};
+    let codec = conf().codec;
+    let text = "(graph g (s (state #:init 1)) (show log) (-> s show))";
+    let mut registry = gantz_edit::format::from_str(text, BASE_TIMESTAMP, codec.data()).unwrap();
+    let name: gantz_ca::Name = "g".parse().unwrap();
+    let commit = registry.head(&name).unwrap();
+    let nodes = vec![(vec![0], gantz_ca::Datum::I64(5))];
+    gantz_ca::section_insert::<Snapshots>(&mut registry, commit, &nodes).unwrap();
+
+    let run = |registry: &gantz_ca::Registry| {
+        let heads = [gantz_ca::Head::Branch(name.clone())];
+        let text = gantz_edit::export::export_heads_sexpr(registry, &heads, codec.data()).unwrap();
+        let (sources, targets) = with_base(vec![Source {
+            label: "g.gantz".to_string(),
+            bytes: Cow::Owned(text.into_bytes()),
+        }]);
+        let output = run_graph(&conf(), &sources, targets.start, None, Some("0"), &[]);
+        assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+        output.stdout
+    };
+    assert_eq!(run(&registry), "5\n");
+
+    gantz_ca::section_insert::<Volatile>(&mut registry, name.clone(), &true).unwrap();
+    assert_eq!(run(&registry), "1.0\n");
+}
+
 #[test]
 fn run_without_main_names_push_sources() {
     let (sources, targets) = with_base(vec![source("root.gantz", ROOT)]);
