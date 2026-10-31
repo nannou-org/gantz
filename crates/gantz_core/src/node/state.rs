@@ -1,8 +1,10 @@
 use super::{Deserialize, Serialize};
 use crate::{
     ROOT_STATE,
+    datum::{self, Datum},
     node::{self, Node},
 };
+use gantz_ca::{CommitAddr, Liveness, MergePolicy, SectionDecl};
 use steel::{
     SteelErr, SteelVal,
     gc::Gc,
@@ -47,6 +49,23 @@ pub trait WithStateType: Node + Sized {
     }
 }
 
+/// The state of the nodes of a graph as data: the path and the state of each
+/// node, in path order.
+///
+/// A node state with no data form is left out, such as one that holds a
+/// function or a runtime object. That node starts from its initial state on a
+/// restore.
+pub type Snapshot = Vec<(Vec<node::Id>, Datum)>;
+
+/// The registry section of the node state of a commit, as a [`Snapshot`].
+///
+/// An entry rides with its commit, as a scene view does. So it syncs to a peer
+/// once, when the commit does, and a state change makes no sync traffic.
+pub struct Snapshots;
+
+/// The id of the [`Snapshots`] section.
+pub const SNAPSHOTS_ID: &str = "gantz.state";
+
 /// The ident of the node identity tree. It holds an opaque identity value per
 /// node, at the node's path followed by `ID_KEY`, with the same nesting as
 /// [`ROOT_STATE`].
@@ -59,6 +78,14 @@ pub const ROOT_IDS: &str = "%root-ids";
 /// The key under a node's path in [`ROOT_IDS`] that holds its identity. No
 /// node index reaches it.
 const ID_KEY: usize = isize::MAX as usize;
+
+impl SectionDecl for Snapshots {
+    const ID: &'static str = SNAPSHOTS_ID;
+    const POLICY: MergePolicy = MergePolicy::KeepExisting;
+    const LIVENESS: Liveness = Liveness::WithCommit;
+    type Key = CommitAddr;
+    type Value = Snapshot;
+}
 
 impl<N, S> State<N, S> {
     /// Given some node, return a `State` node enabling access to state of the
@@ -157,6 +184,34 @@ where
     fn visit(&self, ctx: node::visit::Ctx<'_, '_>, visitor: &mut dyn node::Visitor) {
         self.node.visit(ctx, visitor)
     }
+}
+
+/// The state of the nodes in `vm` as data.
+///
+/// This reads the state tree alone, so it needs no graph or node lookup. A
+/// map with only integer keys is the state of a nested graph.
+pub fn snapshot(vm: &Engine) -> Snapshot {
+    let mut nodes = vec![];
+    if let Ok(root) = root_map(vm, ROOT_STATE) {
+        collect_states(&root, &mut vec![], &mut nodes);
+    }
+    nodes.sort_by(|(a, _), (b, _)| a.cmp(b));
+    nodes
+}
+
+/// Set each node in `nodes` that has state in `vm` to its value in `nodes`.
+///
+/// Call this after the graph registers. It writes only the slots of the nodes
+/// that registered, so an entry that does not fit the graph changes nothing.
+pub fn restore(vm: &mut Engine, nodes: &[(Vec<node::Id>, Datum)]) -> Result<(), SteelErr> {
+    for (path, state) in nodes {
+        match extract_value(vm, path) {
+            Ok(Some(SteelVal::HashMapV(map))) if is_graph_state(&map) => (),
+            Ok(Some(_)) => update_value(vm, path, datum::to_steel(state))?,
+            Ok(None) | Err(_) => (),
+        }
+    }
+    Ok(())
 }
 
 /// Sets the given node's state to the given value.
@@ -287,6 +342,35 @@ pub fn init_if_absent<S: NodeState>(
         update_value(vm, path, val)?;
     }
     Ok(())
+}
+
+/// Add the state of each node in `map`, the state of the graph at `path`, to
+/// `nodes`.
+fn collect_states(map: &SteelHashMap, path: &mut Vec<node::Id>, nodes: &mut Snapshot) {
+    for (key, val) in map.iter() {
+        let SteelVal::IntV(id) = key else {
+            continue;
+        };
+        let Ok(id) = usize::try_from(*id) else {
+            continue;
+        };
+        path.push(id);
+        match val {
+            SteelVal::HashMapV(nested) if is_graph_state(nested) => {
+                collect_states(nested, path, nodes)
+            }
+            val => match datum::of_steel(val) {
+                Ok(state) => nodes.push((path.clone(), state)),
+                Err(e) => log::debug!("no snapshot of the state at {path:?}: {e}"),
+            },
+        }
+        path.pop();
+    }
+}
+
+/// Whether `map` is the state of a graph, keyed by node index.
+fn is_graph_state(map: &SteelHashMap) -> bool {
+    !map.is_empty() && map.keys().all(|key| matches!(key, SteelVal::IntV(_)))
 }
 
 /// The path in [`ROOT_IDS`] of the identity of the node at `node_path`.

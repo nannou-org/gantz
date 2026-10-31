@@ -449,3 +449,80 @@ fn nested_ref_instances_have_independent_state() {
         .unwrap();
     assert_eq!([s1, s2], [Counter(2), Counter(2)]);
 }
+
+/// A VM with the root state and each `(path, value)` in `states`.
+fn vm_with(states: &[(&[usize], SteelVal)]) -> Engine {
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    for (path, val) in states {
+        node::state::update_value(&mut vm, path, val.clone()).unwrap();
+    }
+    vm
+}
+
+/// A snapshot gives each node state by path in order, with the state of a
+/// nested graph as the states of its nodes. A restore puts them back.
+#[test]
+fn snapshot_and_restore_by_path() {
+    use gantz_core::datum::Datum;
+    let map = SteelVal::HashMapV(
+        steel::gc::Gc::new(steel::HashMap::from_iter([(
+            SteelVal::SymbolV("value".into()),
+            SteelVal::NumV(0.5),
+        )]))
+        .into(),
+    );
+    let vm = vm_with(&[
+        (&[2, 1], SteelVal::SymbolV("bd".into())),
+        (&[0], SteelVal::IntV(7)),
+        (&[2, 3], map),
+    ]);
+    let nodes = node::state::snapshot(&vm);
+    let value = Datum::Map(vec![("value".into(), Datum::F64(0.5))]);
+    let expected = vec![
+        (vec![0], Datum::I64(7)),
+        (vec![2, 1], Datum::Sym("bd".into())),
+        (vec![2, 3], value),
+    ];
+    assert_eq!(nodes, expected);
+
+    let mut fresh = vm_with(&[
+        (&[0], SteelVal::Void),
+        (&[2, 1], SteelVal::Void),
+        (&[2, 3], SteelVal::Void),
+    ]);
+    node::state::restore(&mut fresh, &nodes).unwrap();
+    assert_eq!(node::state::snapshot(&fresh), expected);
+}
+
+/// A state with no data form stays out of a snapshot, so that node starts
+/// from its initial state on a restore.
+#[test]
+fn a_snapshot_leaves_out_state_with_no_data_form() {
+    use gantz_core::datum::Datum;
+    let mut vm = Engine::new_base();
+    let f = vm.run("(lambda (x) x)".to_string()).unwrap().pop().unwrap();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    node::state::update_value(&mut vm, &[0], f).unwrap();
+    node::state::update_value(&mut vm, &[1], SteelVal::IntV(1)).unwrap();
+    assert_eq!(node::state::snapshot(&vm), vec![(vec![1], Datum::I64(1))]);
+}
+
+/// An entry that does not fit the registered graph changes nothing: a path
+/// with no slot, a path through the state of a node, and the path of a
+/// nested graph.
+#[test]
+fn a_restore_ignores_entries_that_do_not_fit() {
+    use gantz_core::datum::Datum;
+    let states: &[(&[usize], SteelVal)] = &[(&[0], SteelVal::IntV(1)), (&[2, 1], SteelVal::Void)];
+    let mut vm = vm_with(states);
+    let entries = [
+        (vec![9], Datum::I64(5)),
+        (vec![0, 1], Datum::I64(5)),
+        (vec![2], Datum::I64(5)),
+        (vec![], Datum::I64(5)),
+    ];
+    node::state::restore(&mut vm, &entries).unwrap();
+    let before = node::state::snapshot(&vm_with(states));
+    assert_eq!(node::state::snapshot(&vm), before);
+}

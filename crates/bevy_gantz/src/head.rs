@@ -7,6 +7,7 @@ use crate::reg::Registry;
 use bevy_ecs::{prelude::*, query::QueryData};
 use bevy_log as log;
 use gantz_ca as ca;
+use gantz_core::node::state;
 use std::{
     collections::HashMap,
     ops::{Deref, DerefMut},
@@ -348,6 +349,73 @@ pub fn is_focused(
         .unwrap_or(false)
 }
 
+/// Store the state of the open head `data` in the registry, as the snapshot of
+/// its commit. See [`state::Snapshots`].
+///
+/// A VM that does not hold the state of the committed graph stores nothing.
+/// The registry changes only when the state did. A first snapshot of a commit
+/// replaces the one of its nearest ancestor, so the section does not grow with
+/// the history of a graph.
+pub fn save_state(
+    registry: &mut impl DerefMut<Target = Registry>,
+    vms: &HeadVms,
+    data: OpenHeadDataReadOnlyItem<'_, '_>,
+) {
+    let Some(vm) = vms.get(&data.entity) else {
+        return;
+    };
+    let Some(commit) = registry.head_commit_ca(&data.head_ref.0) else {
+        return;
+    };
+    let graph = registry.commits().get(&commit).map(|c| c.graph);
+    let compiled = data.compiled_inputs.0.map(|inputs| inputs.graph);
+    if compiled != graph || data.module.error.is_some() {
+        return;
+    }
+    let nodes = state::snapshot(vm);
+    if nodes.is_empty() {
+        return;
+    }
+    let stored = ca::section_get::<state::Snapshots>(&registry.0, &commit);
+    if stored.as_ref() == Some(&nodes) {
+        return;
+    }
+    let superseded = stored
+        .is_none()
+        .then(|| superseded_snapshot(&registry.0, commit))
+        .flatten();
+    if let Err(e) = ca::section_insert::<state::Snapshots>(&mut registry.0, commit, &nodes) {
+        log::error!("cannot store the state of {commit}: {e}");
+    }
+    if let Some(ancestor) = superseded {
+        ca::section_remove::<state::Snapshots>(&mut registry.0, &ancestor);
+    }
+}
+
+/// The nearest ancestor of `commit` with a snapshot, unless a name still
+/// points to it, since its state then belongs to that name.
+fn superseded_snapshot(registry: &ca::Registry, commit: ca::CommitAddr) -> Option<ca::CommitAddr> {
+    let parent = |ca: &ca::CommitAddr| registry.commits().get(ca)?.parent;
+    let ancestor = std::iter::successors(parent(&commit), parent)
+        .find(|ca| ca::section_get::<state::Snapshots>(registry, ca).is_some())?;
+    let held = registry.heads().any(|(_, ca)| ca == ancestor);
+    (!held).then_some(ancestor)
+}
+
+/// Set the nodes in `vm`, which registered the graph of `head`, to the state
+/// stored for its commit.
+pub fn restore_state(registry: &ca::Registry, head: &ca::Head, vm: &mut Engine) {
+    let Some(commit) = registry.head_commit_ca(head) else {
+        return;
+    };
+    let Some(nodes) = ca::section_get::<state::Snapshots>(registry, &commit) else {
+        return;
+    };
+    if let Err(e) = state::restore(vm, &nodes) {
+        log::error!("cannot restore the state of {commit}: {e}");
+    }
+}
+
 // Observers
 
 /// Observer for [`OpenEvent`].
@@ -391,10 +459,11 @@ pub fn on_open(
 pub fn on_replace(
     trigger: On<ReplaceEvent>,
     mut cmds: Commands,
-    registry: Res<Registry>,
+    mut registry: ResMut<Registry>,
     mut focused: ResMut<FocusedHead>,
     mut vms: NonSendMut<HeadVms>,
     heads: Query<(Entity, &HeadRef), With<OpenHead>>,
+    data: Query<OpenHeadDataReadOnly, With<OpenHead>>,
 ) {
     let ReplaceEvent(new_head) = trigger.event();
 
@@ -410,6 +479,9 @@ pub fn on_replace(
         log::error!("cannot replace head: graph data missing from the registry");
         return;
     };
+    if let Ok(data) = data.get(entity) {
+        save_state(&mut registry, &vms, data);
+    }
     // The tab loads another head, so its load is pending.
     let change = Retarget {
         entity,
@@ -427,10 +499,12 @@ pub fn on_replace(
 pub fn on_close(
     trigger: On<CloseEvent>,
     mut cmds: Commands,
+    mut registry: ResMut<Registry>,
     mut tab_order: ResMut<HeadTabOrder>,
     mut focused: ResMut<FocusedHead>,
     mut vms: NonSendMut<HeadVms>,
     heads: Query<(Entity, &HeadRef), With<OpenHead>>,
+    data: Query<OpenHeadDataReadOnly, With<OpenHead>>,
 ) {
     let CloseEvent(head) = trigger.event();
 
@@ -445,6 +519,9 @@ pub fn on_close(
         return;
     };
 
+    if let Ok(data) = data.get(entity) {
+        save_state(&mut registry, &vms, data);
+    }
     vms.remove(&entity);
 
     cmds.entity(entity).despawn();

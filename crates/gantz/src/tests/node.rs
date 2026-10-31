@@ -2786,6 +2786,63 @@ fn demo_pplot_plots_every_source() {
     }
 }
 
+/// The state of each demo after its load pass survives a snapshot and a
+/// restore into a fresh VM, through the stored form of the section. A node
+/// with no data form for its state is not in the snapshot, and starts from its
+/// initial state.
+#[test]
+fn demo_state_round_trips_through_a_snapshot() {
+    use gantz_core::compile::entry_fn_name;
+    use gantz_core::node::state;
+
+    let merged = load_base().registry;
+    let reified = reify_all(&merged);
+    let builtins = builtins_with_instances(&crate::conf());
+    let codec = crate::node::codec();
+    let reg_env = env(&merged, &reified, &builtins, &codec);
+    let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
+
+    let names: Vec<_> = merged.heads().map(|(name, _)| name.clone()).collect();
+    let demos = names.iter().filter(|n| n.to_string().starts_with("demo."));
+    let mut with_state = 0;
+    for name in demos {
+        let head = gantz_ca::Head::Branch(name.clone());
+        let graph = head_graph(&reified, &merged, &head).expect("demo graph");
+        let eps = bevy_gantz_egui::entrypoints(&get_node, graph);
+        let init = || {
+            gantz_core::vm::init_with_modules(
+                &get_node,
+                graph,
+                &eps,
+                &gantz_core::compile::Config::default(),
+                &crate::node::steel_modules(),
+            )
+            .unwrap_or_else(|e| panic!("init: {}", gantz_core::vm::error_chain(&e)))
+            .0
+        };
+        let mut vm = init();
+        if let Some(load) = bevy_gantz_egui::node::load_bang::entrypoint(&get_node, graph) {
+            vm.call_function_by_name_with_args(&entry_fn_name(&load.id()), vec![])
+                .unwrap_or_else(|e| panic!("{name}: load pass errored: {e}"));
+        }
+        let nodes = state::snapshot(&vm);
+        if nodes.is_empty() {
+            continue;
+        }
+        with_state += 1;
+        let datum = gantz_ca::datum::to_datum(&nodes).expect("encode");
+        let stored: state::Snapshot = gantz_ca::datum::from_datum(datum).expect("decode");
+        assert_eq!(stored, nodes, "{name}: the stored form");
+        let mut fresh = init();
+        state::restore(&mut fresh, &stored).unwrap();
+        let restored = state::snapshot(&fresh);
+        for node in &nodes {
+            assert!(restored.contains(node), "{name}: state at {:?}", node.0);
+        }
+    }
+    assert!(with_state > 0, "a demo has state");
+}
+
 /// Partial evals over demo.pat stay silent. The tick entrypoint is
 /// interleaved with the cps number node's push entrypoint. That push's
 /// cone reaches the pattern nodes without their pattern inputs. The
