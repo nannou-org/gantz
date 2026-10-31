@@ -66,9 +66,10 @@ impl Plugin for PersistPlugin {
                     .run_if(store_writable),
             );
         // Native only. Wasm writes inline, and the runner consumes the World, so
-        // this cannot run after `run()`.
+        // this cannot run after `run()`. The exit systems run in `Last` too, and
+        // the app stops at the end of that frame, so this must follow them.
         #[cfg(not(target_arch = "wasm32"))]
-        app.add_systems(Last, flush_on_exit);
+        app.add_systems(Last, flush_on_exit.after(bevy::window::ExitSystems));
     }
 }
 
@@ -313,4 +314,47 @@ fn flush_on_exit(
         persister.submit(batch);
     }
     persister.shutdown();
+}
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+mod tests {
+    use super::*;
+
+    /// An exit ends the app with the frame that reports it, so the last save
+    /// must run in that frame. With no window, the first frame is that frame.
+    #[test]
+    fn the_last_frame_flushes_the_store() {
+        let dir = std::env::temp_dir().join(format!("gantz-flush-{}", std::process::id()));
+        let pkv = Pkv::new(bevy_pkv::PkvStore::new_in_dir(&dir));
+        let mut app = App::new();
+        app.add_plugins((
+            MinimalPlugins,
+            bevy::input::InputPlugin,
+            bevy::window::WindowPlugin {
+                primary_window: None,
+                ..default()
+            },
+            bevy_gantz::GantzPlugin,
+            DebouncedInputPlugin::<DebouncedInputEvent>::new(0.25),
+            PersistPlugin,
+        ))
+        .insert_resource(pkv.clone())
+        .init_resource::<Persisted>()
+        .init_resource::<GuiState>();
+        #[cfg(feature = "collab")]
+        app.init_resource::<bevy_gantz_collab::PersistedVaultSynced>();
+        let name: gantz_ca::Name = "g".parse().unwrap();
+        let graph = gantz_ca::DataGraph::default();
+        let addr = gantz_ca::graph_addr(&graph);
+        let mut registry = app.world_mut().resource_mut::<Registry>();
+        let commit = registry.commit_graph(std::time::Duration::ZERO, None, addr, || graph);
+        registry.set_head(name.clone(), commit);
+
+        app.update();
+        assert!(app.should_exit().is_some());
+        let (stored, _) = gantz_store::load_registry(&pkv);
+        drop((app, pkv));
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(stored.head(&name), Some(commit));
+    }
 }
