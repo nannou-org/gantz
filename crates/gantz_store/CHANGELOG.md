@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/nannou-org/gantz/compare/gantz_store-v0.1.1...gantz_store-v0.2.0) - 2026-10-31
+
+### Other
+
+- *(gantz_ca)* [**breaking**] tidy the registry API
+
 ## [0.1.1](https://github.com/nannou-org/gantz/compare/gantz_store-v0.1.0...gantz_store-v0.1.1) - 2026-10-17
 
 ### Other

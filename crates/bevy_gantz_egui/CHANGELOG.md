@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.10.0...bevy_gantz_egui-v0.11.0) - 2026-10-31
+
+### Added
+
+- carry node state through copy and paste
+- add a keep toggle and a reset for node state
+- keep node state across sessions
+- [**breaking**] define the DSP nodes as data
+- keep a graph running from the command line with run --live
+- give the nodes of open heads entities
+- *(gantz_egui)* describe a node on a hover of its frame
+- draw bang, number, expr and inspect nodes flat
+- *(bevy_gantz_egui)* follow the system's light or dark preference
+- *(gantz_egui)* refine the window's decorations
+- *(gantz_egui)* draw the window's own decorations
+- show save time, links, audio and vm history in the status line
+- *(gantz_egui)* save, reset and export palettes
+- *(gantz_egui)* add palette presets and base16 import
+- [**breaking**] move base graphs into dot namespaces
+- [**breaking**] rename old base graph names on load and import
+
+### Fixed
+
+- *(bevy_gantz_egui)* commit layouts only after a layout edit
+
+### Other
+
+- [**breaking**] compose node kinds at run time
+- [**breaking**] move the format, export and base modules to gantz_edit
+- *(gantz_edit)* [**breaking**] make the node codec generic over the node type
+- *(bevy_gantz_egui)* index driven nodes per graph
+- *(gantz_ca)* [**breaking**] tidy the registry API
+- *(bevy_gantz_egui)* share the file dialog tasks
+
 ## [0.10.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_egui-v0.9.0...bevy_gantz_egui-v0.10.0) - 2026-10-17
 
 ### Added

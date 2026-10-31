@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.9.0...gantz_core-v0.10.0) - 2026-10-31
+
+### Added
+
+- carry node state through copy and paste
+- add a keep toggle and a reset for node state
+- keep node state across sessions
+- give the nodes of open heads entities
+
+### Other
+
+- [**breaking**] make Datum the one data form
+
 ## [0.9.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.8.0...gantz_core-v0.9.0) - 2026-10-17
 
 ### Fixed

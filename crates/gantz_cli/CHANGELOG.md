@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_cli-v0.3.0...gantz_cli-v0.4.0) - 2026-10-31
+
+### Added
+
+- add a keep toggle and a reset for node state
+- keep a graph running from the command line with run --live
+- *(gantz_egui)* add a state node for GUI controls to edit
+- [**breaking**] move base graphs into dot namespaces
+- [**breaking**] rename old base graph names on load and import
+
+### Fixed
+
+- *(gantz_cli)* compare mirrored layouts over the stored layout
+
+### Other
+
+- [**breaking**] compose node kinds at run time
+- [**breaking**] move the format, export and base modules to gantz_edit
+- *(gantz_edit)* [**breaking**] make the node codec generic over the node type
+
 ## [0.3.0](https://github.com/nannou-org/gantz/compare/gantz_cli-v0.2.0...gantz_cli-v0.3.0) - 2026-10-17
 
 ### Added

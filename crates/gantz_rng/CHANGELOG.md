@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/nannou-org/gantz/compare/gantz_rng-v0.1.2...gantz_rng-v0.2.0) - 2026-10-31
+
+### Added
+
+- [**breaking**] move base graphs into dot namespaces
+
 ## [0.1.2](https://github.com/nannou-org/gantz/compare/gantz_rng-v0.1.1...gantz_rng-v0.1.2) - 2026-10-17
 
 ### Other

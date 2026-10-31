@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0](https://github.com/nannou-org/gantz/compare/gantz_ui-v0.5.1...gantz_ui-v0.6.0) - 2026-10-31
+
+### Added
+
+- define node types as data
+- add bound, choice and color GUI elements
+- [**breaking**] move base graphs into dot namespaces
+
+### Other
+
+- [**breaking**] make Datum the one data form
+
 ## [0.5.1](https://github.com/nannou-org/gantz/compare/gantz_ui-v0.5.0...gantz_ui-v0.5.1) - 2026-10-17
 
 ### Other

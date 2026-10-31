@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0](https://github.com/nannou-org/gantz/compare/gantz_format-v0.7.0...gantz_format-v0.8.0) - 2026-10-31
+
+### Other
+
+- [**breaking**] make Datum the one data form
+- [**breaking**] compose node kinds at run time
+
 ## [0.7.0](https://github.com/nannou-org/gantz/compare/gantz_format-v0.6.0...gantz_format-v0.7.0) - 2026-10-17
 
 ### Other
