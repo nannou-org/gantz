@@ -8,9 +8,14 @@
 //! resolution, identity rules and decode totality are documented in
 //! [`gantz_ui`].
 //!
-//! Bindings read via [`NodeCtx::extract_value_at`] and write via
-//! [`NodeCtx::update_value_at`]. Those touch VM runtime state only, so
-//! interpreting a tree never mutates CA-affecting state.
+//! Bindings read and write node state through a [`TreeState`]. A node's
+//! view uses its [`NodeCtx`], whose state is VM runtime state only, so
+//! interpreting a tree never mutates CA-affecting state. A tree with no node,
+//! such as a domain's settings tab, renders over [`Detached`].
+//!
+//! A control bound to a `field` reads the fields of the node that owns the
+//! tree, given by [`UiTree::fields`]. Its edits come back in
+//! [`UiTreeResponse::field_edits`] for the node to apply.
 //!
 //! Each element's [`egui::Id`] derives from the render root's id, its
 //! structural position or `key` beneath its parent, and any enclosing
@@ -35,17 +40,38 @@
 //! referenced graph to see them.
 
 use crate::{NodeCtx, node, response::DynResponse};
+use gantz_core::datum::{self, Datum};
 use gantz_ui::{
-    Align, BindPath, Bound, Button, Choice, Color, Dialer, Element, Key, Matrix, Rgba, Toggle,
+    Align, At, BindPath, Bound, Button, Choice, Color, Dialer, Edit, Element, EnvelopeElem, Field,
+    Key, Matrix, Rgba, TextInput, Toggle, Tone,
 };
-use steel::{SteelVal, Vector, gc::Gc};
+use steel::{HashMap, SteelErr, SteelVal, Vector, gc::Gc};
 
+pub mod canvas;
+pub mod envelope;
 pub mod plot;
+
+/// The node state that a tree's bound controls read and write. See the
+/// module docs.
+pub trait TreeState {
+    /// The state at `path`, if any.
+    fn value_at(&self, path: &[node::Id]) -> Result<Option<SteelVal>, SteelErr>;
+
+    /// Write `val` as the state at `path`.
+    fn set_value_at(&mut self, path: &[node::Id], val: SteelVal) -> Result<(), SteelErr>;
+}
+
+/// No node state, for a tree that no node owns. A bound control shows that
+/// its path holds nothing, and its writes fail.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Detached;
 
 /// The outcome of interpreting a UI tree for one frame.
 ///
 /// Controls write VM runtime state and queue evaluations only. Interpreting
 /// a tree never edits CA-affecting state, so there is no `changed` flag.
+/// Edits to the fields of the node that owns the tree are reported for the
+/// node to apply, see [`UiTree::fields`].
 #[derive(Debug, Default)]
 pub struct UiTreeResponse {
     /// The union of every rendered widget's response, if anything rendered.
@@ -53,7 +79,56 @@ pub struct UiTreeResponse {
     /// Payloads for the application to handle after the GUI pass. In v1
     /// these are [`crate::EvalEntry`] push evaluations.
     pub payloads: Vec<DynResponse>,
+    /// Edits to fields of the node that owns the tree, in the order made.
+    pub field_edits: Vec<(Field, Datum)>,
+    /// Edits for the node that owns the tree to apply, in the order made, with
+    /// the control's new value. A button sends `Datum::Null`.
+    pub edits: Vec<(Edit, Datum)>,
+    /// Edits of a gesture in progress, such as each step of a drag, with the
+    /// value so far. The gesture's end comes as one of [`Self::edits`]. A
+    /// node can preview a live edit without a change of the node.
+    pub live_edits: Vec<(Edit, Datum)>,
+    /// Requests to import a file into the node that owns the tree, each with
+    /// its edit and the name of its importer. See [`gantz_ui::File`].
+    pub imports: Vec<(Edit, String)>,
 }
+
+/// Where a control reads and writes its value.
+enum Target {
+    /// VM state at a resolved path, or at keys within it.
+    State(Vec<node::Id>, Option<At>),
+    /// A field of the node that owns the tree.
+    Field(Field),
+    /// An edit that the node that owns the tree applies.
+    Edit(Edit),
+}
+
+/// What a control binds. See [`Walk::target_value`].
+struct Binding<'b> {
+    bind: &'b Option<BindPath>,
+    at: &'b Option<At>,
+    field: &'b Option<Field>,
+    on: &'b Option<Edit>,
+    /// The value that a control with an edit shows.
+    value: Option<SteelVal>,
+}
+
+/// The buffered text of a text input, held in egui temp memory, so an edit
+/// commits once it settles rather than per keystroke.
+#[derive(Clone, Default)]
+struct TextBuffer {
+    /// The text being edited.
+    text: String,
+    /// The bound text when the buffer last synced with it.
+    source: String,
+    /// The time of the last keystroke.
+    last_edit: f64,
+}
+
+/// Seconds of no typing before a text input commits a changed buffer.
+const TEXT_FLUSH: f64 = 2.0;
+/// The tip of a colour control's button that clears its colour.
+const THEME_TIP: &str = "follow the theme's colour";
 
 /// Renders a [`gantz_ui::Element`] tree and resolves bindings against VM
 /// state through the given [`NodeCtx`].
@@ -66,6 +141,8 @@ pub struct UiTree<'a> {
     instance_prefix: &'a [node::Id],
     n_outputs: Option<&'a dyn Fn(&[node::Id]) -> Option<usize>>,
     ref_gui: Option<&'a dyn Fn(&[node::Id]) -> Option<node::Id>>,
+    fields: Option<&'a Datum>,
+    owned: bool,
 }
 
 /// The maximum depth of nested `ref-gui` embeds rendered before falling back
@@ -94,6 +171,9 @@ struct Walk<'a> {
     ref_chain: Vec<node::Id>,
     n_outputs: Option<&'a dyn Fn(&[node::Id]) -> Option<usize>>,
     ref_gui: Option<&'a dyn Fn(&[node::Id]) -> Option<node::Id>>,
+    fields: Option<&'a Datum>,
+    /// Whether an owner takes the `on` edits and the imports of the tree.
+    owned: bool,
     resp: UiTreeResponse,
 }
 
@@ -105,7 +185,26 @@ impl<'a> UiTree<'a> {
             instance_prefix: &[],
             n_outputs: None,
             ref_gui: None,
+            fields: None,
+            owned: false,
         }
+    }
+
+    /// The fields of the node that owns the tree, the map of its stored form.
+    /// Field-bound controls read them and report edits in
+    /// [`UiTreeResponse::field_edits`]. Without fields, such controls are
+    /// inert.
+    pub fn fields(mut self, fields: &'a Datum) -> Self {
+        self.fields = Some(fields);
+        self
+    }
+
+    /// Mark the tree as one of a node or a domain that applies its `on`
+    /// edits and imports. A tree with [`fields`](Self::fields) is one of a
+    /// node too. Without an owner, such controls are inert.
+    pub fn owned(mut self) -> Self {
+        self.owned = true;
+        self
     }
 
     /// The path prefix prepended to every binding. It is the path at which
@@ -142,13 +241,20 @@ impl<'a> UiTree<'a> {
     }
 
     /// Render the tree, resolving bindings via `ctx`.
-    pub fn show(self, tree: &Element, ctx: &mut NodeCtx, ui: &mut egui::Ui) -> UiTreeResponse {
+    pub fn show(
+        self,
+        tree: &Element,
+        ctx: &mut dyn TreeState,
+        ui: &mut egui::Ui,
+    ) -> UiTreeResponse {
         let mut walk = Walk {
             instance_prefix: self.instance_prefix,
             scopes: Vec::new(),
             ref_chain: Vec::new(),
             n_outputs: self.n_outputs,
             ref_gui: self.ref_gui,
+            fields: self.fields,
+            owned: self.owned || self.fields.is_some(),
             resp: UiTreeResponse::default(),
         };
         walk.element(tree, self.root_id, ctx, ui);
@@ -158,7 +264,7 @@ impl<'a> UiTree<'a> {
 
 impl Walk<'_> {
     /// Render one element with the given derived id.
-    fn element(&mut self, e: &Element, id: egui::Id, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+    fn element(&mut self, e: &Element, id: egui::Id, ctx: &mut dyn TreeState, ui: &mut egui::Ui) {
         match e {
             Element::Col(col) => {
                 let cross = cross_align(col.align.unwrap_or(Align::Start));
@@ -237,25 +343,54 @@ impl Walk<'_> {
             Element::Toggle(toggle) => self.toggle(toggle, id, ctx, ui),
             Element::Bound(bound) => self.bound(bound, id, ctx, ui),
             Element::Choice(choice) => self.choice(choice, id, ctx, ui),
+            Element::TextInput(input) => self.text_input(input, id, ctx, ui),
             Element::Color(color) => self.color(color, id, ctx, ui),
             Element::Button(button) => self.button(button, id, ui),
+            Element::File(file) => self.file(file, id, ui),
             Element::Matrix(matrix) => self.matrix(matrix, id, ctx, ui),
             Element::Label(label) => {
-                let mut text = egui::RichText::new(&label.text);
+                let bound = label.bind.as_ref().and_then(|bind| {
+                    let state = ctx.value_at(&self.resolve(bind)).ok().flatten()?;
+                    match &label.at {
+                        Some(at) => state_at(&state, &at.0),
+                        None => Some(state),
+                    }
+                });
+                let shown = match bound {
+                    Some(SteelVal::StringV(s)) => s.to_string(),
+                    Some(SteelVal::Void) | None => label.text.clone(),
+                    Some(val) => format!("{val:?}"),
+                };
+                let mut text = egui::RichText::new(shown);
                 if let Some(size) = label.size {
                     text = text.size(size);
                 }
-                if let Some(Rgba([r, g, b, a])) = label.color {
-                    text = text.color(egui::Color32::from_rgba_unmultiplied(r, g, b, a));
+                if label.mono {
+                    text = text.monospace();
+                }
+                let visuals = ui.visuals();
+                let color = match (label.color, label.tone) {
+                    (Some(Rgba([r, g, b, a])), _) => {
+                        Some(egui::Color32::from_rgba_unmultiplied(r, g, b, a))
+                    }
+                    (None, Some(Tone::Weak)) => Some(visuals.weak_text_color()),
+                    (None, Some(Tone::Strong)) => Some(visuals.strong_text_color()),
+                    (None, Some(Tone::Warn)) => Some(visuals.warn_fg_color),
+                    (None, Some(Tone::Error)) => Some(visuals.error_fg_color),
+                    (None, None) => None,
+                };
+                if let Some(color) = color {
+                    text = text.color(color);
                 }
                 // Non-selectable so surrounding node bodies stay draggable.
                 let r = ui.add(egui::Label::new(text).selectable(false));
+                let r = with_tip(r, label.tip.as_deref());
                 self.merge(r);
             }
             Element::Value(value) => {
                 let text = match &value.bind {
                     None => "∅".to_string(),
-                    Some(bind) => match ctx.extract_value_at(&self.resolve(bind)) {
+                    Some(bind) => match ctx.value_at(&self.resolve(bind)) {
                         // A value that has not arrived yet shows as a dash.
                         Ok(Some(SteelVal::Void)) => "—".to_string(),
                         Ok(Some(val)) => format!("{val:?}"),
@@ -273,6 +408,8 @@ impl Walk<'_> {
                 self.merge(r);
             }
             Element::Plot(plot) => self.plot(plot, id, ctx, ui),
+            Element::Canvas(canvas) => self.canvas(canvas, id, ctx, ui),
+            Element::Envelope(e) => self.envelope(e, id, ui),
             Element::RefGui(ref_gui) => self.ref_gui_elem(ref_gui, id, ctx, ui),
             Element::Error(err) => {
                 let color = ui.visuals().error_fg_color;
@@ -296,7 +433,7 @@ impl Walk<'_> {
         &mut self,
         children: &[Element],
         parent: egui::Id,
-        ctx: &mut NodeCtx,
+        ctx: &mut dyn TreeState,
         ui: &mut egui::Ui,
     ) {
         for (ix, child) in children.iter().enumerate() {
@@ -304,17 +441,14 @@ impl Walk<'_> {
         }
     }
 
-    /// Render a numeric drag value bound to number state.
-    fn dialer(&mut self, d: &Dialer, id: egui::Id, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
-        let Some(bind) = &d.bind else {
-            let r = unbound_chip(ui, "dialer");
-            self.merge(r);
-            return;
-        };
-        let path = self.resolve(bind);
-        let Ok(Some(mut val)) = ctx.extract_value_at(&path) else {
-            let r = err_label(ui, "no state at the bound path");
-            self.merge(r);
+    /// Render a numeric drag value bound to number state or a number field.
+    fn dialer(&mut self, d: &Dialer, id: egui::Id, ctx: &mut dyn TreeState, ui: &mut egui::Ui) {
+        let Some((target, mut val)) = self.target_value(
+            binding(&d.bind, &d.at, &d.field, &d.on, d.value.map(SteelVal::NumV)),
+            "dialer",
+            ctx,
+            ui,
+        ) else {
             return;
         };
         let original = val.clone();
@@ -350,23 +484,27 @@ impl Walk<'_> {
                 }
             })
             .inner;
+        let r = with_tip(r, d.tip.as_deref());
         if r.changed() && val != original {
-            self.emit_set(ctx, &path, val, d.push);
+            self.emit_target(ctx, target, val, d.push);
         }
         self.merge(r);
     }
 
-    /// Render a checkbox bound to bool state.
-    fn toggle(&mut self, t: &Toggle, id: egui::Id, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
-        let Some(bind) = &t.bind else {
-            let r = unbound_chip(ui, "toggle");
-            self.merge(r);
-            return;
-        };
-        let path = self.resolve(bind);
-        let Ok(Some(val)) = ctx.extract_value_at(&path) else {
-            let r = err_label(ui, "no state at the bound path");
-            self.merge(r);
+    /// Render a checkbox bound to bool state or a bool field.
+    fn toggle(&mut self, t: &Toggle, id: egui::Id, ctx: &mut dyn TreeState, ui: &mut egui::Ui) {
+        let Some((target, val)) = self.target_value(
+            binding(
+                &t.bind,
+                &t.at,
+                &t.field,
+                &t.on,
+                Some(SteelVal::BoolV(t.value)),
+            ),
+            "toggle",
+            ctx,
+            ui,
+        ) else {
             return;
         };
         let SteelVal::BoolV(mut b) = val else {
@@ -382,11 +520,83 @@ impl Walk<'_> {
             }
             false => ui.checkbox(&mut b, text),
         });
-        let r = claim_press(r.inner);
+        let r = with_tip(claim_press(r.inner), t.tip.as_deref());
         if r.changed() {
-            self.emit_set(ctx, &path, SteelVal::BoolV(b), t.push);
+            self.emit_target(ctx, target, SteelVal::BoolV(b), t.push);
         }
         self.merge(r);
+    }
+
+    /// Where a control reads and writes, and its value there. A field comes
+    /// first, then an edit, then a bound path. Shows why when there is no
+    /// value and returns `None`.
+    fn target_value(
+        &mut self,
+        binding: Binding<'_>,
+        tag: &str,
+        ctx: &mut dyn TreeState,
+        ui: &mut egui::Ui,
+    ) -> Option<(Target, SteelVal)> {
+        let Some(field) = binding.field else {
+            if let Some(edit) = binding.on {
+                if !self.owned {
+                    let why = "an edit goes only to the node of its own view";
+                    let r = weak_chip(ui, tag).on_hover_text(why);
+                    self.merge(r);
+                    return None;
+                }
+                let Some(val) = binding.value else {
+                    let r = err_label(ui, "a control with an edit needs a `value`");
+                    self.merge(r);
+                    return None;
+                };
+                return Some((Target::Edit(edit.clone()), val));
+            }
+            let (path, state) = self.bound_state(binding.bind, tag, ctx, ui)?;
+            let val = match binding.at {
+                None => state,
+                Some(at) => match state_at(&state, &at.0) {
+                    Some(val) => val,
+                    None => {
+                        let r = err_label(ui, "no state at the bound keys");
+                        self.merge(r);
+                        return None;
+                    }
+                },
+            };
+            return Some((Target::State(path, binding.at.clone()), val));
+        };
+        let Some(fields) = self.fields else {
+            let r = weak_chip(ui, tag).on_hover_text("a field binds only in a node's own view");
+            self.merge(r);
+            return None;
+        };
+        let Some(val) = fields.get(&field.0).map(datum::to_steel) else {
+            let r = err_label(ui, "the node has no field of this name");
+            self.merge(r);
+            return None;
+        };
+        Some((Target::Field(field.clone()), val))
+    }
+
+    /// Write a control's new value to its target. See [`Walk::target_value`].
+    fn emit_target(&mut self, ctx: &mut dyn TreeState, target: Target, val: SteelVal, push: bool) {
+        match target {
+            Target::State(path, None) => self.emit_set(ctx, &path, val, push),
+            Target::State(path, Some(at)) => {
+                let state = ctx.value_at(&path).ok().flatten();
+                let val = with_state_at(state.as_ref(), &at.0, val);
+                self.emit_set(ctx, &path, val, push)
+            }
+            Target::Field(field) => match datum::of_steel(&val) {
+                Ok(datum) => self.resp.field_edits.push((field, datum)),
+                Err(e) => log::warn!("cannot write {e} to the field `{}`", field.0),
+            },
+            Target::Edit(edit) => match datum::of_steel(&val) {
+                Ok(datum) => self.resp.edits.push((edit, datum)),
+                Err(e) => log::warn!("cannot send {e} with the edit `{}`", edit.0),
+            },
+        }
     }
 
     /// The path that `bind` resolves to and the state there. Shows why when
@@ -395,7 +605,7 @@ impl Walk<'_> {
         &mut self,
         bind: &Option<BindPath>,
         tag: &str,
-        ctx: &mut NodeCtx,
+        ctx: &mut dyn TreeState,
         ui: &mut egui::Ui,
     ) -> Option<(Vec<node::Id>, SteelVal)> {
         let Some(bind) = bind else {
@@ -404,7 +614,7 @@ impl Walk<'_> {
             return None;
         };
         let path = self.resolve(bind);
-        let Ok(Some(val)) = ctx.extract_value_at(&path) else {
+        let Ok(Some(val)) = ctx.value_at(&path) else {
             let r = err_label(ui, "no state at the bound path");
             self.merge(r);
             return None;
@@ -412,10 +622,13 @@ impl Walk<'_> {
         Some((path, val))
     }
 
-    /// Render a checkbox and a number bound to number or `#f` state, as an
-    /// inspector bound row does. The checkbox sets the number or clears it.
-    fn bound(&mut self, b: &Bound, id: egui::Id, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
-        let Some((path, val)) = self.bound_state(&b.bind, "bound", ctx, ui) else {
+    /// Render a checkbox and a number bound to number or `#f` state, or to
+    /// such a field or edit, as an inspector bound row does. The checkbox sets
+    /// the number or clears it.
+    fn bound(&mut self, b: &Bound, id: egui::Id, ctx: &mut dyn TreeState, ui: &mut egui::Ui) {
+        let shown = Some(b.value.map_or(SteelVal::BoolV(false), SteelVal::NumV));
+        let binding = binding(&b.bind, &b.at, &b.field, &b.on, shown);
+        let Some((target, val)) = self.target_value(binding, "bound", ctx, ui) else {
             return;
         };
         let mut bound = match val {
@@ -429,15 +642,26 @@ impl Walk<'_> {
         });
         if r.inner {
             let val = bound.map_or(SteelVal::BoolV(false), SteelVal::NumV);
-            self.emit_set(ctx, &path, val, true);
+            self.emit_target(ctx, target, val, true);
         }
         self.merge(r.response);
     }
 
-    /// Render a pill per option, bound to state that holds one of them as a
-    /// symbol. A click sets the state to its option.
-    fn choice(&mut self, c: &Choice, id: egui::Id, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
-        let Some((path, val)) = self.bound_state(&c.bind, "choice", ctx, ui) else {
+    /// Render a pill per option, bound to state or a field that holds one of
+    /// them. A click sets the state or field to its option.
+    fn choice(&mut self, c: &Choice, id: egui::Id, ctx: &mut dyn TreeState, ui: &mut egui::Ui) {
+        let Some((target, val)) = self.target_value(
+            binding(
+                &c.bind,
+                &c.at,
+                &c.field,
+                &c.on,
+                c.value.clone().map(|v| SteelVal::SymbolV(v.into())),
+            ),
+            "choice",
+            ctx,
+            ui,
+        ) else {
             return;
         };
         let current = match &val {
@@ -448,10 +672,11 @@ impl Walk<'_> {
             ui.horizontal(|ui| {
                 let strong = ui.visuals().strong_text_color();
                 let mut picked = None;
-                for option in &c.options {
+                for (ix, option) in c.options.iter().enumerate() {
                     let mut on = current.as_deref() == Some(option.as_str());
                     let toggle = crate::widget::LabelToggle::new(option, &mut on);
                     let r = claim_press(ui.add(toggle.selected_color(strong)));
+                    let r = with_tip(r, c.tips.get(ix).map(String::as_str));
                     if r.changed() && on {
                         picked = Some(option.clone());
                     }
@@ -460,15 +685,103 @@ impl Walk<'_> {
             })
         });
         if let Some(option) = r.inner.inner {
-            self.emit_set(ctx, &path, SteelVal::SymbolV(option.into()), true);
+            self.emit_target(ctx, target, SteelVal::SymbolV(option.into()), true);
         }
         self.merge(r.response);
     }
 
-    /// Render a colour button bound to `"#rrggbb"` or `#f` state. `#f` shows
-    /// the theme's colour. A `theme` button clears an edited colour.
-    fn color(&mut self, c: &Color, id: egui::Id, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
-        let Some((path, val)) = self.bound_state(&c.bind, "color", ctx, ui) else {
+    /// Render a line of text bound to string state or a string field. The
+    /// text buffers in egui temp memory and commits once the edit settles. A
+    /// change to the bound text from elsewhere, such as an undo, resyncs it.
+    fn text_input(
+        &mut self,
+        t: &TextInput,
+        id: egui::Id,
+        ctx: &mut dyn TreeState,
+        ui: &mut egui::Ui,
+    ) {
+        let Some((target, val)) = self.target_value(
+            binding(
+                &t.bind,
+                &t.at,
+                &t.field,
+                &t.on,
+                t.value.clone().map(|v| SteelVal::StringV(v.into())),
+            ),
+            "text-input",
+            ctx,
+            ui,
+        ) else {
+            return;
+        };
+        let (SteelVal::StringV(current) | SteelVal::SymbolV(current)) = &val else {
+            let r = err_label(ui, "bound state is not a string");
+            self.merge(r);
+            return;
+        };
+        let current = current.to_string();
+        let mem_id = id.with("text-input");
+        let mut buf: TextBuffer = ui
+            .memory_mut(|m| m.data.remove_temp(mem_id))
+            .unwrap_or_default();
+        if buf.source != current {
+            buf.source = current.clone();
+            buf.text = current;
+        }
+        let style = match t.mono {
+            true => egui::TextStyle::Monospace,
+            false => egui::TextStyle::Body,
+        };
+        let font = egui::FontSelection::from(style).resolve(ui.style());
+        // Size the input to its text, or to its hint while empty. A text edit
+        // lays out within its width less its margin, so add the margin back,
+        // plus 1px for sub-pixel rounding.
+        let margin = egui::Margin::symmetric(4, 2);
+        let measure = |ui: &egui::Ui, text: &str| {
+            ui.ctx().fonts_mut(|f| {
+                f.layout_no_wrap(text.to_string(), font.clone(), egui::Color32::WHITE)
+                    .rect
+                    .width()
+            })
+        };
+        let hint = t.hint.as_deref().unwrap_or("");
+        let width = measure(ui, &buf.text).max(measure(ui, hint)).max(16.0);
+        let mut edit = egui::TextEdit::singleline(&mut buf.text)
+            .font(font.clone())
+            .margin(margin)
+            .desired_width(width.ceil() + margin.sum().x + 1.0);
+        if let Some(hint) = &t.hint {
+            edit = edit.hint_text(hint);
+        }
+        let r = ui.push_id(id, |ui| ui.add(edit)).inner;
+        let r = with_tip(r, t.tip.as_deref());
+        let time = ui.input(|i| i.time);
+        if r.changed() {
+            buf.last_edit = time;
+        }
+        let dirty = buf.text != buf.source;
+        let settled = time - buf.last_edit >= TEXT_FLUSH;
+        if dirty && (r.lost_focus() || settled) {
+            buf.source = buf.text.clone();
+            let text = SteelVal::StringV(buf.text.clone().into());
+            self.emit_target(ctx, target, text, t.push);
+        } else if dirty {
+            let wait = TEXT_FLUSH - (time - buf.last_edit);
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f64(wait.max(0.0)));
+        }
+        ui.memory_mut(|m| m.data.insert_temp(mem_id, buf));
+        self.merge(r);
+    }
+
+    /// Render a colour button bound to `"#rrggbb"` or `#f` state, or to such
+    /// a field or edit. `#f` shows the theme's colour. A `theme` button
+    /// clears an edited colour.
+    fn color(&mut self, c: &Color, id: egui::Id, ctx: &mut dyn TreeState, ui: &mut egui::Ui) {
+        let shown = c.value.map(|rgba| SteelVal::StringV(rgba.hex().into()));
+        let shown = shown.or(Some(SteelVal::BoolV(false)));
+        let binding = binding(&c.bind, &c.at, &c.field, &c.on, shown);
+        let Some((target, val)) = self.target_value(binding, "color", ctx, ui) else {
             return;
         };
         let set = match &val {
@@ -479,26 +792,63 @@ impl Walk<'_> {
             ui.horizontal(|ui| {
                 let mut col = plot::resolve_color(set.map(|Rgba(c)| c), ui);
                 let edit = claim_press(ui.color_edit_button_srgba(&mut col));
+                let edit = with_tip(edit, c.tip.as_deref());
                 if edit.changed() {
                     let rgba = Rgba([col.r(), col.g(), col.b(), col.a()]);
                     return Some(SteelVal::StringV(rgba.hex().into()));
                 }
-                let theme = set.is_some() && claim_press(ui.button("theme")).clicked();
+                let theme = c.theme
+                    && set.is_some()
+                    && claim_press(ui.button("theme").on_hover_text(THEME_TIP)).clicked();
                 theme.then_some(SteelVal::BoolV(false))
             })
         });
         if let Some(val) = r.inner.inner {
-            self.emit_set(ctx, &path, val, true);
+            self.emit_target(ctx, target, val, true);
         }
         self.merge(r.response);
+    }
+
+    /// Render a button that asks the host to import a file into the node
+    /// that owns the tree.
+    fn file(&mut self, f: &gantz_ui::File, id: egui::Id, ui: &mut egui::Ui) {
+        let (Some(edit), Some(import)) = (&f.on, &f.import) else {
+            let r = err_label(ui, "a file control needs an `on` edit and an `import`");
+            self.merge(r);
+            return;
+        };
+        if !self.owned {
+            let why = "an import goes only to the node of its own view";
+            let r = weak_chip(ui, "file").on_hover_text(why);
+            self.merge(r);
+            return;
+        }
+        let text = f.label.as_deref().unwrap_or("load…");
+        let r = claim_press(ui.push_id(id, |ui| ui.button(text)).inner);
+        let r = with_tip(r, f.tip.as_deref());
+        if r.clicked() {
+            self.resp.imports.push((edit.clone(), import.clone()));
+        }
+        self.merge(r);
     }
 
     /// Render a button that queues a push evaluation at the bound node.
     /// Buttons never write state. Bang semantics stay in the node's expr.
     fn button(&mut self, b: &Button, id: egui::Id, ui: &mut egui::Ui) {
+        if b.on.is_some() && !self.owned {
+            let why = "an edit goes only to the node of its own view";
+            let r = weak_chip(ui, "button").on_hover_text(why);
+            self.merge(r);
+            return;
+        }
         let text = b.label.as_deref().unwrap_or("!");
         let r = claim_press(ui.push_id(id, |ui| ui.button(text)).inner);
-        if r.clicked() {
+        let r = with_tip(r, b.tip.as_deref());
+        if r.clicked()
+            && let Some(edit) = &b.on
+        {
+            self.resp.edits.push((edit.clone(), Datum::Null));
+        } else if r.clicked() {
             match &b.bind {
                 Some(bind) => {
                     let path = self.resolve(bind);
@@ -513,14 +863,14 @@ impl Walk<'_> {
     /// Render a grid of cells bound to rows-of-cells state. Cells are bools
     /// or numbers. Rows and columns come from the state shape. Any cell edit
     /// rebuilds and writes the whole value.
-    fn matrix(&mut self, m: &Matrix, id: egui::Id, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+    fn matrix(&mut self, m: &Matrix, id: egui::Id, ctx: &mut dyn TreeState, ui: &mut egui::Ui) {
         let Some(bind) = &m.bind else {
             let r = unbound_chip(ui, "matrix");
             self.merge(r);
             return;
         };
         let path = self.resolve(bind);
-        let Ok(Some(val)) = ctx.extract_value_at(&path) else {
+        let Ok(Some(val)) = ctx.value_at(&path) else {
             let r = err_label(ui, "no state at the bound path");
             self.merge(r);
             return;
@@ -595,14 +945,20 @@ impl Walk<'_> {
     /// Render bound state through the shared plot leaf. The `mode` attr
     /// selects how the producing node accumulates its state. It is
     /// irrelevant to drawing, so the walker ignores it.
-    fn plot(&mut self, p: &gantz_ui::Plot, id: egui::Id, ctx: &mut NodeCtx, ui: &mut egui::Ui) {
+    fn plot(
+        &mut self,
+        p: &gantz_ui::Plot,
+        id: egui::Id,
+        ctx: &mut dyn TreeState,
+        ui: &mut egui::Ui,
+    ) {
         let Some(bind) = &p.bind else {
             let r = unbound_chip(ui, "plot");
             self.merge(r);
             return;
         };
         let path = self.resolve(bind);
-        let mut channels = match ctx.extract_value_at(&path) {
+        let mut channels = match ctx.value_at(&path) {
             Ok(Some(val)) => plot::split_channels(&val),
             _ => Vec::new(),
         };
@@ -633,6 +989,88 @@ impl Walk<'_> {
         self.merge(r);
     }
 
+    /// Render an envelope editor over the node that owns the tree. Each step
+    /// of a drag is a live edit, and the drag's end or a menu edit is an
+    /// edit. See [`envelope::edit`].
+    fn envelope(&mut self, e: &EnvelopeElem, id: egui::Id, ui: &mut egui::Ui) {
+        let Some(edit) = &e.on else {
+            let r = err_label(ui, "an envelope needs an `on` edit");
+            self.merge(r);
+            return;
+        };
+        if !self.owned {
+            let why = "an edit goes only to the node of its own view";
+            let r = weak_chip(ui, "envelope").on_hover_text(why);
+            self.merge(r);
+            return;
+        }
+        let Some(env) = &e.value else {
+            let r = err_label(ui, "an envelope needs a `value`");
+            self.merge(r);
+            return;
+        };
+        let duration = env.total_time();
+        let view = envelope::View {
+            grid: e.grid,
+            axes: e.axes,
+            x_range: e.x_range.unwrap_or(match duration > 0.0 {
+                true => [0.0, duration],
+                false => [0.0, 1.0],
+            }),
+            y_range: e.y_range.unwrap_or([0.0, 1.0]),
+        };
+        let size = egui::vec2(
+            e.w.unwrap_or_else(|| ui.available_width()),
+            e.h.unwrap_or_else(|| ui.available_height()),
+        );
+        let edited = envelope::edit(ui, id, env, size, view);
+        let datum = |env: &gantz_ui::envelope::Envelope| gantz_ca::to_datum(env).ok();
+        if let Some(value) = edited.live.as_ref().and_then(datum) {
+            self.resp.live_edits.push((edit.clone(), value));
+        }
+        if let Some(value) = edited.commit.as_ref().and_then(datum) {
+            self.resp.edits.push((edit.clone(), value));
+        }
+        self.merge(edited.response);
+    }
+
+    /// Render the figure that bound state holds. State that is not a figure
+    /// draws as an empty panel.
+    fn canvas(
+        &mut self,
+        c: &gantz_ui::Canvas,
+        id: egui::Id,
+        ctx: &mut dyn TreeState,
+        ui: &mut egui::Ui,
+    ) {
+        let Some(bind) = &c.bind else {
+            let r = unbound_chip(ui, "canvas");
+            self.merge(r);
+            return;
+        };
+        let state = ctx.value_at(&self.resolve(bind)).ok().flatten();
+        let state = match &c.at {
+            Some(at) => state.and_then(|s| state_at(&s, &at.0)),
+            None => state,
+        };
+        let figs = match state {
+            Some(val) => gantz_ui::decode_figures(&gantz_ui::codec::steel::lower(&val)),
+            _ => gantz_ui::Figures::default(),
+        };
+        let frame = plot::PlotFrame {
+            grid: c.grid,
+            axes: c.axes,
+            interactive: c.interactive,
+        };
+        // Absent dimensions fill the available space, as a plot does.
+        let size = egui::vec2(
+            c.w.unwrap_or_else(|| ui.available_width()),
+            c.h.unwrap_or_else(|| ui.available_height()),
+        );
+        let r = canvas::canvas_body(frame, &figs, id, size, ui);
+        self.merge(r);
+    }
+
     /// Render an embedded reference GUI. Resolve the accumulated ref chain
     /// to the leaf graph's body marker. Read and decode the marker's stored
     /// tree. Render it inside a group frame under an implicit scope.
@@ -640,7 +1078,7 @@ impl Walk<'_> {
         &mut self,
         rg: &gantz_ui::RefGui,
         id: egui::Id,
-        ctx: &mut NodeCtx,
+        ctx: &mut dyn TreeState,
         ui: &mut egui::Ui,
     ) {
         let chip = |walk: &mut Self, ui: &mut egui::Ui, why: &str| {
@@ -662,7 +1100,7 @@ impl Walk<'_> {
                 // Resolved before the implicit scope push below. The marker
                 // lives inside the instance at `rg.id`.
                 let path = self.resolve(&BindPath(vec![rg.id, marker_id]));
-                match ctx.extract_value_at(&path) {
+                match ctx.value_at(&path) {
                     Ok(Some(val)) if !matches!(val, SteelVal::Void) => Ok(
                         gantz_ui::codec::steel::decode(&val, &gantz_ui::Limits::default()),
                     ),
@@ -691,8 +1129,8 @@ impl Walk<'_> {
 
     /// Write an edited value to its bound state, then queue a push
     /// evaluation when `push` is on.
-    fn emit_set(&mut self, ctx: &mut NodeCtx, path: &[node::Id], val: SteelVal, push: bool) {
-        if let Err(e) = ctx.update_value_at(path, val) {
+    fn emit_set(&mut self, ctx: &mut dyn TreeState, path: &[node::Id], val: SteelVal, push: bool) {
+        if let Err(e) = ctx.set_value_at(path, val) {
             log::warn!("failed to write bound state at {path:?}: {e}");
             return;
         }
@@ -727,6 +1165,27 @@ impl Walk<'_> {
             Some(prev) => prev.union(r),
             None => r,
         });
+    }
+}
+
+impl TreeState for NodeCtx<'_> {
+    fn value_at(&self, path: &[node::Id]) -> Result<Option<SteelVal>, SteelErr> {
+        self.extract_value_at(path)
+    }
+
+    fn set_value_at(&mut self, path: &[node::Id], val: SteelVal) -> Result<(), SteelErr> {
+        self.update_value_at(path, val)
+    }
+}
+
+impl TreeState for Detached {
+    fn value_at(&self, _path: &[node::Id]) -> Result<Option<SteelVal>, SteelErr> {
+        Ok(None)
+    }
+
+    fn set_value_at(&mut self, path: &[node::Id], _val: SteelVal) -> Result<(), SteelErr> {
+        let msg = format!("no node state to write at {path:?}");
+        Err(SteelErr::new(steel::rerrs::ErrorKind::Generic, msg))
     }
 }
 
@@ -842,6 +1301,9 @@ pub(crate) fn drag_value(ui: &mut egui::Ui, d: &Dialer, val: &mut SteelVal) -> e
             if let Some(p) = &d.prefix {
                 dv = dv.prefix(p);
             }
+            if let Some(s) = &d.suffix {
+                dv = dv.suffix(s);
+            }
             ui.add(dv)
         }
         SteelVal::IntV(i) => {
@@ -859,6 +1321,9 @@ pub(crate) fn drag_value(ui: &mut egui::Ui, d: &Dialer, val: &mut SteelVal) -> e
             }
             if let Some(p) = &d.prefix {
                 dv = dv.prefix(p);
+            }
+            if let Some(s) = &d.suffix {
+                dv = dv.suffix(s);
             }
             ui.add(dv)
         }
@@ -927,11 +1392,12 @@ fn zero_padded(v: f64, digits: usize, decimals: usize) -> String {
 }
 
 /// Whether the tree `e` fills the space it is given: whether it holds a plot
-/// without a fixed width or height. A host gives such a tree a size, such as
+/// or a canvas without a fixed width or height. A host gives such a tree a size, such as
 /// a resizable node body or a pane.
 pub(crate) fn fills(e: &Element) -> bool {
     match e {
         Element::Plot(p) => p.w.is_none() || p.h.is_none(),
+        Element::Canvas(c) => c.w.is_none() || c.h.is_none(),
         e => e.children().iter().any(fills),
     }
 }
@@ -975,9 +1441,71 @@ fn claim_press(r: egui::Response) -> egui::Response {
     claimed
 }
 
+/// What a control binds, from its attributes.
+fn binding<'b>(
+    bind: &'b Option<BindPath>,
+    at: &'b Option<At>,
+    field: &'b Option<Field>,
+    on: &'b Option<Edit>,
+    value: Option<SteelVal>,
+) -> Binding<'b> {
+    Binding {
+        bind,
+        at,
+        field,
+        on,
+        value,
+    }
+}
+
+/// The response, with `tip` shown while the pointer hovers it.
+fn with_tip(r: egui::Response, tip: Option<&str>) -> egui::Response {
+    match tip {
+        Some(tip) => r.on_hover_text(tip),
+        None => r,
+    }
+}
+
 /// An inline chip for a control missing its `bind` attr.
 fn unbound_chip(ui: &mut egui::Ui, tag: &str) -> egui::Response {
     weak_chip(ui, tag).on_hover_text("no `bind` attribute")
+}
+
+/// The value at `keys` within the nested hash maps of `state`. See [`At`].
+fn state_at(state: &SteelVal, keys: &[String]) -> Option<SteelVal> {
+    keys.iter().try_fold(state.clone(), |val, key| {
+        let SteelVal::HashMapV(map) = &val else {
+            return None;
+        };
+        map.get(&map_key(map, key)).cloned()
+    })
+}
+
+/// `state` with the value at `keys` replaced by `val`. The other entries of
+/// each map stay. A missing map on the way, or a value that is not a map,
+/// becomes a map. See [`At`].
+fn with_state_at(state: Option<&SteelVal>, keys: &[String], val: SteelVal) -> SteelVal {
+    let Some((key, rest)) = keys.split_first() else {
+        return val;
+    };
+    let map = match state {
+        Some(SteelVal::HashMapV(map)) => (**map).clone(),
+        _ => HashMap::new(),
+    };
+    let key = map_key(&map, key);
+    let inner = with_state_at(map.get(&key), rest, val);
+    SteelVal::HashMapV(Gc::new(map.update(key, inner)).into())
+}
+
+/// The key of `map` named `name`. A string key when `map` has one and no
+/// symbol key of the name, else a symbol key.
+fn map_key(map: &HashMap<SteelVal, SteelVal>, name: &str) -> SteelVal {
+    let symbol = SteelVal::SymbolV(name.into());
+    let string = SteelVal::StringV(name.into());
+    match !map.contains_key(&symbol) && map.contains_key(&string) {
+        true => string,
+        false => symbol,
+    }
 }
 
 /// An inline "ERR" label for a control whose bound state has the wrong
@@ -1047,6 +1575,7 @@ mod tests {
         assert!(fills(&col(vec![plot(None, None)])));
         assert!(!fills(&col(vec![plot(Some(1.0), Some(1.0))])));
         assert!(!fills(&Element::Toggle(Toggle::default())));
+        assert!(fills(&Element::Canvas(gantz_ui::Canvas::default())));
     }
 
     #[test]
@@ -1321,5 +1850,178 @@ mod tests {
             matrix_set_cell(&SteelVal::IntV(1), 0, 0, SteelVal::BoolV(true)),
             None,
         );
+    }
+
+    /// Field-bound and edit-bound controls render from the given fields and
+    /// their values, and report no edit without input. Without fields they
+    /// render inert.
+    #[test]
+    fn field_controls_read_the_given_fields() {
+        let field = |name: &str| Some(gantz_ui::Field(name.to_string()));
+        let tree = Element::Col(gantz_ui::Col {
+            children: vec![
+                Element::Dialer(Dialer {
+                    field: field("amount"),
+                    ..Dialer::default()
+                }),
+                Element::TextInput(TextInput {
+                    field: field("src"),
+                    ..TextInput::default()
+                }),
+                Element::Dialer(Dialer {
+                    on: Some(Edit("start".into())),
+                    value: Some(0.25),
+                    ..Dialer::default()
+                }),
+                Element::Button(Button {
+                    on: Some(Edit("add".into())),
+                    ..Button::default()
+                }),
+            ],
+            ..gantz_ui::Col::default()
+        });
+        let fields = Datum::Map(vec![
+            ("amount".into(), Datum::F64(0.5)),
+            ("src".into(), Datum::Str("bd".into())),
+        ]);
+        run_with_ctx(vec![], |ctx, ui| {
+            let r = UiTree::new(egui::Id::new("t"))
+                .fields(&fields)
+                .show(&tree, ctx, ui);
+            assert!(r.inner.is_some());
+            assert!(r.field_edits.is_empty() && r.edits.is_empty());
+            let r = UiTree::new(egui::Id::new("u")).show(&tree, ctx, ui);
+            assert!(r.inner.is_some(), "inert chips render");
+            assert!(r.field_edits.is_empty() && r.edits.is_empty());
+        });
+    }
+
+    /// A tree that no node owns renders over no state. Its edits still
+    /// arrive, and a bound control shows that its path holds nothing.
+    #[test]
+    fn detached_trees_render_and_send_edits() {
+        let tree = Element::Col(gantz_ui::Col {
+            children: vec![
+                Element::Dialer(Dialer {
+                    on: Some(Edit("gain".into())),
+                    value: Some(0.5),
+                    ..Dialer::default()
+                }),
+                Element::Dialer(Dialer {
+                    bind: Some(BindPath(vec![0])),
+                    ..Dialer::default()
+                }),
+            ],
+            ..gantz_ui::Col::default()
+        });
+        egui::__run_test_ui(|ui| {
+            let r = UiTree::new(egui::Id::new("t"))
+                .owned()
+                .show(&tree, &mut Detached, ui);
+            assert!(r.inner.is_some());
+            assert!(r.edits.is_empty() && r.payloads.is_empty());
+        });
+        assert!(Detached.value_at(&[0]).unwrap().is_none());
+        assert!(Detached.set_value_at(&[0], SteelVal::IntV(1)).is_err());
+    }
+
+    /// A text input commits its edit once typing pauses for `TEXT_FLUSH`, or
+    /// as it loses focus, and not at each keystroke.
+    #[test]
+    fn text_input_commits_once_typing_pauses_or_on_focus_loss() {
+        let ctx = egui::Context::default();
+        let tree = Element::TextInput(TextInput {
+            on: Some(Edit("src".into())),
+            value: Some(String::new()),
+            ..TextInput::default()
+        });
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(400.0, 300.0));
+        let frame = |time: f64, events: Vec<egui::Event>| {
+            let input = egui::RawInput {
+                events,
+                time: Some(time),
+                screen_rect: Some(screen),
+                ..Default::default()
+            };
+            let mut out = None;
+            let _ = ctx.run_ui(input, |ui| {
+                let r = UiTree::new(egui::Id::new("t"))
+                    .owned()
+                    .show(&tree, &mut Detached, ui);
+                out = Some((r.inner.map(|r| r.rect), r.edits));
+            });
+            out.expect("a frame")
+        };
+        let click = |pos: egui::Pos2| {
+            let press = |pressed| egui::Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers: egui::Modifiers::NONE,
+            };
+            vec![egui::Event::PointerMoved(pos), press(true), press(false)]
+        };
+        let text = |s: &str| vec![egui::Event::Text(s.into())];
+        let edit = |s: &str| vec![(Edit("src".into()), Datum::Str(s.into()))];
+
+        let (rect, _) = frame(0.0, vec![]);
+        let rect = rect.expect("the input renders");
+        assert!(frame(0.1, click(rect.center())).1.is_empty());
+        assert!(frame(0.2, text("bd")).1.is_empty(), "no commit per key");
+        assert!(frame(1.0, vec![]).1.is_empty(), "typing has not paused");
+        assert_eq!(frame(2.3, vec![]).1, edit("bd"), "typing paused");
+        assert!(frame(2.4, vec![]).1.is_empty(), "one commit");
+
+        assert!(frame(3.0, text("x")).1.is_empty());
+        let away = egui::pos2(390.0, 290.0);
+        assert_eq!(frame(3.1, click(away)).1, edit("x"), "focus left");
+    }
+
+    /// A key path reads a value within nested maps, and a write replaces only
+    /// that value. A string key stays a string key.
+    #[test]
+    fn state_keys_read_and_write_within_maps() {
+        let sym = |s: &str| SteelVal::SymbolV(s.into());
+        let string = |s: &str| SteelVal::StringV(s.into());
+        let map = |entries: Vec<(SteelVal, SteelVal)>| {
+            let map: HashMap<SteelVal, SteelVal> = entries.into_iter().collect();
+            SteelVal::HashMapV(Gc::new(map).into())
+        };
+        let keys = |ks: &[&str]| ks.iter().map(|k| k.to_string()).collect::<Vec<_>>();
+        let freq = map(vec![
+            (sym("value"), SteelVal::NumV(220.0)),
+            (sym("pending"), SteelVal::ListV(Default::default())),
+        ]);
+        let state = map(vec![
+            (sym("freq"), freq),
+            (string("width"), SteelVal::NumV(0.5)),
+        ]);
+        let at = |state: &SteelVal, ks: &[&str]| state_at(state, &keys(ks));
+        assert_eq!(at(&state, &["freq", "value"]), Some(SteelVal::NumV(220.0)));
+        assert_eq!(at(&state, &["width"]), Some(SteelVal::NumV(0.5)));
+        assert_eq!(at(&state, &["freq", "nope"]), None);
+        assert_eq!(at(&state, &["width", "value"]), None);
+
+        let freq_keys = keys(&["freq", "value"]);
+        let written = with_state_at(Some(&state), &freq_keys, SteelVal::NumV(440.0));
+        assert_eq!(
+            at(&written, &["freq", "value"]),
+            Some(SteelVal::NumV(440.0))
+        );
+        assert!(
+            at(&written, &["freq", "pending"]).is_some(),
+            "a sibling stays"
+        );
+        assert_eq!(at(&written, &["width"]), Some(SteelVal::NumV(0.5)));
+
+        let width = with_state_at(Some(&state), &keys(&["width"]), SteelVal::NumV(1.0));
+        let SteelVal::HashMapV(width) = &width else {
+            panic!("a map");
+        };
+        assert!(width.contains_key(&string("width")));
+        assert!(!width.contains_key(&sym("width")));
+
+        let fresh = with_state_at(None, &keys(&["a", "b"]), SteelVal::BoolV(true));
+        assert_eq!(at(&fresh, &["a", "b"]), Some(SteelVal::BoolV(true)));
     }
 }

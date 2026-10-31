@@ -75,6 +75,7 @@ gantz_edit = { version = "0.1.0", path = "crates/gantz_edit" }
 gantz_egui = { version = "0.10.0", path = "crates/gantz_egui" }
 gantz_format = { version = "0.7.0", path = "crates/gantz_format" }
 gantz_io = { version = "0.1.3", path = "crates/gantz_io" }
+gantz_nodedef = { version = "0.1.0", path = "crates/gantz_nodedef" }
 gantz_nodetag = { version = "0.2.1", path = "crates/gantz_nodetag" }
 gantz_nodetag_derive = { version = "0.1.2", path = "crates/gantz_nodetag_derive" }
 gantz_pattern = { version = "0.1.3", path = "crates/gantz_pattern" }

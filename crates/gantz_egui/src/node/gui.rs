@@ -245,7 +245,7 @@ impl NodeUi for Gui {
         "gui".into()
     }
 
-    fn description(&self) -> Option<&'static str> {
+    fn description(&self) -> Option<&str> {
         Some("Declares the wired tree as this graph's GUI for a role. See the demo.gui graph")
     }
 

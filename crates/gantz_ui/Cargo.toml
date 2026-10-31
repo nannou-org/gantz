@@ -11,9 +11,12 @@ repository.workspace = true
 [features]
 default = ["steel"]
 steel = ["dep:steel-core", "dep:gantz_core"]
+# Serde for the envelope model, for hosts and domains that store one.
+serde = ["dep:serde"]
 
 [dependencies]
 gantz_ca.workspace = true
 gantz_core = { workspace = true, optional = true }
+serde = { workspace = true, optional = true }
 steel-core = { workspace = true, optional = true }
 thiserror.workspace = true

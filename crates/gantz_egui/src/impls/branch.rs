@@ -95,7 +95,7 @@ impl NodeUi for gantz_core::node::Branch {
         "branch".into()
     }
 
-    fn description(&self) -> Option<&'static str> {
+    fn description(&self) -> Option<&str> {
         Some("Route to an output arm by predicate")
     }
 

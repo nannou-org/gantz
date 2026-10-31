@@ -110,7 +110,7 @@ impl NodeUi for State {
         "state".into()
     }
 
-    fn description(&self) -> Option<&'static str> {
+    fn description(&self) -> Option<&str> {
         Some("Hold a value for a GUI control to edit")
     }
 

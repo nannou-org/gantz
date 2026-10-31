@@ -10,10 +10,12 @@
 
 use crate::diag::{ErrorReason, TreePath, Warning, WarningKind};
 use crate::elem::{
-    ATTRS_MARKER, Align, BindPath, Bound, Button, Choice, Col, Color, Dialer, DialerStyle, Element,
-    ErrorElem, Frame, Grid, Key, Label, Matrix, Plot, PlotMode, PlotStyle, RESERVED_TAGS, RefGui,
-    Rgba, Row, Scope, Sep, Space, Toggle, Value,
+    ATTRS_MARKER, Align, At, BindPath, Bound, Button, Canvas, Choice, Col, Color, Dialer,
+    DialerStyle, Edit, Element, EnvelopeElem, ErrorElem, Field, File, Frame, Grid, Key, Label,
+    Matrix, Plot, PlotMode, PlotStyle, RESERVED_TAGS, RefGui, Rgba, Row, Scope, Sep, Space,
+    TextInput, Toggle, Tone, Value,
 };
+use crate::envelope::{Envelope, Segment, Shape};
 use crate::sexpr;
 use gantz_ca::Datum;
 
@@ -60,9 +62,32 @@ struct Attrs<'a, 'b> {
 
 /// Every tag of the v1 vocabulary.
 const KNOWN_TAGS: &[&str] = &[
-    "col", "row", "grid", "frame", "sep", "space", "scope", "dialer", "toggle", "bound", "choice",
-    "color", "button", "matrix", "label", "value", "plot", "ref-gui",
+    "col",
+    "row",
+    "grid",
+    "frame",
+    "sep",
+    "space",
+    "scope",
+    "dialer",
+    "toggle",
+    "bound",
+    "choice",
+    "text-input",
+    "color",
+    "button",
+    "file",
+    "matrix",
+    "label",
+    "value",
+    "plot",
+    "canvas",
+    "envelope",
+    "ref-gui",
 ];
+
+/// What an envelope attribute holds, for its diagnostics.
+const ENVELOPE_FORM: &str = "an envelope, (init ((level time shape curve) ...) release)";
 
 impl Ctx<'_> {
     fn warn(&mut self, path: &[usize], kind: WarningKind) {
@@ -172,6 +197,18 @@ impl<'a, 'b> Attrs<'a, 'b> {
 
     fn bind(&mut self) -> Option<BindPath> {
         self.take("bind", "a list of node ids", as_bind)
+    }
+
+    fn at(&mut self) -> Option<At> {
+        self.take("at", "a list of keys", as_texts).map(At)
+    }
+
+    fn field(&mut self) -> Option<Field> {
+        self.string("field").map(Field)
+    }
+
+    fn on(&mut self) -> Option<Edit> {
+        self.string("on").map(Edit)
     }
 
     /// The required `cols` attribute of `grid`. It substitutes 1 with a
@@ -383,85 +420,250 @@ fn elem(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, expr: Datum) -> Elem
         "dialer" => {
             let mut a = Attrs::new(ctx, path, &tag, set);
             let bind = a.bind();
+            let at = a.at();
+            let field = a.field();
+            let on = a.on();
+            let value = a.f64("value");
             let min = a.f64("min");
             let max = a.f64("max");
             let step = a.f64("step");
             let precision = a.u8("precision");
             let label = a.string("label");
             let prefix = a.string("prefix");
+            let suffix = a.string("suffix");
             let push = a.bool_or("push", true);
             let style = a.take("style", "one of slider, knob", |v| {
                 text(v).as_deref().and_then(DialerStyle::from_name)
             });
+            let tip = a.string("tip");
             let key = a.key();
             a.finish();
             warn_ignored(ctx, path, &tag, rest.len());
             Element::Dialer(Dialer {
                 bind,
+                at,
+                field,
+                on,
+                value,
                 min,
                 max,
                 step,
                 precision,
                 label,
                 prefix,
+                suffix,
                 push,
                 style,
+                tip,
                 key,
             })
         }
         "toggle" => {
             let mut a = Attrs::new(ctx, path, &tag, set);
             let bind = a.bind();
+            let at = a.at();
+            let field = a.field();
+            let on = a.on();
+            let value = a.bool_or("value", false);
             let label = a.string("label");
             let push = a.bool_or("push", true);
             let pill = a.bool_or("pill", false);
+            let tip = a.string("tip");
             let key = a.key();
             a.finish();
             warn_ignored(ctx, path, &tag, rest.len());
             Element::Toggle(Toggle {
                 bind,
+                at,
+                field,
+                on,
+                value,
                 label,
                 push,
                 pill,
+                tip,
                 key,
             })
         }
         "bound" => {
             let mut a = Attrs::new(ctx, path, &tag, set);
             let bind = a.bind();
+            let at = a.at();
+            let field = a.field();
+            let on = a.on();
+            let value = a.f64("value");
             let label = a.string("label");
             let key = a.key();
             a.finish();
             warn_ignored(ctx, path, &tag, rest.len());
-            Element::Bound(Bound { bind, label, key })
+            Element::Bound(Bound {
+                bind,
+                at,
+                field,
+                on,
+                value,
+                label,
+                key,
+            })
+        }
+        "canvas" => {
+            let mut a = Attrs::new(ctx, path, &tag, set);
+            let bind = a.bind();
+            let at = a.at();
+            let w = a.f32("w");
+            let h = a.f32("h");
+            let grid = a.bool_or("grid", false);
+            let axes = a.bool_or("axes", false);
+            let interactive = a.bool_or("interactive", false);
+            let key = a.key();
+            a.finish();
+            warn_ignored(ctx, path, &tag, rest.len());
+            Element::Canvas(Canvas {
+                bind,
+                at,
+                w,
+                h,
+                grid,
+                axes,
+                interactive,
+                key,
+            })
+        }
+        "envelope" => {
+            let mut a = Attrs::new(ctx, path, &tag, set);
+            let on = a.on();
+            let value = a.take("value", ENVELOPE_FORM, as_envelope);
+            let x_range = a.take("x-range", "a list of two numbers", as_range);
+            let y_range = a.take("y-range", "a list of two numbers", as_range);
+            let grid = a.bool_or("grid", false);
+            let axes = a.bool_or("axes", false);
+            let w = a.f32("w");
+            let h = a.f32("h");
+            let key = a.key();
+            a.finish();
+            warn_ignored(ctx, path, &tag, rest.len());
+            Element::Envelope(EnvelopeElem {
+                on,
+                value,
+                x_range,
+                y_range,
+                grid,
+                axes,
+                w,
+                h,
+                key,
+            })
         }
         "choice" => {
             let mut a = Attrs::new(ctx, path, &tag, set);
             let bind = a.bind();
+            let at = a.at();
+            let field = a.field();
+            let on = a.on();
+            let value = a.string("value");
             let options = a
                 .take("options", "a list of symbols", as_texts)
+                .unwrap_or_default();
+            let tips = a
+                .take("tips", "a list of strings", as_texts)
                 .unwrap_or_default();
             let key = a.key();
             a.finish();
             warn_ignored(ctx, path, &tag, rest.len());
-            Element::Choice(Choice { bind, options, key })
+            Element::Choice(Choice {
+                bind,
+                at,
+                field,
+                on,
+                value,
+                options,
+                tips,
+                key,
+            })
+        }
+        "text-input" => {
+            let mut a = Attrs::new(ctx, path, &tag, set);
+            let bind = a.bind();
+            let at = a.at();
+            let field = a.field();
+            let on = a.on();
+            let value = a.string("value");
+            let hint = a.string("hint");
+            let mono = a.bool_or("mono", false);
+            let push = a.bool_or("push", true);
+            let tip = a.string("tip");
+            let key = a.key();
+            a.finish();
+            warn_ignored(ctx, path, &tag, rest.len());
+            Element::TextInput(TextInput {
+                bind,
+                at,
+                field,
+                on,
+                value,
+                hint,
+                mono,
+                push,
+                tip,
+                key,
+            })
         }
         "color" => {
             let mut a = Attrs::new(ctx, path, &tag, set);
             let bind = a.bind();
+            let at = a.at();
+            let field = a.field();
+            let on = a.on();
+            let value = a.color("value");
+            let theme = a.bool_or("theme", true);
+            let tip = a.string("tip");
             let key = a.key();
             a.finish();
             warn_ignored(ctx, path, &tag, rest.len());
-            Element::Color(Color { bind, key })
+            Element::Color(Color {
+                bind,
+                at,
+                field,
+                on,
+                value,
+                theme,
+                tip,
+                key,
+            })
+        }
+        "file" => {
+            let mut a = Attrs::new(ctx, path, &tag, set);
+            let on = a.on();
+            let import = a.string("import");
+            let label = a.string("label");
+            let tip = a.string("tip");
+            let key = a.key();
+            a.finish();
+            warn_ignored(ctx, path, &tag, rest.len());
+            Element::File(File {
+                on,
+                import,
+                label,
+                tip,
+                key,
+            })
         }
         "button" => {
             let mut a = Attrs::new(ctx, path, &tag, set);
             let bind = a.bind();
+            let on = a.on();
             let label = a.string("label");
+            let tip = a.string("tip");
             let key = a.key();
             a.finish();
             warn_ignored(ctx, path, &tag, rest.len());
-            Element::Button(Button { bind, label, key })
+            Element::Button(Button {
+                bind,
+                on,
+                label,
+                tip,
+                key,
+            })
         }
         "matrix" => {
             let mut a = Attrs::new(ctx, path, &tag, set);
@@ -480,8 +682,15 @@ fn elem(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, expr: Datum) -> Elem
         }
         "label" => {
             let mut a = Attrs::new(ctx, path, &tag, set);
+            let bind = a.bind();
+            let at = a.at();
             let size = a.f32("size");
             let color = a.color("color");
+            let tone = a.take("tone", "one of weak, strong, warn, error", |v| {
+                text(v).as_deref().and_then(Tone::from_name)
+            });
+            let mono = a.bool_or("mono", false);
+            let tip = a.string("tip");
             let key = a.key();
             a.finish();
             let mut items = rest.into_iter();
@@ -510,8 +719,13 @@ fn elem(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, expr: Datum) -> Elem
             warn_ignored(ctx, path, &tag, items.count());
             Element::Label(Label {
                 text: text_arg,
+                bind,
+                at,
                 size,
                 color,
+                tone,
+                mono,
+                tip,
                 key,
             })
         }
@@ -693,6 +907,69 @@ fn text(expr: &Datum) -> Option<String> {
     }
 }
 
+/// An envelope, `(init ((level time shape curve) ...) release)`. The release
+/// is a point index or `#f`. A segment can leave out its curve, then its
+/// shape. See [`crate::envelope`].
+fn as_envelope(expr: &Datum) -> Option<Envelope> {
+    let Datum::Seq(items) = expr else {
+        return None;
+    };
+    let [init, Datum::Seq(segments), release] = &items[..] else {
+        return None;
+    };
+    let segments = segments
+        .iter()
+        .map(as_segment)
+        .collect::<Option<Vec<_>>>()?;
+    let release = match release {
+        Datum::Bool(false) => None,
+        point => Some(as_node_id(point)?),
+    };
+    Some(Envelope {
+        init: as_f32(init)?,
+        segments,
+        release,
+    })
+}
+
+/// A segment of an envelope, `(level time shape curve)`. See [`as_envelope`].
+fn as_segment(expr: &Datum) -> Option<Segment> {
+    let Datum::Seq(items) = expr else {
+        return None;
+    };
+    let (level, time, shape, curve) = match &items[..] {
+        [level, time] => (level, time, None, None),
+        [level, time, shape] => (level, time, Some(shape), None),
+        [level, time, shape, curve] => (level, time, Some(shape), Some(curve)),
+        _ => return None,
+    };
+    let shape = match shape {
+        Some(shape) => Shape::from_name(&text(shape)?)?,
+        None => Shape::default(),
+    };
+    let curve = match curve {
+        Some(curve) => as_f32(curve)?,
+        None => 0.0,
+    };
+    Some(Segment {
+        level: as_f32(level)?,
+        time: as_f32(time)?,
+        shape,
+        curve,
+    })
+}
+
+/// A range, a list of two numbers.
+fn as_range(expr: &Datum) -> Option<[f32; 2]> {
+    let Datum::Seq(items) = expr else {
+        return None;
+    };
+    let [min, max] = &items[..] else {
+        return None;
+    };
+    Some([as_f32(min)?, as_f32(max)?])
+}
+
 /// A list of symbols or strings.
 fn as_texts(expr: &Datum) -> Option<Vec<String>> {
     match expr {
@@ -845,14 +1122,20 @@ mod tests {
         ]));
         let expected = Element::Dialer(Dialer {
             bind: Some(BindPath(vec![0, 2])),
+            at: None,
+            field: None,
+            on: None,
+            value: None,
             min: Some(0.0),
             max: Some(1.0),
             step: Some(0.1),
             precision: Some(3),
             label: Some("cutoff".to_string()),
             prefix: Some("!".to_string()),
+            suffix: None,
             push: false,
             style: Some(DialerStyle::Knob),
+            tip: None,
             key: Some(Key::Str("k".to_string())),
         });
         assert_eq!(d.root, expected);
@@ -867,6 +1150,10 @@ mod tests {
         ]));
         let expected = Element::Toggle(Toggle {
             bind: Some(BindPath(vec![5])),
+            at: None,
+            field: None,
+            on: None,
+            value: false,
             label: Some("drive".to_string()),
             ..Default::default()
         });
@@ -878,6 +1165,7 @@ mod tests {
         ]));
         let expected = Element::Button(Button {
             bind: Some(BindPath(vec![7])),
+            on: None,
             ..Default::default()
         });
         assert_eq!(d.root, expected);
@@ -910,10 +1198,12 @@ mod tests {
             str_("hello"),
         ]));
         let expected = Element::Label(Label {
+            bind: None,
+            at: None,
             text: "hello".to_string(),
             size: Some(18.0),
             color: Some(Rgba([255, 0, 128, 255])),
-            key: None,
+            ..Label::default()
         });
         assert_eq!(d.root, expected);
         assert_eq!(d.warnings, vec![]);
@@ -1303,6 +1593,8 @@ mod tests {
         let expected = Element::Col(Col {
             align: Some(Align::Center),
             children: vec![Element::Label(Label {
+                bind: None,
+                at: None,
                 text: "hi".to_string(),
                 ..Default::default()
             })],

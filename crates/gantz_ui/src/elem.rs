@@ -55,6 +55,19 @@ pub enum DialerStyle {
     Knob,
 }
 
+/// A theme colour for text, as a host's theme gives it.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub enum Tone {
+    /// Text of less weight, such as a note.
+    Weak,
+    /// Text of more weight, such as a heading.
+    Strong,
+    /// A warning.
+    Warn,
+    /// An error.
+    Error,
+}
+
 /// What a `plot` displays.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum PlotMode {
@@ -103,8 +116,12 @@ pub enum Element {
     Choice(Choice),
     /// A colour, `(color)`.
     Color(Color),
+    /// A line of text, `(text-input)`.
+    TextInput(TextInput),
     /// A trigger control, `(button)`.
     Button(Button),
+    /// A button that imports a file into the node, `(file)`.
+    File(File),
     /// A grid of bool or number cells, `(matrix)`.
     Matrix(Matrix),
     /// Static text, `(label "text")`.
@@ -113,6 +130,11 @@ pub enum Element {
     Value(Value),
     /// A plotted view of bound state, `(plot)`.
     Plot(Plot),
+    /// A figure that bound state holds, `(canvas)`. See [`crate::figure`].
+    Canvas(Canvas),
+    /// An editor of a breakpoint envelope, `(envelope)`. See
+    /// [`crate::envelope`].
+    Envelope(EnvelopeElem),
     /// A host resolved embed of a child instance's GUI, `(ref-gui id)`.
     RefGui(RefGui),
     /// A subtree that could not be decoded, rendered as an inline error.
@@ -208,6 +230,15 @@ pub struct Scope {
 pub struct Dialer {
     /// The bound node path.
     pub bind: Option<BindPath>,
+    /// The keys of the value within the bound state. See [`At`].
+    pub at: Option<At>,
+    /// The bound field of the node that owns the tree. See [`Field`].
+    pub field: Option<Field>,
+    /// The edit that the control sends to the node that owns the tree. See
+    /// [`Edit`].
+    pub on: Option<Edit>,
+    /// The value shown by a control that sends an edit.
+    pub value: Option<f64>,
     /// Lower bound.
     pub min: Option<f64>,
     /// Upper bound.
@@ -220,10 +251,14 @@ pub struct Dialer {
     pub label: Option<String>,
     /// Text drawn inside the value box, before the value.
     pub prefix: Option<String>,
+    /// Text drawn inside the value box, after the value.
+    pub suffix: Option<String>,
     /// Whether a `set` also queues a push eval at the bound node.
     pub push: bool,
     /// Rendering style, reserved.
     pub style: Option<DialerStyle>,
+    /// Text shown while the pointer hovers the control.
+    pub tip: Option<String>,
     /// Identity override.
     pub key: Option<Key>,
 }
@@ -233,6 +268,15 @@ pub struct Dialer {
 pub struct Toggle {
     /// The bound node path.
     pub bind: Option<BindPath>,
+    /// The keys of the value within the bound state. See [`At`].
+    pub at: Option<At>,
+    /// The bound field of the node that owns the tree. See [`Field`].
+    pub field: Option<Field>,
+    /// The edit that the control sends to the node that owns the tree. See
+    /// [`Edit`].
+    pub on: Option<Edit>,
+    /// The value shown by a control that sends an edit.
+    pub value: bool,
     /// An inline label.
     pub label: Option<String>,
     /// Whether a `set` also queues a push eval at the bound node.
@@ -240,6 +284,8 @@ pub struct Toggle {
     /// Whether it shows as a pill that lights while on, as a display option
     /// does, rather than as a checkbox. The pill shows the label.
     pub pill: bool,
+    /// Text shown while the pointer hovers the control.
+    pub tip: Option<String>,
     /// Identity override.
     pub key: Option<Key>,
 }
@@ -250,6 +296,16 @@ pub struct Toggle {
 pub struct Bound {
     /// The bound node path.
     pub bind: Option<BindPath>,
+    /// The keys of the value within the bound state. See [`At`].
+    pub at: Option<At>,
+    /// The bound field of the node that owns the tree. See [`Field`].
+    pub field: Option<Field>,
+    /// The edit that the control sends to the node that owns the tree. See
+    /// [`Edit`].
+    pub on: Option<Edit>,
+    /// The bound shown by a control that sends an edit. `None` shows it
+    /// unset.
+    pub value: Option<f64>,
     /// The checkbox's hint, such as `minimum`.
     pub label: Option<String>,
     /// Identity override.
@@ -262,18 +318,101 @@ pub struct Bound {
 pub struct Choice {
     /// The bound node path.
     pub bind: Option<BindPath>,
+    /// The keys of the value within the bound state. See [`At`].
+    pub at: Option<At>,
+    /// The bound field of the node that owns the tree. See [`Field`].
+    pub field: Option<Field>,
+    /// The edit that the control sends to the node that owns the tree. See
+    /// [`Edit`].
+    pub on: Option<Edit>,
+    /// The option shown by a control that sends an edit.
+    pub value: Option<String>,
     /// The options, as symbols.
     pub options: Vec<String>,
+    /// Text shown while the pointer hovers an option, one per option.
+    pub tips: Vec<String>,
     /// Identity override.
     pub key: Option<Key>,
 }
 
+/// A line of text bound to string state. An edit commits when the input
+/// loses focus, on enter, or once typing pauses, so each keystroke is not a
+/// write.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextInput {
+    /// The bound node path.
+    pub bind: Option<BindPath>,
+    /// The keys of the value within the bound state. See [`At`].
+    pub at: Option<At>,
+    /// The bound field of the node that owns the tree. See [`Field`].
+    pub field: Option<Field>,
+    /// The edit that the control sends to the node that owns the tree. See
+    /// [`Edit`].
+    pub on: Option<Edit>,
+    /// The text shown by a control that sends an edit.
+    pub value: Option<String>,
+    /// Text shown while the input is empty.
+    pub hint: Option<String>,
+    /// Whether the text shows in a monospace font, as code does.
+    pub mono: bool,
+    /// Whether a commit to bound state also queues a push eval at the bound
+    /// node.
+    pub push: bool,
+    /// Text shown while the pointer hovers the control.
+    pub tip: Option<String>,
+    /// Identity override.
+    pub key: Option<Key>,
+}
+
+/// A path of keys into the bound state, `(at freq value)`.
+///
+/// A control with a `bind` and an `at` reads the value at these keys of the
+/// nested hash maps of the bound state. A write replaces only that value, so
+/// the other entries of each map stay. A key matches a symbol or a string key
+/// of the same name. A write creates a missing map on the way.
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+pub struct At(pub Vec<String>);
+
+/// The name of a top-level field of the node that owns a tree.
+///
+/// A node may give a tree as its own view. A control bound to one of its
+/// fields reads the field and, on an edit, sets it in the node's stored
+/// form, which changes the node. The host checks the edit by decoding the
+/// node again. Elsewhere, such as in a graph's GUI, a field-bound control is
+/// inert.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct Field(pub String);
+
+/// The name of an edit that a control sends to the node that owns the tree.
+///
+/// A node may give a tree as its own view. A control with an `on` edit shows
+/// the value of its `value` attribute. On user input it sends the edit, with
+/// its new value, to the node. The node applies the edit, so it can check
+/// and adjust the value, or change several fields at once. A button sends no
+/// value. Elsewhere, such as in a graph's GUI, a control with an edit is
+/// inert.
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct Edit(pub String);
+
 /// A colour bound to `"#rrggbb"` or `#f` state. `#f` follows the theme, and
-/// a reset button clears an edited colour back to it.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// a `theme` button clears an edited colour back to it.
+#[derive(Clone, Debug, PartialEq)]
 pub struct Color {
     /// The bound node path.
     pub bind: Option<BindPath>,
+    /// The keys of the value within the bound state. See [`At`].
+    pub at: Option<At>,
+    /// The bound field of the node that owns the tree. See [`Field`].
+    pub field: Option<Field>,
+    /// The edit that the control sends to the node that owns the tree. See
+    /// [`Edit`].
+    pub on: Option<Edit>,
+    /// The colour shown by a control that sends an edit.
+    pub value: Option<Rgba>,
+    /// Whether the `theme` button shows. Without it, the colour stays set.
+    pub theme: bool,
+    /// Text shown while the pointer hovers the control.
+    pub tip: Option<String>,
     /// Identity override.
     pub key: Option<Key>,
 }
@@ -284,8 +423,33 @@ pub struct Color {
 pub struct Button {
     /// The bound node path.
     pub bind: Option<BindPath>,
+    /// The edit that a press sends to the node that owns the tree. See
+    /// [`Edit`].
+    pub on: Option<Edit>,
     /// An inline label.
     pub label: Option<String>,
+    /// Text shown while the pointer hovers the control.
+    pub tip: Option<String>,
+    /// Identity override.
+    pub key: Option<Key>,
+}
+
+/// A button that imports a file into the node that owns the tree.
+///
+/// A press lets the user pick a file that the host's importer named
+/// `import` reads. The host stores the blob that the importer gives, then
+/// sends the `on` edit to the node with the blob's address and the
+/// importer's data. Elsewhere, such as in a graph's GUI, it is inert.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct File {
+    /// The edit that the host sends with the import.
+    pub on: Option<Edit>,
+    /// The name of the importer that reads the file.
+    pub import: Option<String>,
+    /// An inline label.
+    pub label: Option<String>,
+    /// Text shown while the pointer hovers the control.
+    pub tip: Option<String>,
     /// Identity override.
     pub key: Option<Key>,
 }
@@ -312,10 +476,21 @@ pub struct Matrix {
 pub struct Label {
     /// The text to display.
     pub text: String,
+    /// The bound node path. A bound label shows the text that the state
+    /// there holds, and `text` while it holds none.
+    pub bind: Option<BindPath>,
+    /// The keys of the text within the bound state. See [`At`].
+    pub at: Option<At>,
     /// Font size, host default when absent.
     pub size: Option<f32>,
     /// Text colour, host default when absent.
     pub color: Option<Rgba>,
+    /// A theme colour, used when `color` is absent.
+    pub tone: Option<Tone>,
+    /// Whether the text shows in a monospace font, as code does.
+    pub mono: bool,
+    /// Text shown while the pointer hovers the label.
+    pub tip: Option<String>,
     /// Identity override.
     pub key: Option<Key>,
 }
@@ -363,6 +538,62 @@ pub struct Plot {
     pub key: Option<Key>,
 }
 
+/// A drawing of the figures in bound state.
+///
+/// The bound state is a list of panels, which stack top to bottom. See
+/// [`crate::figure`].
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Canvas {
+    /// The bound node path.
+    pub bind: Option<BindPath>,
+    /// The keys of the figures within the bound state. See [`At`].
+    pub at: Option<At>,
+    /// Whether a grid draws behind the figures.
+    pub grid: bool,
+    /// Whether axes draw.
+    pub axes: bool,
+    /// Whether hovering shows a crosshair and the value beneath it. A tip
+    /// shows on hover either way.
+    pub interactive: bool,
+    /// Width, host default when absent.
+    pub w: Option<f32>,
+    /// Height, host default when absent.
+    pub h: Option<f32>,
+    /// Identity override.
+    pub key: Option<Key>,
+}
+
+/// An editor of a breakpoint envelope. See [`crate::envelope`].
+///
+/// It shows its `value` envelope. Points drag, segments bend, a double
+/// click adds a point, and each point has a menu for its segment's shape,
+/// the release point and a delete. Each step of a drag goes to the node
+/// that owns the tree as a live edit, and the drag's end as its `on` edit,
+/// so a drag is one change of the node. See [`Edit`]. Elsewhere, such as in
+/// a graph's GUI, it is inert.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct EnvelopeElem {
+    /// The edit that the editor sends to the node that owns the tree.
+    pub on: Option<Edit>,
+    /// The envelope to show.
+    pub value: Option<crate::envelope::Envelope>,
+    /// The time range in seconds, `[min, max]`. The envelope's duration
+    /// when absent.
+    pub x_range: Option<[f32; 2]>,
+    /// The level range, `[min, max]`. `[0, 1]` when absent.
+    pub y_range: Option<[f32; 2]>,
+    /// Whether a grid draws behind the envelope.
+    pub grid: bool,
+    /// Whether axes draw.
+    pub axes: bool,
+    /// Width, the available width when absent.
+    pub w: Option<f32>,
+    /// Height, the available height when absent.
+    pub h: Option<f32>,
+    /// Identity override.
+    pub key: Option<Key>,
+}
+
 /// A host resolved embed of a child instance's GUI.
 ///
 /// The id is the instance's node id in the defining graph. The host resolves
@@ -388,15 +619,7 @@ pub struct ErrorElem {
 /// Tag names claimed by the vocabulary but not yet implemented. Decoding one
 /// yields an [`ErrorReason::ReservedTag`] element.
 pub const RESERVED_TAGS: &[&str] = &[
-    "tabs",
-    "page",
-    "canvas",
-    "paint",
-    "image",
-    "dropdown",
-    "text-input",
-    "xy-pad",
-    "meter",
+    "tabs", "page", "paint", "image", "dropdown", "xy-pad", "meter",
 ];
 
 /// The reserved attribute block marker, invalid as a user tag.
@@ -418,11 +641,15 @@ impl Element {
             Element::Bound(_) => "bound",
             Element::Choice(_) => "choice",
             Element::Color(_) => "color",
+            Element::TextInput(_) => "text-input",
             Element::Button(_) => "button",
+            Element::File(_) => "file",
             Element::Matrix(_) => "matrix",
             Element::Label(_) => "label",
             Element::Value(_) => "value",
             Element::Plot(_) => "plot",
+            Element::Canvas(_) => "canvas",
+            Element::Envelope(_) => "envelope",
             Element::RefGui(_) => "ref-gui",
             Element::Error(_) => "error",
         }
@@ -455,11 +682,15 @@ impl Element {
             Element::Bound(e) => e.key.as_ref(),
             Element::Choice(e) => e.key.as_ref(),
             Element::Color(e) => e.key.as_ref(),
+            Element::TextInput(e) => e.key.as_ref(),
             Element::Button(e) => e.key.as_ref(),
+            Element::File(e) => e.key.as_ref(),
             Element::Matrix(e) => e.key.as_ref(),
             Element::Label(e) => e.key.as_ref(),
             Element::Value(e) => e.key.as_ref(),
             Element::Plot(e) => e.key.as_ref(),
+            Element::Canvas(e) => e.key.as_ref(),
+            Element::Envelope(e) => e.key.as_ref(),
             Element::RefGui(e) => e.key.as_ref(),
             Element::Error(_) => None,
         }
@@ -501,6 +732,29 @@ impl DialerStyle {
         match name {
             "slider" => Some(DialerStyle::Slider),
             "knob" => Some(DialerStyle::Knob),
+            _ => None,
+        }
+    }
+}
+
+impl Tone {
+    /// The identifier for this tone in the tree form.
+    pub fn name(self) -> &'static str {
+        match self {
+            Tone::Weak => "weak",
+            Tone::Strong => "strong",
+            Tone::Warn => "warn",
+            Tone::Error => "error",
+        }
+    }
+
+    /// Parse a tone from its identifier.
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name {
+            "weak" => Some(Tone::Weak),
+            "strong" => Some(Tone::Strong),
+            "warn" => Some(Tone::Warn),
+            "error" => Some(Tone::Error),
             _ => None,
         }
     }
@@ -588,14 +842,37 @@ impl Default for Dialer {
     fn default() -> Self {
         Dialer {
             bind: None,
+            at: None,
+            field: None,
+            on: None,
+            value: None,
             min: None,
             max: None,
             step: None,
             precision: None,
             label: None,
             prefix: None,
+            suffix: None,
             push: true,
             style: None,
+            tip: None,
+            key: None,
+        }
+    }
+}
+
+impl Default for TextInput {
+    fn default() -> Self {
+        TextInput {
+            bind: None,
+            at: None,
+            field: None,
+            on: None,
+            value: None,
+            hint: None,
+            mono: false,
+            push: true,
+            tip: None,
             key: None,
         }
     }
@@ -605,9 +882,29 @@ impl Default for Toggle {
     fn default() -> Self {
         Toggle {
             bind: None,
+            at: None,
+            field: None,
+            on: None,
+            value: false,
             label: None,
             push: true,
             pill: false,
+            tip: None,
+            key: None,
+        }
+    }
+}
+
+impl Default for Color {
+    fn default() -> Self {
+        Color {
+            bind: None,
+            at: None,
+            field: None,
+            on: None,
+            value: None,
+            theme: true,
+            tip: None,
             key: None,
         }
     }

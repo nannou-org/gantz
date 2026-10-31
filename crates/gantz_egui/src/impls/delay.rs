@@ -5,7 +5,7 @@ impl NodeUi for gantz_core::node::Delay {
         "delay".into()
     }
 
-    fn description(&self) -> Option<&'static str> {
+    fn description(&self) -> Option<&str> {
         Some("Output the previous evaluation's value")
     }
 

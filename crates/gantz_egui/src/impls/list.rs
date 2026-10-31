@@ -6,7 +6,7 @@ impl NodeUi for List {
         "list".into()
     }
 
-    fn description(&self) -> Option<&'static str> {
+    fn description(&self) -> Option<&str> {
         Some("Collect the connected inputs into a list")
     }
 

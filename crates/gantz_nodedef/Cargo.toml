@@ -1,0 +1,14 @@
+[package]
+name = "gantz_nodedef"
+version = "0.1.0"
+description = "Node types defined as data, for the domains of gantz."
+authors.workspace = true
+edition.workspace = true
+homepage.workspace = true
+license = "MIT OR Apache-2.0"
+repository.workspace = true
+
+[dependencies]
+gantz_ca.workspace = true
+gantz_ui = { workspace = true, default-features = false }
+serde.workspace = true
