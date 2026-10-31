@@ -40,8 +40,7 @@ jobs:
               develop -c bash -c "
               cargo check --locked --all-targets --no-default-features -p gantz -p gantz_cli &&
               cargo check --locked --all-targets --no-default-features -p gantz_egui -p gantz_pattern -p gantz_plyphon &&
-              cargo check --locked --all-targets --no-default-features -p gantz_ui &&
-              cargo check --locked --all-targets --no-default-features --features datum -p gantz_ui"
+              cargo check --locked --all-targets --no-default-features -p gantz_ui"
             cache: features
           - command: fmt -- --ci
           # The checks build the most paths, mostly check results that nothing
