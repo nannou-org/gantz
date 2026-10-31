@@ -2747,23 +2747,30 @@ fn demo_pplot_plots_every_source() {
 
     let plots: Vec<_> = graph
         .node_indices()
-        .filter(|&ix| (&*graph[ix] as &dyn std::any::Any).is::<gantz_pattern::Pplot>())
+        .filter(|&ix| {
+            let node = &*graph[ix] as &dyn gantz_core::Node as &dyn std::any::Any;
+            node.downcast_ref::<gantz_egui::node::DefNode>()
+                .and_then(|n| n.node::<gantz_pattern::Pplot>())
+                .is_some()
+        })
         .collect();
     assert!(!plots.is_empty(), "demo.pat.plot has no pplot");
     for ix in plots {
         let state = gantz_core::node::state::extract_value(&vm, &[ix.index()])
             .unwrap()
             .unwrap_or_else(|| panic!("pplot {} has no state", ix.index()));
-        let SteelVal::ListV(parts) = state else {
-            panic!("pplot {} state is not plot data", ix.index());
+        let SteelVal::HashMapV(map) = state else {
+            panic!("pplot {} state is not figures", ix.index());
         };
-        let non_empty =
-            |i: usize| matches!(parts.get(i), Some(SteelVal::ListV(l)) if !l.is_empty());
-        assert!(
-            non_empty(2) || non_empty(3),
-            "pplot {} plotted nothing",
-            ix.index(),
-        );
+        let figures = map.get(&SteelVal::SymbolV("figures".into()));
+        let Some(SteelVal::ListV(panels)) = figures else {
+            panic!("pplot {} has no figures", ix.index());
+        };
+        // A panel is `(panel (@ ...) figure ...)`.
+        let plotted = panels
+            .iter()
+            .any(|p| matches!(p, SteelVal::ListV(items) if items.len() > 2));
+        assert!(plotted, "pplot {} plotted nothing", ix.index());
     }
 }
 

@@ -1,17 +1,16 @@
 //! `.gantz` keyword sugar for the pattern node set.
 //!
-//! [`PatternSugar`] provides `(pat.mini "notation")` and, with the `egui`
-//! feature, `(pat.plot <keyword>...)`. Compose it with the other
+//! [`PatternSugar`] provides `(pat.mini "notation")` and
+//! `(pat.plot <keyword>...)`. Compose it with the other
 //! crates' sugars via [`gantz_format::Sugars`]. The keywords from before the
 //! `pat.` namespace, `pmini` and `pplot`, still read.
 
-use crate::Pmini;
-#[cfg(feature = "egui")]
-use crate::egui::pplot::sugar as pplot;
+use crate::plot as pplot;
+use crate::{Pmini, Pplot};
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
-use gantz_nodetag::NodeTag;
+use gantz_nodedef::NodeDef;
 
-/// Keyword sugar for [`Pmini`] and, with the `egui` feature, `Pplot`.
+/// Keyword sugar for [`Pmini`] and [`Pplot`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PatternSugar;
 
@@ -28,7 +27,6 @@ impl Sugar for PatternSugar {
                 let src = args.str_at(0).unwrap_or_default();
                 Ok(Some(node_datum(Pmini::TAG, vec![("src", Datum::Str(src))])))
             }
-            #[cfg(feature = "egui")]
             pplot::KEYWORD | pplot::OLD_KEYWORD => pplot::read_spec(args).map(Some),
             _ => Ok(None),
         }
@@ -40,7 +38,6 @@ impl Sugar for PatternSugar {
                 Pmini::TAG,
                 vec![("src", Datum::Str(String::new()))],
             )),
-            #[cfg(feature = "egui")]
             pplot::KEYWORD | pplot::OLD_KEYWORD => pplot::read_bare(),
             _ => None,
         }
@@ -51,8 +48,7 @@ impl Sugar for PatternSugar {
             let src = node.get("src").and_then(Datum::as_str).unwrap_or("");
             return Some(format!("({MINI} {src:?})"));
         }
-        #[cfg(feature = "egui")]
-        if tag == pplot::tag() {
+        if tag == Pplot::TAG {
             return pplot::write_spec(node);
         }
         None
@@ -62,8 +58,7 @@ impl Sugar for PatternSugar {
         if tag == Pmini::TAG {
             return Some(MINI);
         }
-        #[cfg(feature = "egui")]
-        if tag == pplot::tag() {
+        if tag == Pplot::TAG {
             return Some(pplot::KEYWORD);
         }
         None

@@ -12,6 +12,12 @@ fn no_lookup(_: &gantz_ca::ContentAddr) -> Option<&'static dyn Node> {
     None
 }
 
+/// A `pat.mini` node of the notation `src`.
+fn pmini(src: &str) -> gantz_egui::node::DefNode {
+    let fields = gantz_nodedef::encode(&gantz_pattern::Pmini::new(src)).unwrap();
+    gantz_egui::node::DefNode::new(gantz_nodedef::of::<gantz_pattern::Pmini>(), &fields).unwrap()
+}
+
 // A file-authored invalid notation fails compilation with a node
 // diagnostic, like an invalid expr.
 #[test]
@@ -19,7 +25,7 @@ fn invalid_notation_fails_compile() {
     let mut g = petgraph::graph::DiGraph::new();
     let push =
         g.add_node(Box::new(node::expr("'()").unwrap().with_push_eval()) as Box<dyn DebugNode>);
-    let pmini = g.add_node(Box::new(gantz_pattern::Pmini::new("bd [")) as Box<_>);
+    let pmini = g.add_node(Box::new(pmini("bd [")) as Box<_>);
     g.add_edge(push, pmini, Edge::from((0, 0)));
     let eps = push_pull_entrypoints(&no_lookup, &g);
     let err = gantz_core::vm::init_with_modules(
@@ -45,7 +51,7 @@ fn pm_compiles_and_evaluates() {
     let mut g = petgraph::graph::DiGraph::new();
     let push =
         g.add_node(Box::new(node::expr("'()").unwrap().with_push_eval()) as Box<dyn DebugNode>);
-    let pmini = g.add_node(Box::new(gantz_pattern::Pmini::new("bd(3,8) <hh cp>")) as Box<_>);
+    let pmini = g.add_node(Box::new(pmini("bd(3,8) <hh cp>")) as Box<_>);
     let q = g.add_node(Box::new(
         node::expr("(pat/query $p (pat/span 0 1))")
             .unwrap()
