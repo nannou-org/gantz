@@ -160,6 +160,8 @@ where
                 _ => None,
             };
 
+            let keep_state = gantz_core::node::state::keeps(gantz.env.registry, &head);
+
             // The head's session display, when a collab layer is wired.
             let session = gantz.collab.map(|c| match &head {
                 gantz_ca::Head::Branch(name) => c.sessions.get(name),
@@ -173,6 +175,7 @@ where
                     .demo_names(&demo_names_vec)
                     .current_demo(current_demo.as_deref())
                     .current_description(current_description.as_deref())
+                    .keep_state(keep_state)
                     .merge_env(gantz.env, merge_resolutions);
                 // The base source dropdown, when authoring context was
                 // supplied. See `Gantz::base_sources`.
@@ -200,6 +203,10 @@ where
             if let Some(merge) = res.inner.merge {
                 gantz_response.responses.push(Some(head.clone()), merge);
             }
+            if res.inner.reset_state {
+                let reset = crate::ResetState(head.clone());
+                gantz_response.responses.push(None, reset);
+            }
             if res.inner.share {
                 gantz_response
                     .responses
@@ -210,7 +217,8 @@ where
                     .responses
                     .push(Some(head.clone()), crate::StopSharing);
             }
-            // Demos, descriptions and base sources belong to named graphs.
+            // Demos, descriptions, base sources and the keep toggle belong to
+            // named graphs.
             if let gantz_ca::Head::Branch(name) = &head {
                 let responses = &mut gantz_response.responses;
                 if let Some(demo) = res.inner.demo_changed {
@@ -223,6 +231,10 @@ where
                 }
                 if res.inner.reset_base_graph {
                     responses.push(None, crate::ResetBaseGraph(name.clone()));
+                }
+                if let Some(keep) = res.inner.keep_state_changed {
+                    let name = name.clone();
+                    responses.push(None, crate::SetKeepState { name, keep });
                 }
                 if let Some(source) = res.inner.base_source_changed {
                     let name = name.clone();

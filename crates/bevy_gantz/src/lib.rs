@@ -118,6 +118,7 @@ impl Plugin for GantzPlugin {
             .insert_resource(EvalEpoch(web_time::Instant::now()))
             .init_non_send::<HeadVms>()
             .add_observer(head::on_open)
+            .add_observer(head::on_reset_state)
             .add_observer(head::on_replace)
             .add_observer(head::on_close)
             .add_observer(head::on_branch_head)

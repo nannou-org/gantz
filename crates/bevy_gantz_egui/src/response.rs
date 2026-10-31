@@ -253,6 +253,13 @@ pub(crate) fn dispatch_reset_base_graph(
     cmds.trigger(ResetBaseGraphEvent(name));
 }
 
+/// Dispatch a [`gantz_egui::ResetState`] payload as a
+/// [`head::ResetStateEvent`].
+pub(crate) fn dispatch_reset_state(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
+    let gantz_egui::ResetState(head) = downcast_payload(payload);
+    cmds.trigger(head::ResetStateEvent(head));
+}
+
 /// Dispatch an app-level payload as a [`ForApp`] event.
 fn dispatch_for_app<T: ResponseData>(_: Option<Entity>, payload: DynResponse, cmds: &mut Commands) {
     cmds.trigger(ForApp(downcast_payload::<T>(payload)));

@@ -275,6 +275,7 @@ pub fn on_reset_base_graph(
     mut registry: ResMut<Registry>,
     mut cache: ResMut<GraphCache>,
     codec: Res<NodeCodecRes>,
+    mut cmds: Commands,
 ) {
     let name = &trigger.event().0;
     // Re-parse the source that defined the name, seeded with the loaded base
@@ -314,6 +315,7 @@ pub fn on_reset_base_graph(
         subset.set_head(name.clone(), base_commit_ca);
         registry.merge(subset);
         refresh_cache(&registry, &mut cache, &codec.0);
+        cmds.trigger(head::ResetStateEvent(ca::Head::Branch(name.clone())));
         log::info!("Reset base graph '{name}' to original version");
     } else {
         log::warn!(

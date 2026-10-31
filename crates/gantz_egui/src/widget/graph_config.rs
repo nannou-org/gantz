@@ -19,6 +19,7 @@ pub struct GraphConfig<'a> {
     base_sources: &'a [&'a str],
     current_base_source: Option<&'a str>,
     current_description: Option<&'a str>,
+    keep_state: bool,
     env: Option<(&'a crate::Env<'a>, &'a mut gantz_ca::merge::Resolutions)>,
     collab: Option<Option<&'a crate::collab::SessionDisplay>>,
 }
@@ -42,6 +43,10 @@ pub struct GraphConfigResponse {
     /// The graph's base source association changed. See
     /// [`base_sources`][GraphConfig::base_sources].
     pub base_source_changed: Option<String>,
+    /// The "keep" toggle of the state row changed.
+    pub keep_state_changed: Option<bool>,
+    /// The "reset" button of the state row was clicked.
+    pub reset_state: bool,
     /// The "share" button was clicked in the collab row.
     pub share: bool,
     /// The "stop" sharing button was clicked in the collab row.
@@ -65,6 +70,7 @@ impl<'a> GraphConfig<'a> {
             base_sources: &[],
             current_base_source: None,
             current_description: None,
+            keep_state: true,
             env: None,
             collab: None,
         }
@@ -99,6 +105,13 @@ impl<'a> GraphConfig<'a> {
     /// The graph's current description, used to seed the description editor.
     pub fn current_description(mut self, current_description: Option<&'a str>) -> Self {
         self.current_description = current_description;
+        self
+    }
+
+    /// Whether the graph keeps its node state across sessions. Only a named
+    /// graph has the choice.
+    pub fn keep_state(mut self, keep_state: bool) -> Self {
+        self.keep_state = keep_state;
         self
     }
 
@@ -151,6 +164,8 @@ impl<'a> GraphConfig<'a> {
         let mut demo_changed = None;
         let mut base_source_changed = None;
         let mut reset_base_graph = false;
+        let mut keep_state_changed = None;
+        let mut reset_state = false;
         let mut export = false;
         let mut merge = None;
         let mut share = false;
@@ -316,6 +331,27 @@ impl<'a> GraphConfig<'a> {
                 });
                 ui.end_row();
 
+                ui.label("state");
+                ui.horizontal(|ui| {
+                    if is_named {
+                        ui.add_enabled_ui(!self.immutable, |ui| {
+                            let mut keep = self.keep_state;
+                            if ui
+                                .checkbox(&mut keep, "keep")
+                                .on_hover_text("keep the node state of this graph across sessions")
+                                .changed()
+                            {
+                                keep_state_changed = Some(keep);
+                            }
+                        });
+                    }
+                    reset_state = ui
+                        .button("reset")
+                        .on_hover_text("reset the nodes of this graph to their initial state")
+                        .clicked();
+                });
+                ui.end_row();
+
                 if is_named && !self.immutable && !self.is_base {
                     if let Some((env, resolutions)) = self.env {
                         ui.label("merge");
@@ -416,6 +452,8 @@ impl<'a> GraphConfig<'a> {
             export,
             demo_changed,
             reset_base_graph,
+            keep_state_changed,
+            reset_state,
             description_changed,
             merge,
             base_source_changed,

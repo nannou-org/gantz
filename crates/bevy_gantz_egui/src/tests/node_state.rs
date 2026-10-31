@@ -184,3 +184,112 @@ fn a_snapshot_of_a_held_commit_stays() {
     trigger(&mut app, head::OpenEvent(fork.clone()));
     assert_eq!(value(&mut app, &fork), SteelVal::NumV(9.0));
 }
+
+/// Trigger the keep toggle of the named graph.
+fn set_keep(app: &mut bevy_app::App, n: &str, keep: bool) {
+    let name = name(n);
+    let toggle = gantz_egui::SetKeepState { name, keep };
+    trigger(app, crate::ForApp(toggle));
+}
+
+/// Turning the toggle off drops the stored state. The graph then stores
+/// nothing and starts from its initial state each time it opens.
+#[test]
+fn a_volatile_graph_starts_from_its_initial_state() {
+    let (mut app, alpha, _other) = app_with_two_heads();
+    app.add_observer(crate::graphs::on_set_keep_state);
+    set_value(&mut app, &alpha, 9.0);
+    trigger(&mut app, head::CloseEvent(alpha.clone()));
+    assert!(snapshot(&app, &alpha).is_some());
+    set_keep(&mut app, "alpha", false);
+    assert!(snapshot(&app, &alpha).is_none());
+
+    trigger(&mut app, head::OpenEvent(alpha.clone()));
+    assert_eq!(value(&mut app, &alpha), SteelVal::NumV(1.0));
+    set_value(&mut app, &alpha, 9.0);
+    trigger(&mut app, head::CloseEvent(alpha.clone()));
+    assert!(snapshot(&app, &alpha).is_none());
+    trigger(&mut app, head::OpenEvent(alpha.clone()));
+    assert_eq!(value(&mut app, &alpha), SteelVal::NumV(1.0));
+}
+
+/// A snapshot that reaches a volatile graph from elsewhere stays out of it.
+#[test]
+fn a_volatile_graph_ignores_a_stored_snapshot() {
+    let (mut app, alpha, _other) = app_with_two_heads();
+    app.add_observer(crate::graphs::on_set_keep_state);
+    set_keep(&mut app, "alpha", false);
+    trigger(&mut app, head::CloseEvent(alpha.clone()));
+    let commit = head_commit(&app, &alpha);
+    let nodes = vec![(vec![0], gantz_ca::Datum::F64(9.0))];
+    let mut registry = app.world_mut().resource_mut::<Registry>();
+    gantz_ca::section_insert::<Snapshots>(&mut registry.0, commit, &nodes).unwrap();
+    trigger(&mut app, head::OpenEvent(alpha.clone()));
+    assert_eq!(value(&mut app, &alpha), SteelVal::NumV(1.0));
+}
+
+/// A graph stores its state again once the toggle is back on.
+#[test]
+fn a_graph_keeps_its_state_again_when_the_toggle_returns() {
+    let (mut app, alpha, _other) = app_with_two_heads();
+    app.add_observer(crate::graphs::on_set_keep_state);
+    set_keep(&mut app, "alpha", false);
+    set_keep(&mut app, "alpha", true);
+    set_value(&mut app, &alpha, 9.0);
+    trigger(&mut app, head::CloseEvent(alpha.clone()));
+    trigger(&mut app, head::OpenEvent(alpha.clone()));
+    assert_eq!(value(&mut app, &alpha), SteelVal::NumV(9.0));
+}
+
+/// A reset returns an open head to its initial state, and the old state does
+/// not return with a later open.
+#[test]
+fn a_reset_returns_a_head_to_its_initial_state() {
+    let (mut app, alpha, _other) = app_with_two_heads();
+    set_value(&mut app, &alpha, 9.0);
+    trigger(&mut app, head::CloseEvent(alpha.clone()));
+    trigger(&mut app, head::OpenEvent(alpha.clone()));
+    assert_eq!(value(&mut app, &alpha), SteelVal::NumV(9.0));
+
+    trigger(&mut app, head::ResetStateEvent(alpha.clone()));
+    assert_eq!(value(&mut app, &alpha), SteelVal::NumV(1.0));
+    assert!(snapshot(&app, &alpha).is_none());
+
+    trigger(&mut app, head::CloseEvent(alpha.clone()));
+    trigger(&mut app, head::OpenEvent(alpha.clone()));
+    assert_eq!(value(&mut app, &alpha), SteelVal::NumV(1.0));
+}
+
+/// A reset also clears the ancestor that the next snapshot would replace, so
+/// an edit made before the reset does not leave its old state behind.
+#[test]
+fn a_reset_clears_the_snapshot_of_the_ancestor() {
+    let (mut app, alpha, _other) = app_with_two_heads();
+    trigger(&mut app, head::CloseEvent(alpha.clone()));
+    let first = head_commit(&app, &alpha);
+    commit(&mut app, "alpha", graph(3.0));
+    trigger(&mut app, head::ResetStateEvent(alpha.clone()));
+    assert!(snapshot(&app, &Head::Commit(first)).is_none());
+}
+
+/// A reset of a closed head removes its stored state.
+#[test]
+fn a_reset_of_a_closed_head_removes_its_state() {
+    let (mut app, alpha, _other) = app_with_two_heads();
+    set_value(&mut app, &alpha, 9.0);
+    trigger(&mut app, head::CloseEvent(alpha.clone()));
+    trigger(&mut app, head::ResetStateEvent(alpha.clone()));
+    trigger(&mut app, head::OpenEvent(alpha.clone()));
+    assert_eq!(value(&mut app, &alpha), SteelVal::NumV(1.0));
+}
+
+/// A reset fires the load nodes again, as an open does.
+#[test]
+fn a_reset_makes_a_load_pending() {
+    let (mut app, alpha, _other) = app_with_two_heads();
+    let e = entity(&mut app, &alpha);
+    app.world_mut().entity_mut(e).remove::<head::PendingLoad>();
+    app.world_mut().trigger(head::ResetStateEvent(alpha));
+    app.world_mut().flush();
+    assert!(app.world().entity(e).contains::<head::PendingLoad>());
+}

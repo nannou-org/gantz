@@ -4,7 +4,7 @@ use crate::{
     datum::{self, Datum},
     node::{self, Node},
 };
-use gantz_ca::{CommitAddr, Liveness, MergePolicy, SectionDecl};
+use gantz_ca::{CommitAddr, Head, Liveness, MergePolicy, Name, Registry, SectionDecl, section_get};
 use steel::{
     SteelErr, SteelVal,
     gc::Gc,
@@ -63,8 +63,17 @@ pub type Snapshot = Vec<(Vec<node::Id>, Datum)>;
 /// once, when the commit does, and a state change makes no sync traffic.
 pub struct Snapshots;
 
+/// The registry section of the named graphs that do not keep their node state.
+/// A head keeps its state unless its name is here.
+///
+/// An entry rides with the name, so the choice survives an edit.
+pub struct Volatile;
+
 /// The id of the [`Snapshots`] section.
 pub const SNAPSHOTS_ID: &str = "gantz.state";
+
+/// The id of the [`Volatile`] section.
+pub const VOLATILE_ID: &str = "gantz.state.volatile";
 
 /// The ident of the node identity tree. It holds an opaque identity value per
 /// node, at the node's path followed by `ID_KEY`, with the same nesting as
@@ -85,6 +94,14 @@ impl SectionDecl for Snapshots {
     const LIVENESS: Liveness = Liveness::WithCommit;
     type Key = CommitAddr;
     type Value = Snapshot;
+}
+
+impl SectionDecl for Volatile {
+    const ID: &'static str = VOLATILE_ID;
+    const POLICY: MergePolicy = MergePolicy::KeepExisting;
+    const LIVENESS: Liveness = Liveness::WithName;
+    type Key = Name;
+    type Value = bool;
 }
 
 impl<N, S> State<N, S> {
@@ -212,6 +229,26 @@ pub fn restore(vm: &mut Engine, nodes: &[(Vec<node::Id>, Datum)]) -> Result<(), 
         }
     }
     Ok(())
+}
+
+/// Set the nodes in `vm`, which registered the graph of `head`, to the state
+/// stored for its commit, if `head` keeps its state.
+pub fn restore_head(registry: &Registry, head: &Head, vm: &mut Engine) -> Result<(), SteelErr> {
+    let commit = registry
+        .head_commit_ca(head)
+        .filter(|_| keeps(registry, head));
+    match commit.and_then(|ca| section_get::<Snapshots>(registry, &ca)) {
+        Some(nodes) => restore(vm, &nodes),
+        None => Ok(()),
+    }
+}
+
+/// Whether `head` keeps its node state. See [`Volatile`].
+pub fn keeps(registry: &Registry, head: &Head) -> bool {
+    match head {
+        Head::Branch(name) => section_get::<Volatile>(registry, name).is_none(),
+        Head::Commit(_) => true,
+    }
 }
 
 /// Sets the given node's state to the given value.
