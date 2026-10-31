@@ -10,6 +10,7 @@ use bevy_gantz::Registry;
 use bevy_gantz::head;
 use bevy_log as log;
 use gantz_ca as ca;
+use gantz_core::node::state;
 use steel::steel_vm::engine::Engine;
 
 /// The data of an observer that edits an open head. See [`HeadEdit::apply`].
@@ -104,6 +105,17 @@ impl Edit<'_, '_, '_> {
         match &*self.head {
             ca::Head::Branch(name) => Some(name.to_string()),
             ca::Head::Commit(_) => None,
+        }
+    }
+
+    /// Re-register the whole working graph, then set the pasted nodes to
+    /// `state`, their state by path. See [`Edit::register_graph`].
+    fn register_pasted(&mut self, what: &str, state: &[(Vec<gantz_core::node::Id>, ca::Datum)]) {
+        self.register_graph(what);
+        if let Some(vm) = self.vm.as_deref_mut() {
+            if let Err(e) = state::restore(vm, state) {
+                log::error!("{what}: cannot restore the state of the nodes: {e}");
+            }
         }
     }
 
@@ -267,6 +279,7 @@ pub fn on_copy_nodes(
     registry: Res<Registry>,
     codec: Res<NodeCodecRes>,
     mut clipboard: ResMut<bevy_egui::EguiClipboard>,
+    vms: NonSend<head::HeadVms>,
     mut heads: Query<(&mut head::WorkingGraph, &GraphView), With<head::OpenHead>>,
 ) {
     let event = trigger.event();
@@ -275,7 +288,9 @@ pub fn on_copy_nodes(
         return;
     };
 
-    let text = gantz_egui::ops::copy_nodes(&registry, &wg, gv, &event.data.0, &codec.0);
+    let state = vms.get(&event.head).map(state::snapshot);
+    let state = state.unwrap_or_default();
+    let text = gantz_egui::ops::copy_nodes(&registry, &wg, gv, &event.data.0, &state, &codec.0);
     if let Some(text) = text {
         clipboard.set_text(&text);
     }
@@ -308,8 +323,8 @@ pub fn on_paste(
             &event.data.pos,
             &e.codec.0,
         );
-        if pasted {
-            e.register_graph("Paste");
+        if let Some(state) = pasted {
+            e.register_pasted("Paste", &state);
         }
     });
 }
@@ -375,6 +390,7 @@ pub fn on_duplicate_nodes(trigger: On<ForHead<gantz_egui::DuplicateNodes>>, mut 
     let event = trigger.event();
     edits.apply(event.head, "DuplicateNodes", |e| {
         let editing = e.editing();
+        let state = e.vm.as_deref().map(state::snapshot).unwrap_or_default();
         let duplicated = gantz_egui::ops::duplicate_nodes(
             e.registry,
             editing.as_deref(),
@@ -382,10 +398,11 @@ pub fn on_duplicate_nodes(trigger: On<ForHead<gantz_egui::DuplicateNodes>>, mut 
             e.view,
             e.state,
             &event.data.0,
+            &state,
             &e.codec.0,
         );
-        if duplicated {
-            e.register_graph("DuplicateNodes");
+        if let Some(state) = duplicated {
+            e.register_pasted("DuplicateNodes", &state);
         }
     });
 }

@@ -251,6 +251,21 @@ pub fn keeps(registry: &Registry, head: &Head) -> bool {
     }
 }
 
+/// `nodes` with the node at the root of each path changed by `ids`, a list of
+/// `(from, to)` node indices. A node that `ids` does not hold drops out.
+pub fn remap_snapshot(
+    nodes: &[(Vec<node::Id>, Datum)],
+    ids: impl IntoIterator<Item = (node::Id, node::Id)>,
+) -> Snapshot {
+    let ids: std::collections::BTreeMap<_, _> = ids.into_iter().collect();
+    let remap = |(path, state): &(Vec<node::Id>, Datum)| {
+        let (id, nested) = path.split_first()?;
+        let root = std::iter::once(*ids.get(id)?);
+        Some((root.chain(nested.iter().copied()).collect(), state.clone()))
+    };
+    nodes.iter().filter_map(remap).collect()
+}
+
 /// Sets the given node's state to the given value.
 pub fn update_value(vm: &mut Engine, node_path: &[usize], val: SteelVal) -> Result<(), SteelErr> {
     update_in(vm, ROOT_STATE, node_path, val)

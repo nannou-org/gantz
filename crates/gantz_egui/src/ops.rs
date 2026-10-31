@@ -133,7 +133,9 @@ fn newest_commit_for_graph(
         .map(|(ca, _)| *ca)
 }
 
-/// Serialize the current selection to a `.gantz` clipboard payload.
+/// Serialize the current selection to a `.gantz` clipboard payload. `state` is
+/// the state of the nodes of `graph`, which the payload carries for the
+/// selection.
 ///
 /// Returns `None` when the selection is empty or serialization fails, and
 /// logs the cause. Writing the resulting string to the clipboard is the
@@ -143,12 +145,13 @@ pub fn copy_nodes(
     graph: &DataGraph,
     head_view: &gantz_edit::SceneView,
     selection: &HashSet<NodeIndex>,
+    state: &[(Vec<node::Id>, gantz_ca::Datum)],
     codec: &NodeCodec,
 ) -> Option<String> {
     if selection.is_empty() {
         return None;
     }
-    let copied = export::copy(registry, graph, selection, &head_view.layout);
+    let copied = export::copy(registry, graph, selection, &head_view.layout, state);
     match export::copied_to_string(&copied, codec.data()) {
         Ok(text) => Some(text),
         Err(e) => {
@@ -680,7 +683,8 @@ pub fn cut_nodes(
     nodes: &HashSet<NodeIndex>,
     codec: &NodeCodec,
 ) -> Option<String> {
-    let text = copy_nodes(registry, graph, head_view, nodes, codec)?;
+    let state = node::state::snapshot(vm);
+    let text = copy_nodes(registry, graph, head_view, nodes, &state, codec)?;
     remove_nodes(
         graph,
         vm,
@@ -754,9 +758,10 @@ pub fn inspect_edge(
 /// Paste a previously-copied clipboard payload into the graph at the head's
 /// current path, and update the selection to the pasted nodes.
 ///
-/// Returns `true` if a payload was pasted. The caller is responsible for
-/// re-registering the root graph with the VM afterwards so pasted nodes get
-/// their state initialized.
+/// Returns the state of the pasted nodes by their paths in `graph`, or `None`
+/// if no payload was pasted. The caller is responsible for re-registering the
+/// root graph with the VM afterwards so pasted nodes get their state
+/// initialized, and for restoring the returned state after that.
 #[allow(clippy::too_many_arguments)]
 pub fn paste(
     registry: &mut gantz_ca::Registry,
@@ -767,12 +772,12 @@ pub fn paste(
     text: &str,
     pos: &PastePos,
     codec: &NodeCodec,
-) -> bool {
+) -> Option<node::state::Snapshot> {
     let copied: export::Copied = match export::copied_from_str(text, codec.data()) {
         Ok(c) => c,
         Err(e) => {
             log::debug!("Clipboard does not contain a valid gantz payload: {e}");
-            return false;
+            return None;
         }
     };
 
@@ -792,25 +797,28 @@ pub fn paste(
                 "Paste: '{}' would create a reference cycle in '{editing}'; skipping paste",
                 named.name()
             );
-            return false;
+            return None;
         }
     }
 
     let offset = crate::resolve_paste_offset(pos, &copied.positions);
 
     let new_indices = export::paste(registry, graph, &mut head_view.layout, &copied, offset);
+    let pairs = copied.graph.node_indices().zip(&new_indices);
+    let pairs = pairs.map(|(old, new)| (old.index(), new.index()));
+    let state = node::state::remap_snapshot(&copied.state, pairs);
 
     head_state.scene.interaction.selection.nodes = new_indices.into_iter().collect();
     head_state.scene.interaction.selection.edges.clear();
-    true
+    Some(state)
 }
 
 /// Duplicate `nodes` in place. Serialize them, then [`paste`] at a small
 /// offset. No clipboard is involved. The selection becomes the new nodes.
 ///
-/// Returns `true` if anything was duplicated. Like [`paste`], the caller
-/// re-registers the root graph with the VM afterwards so the new nodes get
-/// their state initialized.
+/// Returns what [`paste`] does, with `state` as the state of the nodes of
+/// `graph`. Like [`paste`], the caller re-registers the root graph with the VM
+/// afterwards, then restores the returned state.
 pub fn duplicate_nodes(
     registry: &mut gantz_ca::Registry,
     editing: Option<&str>,
@@ -818,11 +826,10 @@ pub fn duplicate_nodes(
     head_view: &mut gantz_edit::SceneView,
     head_state: &mut OpenHeadState,
     nodes: &HashSet<NodeIndex>,
+    state: &[(Vec<node::Id>, gantz_ca::Datum)],
     codec: &NodeCodec,
-) -> bool {
-    let Some(text) = copy_nodes(registry, graph, head_view, nodes, codec) else {
-        return false;
-    };
+) -> Option<node::state::Snapshot> {
+    let text = copy_nodes(registry, graph, head_view, nodes, state, codec)?;
     paste(
         registry,
         editing,
