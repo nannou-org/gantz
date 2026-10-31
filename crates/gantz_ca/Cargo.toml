@@ -16,4 +16,5 @@ petgraph.workspace = true
 serde.workspace = true
 
 [dev-dependencies]
+postcard.workspace = true
 ron.workspace = true

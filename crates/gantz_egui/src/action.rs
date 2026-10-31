@@ -24,9 +24,9 @@
 //! an app restart, since VM state is not persisted either.
 
 use gantz_core::compile::entrypoint::{self, EvalKind, EvalSource};
+use gantz_core::datum::Datum;
 use gantz_core::node;
 use serde::{Deserialize, Serialize};
-use steel::SteelVal;
 
 /// An ephemeral node-interaction action.
 ///
@@ -48,7 +48,8 @@ pub enum Action {
     /// `eval: None` and fires nothing.
     SetState {
         path: Vec<node::Id>,
-        values: Vec<Value>,
+        #[serde(with = "gantz_core::datum::wire::seq")]
+        values: Vec<Datum>,
         eval: Option<Source>,
     },
     /// A push or pull evaluation with no accompanying state write. A `bang`
@@ -81,38 +82,15 @@ pub enum Kind {
     Pull,
 }
 
-/// A VM-state value in wire-encodable form.
-///
-/// Covers the value shapes interactive nodes write, such as numbers and
-/// lists. Rich runtime values such as closures, ports and custom types are
-/// unsupported. A write of one is not captured.
-///
-/// `Int` and `Num` are distinct on purpose. Nodes branch on the steel
-/// variant. For example, the `number` node renders an integer or a float
-/// dialer. A lossy `serde_json`-style int-to-float bridge would corrupt
-/// behaviour.
-///
-/// `gantz_core::Datum` is not reused here. Its `Deserialize` is data-model
-/// style and uses `deserialize_any`. A non-self-describing wire format like
-/// the action envelope's postcard cannot drive that. This plain derived enum
-/// round-trips postcard directly.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub enum Value {
-    Unit,
-    Bool(bool),
-    Int(i64),
-    Num(f64),
-    Char(char),
-    Str(String),
-    List(Vec<Value>),
-}
-
 /// A VM-state write recorded by
-/// [`NodeCtx::update_value`][crate::NodeCtx::update_value].
+/// [`NodeCtx::update_value`][crate::NodeCtx::update_value]. The value travels in
+/// the fixed-shape encoding of [`gantz_core::datum::wire`], since the action envelope is
+/// postcard.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct StateWrite {
     pub path: Vec<node::Id>,
-    pub value: Value,
+    #[serde(with = "gantz_core::datum::wire")]
+    pub value: Datum,
 }
 
 /// Response payload. A node UI wrote VM state via
@@ -132,50 +110,6 @@ pub(crate) fn state_written(
     writes
         .drain(..)
         .map(|w| crate::DynResponse::new(StateWritten(w)))
-}
-
-/// The error returned when a [`SteelVal`] has no [`Value`] representation.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct UnsupportedValue;
-
-impl std::fmt::Display for UnsupportedValue {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "steel value has no wire-encodable representation")
-    }
-}
-
-impl std::error::Error for UnsupportedValue {}
-
-impl TryFrom<&SteelVal> for Value {
-    type Error = UnsupportedValue;
-    fn try_from(val: &SteelVal) -> Result<Self, Self::Error> {
-        Ok(match val {
-            SteelVal::Void => Value::Unit,
-            SteelVal::BoolV(b) => Value::Bool(*b),
-            SteelVal::IntV(i) => Value::Int(*i as i64),
-            SteelVal::NumV(n) => Value::Num(*n),
-            SteelVal::CharV(c) => Value::Char(*c),
-            SteelVal::StringV(s) => Value::Str(s.to_string()),
-            SteelVal::ListV(l) => {
-                Value::List(l.iter().map(Value::try_from).collect::<Result<_, _>>()?)
-            }
-            _ => return Err(UnsupportedValue),
-        })
-    }
-}
-
-impl From<Value> for SteelVal {
-    fn from(v: Value) -> Self {
-        match v {
-            Value::Unit => SteelVal::Void,
-            Value::Bool(b) => SteelVal::BoolV(b),
-            Value::Int(i) => SteelVal::IntV(i as isize),
-            Value::Num(n) => SteelVal::NumV(n),
-            Value::Char(c) => SteelVal::CharV(c),
-            Value::Str(s) => SteelVal::StringV(s.into()),
-            Value::List(l) => SteelVal::ListV(l.into_iter().map(SteelVal::from).collect()),
-        }
-    }
 }
 
 impl From<EvalKind> for Kind {
@@ -228,46 +162,20 @@ pub fn entrypoint(sources: impl IntoIterator<Item = Source>) -> entrypoint::Entr
 mod tests {
     use super::*;
 
+    /// A batch of state writes of any datums round-trips through postcard, the
+    /// format of the action envelope. An integer and a float stay distinct.
     #[test]
-    fn value_round_trips_through_steel() {
-        let values = [
-            Value::Unit,
-            Value::Bool(true),
-            Value::Int(-42),
-            Value::Num(1.5),
-            Value::Char('g'),
-            Value::Str("gantz".to_string()),
-            Value::List(vec![Value::Int(1), Value::List(vec![Value::Num(2.0)])]),
-        ];
-        for value in values {
-            let steel = SteelVal::from(value.clone());
-            assert_eq!(Value::try_from(&steel).unwrap(), value);
-        }
-    }
-
-    // Int and Num must stay distinct through the round trip. Nodes branch on
-    // the steel variant.
-    #[test]
-    fn value_preserves_int_vs_num() {
-        assert!(matches!(SteelVal::from(Value::Int(1)), SteelVal::IntV(1)));
-        assert!(matches!(
-            SteelVal::from(Value::Num(1.0)),
-            SteelVal::NumV(n) if n == 1.0
-        ));
-    }
-
-    // Unsupported runtime values such as closures are rejected, not mangled.
-    #[test]
-    fn unsupported_values_are_rejected() {
-        let steel = SteelVal::SymbolV("nope".into());
-        assert_eq!(Value::try_from(&steel), Err(UnsupportedValue));
-        // A list containing an unsupported value is rejected wholesale.
-        let steel = SteelVal::ListV(
-            [SteelVal::IntV(1), SteelVal::SymbolV("nope".into())]
-                .into_iter()
-                .collect(),
-        );
-        assert_eq!(Value::try_from(&steel), Err(UnsupportedValue));
+    fn set_state_round_trips_through_postcard() {
+        let map = Datum::Map(vec![("k".into(), Datum::Sym("v".into()))]);
+        let values = vec![Datum::I64(1), Datum::F64(1.0), map];
+        let action = Action::SetState {
+            path: vec![0, 2],
+            values,
+            eval: None,
+        };
+        let bytes = postcard::to_allocvec(&action).unwrap();
+        let back: Action = postcard::from_bytes(&bytes).unwrap();
+        assert_eq!(back, action);
     }
 
     // A round-tripped Source rebuilds the identical content-addressed

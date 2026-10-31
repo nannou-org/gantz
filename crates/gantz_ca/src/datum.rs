@@ -20,12 +20,26 @@
 //! content address. [`to_datum`], `Datum`'s `Deserialize` and
 //! [`Datum::canonicalize`] all apply the rule.
 //!
-//! The one divergence from `serde_json::Value` is that `char` and `bytes`
-//! keep dedicated variants, [`Datum::Char`] and [`Datum::Bytes`], rather
-//! than collapsing to a string or array. The full serde data model then
+//! `Datum` diverges from `serde_json::Value` in two ways. First, `char` and
+//! `bytes` keep dedicated variants, [`Datum::Char`] and [`Datum::Bytes`],
+//! rather than collapsing to a string or array. The full serde data model then
 //! round-trips faithfully. For parity, `deserialize_str` and
 //! `deserialize_string` still accept a `Char`, and `deserialize_bytes` still
 //! accepts a `Seq`.
+//!
+//! Second, [`Datum::Sym`] and [`Datum::Ratio`] hold the symbols and exact
+//! ratios of Steel values, so that a datum can hold the state of a node. The
+//! serde data model has neither, so there they are the one-entry maps
+//! `{"$sym": name}` and `{"$ratio": [n, d]}`. The codec reads these maps back
+//! as the variants, so the two keys are reserved. `deserialize_str` and
+//! `deserialize_string` accept a `Sym`.
+//!
+//! [`Datum::opaque`] stands in for a runtime value that has no data form, such
+//! as a function, for display only. It is the one-entry map
+//! `{"$opaque": what}`, which reads back as a map.
+//!
+//! [`wire`] encodes a datum for formats that are not self-describing, such as
+//! postcard.
 
 use serde::de::{
     self, Deserialize, DeserializeOwned, DeserializeSeed, EnumAccess, Expected, IntoDeserializer,
@@ -34,6 +48,8 @@ use serde::de::{
 use serde::ser::{self, Serialize};
 use std::fmt;
 use std::vec;
+
+pub mod wire;
 
 /// A self-describing value mirroring the serde data model. It is the bridge
 /// between node types and reader-valid Steel text.
@@ -67,11 +83,32 @@ pub enum Datum {
     /// A map, struct or struct variant. Written as a list of pairs,
     /// `((k v)...)`.
     Map(Vec<(String, Datum)>),
+    /// A symbol. Written as a quoted symbol, `'name`.
+    Sym(String),
+    /// An exact ratio that is not whole. Written as `n/d`.
+    Ratio(Ratio),
+}
+
+/// An exact ratio of two integers that is not whole. It is reduced, and its
+/// denominator is at least 2. [`Datum::ratio`] gives one.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct Ratio {
+    numer: i64,
+    denom: i64,
 }
 
 /// An error produced by the [`Datum`] serde codec.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DatumError(String);
+
+/// The reserved map key of a [`Datum::Sym`] in the serde data model.
+const SYM_KEY: &str = "$sym";
+
+/// The reserved map key of a [`Datum::Ratio`] in the serde data model.
+const RATIO_KEY: &str = "$ratio";
+
+/// The reserved map key of the placeholder of [`Datum::opaque`].
+const OPAQUE_KEY: &str = "$opaque";
 
 /// Serialize any [`Serialize`] value into a [`Datum`].
 pub fn to_datum<T>(value: &T) -> Result<Datum, DatumError>
@@ -138,12 +175,39 @@ impl Datum {
         }
     }
 
-    /// The value of a float datum, coercing integer datums to `f64`.
+    /// The value of a float datum, coercing integer and ratio datums to `f64`.
     pub fn as_f64(&self) -> Option<f64> {
         match self {
             Datum::F64(n) => Some(*n),
             Datum::I64(n) => Some(*n as f64),
             Datum::U64(n) => Some(*n as f64),
+            Datum::Ratio(r) => Some(r.numer as f64 / r.denom as f64),
+            _ => None,
+        }
+    }
+
+    /// A placeholder for a runtime value that has no data form, such as a
+    /// function, by what it is. It is for display only, since it does not
+    /// convert back to the value that it stands for.
+    pub fn opaque(what: &str) -> Datum {
+        Datum::Map(vec![(OPAQUE_KEY.to_string(), Datum::Str(what.to_string()))])
+    }
+
+    /// What the value is that a placeholder of [`Datum::opaque`] stands for.
+    pub fn as_opaque(&self) -> Option<&str> {
+        match self {
+            Datum::Map(entries) => match entries.as_slice() {
+                [(k, Datum::Str(what))] if k == OPAQUE_KEY => Some(what),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// The name of a symbol datum.
+    pub fn as_sym(&self) -> Option<&str> {
+        match self {
+            Datum::Sym(s) => Some(s),
             _ => None,
         }
     }
@@ -159,6 +223,24 @@ impl Datum {
     /// The canonical datum for an unsigned integer. See the module docs.
     pub fn from_u64(n: u64) -> Datum {
         i64::try_from(n).map_or(Datum::U64(n), Datum::I64)
+    }
+
+    /// The canonical datum of the ratio `numer / denom`: a [`Datum::I64`] when
+    /// it is whole, else a reduced [`Datum::Ratio`]. `None` when `denom` is
+    /// zero, or when the reduced ratio does not fit in `i64`.
+    pub fn ratio(numer: i64, denom: i64) -> Option<Datum> {
+        if denom == 0 {
+            return None;
+        }
+        let (n, d) = (i128::from(numer), i128::from(denom));
+        let g = gcd(n.unsigned_abs(), d.unsigned_abs()) as i128;
+        let sign = d.signum();
+        let numer = i64::try_from(sign * n / g).ok()?;
+        let denom = i64::try_from(sign * d / g).ok()?;
+        Some(match denom {
+            1 => Datum::I64(numer),
+            _ => Datum::Ratio(Ratio { numer, denom }),
+        })
     }
 
     /// Recursively sort map entries by key and give each integer its
@@ -182,6 +264,18 @@ impl Datum {
     }
 }
 
+impl Ratio {
+    /// The numerator, which carries the sign.
+    pub fn numer(&self) -> i64 {
+        self.numer
+    }
+
+    /// The denominator, at least 2.
+    pub fn denom(&self) -> i64 {
+        self.denom
+    }
+}
+
 impl PartialEq for Datum {
     fn eq(&self, other: &Self) -> bool {
         use Datum::*;
@@ -196,6 +290,8 @@ impl PartialEq for Datum {
             (Bytes(a), Bytes(b)) => a == b,
             (Seq(a), Seq(b)) => a == b,
             (Map(a), Map(b)) => a == b,
+            (Sym(a), Sym(b)) => a == b,
+            (Ratio(a), Ratio(b)) => a == b,
             _ => false,
         }
     }
@@ -217,6 +313,8 @@ impl std::hash::Hash for Datum {
             Datum::Bytes(b) => b.hash(state),
             Datum::Seq(items) => items.hash(state),
             Datum::Map(entries) => entries.hash(state),
+            Datum::Sym(s) => s.hash(state),
+            Datum::Ratio(r) => r.hash(state),
         }
     }
 }
@@ -283,13 +381,24 @@ impl crate::CaHash for Datum {
                     crate::CaHash::hash(v, hasher);
                 }
             }
+            Datum::Sym(s) => {
+                hasher.update(&[10]);
+                len(hasher, s.len());
+                hasher.update(s.as_bytes());
+            }
+            Datum::Ratio(r) => {
+                hasher.update(&[11]);
+                hasher.update(&r.numer.to_be_bytes());
+                hasher.update(&r.denom.to_be_bytes());
+            }
         }
     }
 }
 
 impl Serialize for Datum {
     /// Serializes the represented value. `Str("x")` serializes as a string
-    /// and `Map` as a map. A datum embedded in a larger `Serialize` type thus
+    /// and `Map` as a map. `Sym` and `Ratio` serialize as their reserved
+    /// one-entry maps. A datum embedded in a larger `Serialize` type thus
     /// round-trips through any self-describing format. Note that
     /// `to_datum(&datum) == datum` holds only for canonical datums, since
     /// this codec's own map serialization sorts keys. See
@@ -317,6 +426,16 @@ impl Serialize for Datum {
                 for (k, v) in entries {
                     map.serialize_entry(k, v)?;
                 }
+                map.end()
+            }
+            Datum::Sym(name) => {
+                let mut map = s.serialize_map(Some(1))?;
+                map.serialize_entry(SYM_KEY, name)?;
+                map.end()
+            }
+            Datum::Ratio(r) => {
+                let mut map = s.serialize_map(Some(1))?;
+                map.serialize_entry(RATIO_KEY, &[r.numer, r.denom])?;
                 map.end()
             }
         }
@@ -679,7 +798,7 @@ impl ser::SerializeMap for SerializeMap {
 
     fn end(mut self) -> Result<Datum, DatumError> {
         self.entries.sort_by(|a, b| a.0.cmp(&b.0));
-        Ok(Datum::Map(self.entries))
+        Ok(of_entries(self.entries))
     }
 }
 
@@ -1013,7 +1132,7 @@ impl<'de> Deserialize<'de> for Datum {
                 while let Some(entry) = map.next_entry()? {
                     entries.push(entry);
                 }
-                Ok(Datum::Map(entries))
+                Ok(of_entries(entries))
             }
         }
 
@@ -1041,6 +1160,8 @@ impl Datum {
             Datum::Bytes(b) => Unexpected::Bytes(b),
             Datum::Seq(_) => Unexpected::Seq,
             Datum::Map(_) => Unexpected::Map,
+            Datum::Sym(_) => Unexpected::Other("a symbol"),
+            Datum::Ratio(_) => Unexpected::Other("a ratio"),
         }
     }
 }
@@ -1088,6 +1209,11 @@ impl<'de> de::Deserializer<'de> for Datum {
             Datum::Bytes(b) => visitor.visit_byte_buf(b),
             Datum::Seq(v) => visit_seq(v, visitor),
             Datum::Map(m) => visit_map(m, visitor),
+            Datum::Sym(name) => visit_map(vec![(SYM_KEY.to_string(), Datum::Str(name))], visitor),
+            Datum::Ratio(r) => {
+                let parts = vec![Datum::I64(r.numer), Datum::I64(r.denom)];
+                visit_map(vec![(RATIO_KEY.to_string(), Datum::Seq(parts))], visitor)
+            }
         }
     }
 
@@ -1136,8 +1262,8 @@ impl<'de> de::Deserializer<'de> for Datum {
                 Unexpected::Map,
                 &"map with a single key",
             )),
-            // ...or a bare string for a unit variant.
-            Datum::Str(variant) => visitor.visit_enum(EnumDeserializer {
+            // ...or a bare string or symbol for a unit variant.
+            Datum::Str(variant) | Datum::Sym(variant) => visitor.visit_enum(EnumDeserializer {
                 variant,
                 value: None,
             }),
@@ -1193,7 +1319,7 @@ impl<'de> de::Deserializer<'de> for Datum {
         V: Visitor<'de>,
     {
         match self {
-            Datum::Str(s) => visitor.visit_string(s),
+            Datum::Str(s) | Datum::Sym(s) => visitor.visit_string(s),
             // For parity, a `char` can satisfy a string target.
             Datum::Char(c) => visitor.visit_string(c.to_string()),
             _ => Err(self.invalid_type(&visitor)),
@@ -1328,6 +1454,31 @@ impl<'de> IntoDeserializer<'de, DatumError> for Datum {
     fn into_deserializer(self) -> Self {
         self
     }
+}
+
+/// The datum of map `entries`. The reserved one-entry map of a symbol or a
+/// valid ratio gives that variant. See the module docs.
+fn of_entries(entries: Vec<(String, Datum)>) -> Datum {
+    match <[_; 1]>::try_from(entries) {
+        Ok([(k, Datum::Str(name))]) if k == SYM_KEY => Datum::Sym(name),
+        Ok([(k, Datum::Seq(parts))]) if k == RATIO_KEY => {
+            let ratio = match parts.as_slice() {
+                [Datum::I64(n), Datum::I64(d)] => Datum::ratio(*n, *d),
+                _ => None,
+            };
+            ratio.unwrap_or_else(|| Datum::Map(vec![(k, Datum::Seq(parts))]))
+        }
+        Ok(entry) => Datum::Map(entry.into()),
+        Err(entries) => Datum::Map(entries),
+    }
+}
+
+/// The greatest common divisor of `a` and `b`, or the other when one is zero.
+fn gcd(mut a: u128, mut b: u128) -> u128 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
 }
 
 fn visit_seq<'de, V>(seq: Vec<Datum>, visitor: V) -> Result<V::Value, DatumError>
@@ -1647,6 +1798,12 @@ mod tests {
             ca(&map(&[("ab", Datum::Str("c".into()))])),
             ca(&map(&[("a", Datum::Str("bc".into()))])),
         );
+        // A symbol is not the string of its name, and a ratio is not a pair.
+        assert_ne!(ca(&Datum::Sym("a".into())), ca(&Datum::Str("a".into())));
+        assert_ne!(
+            ca(&Datum::ratio(1, 2).unwrap()),
+            ca(&Datum::Seq(vec![Datum::I64(1), Datum::I64(2)])),
+        );
     }
 
     /// Pin the fold so accidental scheme changes are caught. Ext data is
@@ -1767,5 +1924,60 @@ mod tests {
             assert_eq!(back, value, "{text}");
             assert_eq!(crate::content_addr(&back), crate::content_addr(&value));
         }
+    }
+
+    /// A ratio is reduced with the sign in its numerator, a whole ratio is an
+    /// integer, and a ratio over zero or beyond `i64` has no datum.
+    #[test]
+    fn ratios_are_canonical() {
+        let ratio = |n, d| Datum::ratio(n, d);
+        let r = |d: Option<Datum>| match d {
+            Some(Datum::Ratio(r)) => (r.numer(), r.denom()),
+            other => panic!("not a ratio: {other:?}"),
+        };
+        assert_eq!(r(ratio(2, 4)), (1, 2));
+        assert_eq!(r(ratio(1, -3)), (-1, 3));
+        assert_eq!(r(ratio(-2, -6)), (1, 3));
+        assert_eq!(ratio(6, 3), Some(Datum::I64(2)));
+        assert_eq!(ratio(0, 5), Some(Datum::I64(0)));
+        assert_eq!(ratio(1, 0), None);
+        assert_eq!(ratio(i64::MIN, -1), None);
+        assert_eq!(ratio(i64::MIN, -2), Some(Datum::I64(1 << 62)));
+    }
+
+    /// A symbol and a ratio pass through the serde data model as their
+    /// reserved one-entry maps, so they survive a self-describing format and
+    /// the datum codec itself.
+    #[test]
+    fn symbols_and_ratios_round_trip_through_serde() {
+        let d = map(&[
+            ("sym", Datum::Sym("bd".into())),
+            ("ratio", Datum::ratio(-1, 3).unwrap()),
+        ]);
+        let text = ron::to_string(&d).unwrap();
+        assert!(text.contains("\"$sym\""), "{text}");
+        let back: Datum = ron::from_str(&text).unwrap();
+        assert_eq!(back, d);
+        assert_eq!(
+            to_datum(&Datum::Sym("bd".into())).unwrap(),
+            Datum::Sym("bd".into())
+        );
+        let ratio = Datum::ratio(3, 4).unwrap();
+        assert_eq!(to_datum(&ratio).unwrap(), ratio);
+        assert_eq!(from_datum::<Datum>(ratio.clone()).unwrap(), ratio);
+    }
+
+    /// A string target accepts a symbol, and a unit variant can be named by
+    /// one.
+    #[test]
+    fn a_symbol_reads_as_a_string() {
+        #[derive(Debug, PartialEq, serde::Deserialize)]
+        enum Mode {
+            Fast,
+        }
+        let sym = || Datum::Sym("Fast".into());
+        assert_eq!(from_datum::<String>(sym()).unwrap(), "Fast");
+        assert_eq!(from_datum::<Mode>(sym()).unwrap(), Mode::Fast);
+        assert!(from_datum::<f64>(Datum::ratio(1, 2).unwrap()).is_err());
     }
 }

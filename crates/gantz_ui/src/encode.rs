@@ -1,9 +1,9 @@
-//! The canonical encoder from the typed tree to the abstract value model.
+//! The canonical encoder from the typed tree to a [`Datum`].
 //!
 //! Canonical form keeps stored GUI values minimal and stable. It mirrors the
 //! ext conventions elsewhere in gantz:
 //!
-//! - Tags and attribute names emit as identifiers.
+//! - Tags and attribute names emit as symbols.
 //! - Only attributes that differ from the element's `Default` emit. Required
 //!   attributes such as `cols` on `grid` always emit. Positional arguments
 //!   always emit. Those are the `scope` and `ref-gui` ids and the `label`
@@ -15,15 +15,15 @@
 //! [`crate::decode::decode`] of the encoding yields the tree unchanged.
 
 use crate::elem::{ATTRS_MARKER, BindPath, Element, Key, Rgba};
-use crate::sexpr::SExpr;
+use gantz_ca::Datum;
 
-/// Encode an element into the abstract value model in canonical form.
+/// Encode an element as a datum in canonical form.
 ///
 /// Total. [`Element::Error`] encodes as `(error (@ (reason "...")))`.
 /// `error` is not a vocabulary tag, so it decodes back to an unknown-tag
 /// error element. Error elements are decode artifacts that stay visible
 /// after a store and reload. They are excluded from the round trip law.
-pub fn encode(elem: &Element) -> SExpr {
+pub fn encode(elem: &Element) -> Datum {
     match elem {
         Element::Col(e) => {
             let mut attrs = Vec::new();
@@ -40,7 +40,7 @@ pub fn encode(elem: &Element) -> SExpr {
             form("row", attrs, Vec::new(), &e.children)
         }
         Element::Grid(e) => {
-            let mut attrs = vec![entry("cols", SExpr::Int(i64::from(e.cols)))];
+            let mut attrs = vec![entry("cols", Datum::I64(i64::from(e.cols)))];
             push_f32(&mut attrs, "gap", e.gap);
             push_key(&mut attrs, &e.key);
             form("grid", attrs, Vec::new(), &e.children)
@@ -61,7 +61,7 @@ pub fn encode(elem: &Element) -> SExpr {
             push_key(&mut attrs, &e.key);
             let positional = e
                 .amount
-                .map(|f| SExpr::Float(f64::from(f)))
+                .map(|f| Datum::F64(f64::from(f)))
                 .into_iter()
                 .collect();
             form("space", attrs, positional, &[])
@@ -105,8 +105,8 @@ pub fn encode(elem: &Element) -> SExpr {
             let mut attrs = Vec::new();
             push_bind(&mut attrs, &e.bind);
             if !e.options.is_empty() {
-                let options = e.options.iter().map(|o| SExpr::Ident(o.clone()));
-                attrs.push(entry("options", SExpr::List(options.collect())));
+                let options = e.options.iter().map(|o| Datum::Sym(o.clone()));
+                attrs.push(entry("options", Datum::Seq(options.collect())));
             }
             push_key(&mut attrs, &e.key);
             form("choice", attrs, Vec::new(), &[])
@@ -137,7 +137,7 @@ pub fn encode(elem: &Element) -> SExpr {
             push_f32(&mut attrs, "size", e.size);
             push_color(&mut attrs, "color", e.color);
             push_key(&mut attrs, &e.key);
-            form("label", attrs, vec![SExpr::Str(e.text.clone())], &[])
+            form("label", attrs, vec![Datum::Str(e.text.clone())], &[])
         }
         Element::Value(e) => {
             let mut attrs = Vec::new();
@@ -169,7 +169,7 @@ pub fn encode(elem: &Element) -> SExpr {
             form("ref-gui", attrs, vec![node_id(e.id)], &[])
         }
         Element::Error(e) => {
-            let attrs = vec![entry("reason", SExpr::Str(e.reason.to_string()))];
+            let attrs = vec![entry("reason", Datum::Str(e.reason.to_string()))];
             form("error", attrs, Vec::new(), &[])
         }
     }
@@ -177,90 +177,90 @@ pub fn encode(elem: &Element) -> SExpr {
 
 /// Assemble `(tag attrs? positional ... child ...)`, omitting the attribute
 /// block when empty.
-fn form(tag: &str, attrs: Vec<SExpr>, positional: Vec<SExpr>, children: &[Element]) -> SExpr {
+fn form(tag: &str, attrs: Vec<Datum>, positional: Vec<Datum>, children: &[Element]) -> Datum {
     let mut items = vec![ident(tag)];
     if !attrs.is_empty() {
         let mut block = vec![ident(ATTRS_MARKER)];
         block.extend(attrs);
-        items.push(SExpr::List(block));
+        items.push(Datum::Seq(block));
     }
     items.extend(positional);
     items.extend(children.iter().map(encode));
-    SExpr::List(items)
+    Datum::Seq(items)
 }
 
-fn ident(s: &str) -> SExpr {
-    SExpr::Ident(s.to_string())
+fn ident(s: &str) -> Datum {
+    Datum::Sym(s.to_string())
 }
 
 /// A `(name value)` attribute entry.
-fn entry(name: &str, value: SExpr) -> SExpr {
-    SExpr::List(vec![ident(name), value])
+fn entry(name: &str, value: Datum) -> Datum {
+    Datum::Seq(vec![ident(name), value])
 }
 
 /// A node id as an integer. Ids never approach the `i64` range in practice.
 /// Saturation keeps the encoder total regardless.
-fn node_id(id: usize) -> SExpr {
-    SExpr::Int(i64::try_from(id).unwrap_or(i64::MAX))
+fn node_id(id: usize) -> Datum {
+    Datum::I64(i64::try_from(id).unwrap_or(i64::MAX))
 }
 
-fn push_f32(attrs: &mut Vec<SExpr>, name: &str, v: Option<f32>) {
+fn push_f32(attrs: &mut Vec<Datum>, name: &str, v: Option<f32>) {
     if let Some(f) = v {
-        attrs.push(entry(name, SExpr::Float(f64::from(f))));
+        attrs.push(entry(name, Datum::F64(f64::from(f))));
     }
 }
 
-fn push_f64(attrs: &mut Vec<SExpr>, name: &str, v: Option<f64>) {
+fn push_f64(attrs: &mut Vec<Datum>, name: &str, v: Option<f64>) {
     if let Some(f) = v {
-        attrs.push(entry(name, SExpr::Float(f)));
+        attrs.push(entry(name, Datum::F64(f)));
     }
 }
 
-fn push_int(attrs: &mut Vec<SExpr>, name: &str, v: Option<i64>) {
+fn push_int(attrs: &mut Vec<Datum>, name: &str, v: Option<i64>) {
     if let Some(i) = v {
-        attrs.push(entry(name, SExpr::Int(i)));
+        attrs.push(entry(name, Datum::I64(i)));
     }
 }
 
-fn push_string(attrs: &mut Vec<SExpr>, name: &str, v: &Option<String>) {
+fn push_string(attrs: &mut Vec<Datum>, name: &str, v: &Option<String>) {
     if let Some(s) = v {
-        attrs.push(entry(name, SExpr::Str(s.clone())));
+        attrs.push(entry(name, Datum::Str(s.clone())));
     }
 }
 
-fn push_ident(attrs: &mut Vec<SExpr>, name: &str, v: Option<&'static str>) {
+fn push_ident(attrs: &mut Vec<Datum>, name: &str, v: Option<&'static str>) {
     if let Some(s) = v {
         attrs.push(entry(name, ident(s)));
     }
 }
 
-fn push_color(attrs: &mut Vec<SExpr>, name: &str, v: Option<Rgba>) {
+fn push_color(attrs: &mut Vec<Datum>, name: &str, v: Option<Rgba>) {
     if let Some(c) = v {
-        attrs.push(entry(name, SExpr::Str(c.to_string())));
+        attrs.push(entry(name, Datum::Str(c.to_string())));
     }
 }
 
 /// Emit a boolean attribute only when it differs from its default.
-fn push_bool(attrs: &mut Vec<SExpr>, name: &str, v: bool, default: bool) {
+fn push_bool(attrs: &mut Vec<Datum>, name: &str, v: bool, default: bool) {
     if v != default {
-        attrs.push(entry(name, SExpr::Bool(v)));
+        attrs.push(entry(name, Datum::Bool(v)));
     }
 }
 
-fn push_key(attrs: &mut Vec<SExpr>, key: &Option<Key>) {
+fn push_key(attrs: &mut Vec<Datum>, key: &Option<Key>) {
     if let Some(k) = key {
         let v = match k {
-            Key::Str(s) => SExpr::Str(s.clone()),
-            Key::Int(i) => SExpr::Int(*i),
+            Key::Str(s) => Datum::Str(s.clone()),
+            Key::Int(i) => Datum::I64(*i),
         };
         attrs.push(entry("key", v));
     }
 }
 
-fn push_bind(attrs: &mut Vec<SExpr>, bind: &Option<BindPath>) {
+fn push_bind(attrs: &mut Vec<Datum>, bind: &Option<BindPath>) {
     if let Some(BindPath(ids)) = bind {
         let items = ids.iter().map(|&id| node_id(id)).collect();
-        attrs.push(entry("bind", SExpr::List(items)));
+        attrs.push(entry("bind", Datum::Seq(items)));
     }
 }
 
@@ -289,15 +289,15 @@ mod tests {
     fn default_leaves_encode_with_no_attr_block() {
         assert_eq!(
             encode(&Element::Dialer(Dialer::default())),
-            SExpr::List(vec![ident("dialer")])
+            Datum::Seq(vec![ident("dialer")])
         );
         assert_eq!(
             encode(&Element::Sep(Sep::default())),
-            SExpr::List(vec![ident("sep")])
+            Datum::Seq(vec![ident("sep")])
         );
         assert_eq!(
             encode(&Element::Space(Space::default())),
-            SExpr::List(vec![ident("space")])
+            Datum::Seq(vec![ident("space")])
         );
     }
 
@@ -306,15 +306,15 @@ mod tests {
         // The required cols attribute.
         assert_eq!(
             encode(&Element::Grid(Grid::default())),
-            SExpr::List(vec![
+            Datum::Seq(vec![
                 ident("grid"),
-                SExpr::List(vec![ident(ATTRS_MARKER), entry("cols", SExpr::Int(1)),]),
+                Datum::Seq(vec![ident(ATTRS_MARKER), entry("cols", Datum::I64(1)),]),
             ])
         );
         // The positional label text, even when empty.
         assert_eq!(
             encode(&Element::Label(Label::default())),
-            SExpr::List(vec![ident("label"), SExpr::Str(String::new())])
+            Datum::Seq(vec![ident("label"), Datum::Str(String::new())])
         );
     }
 
@@ -328,15 +328,15 @@ mod tests {
             key: Some(Key::Int(1)),
             ..Default::default()
         });
-        let expected = SExpr::List(vec![
+        let expected = Datum::Seq(vec![
             ident("dialer"),
-            SExpr::List(vec![
+            Datum::Seq(vec![
                 ident(ATTRS_MARKER),
-                entry("bind", SExpr::List(vec![SExpr::Int(2)])),
-                entry("min", SExpr::Float(0.0)),
-                entry("max", SExpr::Float(1.0)),
-                entry("push", SExpr::Bool(false)),
-                entry("key", SExpr::Int(1)),
+                entry("bind", Datum::Seq(vec![Datum::I64(2)])),
+                entry("min", Datum::F64(0.0)),
+                entry("max", Datum::F64(1.0)),
+                entry("push", Datum::Bool(false)),
+                entry("key", Datum::I64(1)),
             ]),
         ]);
         assert_eq!(encode(&dialer), expected);
@@ -349,7 +349,7 @@ mod tests {
             reason: ErrorReason::UnknownTag("bogus".to_string()),
         });
         let encoded = encode(&err);
-        let SExpr::List(items) = &encoded else {
+        let Datum::Seq(items) = &encoded else {
             panic!("expected a list");
         };
         assert_eq!(items[0], ident("error"));

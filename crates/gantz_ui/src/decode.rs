@@ -1,13 +1,12 @@
-//! The total decoder from the abstract value model to the typed tree.
+//! The total decoder from a [`Datum`] to the typed tree.
 //!
 //! [`decode`] never fails. Malformed subtrees become inline
 //! [`Element::Error`] nodes. Recoverable issues become [`Warning`]s. See
 //! [`crate::diag`] for the boundary rule.
 //!
-//! One tolerance rule spans every codec. `Datum` has no symbol variant, so
-//! identifier positions also accept strings, and text positions also accept
-//! identifiers. Identifier positions are tags, attribute names and enum-like
-//! attribute values.
+//! One tolerance rule spans the decoder. Identifier positions also accept
+//! strings, and text positions also accept symbols. Identifier positions are
+//! tags, attribute names and enum-like attribute values.
 
 use crate::diag::{ErrorReason, TreePath, Warning, WarningKind};
 use crate::elem::{
@@ -15,7 +14,8 @@ use crate::elem::{
     ErrorElem, Frame, Grid, Key, Label, Matrix, Plot, PlotMode, PlotStyle, RESERVED_TAGS, RefGui,
     Rgba, Row, Scope, Sep, Space, Toggle, Value,
 };
-use crate::sexpr::{self, SExpr};
+use crate::sexpr;
+use gantz_ca::Datum;
 
 /// Caps that bound pathological computed trees. The defaults are generous.
 /// A hand-authored GUI never meets them. A runaway computed one stays
@@ -46,7 +46,7 @@ struct Ctx<'a> {
 
 /// The attribute entries of one element, consumed by name.
 struct AttrSet {
-    entries: Vec<(String, Option<SExpr>)>,
+    entries: Vec<(String, Option<Datum>)>,
 }
 
 /// Typed attribute extraction for one element, warning on mismatches and
@@ -78,7 +78,7 @@ impl AttrSet {
         }
     }
 
-    fn take(&mut self, name: &str) -> Option<SExpr> {
+    fn take(&mut self, name: &str) -> Option<Datum> {
         self.entries
             .iter_mut()
             .find(|(n, v)| n == name && v.is_some())
@@ -107,10 +107,10 @@ impl<'a, 'b> Attrs<'a, 'b> {
         &mut self,
         name: &str,
         expected: &'static str,
-        parse: impl Fn(&SExpr) -> Option<T>,
+        parse: impl Fn(&Datum) -> Option<T>,
     ) -> Option<T> {
         let v = self.set.take(name)?;
-        if v == SExpr::Bool(false) {
+        if v == Datum::Bool(false) {
             return None;
         }
         self.parse(name, expected, v, parse)
@@ -121,8 +121,8 @@ impl<'a, 'b> Attrs<'a, 'b> {
         &mut self,
         name: &str,
         expected: &'static str,
-        v: SExpr,
-        parse: impl Fn(&SExpr) -> Option<T>,
+        v: Datum,
+        parse: impl Fn(&Datum) -> Option<T>,
     ) -> Option<T> {
         let parsed = parse(&v);
         if parsed.is_none() {
@@ -221,13 +221,13 @@ impl Default for Limits {
     }
 }
 
-/// Decode a UI tree from the abstract value model.
+/// Decode a UI tree from a datum.
 ///
 /// Total. This never fails. Malformed subtrees become inline
 /// [`Element::Error`] nodes that keep their slot in the tree. Recoverable
 /// issues become [`Warning`]s and the element renders with documented
 /// defaults.
-pub fn decode(expr: SExpr, limits: &Limits) -> Decoded {
+pub fn decode(expr: Datum, limits: &Limits) -> Decoded {
     let mut ctx = Ctx {
         limits,
         remaining: limits.max_elements,
@@ -249,7 +249,7 @@ fn error_at(path: &[usize], reason: ErrorReason) -> Element {
 }
 
 /// Decode one element form.
-fn elem(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, expr: SExpr) -> Element {
+fn elem(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, expr: Datum) -> Element {
     if ctx.remaining == 0 {
         return error_at(path, ErrorReason::ElementLimit(ctx.limits.max_elements));
     }
@@ -258,7 +258,7 @@ fn elem(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, expr: SExpr) -> Elem
     }
     ctx.remaining -= 1;
 
-    let SExpr::List(items) = expr else {
+    let Datum::Seq(items) = expr else {
         let found = sexpr::summary(&expr);
         return error_at(path, ErrorReason::NotAnElement { found });
     };
@@ -580,7 +580,7 @@ fn elem(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, expr: SExpr) -> Elem
 
 /// Decode the child elements of a container, dropping remaining siblings
 /// behind a single visible error once the element budget is spent.
-fn children(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, items: Vec<SExpr>) -> Vec<Element> {
+fn children(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, items: Vec<Datum>) -> Vec<Element> {
     let mut elems = Vec::with_capacity(items.len());
     for (ix, item) in items.into_iter().enumerate() {
         path.push(ix);
@@ -599,10 +599,10 @@ fn children(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, items: Vec<SExpr
 }
 
 /// Split a leading attribute block from an element's remaining items.
-fn split_attrs(rest: Vec<SExpr>) -> (Option<Vec<SExpr>>, Vec<SExpr>) {
+fn split_attrs(rest: Vec<Datum>) -> (Option<Vec<Datum>>, Vec<Datum>) {
     let mut iter = rest.into_iter();
     match iter.next() {
-        Some(SExpr::List(entries)) if entries.first().is_some_and(is_attrs_marker) => {
+        Some(Datum::Seq(entries)) if entries.first().is_some_and(is_attrs_marker) => {
             (Some(entries), iter.collect())
         }
         Some(first) => (None, std::iter::once(first).chain(iter).collect()),
@@ -611,17 +611,17 @@ fn split_attrs(rest: Vec<SExpr>) -> (Option<Vec<SExpr>>, Vec<SExpr>) {
 }
 
 /// Whether the value is the reserved `@` marker.
-fn is_attrs_marker(expr: &SExpr) -> bool {
-    matches!(expr, SExpr::Ident(s) | SExpr::Str(s) if s == ATTRS_MARKER)
+fn is_attrs_marker(expr: &Datum) -> bool {
+    matches!(expr, Datum::Sym(s) | Datum::Str(s) if s == ATTRS_MARKER)
 }
 
 /// Parse the entries of an attribute block, marker included, into an
 /// [`AttrSet`]. Warn for malformed entries and duplicates.
-fn parse_attrs(ctx: &mut Ctx, path: &[usize], tag: &str, entries: Vec<SExpr>) -> AttrSet {
-    let mut parsed: Vec<(String, Option<SExpr>)> = Vec::new();
+fn parse_attrs(ctx: &mut Ctx, path: &[usize], tag: &str, entries: Vec<Datum>) -> AttrSet {
+    let mut parsed: Vec<(String, Option<Datum>)> = Vec::new();
     for entry in entries.into_iter().skip(1) {
         match entry {
-            SExpr::List(pair) => match <[SExpr; 2]>::try_from(pair) {
+            Datum::Seq(pair) => match <[Datum; 2]>::try_from(pair) {
                 Ok([name_expr, value]) => match text(&name_expr) {
                     Some(name) if parsed.iter().any(|(n, _)| *n == name) => {
                         let kind = WarningKind::DuplicateAttr {
@@ -642,7 +642,7 @@ fn parse_attrs(ctx: &mut Ctx, path: &[usize], tag: &str, entries: Vec<SExpr>) ->
                 Err(pair) => {
                     let kind = WarningKind::MalformedAttr {
                         tag: tag.to_string(),
-                        found: sexpr::summary(&SExpr::List(pair)),
+                        found: sexpr::summary(&Datum::Seq(pair)),
                     };
                     ctx.warn(path, kind);
                 }
@@ -660,7 +660,7 @@ fn parse_attrs(ctx: &mut Ctx, path: &[usize], tag: &str, entries: Vec<SExpr>) ->
 }
 
 /// Extract the required leading node id argument of `scope` and `ref-gui`.
-fn node_id_arg(tag: &str, arg: Option<SExpr>) -> Result<usize, ErrorReason> {
+fn node_id_arg(tag: &str, arg: Option<Datum>) -> Result<usize, ErrorReason> {
     let missing = |found: String| ErrorReason::MissingArg {
         tag: tag.to_string(),
         what: "a node id",
@@ -682,82 +682,77 @@ fn warn_ignored(ctx: &mut Ctx, path: &[usize], tag: &str, count: usize) {
     }
 }
 
-/// The contents of an identifier or string.
+/// The contents of a symbol or string.
 ///
 /// This is the tolerance rule in one place. Identifier positions accept
-/// strings and text positions accept identifiers, because `Datum` encodes
-/// identifiers as strings.
-fn text(expr: &SExpr) -> Option<String> {
+/// strings and text positions accept symbols.
+fn text(expr: &Datum) -> Option<String> {
     match expr {
-        SExpr::Ident(s) | SExpr::Str(s) => Some(s.clone()),
+        Datum::Sym(s) | Datum::Str(s) => Some(s.clone()),
         _ => None,
     }
 }
 
-/// A list of identifiers or strings.
-fn as_texts(expr: &SExpr) -> Option<Vec<String>> {
+/// A list of symbols or strings.
+fn as_texts(expr: &Datum) -> Option<Vec<String>> {
     match expr {
-        SExpr::List(items) => items.iter().map(text).collect(),
+        Datum::Seq(items) => items.iter().map(text).collect(),
         _ => None,
     }
 }
 
-/// A number. Integers widen to floats, never the reverse.
-fn as_f64(expr: &SExpr) -> Option<f64> {
-    match expr {
-        SExpr::Float(f) => Some(*f),
-        SExpr::Int(i) => Some(*i as f64),
-        _ => None,
-    }
+/// A number. Integers and ratios widen to floats, never the reverse.
+fn as_f64(expr: &Datum) -> Option<f64> {
+    expr.as_f64()
 }
 
-fn as_f32(expr: &SExpr) -> Option<f32> {
+fn as_f32(expr: &Datum) -> Option<f32> {
     as_f64(expr).map(|f| f as f32)
 }
 
-fn as_u8(expr: &SExpr) -> Option<u8> {
+fn as_u8(expr: &Datum) -> Option<u8> {
     match expr {
-        SExpr::Int(i) => u8::try_from(*i).ok(),
+        Datum::I64(i) => u8::try_from(*i).ok(),
         _ => None,
     }
 }
 
 /// A grid column count, a positive integer.
-fn as_cols(expr: &SExpr) -> Option<u32> {
+fn as_cols(expr: &Datum) -> Option<u32> {
     match expr {
-        SExpr::Int(i) if *i >= 1 => u32::try_from(*i).ok(),
+        Datum::I64(i) if *i >= 1 => u32::try_from(*i).ok(),
         _ => None,
     }
 }
 
-fn as_bool(expr: &SExpr) -> Option<bool> {
+fn as_bool(expr: &Datum) -> Option<bool> {
     match expr {
-        SExpr::Bool(b) => Some(*b),
+        Datum::Bool(b) => Some(*b),
         _ => None,
     }
 }
 
-fn as_key(expr: &SExpr) -> Option<Key> {
+fn as_key(expr: &Datum) -> Option<Key> {
     match expr {
-        SExpr::Ident(s) | SExpr::Str(s) => Some(Key::Str(s.clone())),
-        SExpr::Int(i) => Some(Key::Int(*i)),
+        Datum::Sym(s) | Datum::Str(s) => Some(Key::Str(s.clone())),
+        Datum::I64(i) => Some(Key::Int(*i)),
         _ => None,
     }
 }
 
 /// A node id, a non-negative integer.
-fn as_node_id(expr: &SExpr) -> Option<usize> {
+fn as_node_id(expr: &Datum) -> Option<usize> {
     match expr {
-        SExpr::Int(i) => usize::try_from(*i).ok(),
+        Datum::I64(i) => usize::try_from(*i).ok(),
         _ => None,
     }
 }
 
 /// A binding path, a list of node ids. Machine produced, so no bare integer
 /// sugar.
-fn as_bind(expr: &SExpr) -> Option<BindPath> {
+fn as_bind(expr: &Datum) -> Option<BindPath> {
     match expr {
-        SExpr::List(items) => items
+        Datum::Seq(items) => items
             .iter()
             .map(as_node_id)
             .collect::<Option<Vec<_>>>()
@@ -770,37 +765,37 @@ fn as_bind(expr: &SExpr) -> Option<BindPath> {
 mod tests {
     use super::*;
 
-    fn ident(s: &str) -> SExpr {
-        SExpr::Ident(s.to_string())
+    fn ident(s: &str) -> Datum {
+        Datum::Sym(s.to_string())
     }
 
-    fn str_(s: &str) -> SExpr {
-        SExpr::Str(s.to_string())
+    fn str_(s: &str) -> Datum {
+        Datum::Str(s.to_string())
     }
 
-    fn int(i: i64) -> SExpr {
-        SExpr::Int(i)
+    fn int(i: i64) -> Datum {
+        Datum::I64(i)
     }
 
-    fn float(f: f64) -> SExpr {
-        SExpr::Float(f)
+    fn float(f: f64) -> Datum {
+        Datum::F64(f)
     }
 
-    fn list(items: Vec<SExpr>) -> SExpr {
-        SExpr::List(items)
+    fn list(items: Vec<Datum>) -> Datum {
+        Datum::Seq(items)
     }
 
-    fn attr(name: &str, value: SExpr) -> SExpr {
+    fn attr(name: &str, value: Datum) -> Datum {
         list(vec![ident(name), value])
     }
 
-    fn attrs(entries: Vec<SExpr>) -> SExpr {
+    fn attrs(entries: Vec<Datum>) -> Datum {
         let mut items = vec![ident(ATTRS_MARKER)];
         items.extend(entries);
         list(items)
     }
 
-    fn dec(expr: SExpr) -> Decoded {
+    fn dec(expr: Datum) -> Decoded {
         decode(expr, &Limits::default())
     }
 
@@ -843,7 +838,7 @@ mod tests {
                 attr("precision", int(3)),
                 attr("label", str_("cutoff")),
                 attr("prefix", str_("!")),
-                attr("push", SExpr::Bool(false)),
+                attr("push", Datum::Bool(false)),
                 attr("style", ident("knob")),
                 attr("key", str_("k")),
             ]),
@@ -892,7 +887,7 @@ mod tests {
             attrs(vec![
                 attr("bind", list(vec![int(1)])),
                 attr("cell-size", int(12)),
-                attr("push", SExpr::Bool(false)),
+                attr("push", Datum::Bool(false)),
             ]),
         ]));
         let expected = Element::Matrix(Matrix {
@@ -927,7 +922,7 @@ mod tests {
             ident("value"),
             attrs(vec![
                 attr("bind", list(vec![int(3)])),
-                attr("wrap", SExpr::Bool(true)),
+                attr("wrap", Datum::Bool(true)),
             ]),
         ]));
         let expected = Element::Value(Value {
@@ -944,9 +939,9 @@ mod tests {
                 attr("mode", ident("scope")),
                 attr("style", ident("line")),
                 attr("color", str_("#00ff0080")),
-                attr("grid", SExpr::Bool(true)),
-                attr("axes", SExpr::Bool(true)),
-                attr("interactive", SExpr::Bool(true)),
+                attr("grid", Datum::Bool(true)),
+                attr("axes", Datum::Bool(true)),
+                attr("interactive", Datum::Bool(true)),
                 attr("y-min", float(-1.0)),
                 attr("y-max", float(1.0)),
                 attr("w", int(120)),
@@ -1085,17 +1080,17 @@ mod tests {
         let d = dec(list(vec![
             ident("plot"),
             attrs(vec![
-                attr("y-min", SExpr::Bool(false)),
-                attr("color", SExpr::Bool(false)),
-                attr("style", SExpr::Bool(false)),
-                attr("grid", SExpr::Bool(false)),
+                attr("y-min", Datum::Bool(false)),
+                attr("color", Datum::Bool(false)),
+                attr("style", Datum::Bool(false)),
+                attr("grid", Datum::Bool(false)),
             ]),
         ]));
         assert_eq!(d.root, Element::Plot(Plot::default()));
         assert_eq!(d.warnings, vec![]);
         let d = dec(list(vec![
             ident("toggle"),
-            attrs(vec![attr("push", SExpr::Bool(false))]),
+            attrs(vec![attr("push", Datum::Bool(false))]),
         ]));
         let expected = Toggle {
             push: false,
@@ -1241,7 +1236,7 @@ mod tests {
         );
         let d = dec(list(vec![
             ident("sep"),
-            attrs(vec![attr("key", SExpr::Bool(true))]),
+            attrs(vec![attr("key", Datum::Bool(true))]),
         ]));
         assert_eq!(d.root, Element::Sep(Sep::default()));
         assert!(matches!(
@@ -1474,17 +1469,14 @@ mod tests {
 
     #[test]
     fn foreign_values_error_with_their_summary() {
-        let d = dec(list(vec![
-            ident("col"),
-            SExpr::Other("a closure".to_string()),
-        ]));
+        let d = dec(list(vec![ident("col"), Datum::Char('x')]));
         let Element::Col(col) = &d.root else {
             panic!("expected a col");
         };
         assert_eq!(
             *error_reason(&col.children[0]),
             ErrorReason::NotAnElement {
-                found: "a closure".to_string(),
+                found: "a character".to_string(),
             }
         );
     }

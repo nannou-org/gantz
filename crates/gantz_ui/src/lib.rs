@@ -9,9 +9,9 @@
 //!
 //! # The form
 //!
-//! The vocabulary is specified over an abstract data model ([`SExpr`]). The
-//! model has identifier atoms, booleans, integers, floats, strings and
-//! lists. The reference syntax is s-expressions:
+//! The vocabulary is specified over [`Datum`](gantz_ca::Datum), the data form
+//! of gantz values. The tree uses its symbols, booleans, integers, floats,
+//! strings and sequences. The reference syntax is s-expressions:
 //!
 //! ```text
 //! element  := (tag attrs? arg ... child ...)
@@ -33,11 +33,8 @@
 //!   (ref-gui 9))
 //! ```
 //!
-//! Each runtime encodes the model in its own value type through a codec.
-//! See [`codec`]. The Steel encoding writes tags and names as symbols. The
-//! `Datum` encoding writes them as strings. The decoder treats identifiers
-//! and strings as interchangeable in identifier and text positions, so both
-//! encodings agree.
+//! Tags and names are symbols. The decoder treats symbols and strings as
+//! interchangeable in identifier and text positions.
 //!
 //! # Principles
 //!
@@ -141,21 +138,17 @@
 //!
 //! # Codecs and features
 //!
-//! - `steel` is the default feature. [`codec::steel`] is the backend
-//!   encoding over `SteelVal`. Symbols are identifiers. Steel lists and
-//!   vectors both read as lists.
-//! - `datum` enables [`codec::datum`], the storage and interchange encoding
-//!   over `gantz_core::datum::Datum`. `Datum` has no symbol variant, so
-//!   identifiers normalize to strings on a store and reload. The result
-//!   decodes to the identical tree.
+//! - `steel` is the default feature. [`codec::steel`] decodes from and
+//!   encodes to `SteelVal` through `gantz_core::datum`. Symbols are
+//!   identifiers. Steel lists and vectors both read as lists.
 //! - `steel` also provides the `gantz/ui` Steel module, see [`modules()`].
 //!   Its `ui-elem` builds an element from optional inputs, dropping absent
 //!   attributes and positionals, so base graphs can compose trees from
 //!   nodes with one expr each.
 //!
-//! With no features enabled the crate is the pure model: [`SExpr`],
-//! [`Element`], [`decode()`], [`encode()`] and the [`pretty()`] printer that
-//! renders any [`SExpr`] as indented scheme text.
+//! With no features enabled the crate is the pure model: [`Element`],
+//! [`decode()`], [`encode()`] and the [`pretty()`] printer that renders any
+//! datum as indented scheme text.
 //!
 //! The canonical encoding ([`encode()`]) emits the minimal form. Only
 //! attributes that differ from an element's `Default` emit. Required
@@ -170,7 +163,7 @@ pub use elem::{
     Rgba, Row, Scope, Sep, Space, Toggle, Value,
 };
 pub use encode::encode;
-pub use sexpr::{SExpr, flat, pretty, summary};
+pub use sexpr::{flat, pretty, summary};
 
 pub mod codec;
 pub mod decode;
