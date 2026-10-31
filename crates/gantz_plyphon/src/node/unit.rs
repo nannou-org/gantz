@@ -4,14 +4,19 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 
-use gantz_core::node::{ExprCtx, ExprResult, MetaCtx, RegCtx};
+use gantz_ca::Datum;
+use gantz_nodedef::{ExprArgs, Meta, SocketDoc, View};
 use gantz_nodetag::NodeTag;
+use gantz_ui::{self as ui, Element};
 use plyphon::synthdef::{InputRef, UnitSpec};
 use serde::{Deserialize, Serialize};
 
 use crate::dsp::{BufferAccess, DspBuilder, NodeDsp, NodeRate, Signal, ToNodeDsp};
 use crate::param::{control_inputs_expr, param_name, params_state, plyphon_param};
 use crate::units::{Emit, In, UnitDesc, UnitRate, unit_desc};
+use crate::view::{
+    LAG, MAX_LAG, RATE, doc, edit_dialer, edit_rate, edit_secs, param_row, rate_row, row,
+};
 
 /// A node wrapping one plyphon unit generator, driven entirely by its
 /// [`UnitDesc`] descriptor row, see [`units`](crate::units). The descriptor
@@ -67,6 +72,9 @@ struct UnitNodeWire {
 /// rate that a fixed-rate row does not allow.
 #[derive(Debug)]
 pub struct InvalidUnitNode(String);
+
+/// The prefix of the edit of an init-only value, as in `init:maxdelay`.
+const INIT: &str = "init:";
 
 impl fmt::Display for InvalidUnitNode {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -260,41 +268,143 @@ impl Hash for UnitNode {
     }
 }
 
-impl gantz_core::Node for UnitNode {
-    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
-        self.desc().n_sockets()
+impl gantz_nodedef::NodeDef for UnitNode {
+    const TAG: &'static str = <Self as NodeTag>::TAG;
+
+    fn meta(&self) -> Meta {
+        let desc = self.desc();
+        Meta {
+            name: desc.keyword.into(),
+            description: desc.doc.into(),
+            inputs: desc.n_sockets(),
+            outputs: desc.outputs.len(),
+            // Hybrid param values live in keyed state.
+            stateful: desc.hybrid_params().next().is_some(),
+            ..Meta::default()
+        }
     }
 
-    fn n_outputs(&self, _ctx: MetaCtx) -> usize {
-        self.desc().outputs.len()
+    fn expr(&self, ctx: ExprArgs<'_>) -> Result<String, String> {
+        // Steel-inert bar the hybrid inputs. A connected number is written
+        // into the param's keyed state and the DSP runtime applies it via
+        // `set_control`. The `number?` guard ignores a dsp source's
+        // non-numeric placeholder. See `control_inputs_expr`.
+        let hybrids: Vec<(usize, &str)> = self.desc().hybrid_sockets().collect();
+        Ok(control_inputs_expr(
+            &ctx,
+            &hybrids,
+            &self.output_placeholder(),
+        ))
     }
 
-    fn stateful(&self, _ctx: MetaCtx) -> bool {
-        // Hybrid param values live in keyed VM state.
-        self.desc().hybrid_params().next().is_some()
-    }
-
-    fn register(&self, mut ctx: RegCtx<'_, '_>) {
+    fn init_state(&self) -> Option<Datum> {
         let defaults: Vec<(&str, f64)> = self
             .desc()
             .hybrid_params()
             .map(|(name, default)| (name, default as f64))
             .collect();
-        if defaults.is_empty() {
-            return;
-        }
-        let path = ctx.path();
-        gantz_core::node::state::init_value_if_absent(ctx.vm(), path, || params_state(&defaults))
-            .unwrap()
+        (!defaults.is_empty()).then(|| params_state(&defaults))
     }
 
-    fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
-        // Steel-inert bar the hybrid inputs. A connected number is written
-        // into the param's keyed state and the audio driver applies it via
-        // `set_control`. The `number?` guard ignores a dsp source's
-        // non-numeric placeholder. See `control_inputs_expr`.
-        let hybrids: Vec<(usize, &str)> = self.desc().hybrid_sockets().collect();
-        control_inputs_expr(&ctx, &hybrids, &self.output_placeholder())
+    fn view(&self) -> View {
+        let desc = self.desc();
+        let inputs = desc.sockets().filter_map(socket_doc).collect();
+        let outputs = desc.outputs.iter().map(|d| doc("signal", *d)).collect();
+        let mut rows = vec![];
+        for entry in desc.inputs {
+            match entry {
+                // Param values live in keyed state. Lags are structural.
+                In::Param {
+                    name,
+                    min,
+                    max,
+                    suffix,
+                    ..
+                } => {
+                    let at = vec![name.to_string(), crate::param::VALUE.to_string()];
+                    rows.push(param_row(name, at, [*min, *max], suffix, self.lag(name)));
+                }
+                // Init-only values are baked into the def as constants, so an
+                // edit is structural and re-derives.
+                In::Init { name, doc, .. } => {
+                    let value = ui::Dialer {
+                        step: Some(0.001),
+                        tip: Some(doc.to_string()),
+                        ..edit_dialer(&format!("{INIT}{name}"), self.init_value(name).into())
+                    };
+                    rows.push(row(name, Element::Dialer(value)));
+                }
+                In::Signal { .. } | In::Buffer { .. } | In::Group { .. } | In::Baked(_) => (),
+            }
+        }
+        // The channel count sets the outputs, so an edit is structural.
+        if let Emit::InitChannels { name, max, doc, .. } = desc.emit {
+            let value = ui::Dialer {
+                min: Some(1.0),
+                max: Some(max as f64),
+                step: Some(0.05),
+                precision: Some(0),
+                tip: Some(doc.to_string()),
+                ..edit_dialer(&format!("{INIT}{name}"), self.init_value(name).into())
+            };
+            rows.push(row(name, Element::Dialer(value)));
+        }
+        // A fixed-rate row has no rate to choose.
+        if desc.rate == UnitRate::Any {
+            rows.push(rate_row(self.rate()));
+        }
+        View {
+            inputs,
+            outputs,
+            rows,
+            hide_state: desc.hybrid_params().next().is_some(),
+            ..View::default()
+        }
+    }
+
+    fn edit(&self, edit: &str, value: &Datum) -> Option<Self> {
+        let mut node = self.clone();
+        if let Some(name) = edit.strip_prefix(LAG) {
+            node.set_lag(name, edit_secs(value, MAX_LAG)?);
+        } else if let Some(name) = edit.strip_prefix(INIT) {
+            let value = value.as_f64().filter(|v| v.is_finite())? as f32;
+            let value = match self.desc().emit {
+                Emit::InitChannels {
+                    name: channels,
+                    max,
+                    ..
+                } if channels == name => value.round().clamp(1.0, max as f32),
+                _ => value,
+            };
+            node.set_init(name, value);
+        } else if edit == RATE {
+            node.set_rate(edit_rate(value)?);
+        } else {
+            return None;
+        }
+        Some(node)
+    }
+}
+
+/// The doc of a socket of a unit's descriptor row.
+fn socket_doc(socket: &In) -> Option<SocketDoc> {
+    match socket {
+        In::Signal { doc: d, .. } | In::Group { doc: d, .. } => Some(doc("signal", *d)),
+        In::Param { doc: d, .. } => {
+            let description = format!(
+                "{d} - a connected signal drives it directly, a connected number overrides \
+                 the inspector value"
+            );
+            Some(doc("signal | number", description))
+        }
+        In::Buffer { doc: d, access, .. } => {
+            let note = match access {
+                BufferAccess::Read => "a `~sample` or `~buffer`",
+                BufferAccess::Write => "a `~buffer`. The unit writes it",
+            };
+            Some(doc("buffer", format!("{d} - {note}")))
+        }
+        In::Baked(_) | In::Init { .. } => None,
     }
 }
 
@@ -601,11 +711,7 @@ mod tests {
     /// and a control rate are part of it. An explicit default rate is not.
     #[test]
     fn structural_fields_key_the_content_address() {
-        let content_addr = |n: &UnitNode| {
-            gantz_core::data::erase_node_typed(n)
-                .unwrap()
-                .content_addr()
-        };
+        let content_addr = |n: &UnitNode| gantz_nodedef::node_data(n).unwrap().content_addr();
         let sinosc = || UnitNode::from_unit("SinOsc").expect("SinOsc row");
         let lag = || UnitNode::from_unit("Lag").expect("Lag row");
         let mut ar_sine = sinosc();

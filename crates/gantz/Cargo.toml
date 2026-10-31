@@ -41,6 +41,9 @@ web-time.workspace = true
 clap.workspace = true
 gantz_cli.workspace = true
 
+[dev-dependencies]
+gantz_nodedef.workspace = true
+
 [features]
 # cpal's AudioWorklet backend on the web - audio on a dedicated Web Audio thread, off the
 # deprecated main-thread ScriptProcessor host. Enabled by default (the shipped website is the

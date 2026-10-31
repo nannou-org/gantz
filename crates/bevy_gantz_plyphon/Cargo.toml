@@ -11,17 +11,15 @@ repository.workspace = true
 [dependencies]
 bevy_app.workspace = true
 bevy_ecs.workspace = true
-bevy_tasks.workspace = true
 cpal.workspace = true
 gantz_ca.workspace = true
 gantz_core.workspace = true
 gantz_edit.workspace = true
 gantz_egui.workspace = true
-gantz_nodetag.workspace = true
+gantz_nodedef.workspace = true
 gantz_plyphon = { workspace = true, features = ["egui"] }
 log.workspace = true
 plyphon.workspace = true
-rfd.workspace = true
 web-time.workspace = true
 
 bevy_gantz.workspace = true
@@ -47,8 +45,6 @@ audioworklet = ["cpal/audioworklet"]
 bevy.workspace = true
 # For deriving `Pod`/`Zeroable` on a custom unit's state.
 bytemuck = { version = "1", features = ["derive"] }
-# The example's node codec: tags, serde and the (minimal) node UI frame.
-egui_graph.workspace = true
+# The example's node codec and its node definition.
 gantz_format.workspace = true
-gantz_nodetag.workspace = true
 serde.workspace = true

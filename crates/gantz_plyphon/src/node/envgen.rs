@@ -1,15 +1,18 @@
 //! The `~envgen` envelope generator node.
 
-use gantz_core::node::{ExprCtx, ExprResult, MetaCtx, RegCtx};
+use gantz_ca::Datum;
+use gantz_nodedef::{ExprArgs, Meta, Resize, Row, View};
 use gantz_nodetag::NodeTag;
+use gantz_ui::{self as ui, Edit, Element, EnvelopeElem};
 use plyphon::synthdef::{InputRef, UnitSpec};
 use serde::{Deserialize, Serialize};
 
 use crate::dsp::{DspBuilder, NodeDsp, NodeRate, Signal, ToNodeDsp};
-use crate::envelope::Envelope;
+use crate::envelope::{Envelope, Segment};
 use crate::node::is_default;
 use crate::node::unit::channel_select;
 use crate::param::{control_inputs_expr, param_name, plyphon_param, sync_params_state};
+use crate::view::{RATE, doc, edit_dialer, edit_rate, edit_toggle, rate_row, row, state_row};
 
 /// An envelope generator. It plays its [`Envelope`] with plyphon's `EnvGen`.
 ///
@@ -97,6 +100,29 @@ pub const SOCKETS: [Socket; 4] = [
 
 /// The `EnvGen` release node value for no release point.
 const NO_NODE: f32 = -99.0;
+
+/// The edits of the node's view. A segment's edit takes the [`SEG`] prefix,
+/// as in `seg:0:level`.
+const ENV: &str = "env";
+const GRID: &str = "grid";
+const AXES: &str = "axes";
+const COMPACT: &str = "compact";
+const X_MIN: &str = "x-min";
+const X_MAX: &str = "x-max";
+const Y_MIN: &str = "y-min";
+const Y_MAX: &str = "y-max";
+const RELEASE: &str = "release";
+const SEG: &str = "seg:";
+
+/// The release option of no release point.
+const NO_RELEASE: &str = "none";
+
+const COMPACT_DOC: &str = "show only the node name in the graph, not the editor";
+const X_RANGE_DOC: &str = "the time range of the plot in seconds. It stays fixed while you edit";
+const Y_RANGE_DOC: &str = "the level range of the plot. It stays fixed while you edit";
+const RELEASE_DOC: &str = "where the envelope waits while the gate stays open. When the gate \
+                           closes, the envelope plays on from here. With none, the envelope \
+                           plays through without a wait";
 
 impl Envgen {
     /// The body width a fresh `~envgen` starts with.
@@ -206,49 +232,159 @@ impl Envgen {
     pub fn set_compact(&mut self, compact: bool) {
         self.compact = compact;
     }
+
+    /// The node's keyed param state, given its state so far. The socket
+    /// params keep their values, and the envelope params take the node's.
+    fn params_state(&self, prev: Option<&Datum>) -> Datum {
+        let keep: Vec<(&str, f64)> = SOCKETS.iter().map(|s| (s.name, s.default as f64)).collect();
+        sync_params_state(prev, &keep, &envelope_params(&self.env))
+    }
 }
 
 impl Default for Envgen {
     fn default() -> Self {
-        Envgen::new(Envelope::default())
+        Envgen::new(crate::envelope::initial())
     }
 }
 
-impl gantz_core::Node for Envgen {
-    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
-        SOCKETS.len()
+impl gantz_nodedef::NodeDef for Envgen {
+    const TAG: &'static str = <Self as NodeTag>::TAG;
+
+    fn meta(&self) -> Meta {
+        Meta {
+            name: "~envgen".into(),
+            description: "Envelope generator, started and released by a gate".into(),
+            inputs: SOCKETS.len(),
+            outputs: 1,
+            stateful: true,
+            ..Meta::default()
+        }
     }
 
-    fn n_outputs(&self, _ctx: MetaCtx) -> usize {
-        1
-    }
-
-    fn stateful(&self, _ctx: MetaCtx) -> bool {
-        true
-    }
-
-    fn register(&self, mut ctx: RegCtx<'_, '_>) {
-        // The envelope params follow the node data. `register` runs again
-        // after each structural edit, so undo and load reach the running
-        // synth through the driver's param drain.
-        let keep: Vec<(&str, f64)> = SOCKETS.iter().map(|s| (s.name, s.default as f64)).collect();
-        let set = envelope_params(&self.env);
-        let path = ctx.path();
-        let vm = ctx.vm();
-        let prev = gantz_core::node::state::extract_value(vm, path)
-            .ok()
-            .flatten();
-        let state = sync_params_state(prev.as_ref(), &keep, &set);
-        gantz_core::node::state::update_value(vm, path, state).unwrap()
-    }
-
-    fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
+    fn expr(&self, ctx: ExprArgs<'_>) -> Result<String, String> {
         let sockets: Vec<(usize, &str)> = SOCKETS
             .iter()
             .enumerate()
             .map(|(ix, s)| (ix, s.name))
             .collect();
-        control_inputs_expr(&ctx, &sockets, "'()")
+        Ok(control_inputs_expr(&ctx, &sockets, "'()"))
+    }
+
+    fn init_state(&self) -> Option<Datum> {
+        Some(self.params_state(None))
+    }
+
+    // The envelope params follow the node data, so an edit, an undo or a
+    // load reaches the running synth through the runtime's param drain.
+    fn sync_state(&self, state: &Datum) -> Option<Datum> {
+        Some(self.params_state(Some(state)))
+    }
+
+    fn view(&self) -> View {
+        let body = (!self.compact).then(|| {
+            Element::Envelope(EnvelopeElem {
+                on: Some(Edit(ENV.into())),
+                value: Some(self.env.clone()),
+                x_range: Some(self.x_range),
+                y_range: Some(self.y_range),
+                grid: self.grid,
+                axes: self.axes,
+                ..EnvelopeElem::default()
+            })
+        });
+        let mut rows: Vec<_> = SOCKETS
+            .iter()
+            .map(|s| {
+                let at = vec![s.name.to_string(), crate::param::VALUE.to_string()];
+                state_row(s.name, at, s.doc)
+            })
+            .collect();
+        rows.push(rate_row(self.rate));
+        let display = vec![
+            Element::Toggle(edit_toggle(GRID, self.grid, "draw the background grid")),
+            Element::Toggle(edit_toggle(AXES, self.axes, "draw the time and level axes")),
+            Element::Toggle(edit_toggle(COMPACT, self.compact, COMPACT_DOC)),
+        ];
+        rows.push(row("display", hbox(display)));
+        rows.push(range_row(
+            "x range",
+            X_RANGE_DOC,
+            X_MIN,
+            X_MAX,
+            self.x_range,
+        ));
+        rows.push(range_row(
+            "y range",
+            Y_RANGE_DOC,
+            Y_MIN,
+            Y_MAX,
+            self.y_range,
+        ));
+        rows.push(release_row(&self.env));
+        rows.extend(self.env.segments.iter().enumerate().map(segment_row));
+        let inputs = SOCKETS
+            .iter()
+            .map(|s| doc("signal | number", s.doc))
+            .collect();
+        View {
+            inputs,
+            outputs: vec![doc("signal", "the envelope")],
+            body,
+            resize: Some(Resize {
+                width: "width".into(),
+                height: "height".into(),
+                margin: false,
+                default: [Self::DEFAULT_WIDTH, Self::DEFAULT_HEIGHT],
+            }),
+            rows: rows,
+            hide_state: true,
+            fill: true,
+            menu: vec![gantz_nodedef::MenuItem {
+                label: COMPACT.into(),
+                tip: COMPACT_DOC.into(),
+                edit: COMPACT.into(),
+                import: None,
+                checked: Some(self.compact),
+            }],
+            ..View::default()
+        }
+    }
+
+    fn edit(&self, edit: &str, value: &Datum) -> Option<Self> {
+        let mut node = self.clone();
+        let num = || value.as_f64().filter(|n| n.is_finite()).map(|n| n as f32);
+        match edit {
+            ENV => node.set_envelope(gantz_ca::from_datum(value.clone()).ok()?),
+            RATE => node.set_rate(edit_rate(value)?),
+            GRID => node.set_grid(value.as_bool()?),
+            AXES => node.set_axes(value.as_bool()?),
+            COMPACT => node.set_compact(value.as_bool()?),
+            X_MIN => node.set_x_range([num()?, self.x_range[1]]),
+            X_MAX => node.set_x_range([self.x_range[0], num()?]),
+            Y_MIN => node.set_y_range([num()?, self.y_range[1]]),
+            Y_MAX => node.set_y_range([self.y_range[0], num()?]),
+            RELEASE => {
+                let mut env = self.env.clone();
+                env.release = match value.as_str()? {
+                    NO_RELEASE => None,
+                    point => Some(point.parse().ok()?),
+                };
+                node.set_envelope(env);
+            }
+            edit => {
+                let (i, part) = edit.strip_prefix(SEG)?.split_once(':')?;
+                let mut env = self.env.clone();
+                let seg = env.segments.get_mut(i.parse::<usize>().ok()?)?;
+                match part {
+                    "level" => seg.level = num()?,
+                    "time" => seg.time = num()?,
+                    "curve" => seg.curve = num()?,
+                    _ => return None,
+                }
+                node.set_envelope(env);
+            }
+        }
+        Some(node)
     }
 }
 
@@ -282,7 +418,12 @@ impl NodeDsp for Envgen {
         for (i, seg) in self.env.segments.iter().enumerate() {
             env.push(keyed_param(b, path, &level_key(i), seg.level));
             env.push(keyed_param(b, path, &time_key(i), seg.time));
-            env.push(keyed_param(b, path, &shape_key(i), seg.shape.code()));
+            env.push(keyed_param(
+                b,
+                path,
+                &shape_key(i),
+                crate::envelope::shape_code(seg.shape),
+            ));
             env.push(keyed_param(b, path, &curve_key(i), seg.curve));
         }
         // One unit per channel of the widest connected socket.
@@ -328,7 +469,7 @@ pub fn envelope_params(env: &Envelope) -> Vec<(String, f64)> {
         [
             (level_key(i), seg.level as f64),
             (time_key(i), seg.time as f64),
-            (shape_key(i), seg.shape.code() as f64),
+            (shape_key(i), crate::envelope::shape_code(seg.shape) as f64),
             (curve_key(i), seg.curve as f64),
         ]
     });
@@ -403,6 +544,73 @@ fn is_default_range(range: &[f32; 2]) -> bool {
     *range == default_range()
 }
 
+/// A row of `children` side by side.
+fn hbox(children: Vec<Element>) -> Element {
+    Element::Row(ui::Row {
+        children,
+        ..ui::Row::default()
+    })
+}
+
+/// The row of a plot range, `[min, max]`, whose dialers send `min_edit` and
+/// `max_edit`.
+fn range_row(name: &str, tip: &str, min_edit: &str, max_edit: &str, [min, max]: [f32; 2]) -> Row {
+    let step = ((max - min) as f64 * 0.005).max(0.0001);
+    let dialer = |edit, value: f32, label: &str| {
+        Element::Dialer(ui::Dialer {
+            step: Some(step),
+            precision: Some(2),
+            tip: Some(format!("the {label}. {tip}")),
+            ..edit_dialer(edit, value.into())
+        })
+    };
+    let children = vec![
+        dialer(min_edit, min, "minimum"),
+        dialer(max_edit, max, "maximum"),
+    ];
+    row(name, hbox(children))
+}
+
+/// The release point row, a choice of no point or a point of the envelope.
+fn release_row(env: &Envelope) -> Row {
+    let points = (1..env.n_points()).map(|k| k.to_string());
+    let options = std::iter::once(NO_RELEASE.to_string()).chain(points);
+    let value = env
+        .release
+        .map_or(NO_RELEASE.to_string(), |k| k.to_string());
+    let tips = std::iter::once(RELEASE_DOC.to_string());
+    let choice = ui::Choice {
+        on: Some(Edit(RELEASE.into())),
+        value: Some(value),
+        options: options.collect(),
+        tips: tips.collect(),
+        ..ui::Choice::default()
+    };
+    row("release", Element::Choice(choice))
+}
+
+/// The row of segment `i`: the level it ends at, its time and the bend of a
+/// curve. The editor's point menu sets a segment's shape.
+fn segment_row((i, seg): (usize, &Segment)) -> Row {
+    let dialer = |part: &str, value: f32, step: f64, label: &str| ui::Dialer {
+        step: Some(step),
+        precision: Some(2),
+        tip: Some(format!("the {label} of segment {i}")),
+        ..edit_dialer(&format!("{SEG}{i}:{part}"), value.into())
+    };
+    let time = ui::Dialer {
+        min: Some(0.0),
+        prefix: Some("s ".into()),
+        ..dialer("time", seg.time, 0.001, "time in seconds")
+    };
+    let children = vec![
+        Element::Dialer(dialer("level", seg.level, 0.01, "level it ends at")),
+        Element::Dialer(time),
+        Element::Dialer(dialer("curve", seg.curve, 0.05, "bend of a curve")),
+    ];
+    row(&format!("seg {i}"), hbox(children))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -455,13 +663,13 @@ mod tests {
             node.ugens(&[0], &[], &mut b);
             crate::compile::structural_sig(&b.finish("t").def)
         };
-        let a = Envgen::new(Envelope::perc(0.01, 1.0));
-        let mut env = Envelope::perc(0.2, 0.5);
+        let a = Envgen::new(crate::envelope::perc(0.01, 1.0));
+        let mut env = crate::envelope::perc(0.2, 0.5);
         env.segments[1].shape = Shape::Exp;
         env.init = 0.3;
         let b = Envgen::new(env);
         assert_eq!(sig(&a), sig(&b), "value edits keep the synth");
-        let c = Envgen::new(Envelope::adsr(0.01, 0.3, 0.5, 1.0));
+        let c = Envgen::new(crate::envelope::adsr(0.01, 0.3, 0.5, 1.0));
         assert_ne!(sig(&a), sig(&c), "a new segment count derives a new def");
     }
 
@@ -479,7 +687,7 @@ mod tests {
 
     #[test]
     fn envelope_params_name_every_value() {
-        let params = envelope_params(&Envelope::perc(0.01, 1.0));
+        let params = envelope_params(&crate::envelope::perc(0.01, 1.0));
         let names: Vec<&str> = params.iter().map(|(n, _)| n.as_str()).collect();
         let expected = [
             "init", "level-0", "time-0", "shape-0", "curve-0", "level-1", "time-1", "shape-1",
@@ -534,7 +742,7 @@ mod tests {
     #[test]
     fn a_kr_impulse_retriggers_the_envelope() {
         use plyphon::Rate;
-        let node = Envgen::new(Envelope::perc(0.001, 0.02));
+        let node = Envgen::new(crate::envelope::perc(0.001, 0.02));
         let impulse = |b: &mut DspBuilder| {
             let freq = vec![InputRef::Constant(10.0), InputRef::Constant(0.0)];
             let unit = b.push_unit(UnitSpec::new("Impulse", Rate::Control, freq, 1));

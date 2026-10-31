@@ -2,13 +2,15 @@
 
 use std::hash::{Hash, Hasher};
 
-use gantz_ca::ContentAddr;
-use gantz_core::node::{ExprCtx, ExprResult, MetaCtx};
+use gantz_ca::{ContentAddr, Datum};
+use gantz_nodedef::{ExprArgs, Meta, View};
 use gantz_nodetag::NodeTag;
+use gantz_ui::{self as ui, Edit, Element};
 use plyphon::synthdef::InputRef;
 use serde::{Deserialize, Serialize};
 
 use crate::dsp::{BufferSource, DspBuilder, NodeDsp, Signal, ToNodeDsp};
+use crate::view::{doc, row};
 
 /// An audio asset as a buffer source. It emits the bufnum wire of the asset
 /// for buffer sockets, such as the one on `~playbuf`.
@@ -35,6 +37,17 @@ pub struct Sample {
     #[serde(default, skip_serializing_if = "crate::node::is_default")]
     sample_rate: f64,
 }
+
+/// The name of the DSP domain's importer of WAV files.
+pub const WAV_IMPORTER: &str = "plyphon.wav";
+
+/// The edit that loads an imported file into a `~sample`.
+const LOAD: &str = "load";
+
+/// The keys of the data that [`import_wav`] gives.
+const CHANNELS: &str = "channels";
+const FRAMES: &str = "frames";
+const SAMPLE_RATE: &str = "sample_rate";
 
 impl Sample {
     /// A node for `asset`, whose PCM has `channels` channels of `frames`
@@ -99,27 +112,103 @@ impl Hash for Sample {
     }
 }
 
-impl gantz_core::Node for Sample {
-    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
-        0
+impl gantz_nodedef::NodeDef for Sample {
+    const TAG: &'static str = <Self as NodeTag>::TAG;
+
+    fn meta(&self) -> Meta {
+        let blobs = self
+            .asset
+            .into_iter()
+            .map(|addr| (crate::BUFFER_SECTION.to_string(), addr));
+        Meta {
+            name: "~sample".into(),
+            description: "An audio sample as a read-only buffer, for example for `~playbuf`".into(),
+            outputs: 1,
+            blobs: blobs.collect(),
+            ..Meta::default()
+        }
     }
 
-    fn n_outputs(&self, _ctx: MetaCtx) -> usize {
-        1
-    }
-
-    fn expr(&self, _ctx: ExprCtx<'_, '_>) -> ExprResult {
+    fn expr(&self, _ctx: ExprArgs<'_>) -> Result<String, String> {
         // Steel-inert. A non-numeric placeholder output feeds the inert dsp
         // output edge, see the `NodeDsp` docs.
-        gantz_core::node::parse_expr("'()")
+        Ok("'()".into())
     }
 
-    fn required_blobs(&self) -> Vec<(gantz_ca::SectionId, ContentAddr)> {
-        self.asset
-            .into_iter()
-            .map(|addr| (crate::BUFFER_SECTION.to_string(), addr))
-            .collect()
+    fn view(&self) -> View {
+        let summary = match self.asset {
+            Some(asset) => {
+                let hex = asset.to_string();
+                let (channels, frames, rate) = (self.channels(), self.frames, self.sample_rate);
+                format!(
+                    "{}… {channels} ch, {frames} frames, {rate} Hz",
+                    &hex[..hex.len().min(8)]
+                )
+            }
+            None => "none".to_string(),
+        };
+        let load = ui::File {
+            on: Some(Edit(LOAD.into())),
+            import: Some(WAV_IMPORTER.into()),
+            label: Some("load…".into()),
+            tip: Some("load a WAV file into this sample".into()),
+            key: None,
+        };
+        let summary = ui::Label {
+            text: summary,
+            ..ui::Label::default()
+        };
+        let asset = ui::Row {
+            children: vec![Element::File(load), Element::Label(summary)],
+            ..ui::Row::default()
+        };
+        let menu = gantz_nodedef::MenuItem {
+            label: "load…".into(),
+            tip: "load a WAV file into this sample".into(),
+            edit: LOAD.into(),
+            import: Some(WAV_IMPORTER.into()),
+            checked: None,
+        };
+        View {
+            outputs: vec![doc("buffer", "the sample, for a buffer socket")],
+            rows: vec![row("asset", Element::Row(asset))],
+            menu: vec![menu],
+            ..View::default()
+        }
     }
+
+    fn edit(&self, edit: &str, value: &Datum) -> Option<Self> {
+        let (asset, data) = gantz_nodedef::import::imported(value).filter(|_| edit == LOAD)?;
+        let field = |key: &str| {
+            let Datum::Map(entries) = data else {
+                return None;
+            };
+            entries.iter().find(|(k, _)| k == key).map(|(_, v)| v)
+        };
+        let count = |key: &str| field(key)?.as_f64().map(|n| n.max(0.0) as usize);
+        let sample = Sample::new(
+            asset,
+            count(CHANNELS)?,
+            count(FRAMES)?,
+            field(SAMPLE_RATE)?.as_f64()?,
+        );
+        Some(sample)
+    }
+}
+
+/// Import a WAV file as an audio asset in its canonical encoding, with the
+/// data that a `~sample` keeps of it. The fn of the [`WAV_IMPORTER`].
+pub fn import_wav(bytes: &[u8]) -> Result<(Vec<u8>, Datum), String> {
+    let asset = crate::AudioAsset::from_wav(bytes).map_err(|e| e.to_string())?;
+    let data = Datum::Map(vec![
+        (
+            CHANNELS.into(),
+            Datum::from_u64(asset.num_channels() as u64),
+        ),
+        (FRAMES.into(), Datum::from_u64(asset.num_frames() as u64)),
+        (SAMPLE_RATE.into(), Datum::F64(asset.sample_rate())),
+    ]);
+    Ok((asset.encode(), data))
 }
 
 impl NodeDsp for Sample {
@@ -153,7 +242,6 @@ impl ToNodeDsp for Sample {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use gantz_core::Node as _;
 
     #[test]
     fn assigned_sample_pushes_an_asset_binding() {
@@ -179,10 +267,19 @@ mod tests {
     #[test]
     fn required_blobs_surfaces_the_asset() {
         let addr = gantz_ca::blob_addr(b"x");
+        let blobs = gantz_nodedef::NodeDef::meta(&Sample::new(addr, 1, 1, 1.0)).blobs;
+        let blobs: Vec<_> = blobs
+            .iter()
+            .map(|(section, addr)| (section.clone(), addr.to_string()))
+            .collect();
         assert_eq!(
-            Sample::new(addr, 1, 1, 1.0).required_blobs(),
-            vec![(crate::BUFFER_SECTION.to_string(), addr)],
+            blobs,
+            [(crate::BUFFER_SECTION.to_string(), addr.to_string())]
         );
-        assert!(Sample::default().required_blobs().is_empty());
+        assert!(
+            gantz_nodedef::NodeDef::meta(&Sample::default())
+                .blobs
+                .is_empty()
+        );
     }
 }

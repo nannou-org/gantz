@@ -1,10 +1,12 @@
 //! The `~pack` node: concatenate signals into one channel group.
 
-use gantz_core::node::{ExprCtx, ExprResult, MetaCtx};
+use gantz_ca::Datum;
+use gantz_nodedef::{ExprArgs, Meta, View};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
 use crate::dsp::{DspBuilder, NodeDsp, Signal, ToNodeDsp, input_or_silent};
+use crate::view::{COUNT, MAX_COUNT, count_row, doc, edit_count};
 
 /// Concatenate `count` input signals into one channel group, like Max's
 /// `mc.pack~` or a VCV merge. The output's width is the sum of the input
@@ -43,21 +45,46 @@ impl Default for Pack {
     }
 }
 
-impl gantz_core::Node for Pack {
-    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
+impl gantz_nodedef::NodeDef for Pack {
+    const TAG: &'static str = <Self as NodeTag>::TAG;
+
+    fn meta(&self) -> Meta {
         // Every input is a dsp signal of any channel width.
-        self.count
+        Meta {
+            name: "~pack".into(),
+            description: "Concatenate signals into one multichannel signal (packed, not mixed)"
+                .into(),
+            inputs: self.count,
+            outputs: 1,
+            ..Meta::default()
+        }
     }
 
-    fn n_outputs(&self, _ctx: MetaCtx) -> usize {
-        1
-    }
-
-    fn expr(&self, _ctx: ExprCtx<'_, '_>) -> ExprResult {
+    fn expr(&self, _ctx: ExprArgs<'_>) -> Result<String, String> {
         // Steel-inert. The packing happens at synthdef derivation. A
         // non-numeric placeholder output feeds the inert dsp output edge, see
         // the `NodeDsp` docs.
-        gantz_core::node::parse_expr("'()")
+        Ok("'()".into())
+    }
+
+    fn view(&self) -> View {
+        let input = |ix| {
+            let description =
+                format!("signal {ix} to pack, of any channel width. Silence when unconnected");
+            doc("signal", description)
+        };
+        let output = "every input's channels concatenated (width = the sum of input widths)";
+        View {
+            inputs: (0..self.count).map(input).collect(),
+            outputs: vec![doc("signal", output)],
+            rows: vec![count_row(self.count, "the number of signals to pack")],
+            ..View::default()
+        }
+    }
+
+    fn edit(&self, edit: &str, value: &Datum) -> Option<Self> {
+        let count = edit_count(value, [1, MAX_COUNT]).filter(|_| edit == COUNT)?;
+        Some(Pack { count })
     }
 }
 

@@ -261,6 +261,9 @@ pub trait ToNodeDsp {
     }
 }
 
+/// A [`NodeDsp`] that is also `Any`, so a [`DspNode`] gives its type back.
+trait AnyDsp: NodeDsp + std::any::Any + Send + Sync {}
+
 // References probe through to the referent, so borrowed graphs such as the
 // flattening pass's `Flat<&N>` weights derive without cloning nodes.
 impl<T: ToNodeDsp + ?Sized> ToNodeDsp for &T {
@@ -675,29 +678,35 @@ impl DspBuilder {
     }
 }
 
-/// Find the [`NodeDsp`] within a type-erased node, trying each of this crate's
-/// DSP node types.
-///
-/// Node-set types such as an app's `Box<dyn Node>` can implement
-/// [`ToNodeDsp`] by delegating to this fn. Sets composing additional DSP node
-/// types chain their own downcasts via `.or_else(..)`.
-///
-/// Keep the probe list in step with `crate::ref_ext`'s data-level DSP tag
-/// set, which classifies the same types by wire tag.
-pub fn node_dsp_of(any: &dyn std::any::Any) -> Option<&dyn NodeDsp> {
-    fn probe<T: NodeDsp + 'static>(any: &dyn std::any::Any) -> Option<&dyn NodeDsp> {
-        any.downcast_ref::<T>().map(|n| n as &dyn NodeDsp)
+/// The decoded node of a DSP node definition. See [`crate::node::node_def`].
+/// Through it the synthdef compiler finds the [`NodeDsp`] of any DSP node, also
+/// one that another crate defines.
+pub struct DspNode(Box<dyn AnyDsp>);
+
+impl DspNode {
+    /// The decoded node `node`.
+    pub fn new<T: NodeDsp + Send + Sync + 'static>(node: T) -> Self {
+        DspNode(Box::new(node))
     }
-    probe::<crate::UnitNode>(any)
-        .or_else(|| probe::<crate::Out>(any))
-        .or_else(|| probe::<crate::ScopeOut>(any))
-        .or_else(|| probe::<crate::Pack>(any))
-        .or_else(|| probe::<crate::Sum>(any))
-        .or_else(|| probe::<crate::Unpack>(any))
-        .or_else(|| probe::<crate::Bus>(any))
-        .or_else(|| probe::<crate::Sample>(any))
-        .or_else(|| probe::<crate::Buffer>(any))
-        .or_else(|| probe::<crate::Envgen>(any))
+
+    /// The node as its [`NodeDsp`].
+    pub fn dsp(&self) -> &dyn NodeDsp {
+        &*self.0
+    }
+
+    /// The node, if its type is `T`.
+    pub fn downcast_ref<T: std::any::Any>(&self) -> Option<&T> {
+        let any: &dyn std::any::Any = &*self.0;
+        any.downcast_ref()
+    }
+}
+
+impl<T: NodeDsp + std::any::Any + Send + Sync> AnyDsp for T {}
+
+/// The [`NodeDsp`] of the decoded node `any` of a node definition, when it
+/// is a [`DspNode`].
+pub fn node_dsp_of(any: &dyn std::any::Any) -> Option<&dyn NodeDsp> {
+    any.downcast_ref::<DspNode>().map(DspNode::dsp)
 }
 
 /// The signal at dsp input `i` of a [`NodeDsp::ugens`] `inputs` slice, or mono
@@ -831,28 +840,20 @@ mod tests {
 
     use super::{BufferAccess, BufferSource, DspBuilder, Signal, node_dsp_of, sum_signals};
 
-    /// Every DSP node type in this crate must be found by [`node_dsp_of`], so
-    /// a probe arm forgotten when adding a node fails here rather than in
-    /// downstream node sets.
+    /// [`node_dsp_of`] finds the `NodeDsp` of the builtin node of each DSP
+    /// node definition of this crate.
     #[test]
     fn node_dsp_of_covers_all_dsp_nodes() {
-        fn check<T: super::NodeDsp + Default + 'static>() {
-            let node = T::default();
-            assert!(node_dsp_of(&node).is_some());
+        for def in crate::node::node_defs() {
+            let builtin = crate::builtins()
+                .into_iter()
+                .find(|b| b.node.tag == def.tag())
+                .expect("a builtin of the definition");
+            let desc = def
+                .describe(&builtin.node.data)
+                .expect("the builtin decodes");
+            assert!(node_dsp_of(&*desc.node).is_some(), "{}", def.tag());
         }
-        check::<crate::Out>();
-        check::<crate::ScopeOut>();
-        check::<crate::Pack>();
-        check::<crate::Sum>();
-        check::<crate::Unpack>();
-        check::<crate::Bus>();
-        check::<crate::Sample>();
-        check::<crate::Buffer>();
-        check::<crate::Envgen>();
-        // `UnitNode` has no `Default`. Every table row probes through the one
-        // type.
-        let unit = crate::UnitNode::from_unit("SinOsc").expect("SinOsc row");
-        assert!(node_dsp_of(&unit).is_some());
     }
 
     /// A unit-backed mono wire at `rate` to feed the summing helpers.

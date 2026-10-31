@@ -16,8 +16,9 @@ use gantz_ca::ContentAddr;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::any::Any;
-use std::marker::PhantomData;
 use std::sync::Arc;
+
+pub mod import;
 
 /// A node of a type that a domain defines as data. See the crate docs.
 pub trait NodeDef: Serialize + DeserializeOwned + Send + Sync + 'static {
@@ -214,8 +215,11 @@ pub struct ExprArgs<'a> {
     pub args: &'a str,
 }
 
-/// The [`DynNodeDef`] of a [`NodeDef`]. See [`of`].
-struct Typed<D>(PhantomData<fn() -> D>);
+/// The [`DynNodeDef`] of a [`NodeDef`]. See [`of_with`].
+struct Typed<D> {
+    /// The decoded node as the host keeps it. See [`Description::node`].
+    wrap: fn(D) -> Arc<dyn Any + Send + Sync>,
+}
 
 impl SocketDoc {
     /// The doc of a socket of values of type `ty`.
@@ -238,7 +242,7 @@ impl<D: NodeDef> DynNodeDef for Typed<D> {
             fields: encode(&node)?,
             meta: node.meta(),
             view: node.view(),
-            node: Arc::new(node),
+            node: (self.wrap)(node),
         })
     }
 
@@ -264,7 +268,14 @@ impl<D: NodeDef> DynNodeDef for Typed<D> {
 
 /// The definition of the node type `D`.
 pub fn of<D: NodeDef>() -> Arc<dyn DynNodeDef> {
-    Arc::new(Typed::<D>(PhantomData))
+    of_with::<D>(|node| Arc::new(node))
+}
+
+/// The definition of the node type `D`, whose decoded node is `wrap` of the
+/// node, such as a type through which a domain reads the nodes of all its node
+/// types.
+pub fn of_with<D: NodeDef>(wrap: fn(D) -> Arc<dyn Any + Send + Sync>) -> Arc<dyn DynNodeDef> {
+    Arc::new(Typed { wrap })
 }
 
 /// The fields of `node`, the map of its serde form. A unit struct has no

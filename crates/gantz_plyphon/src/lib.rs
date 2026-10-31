@@ -29,9 +29,9 @@ pub use compile::{
 pub use config::{Config, DeriveStatus, Status};
 pub use describe::describe_parts;
 pub use dsp::{
-    BufferAccess, BufferBinding, BufferSource, DspBuilder, FADE_LAG, FadeSink, Finished, GainRef,
-    NodeDsp, NodeRate, ParamBinding, PortShape, PortShapes, ScopeOutBinding, Signal, ToNodeDsp,
-    node_dsp_of, signal_rate,
+    BufferAccess, BufferBinding, BufferSource, DspBuilder, DspNode, FADE_LAG, FadeSink, Finished,
+    GainRef, NodeDsp, NodeRate, ParamBinding, PortShape, PortShapes, ScopeOutBinding, Signal,
+    ToNodeDsp, node_dsp_of, signal_rate,
 };
 pub use envelope::{Envelope, Segment, Shape};
 pub use flatten::{
@@ -45,6 +45,7 @@ pub use instance::{
 pub use node::{
     Buffer, Bus, Envgen, InvalidUnitNode, Out, Pack, Sample, ScopeOut, Sum, UnitNode, Unpack,
 };
+pub use node::{node_def, node_defs};
 pub use port_info::{RootPortInfo, root_port_info};
 pub use ref_ext::{DSP_REF_EXT_KEY, DspRefExt, dsp_graphs, is_dsp_graph};
 pub use sugar::PlyphonSugar;
@@ -52,7 +53,7 @@ pub use units::{Emit, In, RateScale, UNITS, UnitDesc, UnitRate, unit_desc, unit_
 // `self::` disambiguates from the extern `egui` crate at the crate root.
 #[cfg(feature = "egui")]
 pub use self::egui::{
-    DSP_PANE_KEY, DspEdgeStyle, DspPane, DspPaneHead, DspRefExtUi, DspSettingsTab, LoadSample,
+    DSP_PANE_KEY, DspEdgeStyle, DspPane, DspPaneHead, DspRefExtUi, DspSettingsTab,
 };
 
 pub mod asset;
@@ -74,6 +75,28 @@ pub mod port_info;
 pub mod ref_ext;
 pub mod sugar;
 pub mod units;
+mod view;
+
+/// The importers of the DSP domain: WAV files into `~sample` nodes.
+pub fn importers() -> Vec<gantz_nodedef::import::Importer> {
+    vec![gantz_nodedef::import::Importer {
+        name: node::sample::WAV_IMPORTER.into(),
+        description: "WAV".into(),
+        extensions: vec!["wav".into()],
+        section: BUFFER_SECTION.into(),
+        import: std::sync::Arc::new(node::sample::import_wav),
+    }]
+}
+
+/// The value of the state at `path` in `vm`.
+#[cfg(test)]
+fn state_value(
+    vm: &gantz_core::steel::steel_vm::engine::Engine,
+    path: &[usize],
+) -> Option<gantz_core::datum::Datum> {
+    let state = gantz_core::node::state::extract_value(vm, path).ok()??;
+    gantz_core::datum::of_steel(&state).ok()
+}
 
 /// Raw bytes of the DSP domain's base `.gantz` export, embedded at compile
 /// time. The `bevy_gantz_plyphon` plugin contributes it as a base source. It

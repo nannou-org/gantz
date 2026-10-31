@@ -52,6 +52,18 @@ where
     gantz_core::data::erase_node_typed(node).expect("erase")
 }
 
+/// The stored form of `node`, of a `NodeDef` type.
+fn erased_def<D: gantz_nodedef::NodeDef>(node: &D) -> gantz_ca::NodeData {
+    gantz_nodedef::node_data(node).expect("erase")
+}
+
+/// The DSP node `node` as the app reifies it.
+fn dsp<D: gantz_nodedef::NodeDef + gantz_plyphon::NodeDsp>(node: D) -> DynNode {
+    let fields = gantz_nodedef::encode(&node).expect("encode");
+    let node = gantz_egui::node::DefNode::new(gantz_plyphon::node_def::<D>(), &fields);
+    Box::new(node.expect("decode"))
+}
+
 /// A data graph over the given stored node weights, with no edges.
 fn data_graph(nodes: impl IntoIterator<Item = gantz_ca::NodeData>) -> gantz_ca::DataGraph {
     let mut g = gantz_ca::DataGraph::default();
@@ -514,14 +526,14 @@ fn node_set_data() -> Vec<gantz_ca::NodeData> {
         name("mul"),
         gantz_core::node::Ref::new(gantz_ca::ContentAddr([1; 32])),
     ))));
-    nodes.push(erased(&gantz_plyphon::Sample::new(
+    nodes.push(erased_def(&gantz_plyphon::Sample::new(
         gantz_ca::ContentAddr([3; 32]),
         2,
         48_000,
         48_000.0,
     )));
-    nodes.push(erased(&gantz_plyphon::Buffer::new(1024, 2)));
-    nodes.push(erased(&gantz_plyphon::Envgen::default()));
+    nodes.push(erased_def(&gantz_plyphon::Buffer::new(1024, 2)));
+    nodes.push(erased_def(&gantz_plyphon::Envgen::default()));
     nodes
 }
 
@@ -931,35 +943,35 @@ fn dsp_nodes_use_plyphon_keyword_sugar() {
     let unit = |name: &str| gantz_plyphon::UnitNode::from_unit(name).expect("table row");
     let sugar = crate::node::sugars();
     let cases: [(gantz_ca::NodeData, &str, &str); 12] = [
-        (erased(&unit("SinOsc")), "Unit", "~sinosc"),
-        (erased(&unit("Lag")), "Unit", "~lag"),
-        (erased(&unit("LPF")), "Unit", "~lpf"),
-        (erased(&gantz_plyphon::Out::default()), "Out", "~out"),
+        (erased_def(&unit("SinOsc")), "Unit", "~sinosc"),
+        (erased_def(&unit("Lag")), "Unit", "~lag"),
+        (erased_def(&unit("LPF")), "Unit", "~lpf"),
+        (erased_def(&gantz_plyphon::Out::default()), "Out", "~out"),
         (
-            erased(&gantz_plyphon::ScopeOut::default()),
+            erased_def(&gantz_plyphon::ScopeOut::default()),
             "ScopeOut",
             "~scopeout",
         ),
-        (erased(&gantz_plyphon::Pack::default()), "Pack", "~pack"),
-        (erased(&gantz_plyphon::Sum::default()), "Sum", "~sum"),
+        (erased_def(&gantz_plyphon::Pack::default()), "Pack", "~pack"),
+        (erased_def(&gantz_plyphon::Sum::default()), "Sum", "~sum"),
         (
-            erased(&gantz_plyphon::Unpack::default()),
+            erased_def(&gantz_plyphon::Unpack::default()),
             "Unpack",
             "~unpack",
         ),
-        (erased(&gantz_plyphon::Bus::default()), "Bus", "~bus"),
+        (erased_def(&gantz_plyphon::Bus::default()), "Bus", "~bus"),
         (
-            erased(&gantz_plyphon::Buffer::default()),
+            erased_def(&gantz_plyphon::Buffer::default()),
             "Buffer",
             "~buffer",
         ),
         (
-            erased(&gantz_plyphon::Sample::default()),
+            erased_def(&gantz_plyphon::Sample::default()),
             "Sample",
             "~sample",
         ),
         (
-            erased(&gantz_plyphon::Envgen::default()),
+            erased_def(&gantz_plyphon::Envgen::default()),
             "Envgen",
             "~envgen",
         ),
@@ -992,12 +1004,12 @@ fn dsp_nodes_are_steel_inert_and_derive() {
     // fuses the boundary to a plain wire.
     let sinosc = || gantz_plyphon::UnitNode::from_unit("SinOsc").expect("SinOsc row");
     let mut g: G = Graph::default();
-    let s0 = g.add_node(Box::new(sinosc()) as DynNode);
-    let s1 = g.add_node(Box::new(sinosc()) as DynNode);
-    let pk = g.add_node(Box::new(gantz_plyphon::Pack::default()) as DynNode);
-    let bus = g.add_node(Box::new(gantz_plyphon::Bus::default()) as DynNode);
-    let up = g.add_node(Box::new(gantz_plyphon::Unpack::default()) as DynNode);
-    let o = g.add_node(Box::new(gantz_plyphon::Out::default()) as DynNode);
+    let s0 = g.add_node(dsp(sinosc()));
+    let s1 = g.add_node(dsp(sinosc()));
+    let pk = g.add_node(dsp(gantz_plyphon::Pack::default()));
+    let bus = g.add_node(dsp(gantz_plyphon::Bus::default()));
+    let up = g.add_node(dsp(gantz_plyphon::Unpack::default()));
+    let o = g.add_node(dsp(gantz_plyphon::Out::default()));
     g.add_edge(s0, pk, Edge::new(0.into(), 0.into()));
     g.add_edge(s1, pk, Edge::new(0.into(), 1.into()));
     g.add_edge(pk, bus, Edge::new(0.into(), 0.into()));
@@ -1224,8 +1236,8 @@ fn unpack_expr_is_steel_inert_for_any_count() {
         unpack.set_count(count);
         let mut g: G = Graph::default();
         let sinosc = gantz_plyphon::UnitNode::from_unit("SinOsc").expect("SinOsc row");
-        let s = g.add_node(Box::new(sinosc) as DynNode);
-        let up = g.add_node(Box::new(unpack) as DynNode);
+        let s = g.add_node(dsp(sinosc));
+        let up = g.add_node(dsp(unpack));
         let insp = g.add_node(Box::new(gantz_egui::node::Inspect::default()) as DynNode);
         g.add_edge(s, up, Edge::new(0.into(), 0.into()));
         // An edge off the last output forces the expr's output shape through
@@ -1258,7 +1270,7 @@ fn control_input_writes_dsp_node_state() {
     let mut g: G = Graph::default();
     let sinosc = gantz_plyphon::UnitNode::from_unit("SinOsc").expect("SinOsc row");
     let num = g.add_node(Box::new(gantz_egui::node::Number::default()) as DynNode);
-    let sine = g.add_node(Box::new(sinosc) as DynNode);
+    let sine = g.add_node(dsp(sinosc));
     g.add_edge(num, sine, Edge::new(0.into(), 0.into()));
 
     let get_node = |_: &gantz_ca::ContentAddr| -> Option<&dyn gantz_core::Node> { None };
@@ -1288,7 +1300,7 @@ fn control_input_writes_dsp_node_state() {
         .expect("extract ~sinosc state")
         .expect("~sinosc state present");
     assert_eq!(
-        gantz_plyphon::param::pending_len_total(&queued),
+        gantz_plyphon::param::pending_len_total(&gantz_core::datum::of_steel(&queued).unwrap()),
         1,
         "pending_len_total must count the queued update without draining",
     );
@@ -1325,8 +1337,8 @@ fn dsp_wire_into_freq_leaves_param_state_untouched() {
     let unit = |name: &str| gantz_plyphon::UnitNode::from_unit(name).expect("table row");
     let mut g: G = Graph::default();
     let num = g.add_node(Box::new(gantz_egui::node::Number::default()) as DynNode);
-    let lag = g.add_node(Box::new(unit("Lag")) as DynNode);
-    let sine = g.add_node(Box::new(unit("SinOsc")) as DynNode);
+    let lag = g.add_node(dsp(unit("Lag")));
+    let sine = g.add_node(dsp(unit("SinOsc")));
     g.add_edge(num, lag, Edge::new(0.into(), 0.into()));
     g.add_edge(lag, sine, Edge::new(0.into(), 0.into()));
 
@@ -1373,7 +1385,7 @@ fn scopeout_trigger_outputs_rings_and_channels() {
     // Output 0 feeds `samples` and output 1 feeds `chans`.
     let mut g: G = Graph::default();
     let num = g.add_node(Box::new(gantz_egui::node::Number::default()) as DynNode);
-    let tap = g.add_node(Box::new(gantz_plyphon::ScopeOut::default()) as DynNode);
+    let tap = g.add_node(dsp(gantz_plyphon::ScopeOut::default()));
     let samples = g.add_node(Box::new(gantz_egui::node::Inspect::default()) as DynNode);
     let chans = g.add_node(Box::new(gantz_egui::node::Inspect::default()) as DynNode);
     g.add_edge(num, tap, Edge::new(0.into(), 1.into()));
@@ -1446,7 +1458,7 @@ fn scopeout_suppresses_output_without_trigger() {
     // input 1 inactive.
     let mut g: G = Graph::default();
     let num = g.add_node(Box::new(gantz_egui::node::Number::default()) as DynNode);
-    let tap = g.add_node(Box::new(gantz_plyphon::ScopeOut::default()) as DynNode);
+    let tap = g.add_node(dsp(gantz_plyphon::ScopeOut::default()));
     let inspect = g.add_node(Box::new(gantz_egui::node::Inspect::default()) as DynNode);
     g.add_edge(num, tap, Edge::new(0.into(), 0.into()));
     g.add_edge(tap, inspect, Edge::new(0.into(), 0.into()));
@@ -2931,7 +2943,7 @@ fn sample_buffers_ride_reachability() {
     let used_addr = gantz_plyphon::add_audio_asset(&mut registry, &used);
     let unused_addr = gantz_plyphon::add_audio_asset(&mut registry, &unused);
 
-    let dg = data_graph([erased(&gantz_plyphon::Sample::from_asset(&used))]);
+    let dg = data_graph([erased_def(&gantz_plyphon::Sample::from_asset(&used))]);
     let g_addr = gantz_ca::graph_addr(&dg);
     registry.add_graph(dg);
     let commit = registry.commit_graph(Duration::from_secs(1), None, g_addr, || {
