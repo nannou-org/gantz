@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/nannou-org/gantz/compare/gantz-v0.6.0...gantz-v0.7.0) - 2026-10-31
+
+### Added
+
+- carry node state through copy and paste
+- keep node state across sessions
+- [**breaking**] define the DSP nodes as data
+- [**breaking**] define the pattern nodes as data
+- keep a graph running from the command line with run --live
+- give the nodes of open heads entities
+- *(gantz)* show the wordmark on the loading splash
+- add bound, choice and color GUI elements
+- *(gantz_egui)* add a state node for GUI controls to edit
+- *(gantz_plyphon)* add a ~scopeplot node
+- *(gantz_egui)* refine the window's decorations
+- *(gantz_egui)* draw the window's own decorations
+- *(gantz_pattern)* [**breaking**] rename pmini and pplot to pat.mini and pat.plot
+- [**breaking**] move base graphs into dot namespaces
+- [**breaking**] rename old base graph names on load and import
+
+### Fixed
+
+- *(gantz)* flush the store when a window closes
+- *(gantz_egui)* keep cards, logs and window drags in bounds
+
+### Other
+
+- [**breaking**] compose node kinds at run time
+- [**breaking**] move the format, export and base modules to gantz_edit
+- *(gantz_edit)* [**breaking**] make the node codec generic over the node type
+- *(gantz_ca)* [**breaking**] tidy the registry API
+- *(gantz)* share setup and persistence between the binaries
+
 ## [0.6.0](https://github.com/nannou-org/gantz/compare/gantz-v0.5.0...gantz-v0.6.0) - 2026-10-17
 
 ### Added

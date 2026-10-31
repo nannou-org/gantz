@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/nannou-org/gantz/compare/gantz_pattern-v0.1.3...gantz_pattern-v0.2.0) - 2026-10-31
+
+### Added
+
+- [**breaking**] define the pattern nodes as data
+- rework the demos for the new nodes and edges
+- *(gantz_pattern)* [**breaking**] rename pmini and pplot to pat.mini and pat.plot
+- [**breaking**] move base graphs into dot namespaces
+
+### Other
+
+- *(nix)* bump nixpkgs
+
 ## [0.1.3](https://github.com/nannou-org/gantz/compare/gantz_pattern-v0.1.2...gantz_pattern-v0.1.3) - 2026-10-17
 
 ### Other

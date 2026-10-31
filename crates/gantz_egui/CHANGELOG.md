@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.10.0...gantz_egui-v0.11.0) - 2026-10-31
+
+### Added
+
+- carry node state through copy and paste
+- add a keep toggle and a reset for node state
+- [**breaking**] define the pattern nodes as data
+- define node types as data
+- *(gantz_egui)* add an egui mono font option
+- *(gantz_egui)* resize a graph body that fills its space
+- *(gantz_egui)* fit graph GUIs into the inspector table
+- add bound, choice and color GUI elements
+- *(gantz_egui)* add a state node for GUI controls to edit
+- meter each output channel in the status line
+- *(gantz_egui)* give the window controls a corner of their own
+- *(gantz_egui)* describe a node on a hover of its frame
+- *(gantz_egui)* copy selected log text from a context menu
+- *(gantz_egui)* make neutral greys the default palette
+- give numbers a start value and a steady width
+- *(gantz_egui)* wrap log messages by default
+- *(gantz_egui)* set a number's drag speed, trim its right padding
+- *(gantz_egui)* show socket docs at once and light the hovered socket
+- open panes and settings from the status line
+- *(gantz_egui)* set comment lines that start with # as headings
+- draw bang, number, expr and inspect nodes flat
+- *(gantz_egui)* choose the edge shape in the style settings
+- *(gantz_egui)* add GNOME dark and light palettes
+- *(gantz_egui)* refine the window's decorations
+- *(gantz_egui)* draw the window's own decorations
+- *(gantz_egui)* restyle the logs and the node inspector
+- show save time, links, audio and vm history in the status line
+- *(gantz_egui)* run the scene on under the panes
+- *(gantz_egui)* set corners, padding and font per category
+- *(gantz_egui)* paint the lock badge of a locked node
+- *(gantz_egui)* add wells, a bang ball, range fills and inline code
+- *(gantz_egui)* tag node errors and unparsed expr code
+- *(gantz_egui)* add patch-only mode and an empty-patch hint
+- *(gantz_egui)* add a status line and toasts
+- *(gantz_egui)* restyle settings with section pills and switches
+- *(gantz_egui)* restyle menus and the node palette, add an app menu
+- *(gantz_egui)* show more than one graph with graph panes
+- *(gantz_egui)* float rounded panes on the scene
+- *(gantz_egui)* add the foundations of the gantz look
+- *(gantz_egui)* save, reset and export palettes
+- *(gantz_egui)* add palette presets and base16 import
+- *(gantz_egui)* add shape settings to the style
+- *(gantz_egui)* derive the style from a palette and roles
+- [**breaking**] move base graphs into dot namespaces
+- [**breaking**] rename old base graph names on load and import
+
+### Fixed
+
+- *(gantz_egui)* keep a card to the height available
+- *(gantz_egui)* give stored palettes the gantz defaults
+- *(gantz_egui)* keep cards strictly to their pane's width
+- *(gantz_egui)* compile a push from a state node
+- *(gantz_egui)* keep a GUI control's edit when it claims the press
+- *(gantz_egui)* keep the graphs pane buttons inside its margin
+- *(gantz_egui)* clamp the camera zoom to the zoom the scene draws
+- *(gantz_egui)* pad bounded dialers with leading zeros
+- *(gantz_egui)* dim the card shade of the egui Dark palette
+- *(gantz_egui)* settle dots, sockets, controls, cards and the status line
+- *(gantz_egui)* take the current role defaults over older saved roles
+- *(gantz_egui)* draw a bang as a circle
+- *(gantz_egui)* pan before the scene shows, place a new graph's nodes
+- *(gantz_egui)* keep cards, logs and window drags in bounds
+- *(gantz_egui)* keep content to pane margins, set explicit spacing
+- *(gantz_egui)* settle cards, fields, tabs and gaps
+- *(gantz_egui)* fit the settings to a narrow pane
+- *(gantz_egui)* key the graph scene id on its tab
+- *(gantz_egui)* report layout edits from the graph scene
+
+### Other
+
+- Merge pull request #489 from nannou-org/fix/node-palette-rect
+- [**breaking**] make Datum the one data form
+- [**breaking**] compose node kinds at run time
+- *(gantz_egui)* take the remaining UI colours from style roles
+- *(nix)* bump nixpkgs
+- [**breaking**] move the format, export and base modules to gantz_edit
+- *(gantz_edit)* [**breaking**] make the node codec generic over the node type
+
 ## [0.10.0](https://github.com/nannou-org/gantz/compare/gantz_egui-v0.9.0...gantz_egui-v0.10.0) - 2026-10-17
 
 ### Added

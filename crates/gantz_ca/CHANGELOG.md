@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/nannou-org/gantz/compare/gantz_ca-v0.6.0...gantz_ca-v0.7.0) - 2026-10-31
+
+### Added
+
+- *(gantz_ca)* rename a head with its name-keyed metadata
+
+### Other
+
+- [**breaking**] make Datum the one data form
+- *(gantz_ca)* [**breaking**] tidy the registry API
+
 ## [0.6.0](https://github.com/nannou-org/gantz/compare/gantz_ca-v0.5.0...gantz_ca-v0.6.0) - 2026-10-17
 
 ### Other

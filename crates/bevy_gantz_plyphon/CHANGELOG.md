@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.6.0...bevy_gantz_plyphon-v0.7.0) - 2026-10-31
+
+### Added
+
+- [**breaking**] define the DSP nodes as data
+- meter each output channel in the status line
+- open panes and settings from the status line
+- show save time, links, audio and vm history in the status line
+- [**breaking**] move base graphs into dot namespaces
+- [**breaking**] rename old base graph names on load and import
+
+### Other
+
+- [**breaking**] compose node kinds at run time
+- [**breaking**] move the format, export and base modules to gantz_edit
+
 ## [0.6.0](https://github.com/nannou-org/gantz/compare/bevy_gantz_plyphon-v0.5.0...bevy_gantz_plyphon-v0.6.0) - 2026-10-17
 
 ### Other

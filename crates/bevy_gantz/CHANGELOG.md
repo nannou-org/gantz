@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0](https://github.com/nannou-org/gantz/compare/bevy_gantz-v0.8.0...bevy_gantz-v0.9.0) - 2026-10-31
+
+### Added
+
+- add a keep toggle and a reset for node state
+- keep node state across sessions
+- keep a graph running from the command line with run --live
+- give the nodes of open heads entities
+
+### Other
+
+- *(gantz_ca)* [**breaking**] tidy the registry API
+
 ## [0.8.0](https://github.com/nannou-org/gantz/compare/bevy_gantz-v0.7.0...bevy_gantz-v0.8.0) - 2026-10-17
 
 ### Other

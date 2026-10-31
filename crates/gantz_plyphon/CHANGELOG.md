@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0](https://github.com/nannou-org/gantz/compare/gantz_plyphon-v0.6.0...gantz_plyphon-v0.7.0) - 2026-10-31
+
+### Added
+
+- [**breaking**] define the DSP nodes as data
+- *(gantz_plyphon)* give ~scopeplot the plot node's settings
+- *(gantz_plyphon)* add a ~scopeplot node
+- give numbers a start value and a steady width
+- *(gantz_plyphon)* load a sample from the ~sample context menu
+- open panes and settings from the status line
+- rework the demos for the new nodes and edges
+- [**breaking**] move base graphs into dot namespaces
+
+### Fixed
+
+- *(gantz_plyphon)* style a passthrough reference output as dsp
+- *(gantz_plyphon)* widen the sampler speed and pluck period
+- *(gantz_egui)* keep cards, logs and window drags in bounds
+
+### Other
+
+- *(gantz_plyphon)* say plainly what the inline toggle does
+- *(nix)* bump nixpkgs
+
 ## [0.6.0](https://github.com/nannou-org/gantz/compare/gantz_plyphon-v0.5.0...gantz_plyphon-v0.6.0) - 2026-10-17
 
 ### Other
