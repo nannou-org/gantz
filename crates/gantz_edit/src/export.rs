@@ -601,6 +601,13 @@ mod tests {
         let mut view = crate::SceneView::default();
         view.layout.insert(crate::NodeId(0), emath::pos2(5.0, 6.0));
         crate::section::set_view(&mut reg, root_ca, &view);
+        let state = vec![
+            (vec![0], gantz_ca::Datum::Sym("bd".to_string())),
+            (vec![1, 2], gantz_ca::Datum::ratio(1, 3).unwrap()),
+            (vec![3], gantz_ca::Datum::F64(0.5)),
+        ];
+        type Snapshots = gantz_core::node::state::Snapshots;
+        gantz_ca::section_insert::<Snapshots>(&mut reg, root_ca, &state).unwrap();
 
         let heads = [
             gantz_ca::Head::Branch(name("root")),
@@ -624,6 +631,8 @@ mod tests {
             view.layout.get(&crate::NodeId(0)).copied(),
             Some(emath::pos2(5.0, 6.0)),
         );
+        let restored = gantz_ca::section_get::<Snapshots>(&fresh, &root_ca);
+        assert_eq!(restored, Some(state), "node state survives");
     }
 
     #[test]

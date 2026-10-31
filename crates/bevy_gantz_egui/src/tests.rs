@@ -10,6 +10,7 @@ mod drop_unknown;
 mod entities;
 mod layout_settle;
 mod load_bang;
+mod node_state;
 mod undo_resync;
 
 /// The codec over the tests' node set, through which the runtime's
@@ -22,6 +23,7 @@ fn codec() -> gantz_egui::node::NodeCodec {
             gantz_egui::node::kind::<crate::node::LoadBang>(),
             gantz_egui::node::kind::<crate::node::Sleep>(),
             gantz_egui::node::kind::<gantz_egui::node::Inspect>(),
+            gantz_egui::node::kind::<gantz_egui::node::State>(),
             gantz_egui::node::kind::<gantz_edit::NamedRef>(),
         ],
     )

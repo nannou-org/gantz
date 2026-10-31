@@ -154,6 +154,7 @@ pub fn sync(
                 let mut vm = gantz_core::vm::new_engine(&modules.0);
                 setups.0.iter().for_each(|setup| setup(&mut vm));
                 gantz_core::graph::register(&get_node, graph, &[], &mut vm);
+                head::restore_state(&registry, &data.head_ref.0, &mut vm);
                 gantz_core::vm::compile(&get_node, graph, &mut vm, &entrypoints, &config.0).map(
                     |module| {
                         vms.insert(data.entity, vm);

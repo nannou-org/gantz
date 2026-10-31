@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use bevy::window::{PrimaryWindow, Window};
 use bevy_egui::EguiContexts;
 use bevy_gantz::{
-    FocusedHead, HeadTabOrder, OpenHead, OpenHeadDataReadOnly, Registry,
+    FocusedHead, HeadTabOrder, HeadVms, OpenHead, OpenHeadDataReadOnly, Registry,
     debounced_input::{DebouncedEvent, DebouncedInputEvent, DebouncedInputPlugin},
 };
 use bevy_gantz_egui::GuiState;
@@ -162,7 +162,8 @@ fn store_writable(read_only: Option<Res<bevy_gantz::storage::StoreReadOnly>>) ->
 }
 
 /// Collect the registry, heads, gui and window into a `(key, value)` batch
-/// to persist. Views, demos and descriptions ride the registry's sections.
+/// to persist. Views, demos, descriptions and node state ride the registry's
+/// sections.
 ///
 /// Registry writes dedup against `persisted`. Pass a cleared tracker, see
 /// [`gantz_store::PersistedRegistry::cleared`], to force a complete
@@ -186,8 +187,21 @@ fn collect_batch_to_persist(
     batch.take()
 }
 
+/// Store the node state of each open head in the registry, so that the writes
+/// that follow carry it.
+fn save_states(
+    registry: &mut ResMut<Registry>,
+    vms: &HeadVms,
+    heads_query: &Query<OpenHeadDataReadOnly, With<OpenHead>>,
+) {
+    for data in heads_query.iter() {
+        bevy_gantz::head::save_state(registry, vms, data);
+    }
+}
+
 fn persist_resources(
-    registry: Res<Registry>,
+    mut registry: ResMut<Registry>,
+    vms: NonSend<HeadVms>,
     mut persisted: ResMut<Persisted>,
     gui_state: Res<GuiState>,
     mut persister: ResMut<Persister>,
@@ -198,6 +212,7 @@ fn persist_resources(
     #[cfg(feature = "collab")] vault: Res<bevy_gantz_collab::PersistedVaultSynced>,
 ) {
     let start = web_time::Instant::now();
+    save_states(&mut registry, &vms, &heads_query);
     let window = primary_window.single().ok();
     let batch = collect_batch_to_persist(
         &registry,
@@ -265,7 +280,8 @@ fn persist_egui_memory(mut persister: ResMut<Persister>, mut ctxs: EguiContexts)
 #[allow(clippy::too_many_arguments)]
 fn flush_on_exit(
     mut exit: MessageReader<AppExit>,
-    registry: Res<Registry>,
+    mut registry: ResMut<Registry>,
+    vms: NonSend<HeadVms>,
     persisted: Res<Persisted>,
     gui_state: Res<GuiState>,
     mut persister: ResMut<Persister>,
@@ -280,6 +296,7 @@ fn flush_on_exit(
         return;
     }
     if read_only.is_none() {
+        save_states(&mut registry, &vms, &heads_query);
         let mut full = persisted.cleared();
         let window = primary_window.single().ok();
         let batch = collect_batch_to_persist(
