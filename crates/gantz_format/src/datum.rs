@@ -37,13 +37,19 @@ pub fn datum_text(d: &Datum) -> String {
                 .join(" ");
             format!("({inner})")
         }
+        Datum::Sym(name) => symbol_text(name),
+        Datum::Ratio(r) => format!("{}/{}", r.numer(), r.denom()),
     }
 }
 
 /// Read a [`Datum`] from a Steel datum expression. Numbers are read from their
 /// verbatim source slice in `src`. Seqs are vectors written `#(...)`. Maps are
-/// bare lists of `(key value)` pairs.
+/// bare lists of `(key value)` pairs. Symbols are quoted, `'name`, or `'"name"`
+/// for a name that is not an identifier.
 pub fn datum_from_expr(e: &ExprKind, src: &str) -> Datum {
+    if let Some(q) = quoted(e) {
+        return symbol_datum(q);
+    }
     match e {
         ExprKind::Vector(v) if v.bytes => {
             Datum::Bytes(v.args.iter().filter_map(|a| byte_of(a, src)).collect())
@@ -98,10 +104,61 @@ fn number_datum(e: &ExprKind, src: &str) -> Datum {
         Datum::I64(i)
     } else if let Ok(u) = text.parse::<u64>() {
         Datum::U64(u)
+    } else if let Some(ratio) = ratio_datum(text) {
+        ratio
     } else if let Ok(f) = text.parse::<f64>() {
         Datum::F64(f)
     } else {
         Datum::Str(text.to_string())
+    }
+}
+
+/// The expression that `e` quotes, written `'x` or `(quote x)`. The reader
+/// gives a quote at the top level as a list with a quote head, and a nested
+/// one as a quote expression. A map is never a quote form, since its items
+/// are lists.
+fn quoted(e: &ExprKind) -> Option<&ExprKind> {
+    let quote_head = |head: &ExprKind| match head {
+        ExprKind::Atom(a) => match &a.syn.ty {
+            TokenType::Quote => true,
+            TokenType::Identifier(s) => s.resolve() == "quote",
+            _ => false,
+        },
+        _ => false,
+    };
+    match e {
+        ExprKind::Quote(q) => Some(&q.expr),
+        _ => match list_args(e)? {
+            [head, quoted] if quote_head(head) => Some(quoted),
+            _ => None,
+        },
+    }
+}
+
+/// The symbol of the quoted expression `q`, an identifier or a string.
+fn symbol_datum(q: &ExprKind) -> Datum {
+    let name = sexpr::as_symbol(q).or_else(|| sexpr::as_string(q));
+    name.map_or(Datum::Null, Datum::Sym)
+}
+
+/// The datum of the ratio literal `text`, such as `-1/3`.
+fn ratio_datum(text: &str) -> Option<Datum> {
+    let (n, d) = text.split_once('/')?;
+    Datum::ratio(n.parse().ok()?, d.parse().ok()?)
+}
+
+/// Render a symbol as `'name`, or as `'"name"` when the name does not read
+/// back as one identifier.
+fn symbol_text(name: &str) -> String {
+    let ident = match sexpr::read(name).as_deref() {
+        Ok([ExprKind::Atom(a)]) => {
+            matches!(&a.syn.ty, TokenType::Identifier(s) if s.resolve() == name)
+        }
+        _ => false,
+    };
+    match ident {
+        true => format!("'{name}"),
+        false => format!("'{}", quote(name)),
     }
 }
 
@@ -478,5 +535,29 @@ mod tests {
         assert!(from_datum::<i64>(Datum::Str("nope".into())).is_err());
         assert!(from_datum::<String>(Datum::I64(1)).is_err());
         assert!(from_datum::<bool>(Datum::Null).is_err());
+    }
+
+    /// Symbols and ratios read back from their text. A name that is not an
+    /// identifier is written as a quoted string, and a bare identifier still
+    /// reads as a string.
+    #[test]
+    fn symbols_and_ratios_round_trip_through_text() {
+        let syms = ["bd", "pat.mini", "@", "text-input", "null", "a b", "1x", ""];
+        for name in syms {
+            let d = Datum::Sym(name.into());
+            assert_eq!(text_roundtrip(&d), d, "{}", datum_text(&d));
+        }
+        assert_eq!(datum_text(&Datum::Sym("bd".into())), "'bd");
+        assert_eq!(datum_text(&Datum::Sym("a b".into())), "'\"a b\"");
+        let ratio = Datum::ratio(-1, 3).unwrap();
+        assert_eq!(datum_text(&ratio), "-1/3");
+        assert_eq!(text_roundtrip(&ratio), ratio);
+        let nested = Datum::Seq(vec![
+            Datum::Map(vec![("k".into(), Datum::Sym("v".into()))]),
+            Datum::ratio(7, 2).unwrap(),
+        ]);
+        assert_eq!(text_roundtrip(&nested), nested);
+        let exprs = sexpr::read("bd").unwrap();
+        assert_eq!(datum_from_expr(&exprs[0], "bd"), Datum::Str("bd".into()));
     }
 }

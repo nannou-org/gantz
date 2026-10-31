@@ -1,13 +1,13 @@
-//! Both codecs agree. One tree, two runtimes, the same decode.
+//! One tree through every encoding: a datum, and a Steel value.
 
-#![cfg(all(feature = "steel", feature = "datum"))]
+#![cfg(feature = "steel")]
 
 use crate::elem::{
     Align, BindPath, Bound, Button, Choice, Col, Color, Dialer, DialerStyle, Element, Frame, Grid,
     Key, Label, Matrix, Plot, PlotMode, PlotStyle, RefGui, Rgba, Row, Scope, Sep, Space, Toggle,
     Value,
 };
-use crate::{Decoded, Limits, SExpr, codec};
+use crate::{Decoded, Limits, codec};
 
 /// One tree exercising every vocabulary element and attribute.
 fn full_tree() -> Element {
@@ -121,39 +121,19 @@ fn full_tree() -> Element {
     })
 }
 
-/// Identifiers and strings are interchangeable, so normalizing identifiers
-/// away yields the codec-independent form.
-fn normalized(expr: SExpr) -> SExpr {
-    match expr {
-        SExpr::Ident(s) => SExpr::Str(s),
-        SExpr::List(items) => SExpr::List(items.into_iter().map(normalized).collect()),
-        other => other,
-    }
-}
-
+/// The tree survives its datum encoding and a trip through Steel, and the
+/// Steel value reads back as the same datum.
 #[test]
-fn both_codecs_decode_the_same_tree_identically() {
+fn the_full_tree_round_trips_through_every_encoding() {
     let tree = full_tree();
     let limits = Limits::default();
-
-    let steel_val = codec::steel::encode(&tree);
-    let datum = codec::datum::encode(&tree);
-
-    let via_steel = codec::steel::decode(&steel_val, &limits);
-    let via_datum = codec::datum::decode(&datum, &limits);
-
     let expected = Decoded {
-        root: tree,
+        root: tree.clone(),
         warnings: vec![],
     };
-    assert_eq!(via_steel, expected);
-    assert_eq!(via_datum, expected);
-}
-
-#[test]
-fn both_encodings_agree_modulo_identifier_normalization() {
-    let tree = full_tree();
-    let steel_lowered = codec::steel::lower(&codec::steel::encode(&tree));
-    let datum_lowered = codec::datum::lower(&codec::datum::encode(&tree));
-    assert_eq!(normalized(steel_lowered), datum_lowered);
+    let datum = crate::encode(&tree);
+    assert_eq!(crate::decode(datum.clone(), &limits), expected);
+    let steel = codec::steel::encode(&tree);
+    assert_eq!(codec::steel::decode(&steel, &limits), expected);
+    assert_eq!(codec::steel::lower(&steel), datum);
 }

@@ -849,21 +849,18 @@ impl<'a> NodeCtx<'a> {
     /// The write is recorded as an [`action::StateWrite`] and surfaced
     /// per-head as a [`StateWritten`] payload, so live interactions can reach
     /// collaborative sessions. Values with no wire representation, such as
-    /// closures, are written but not recorded. Use
+    /// closures, are written but not recorded. See [`gantz_core::datum::of_steel`]. Use
     /// [`update_value_local`](Self::update_value_local) for writes that must
     /// stay local.
     pub fn update_value(&mut self, val: SteelVal) -> Result<(), SteelErr> {
-        let recorded = action::Value::try_from(&val).ok();
+        let recorded = gantz_core::datum::of_steel(&val);
         node::state::update_value(self.vm, self.path, val)?;
         match recorded {
-            Some(value) => self.writes.push(action::StateWrite {
+            Ok(value) => self.writes.push(action::StateWrite {
                 path: self.path.to_vec(),
                 value,
             }),
-            None => log::debug!(
-                "state write at {:?} not recorded: no wire-encodable representation",
-                self.path
-            ),
+            Err(e) => log::debug!("state write at {:?} not recorded: {e}", self.path),
         }
         Ok(())
     }
@@ -904,16 +901,14 @@ impl<'a> NodeCtx<'a> {
     /// `changed`. The write is likewise recorded for session sync under the
     /// given path.
     pub fn update_value_at(&mut self, path: &[node::Id], val: SteelVal) -> Result<(), SteelErr> {
-        let recorded = action::Value::try_from(&val).ok();
+        let recorded = gantz_core::datum::of_steel(&val);
         node::state::update_value(self.vm, path, val)?;
         match recorded {
-            Some(value) => self.writes.push(action::StateWrite {
+            Ok(value) => self.writes.push(action::StateWrite {
                 path: path.to_vec(),
                 value,
             }),
-            None => log::debug!(
-                "state write at {path:?} not recorded: no wire-encodable representation"
-            ),
+            Err(e) => log::debug!("state write at {path:?} not recorded: {e}"),
         }
         Ok(())
     }

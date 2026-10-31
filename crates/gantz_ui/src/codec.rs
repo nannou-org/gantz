@@ -1,12 +1,7 @@
-//! Per-runtime codecs between the abstract value model and value types.
+//! Runtime codecs between value types and the tree.
 //!
-//! Each codec is four total free functions. `lower` maps a runtime value
-//! into [`crate::sexpr::SExpr`]. `raise` maps an `SExpr` back. `decode` and
-//! `encode` compose them with the shared decoder and encoder. Adding a
-//! backend means writing one small total lowering. The model, decoder and
-//! encoder are shared.
+//! A codec converts a runtime value to and from a [`Datum`](gantz_ca::Datum),
+//! and composes that with the shared decoder and encoder.
 
-#[cfg(feature = "datum")]
-pub mod datum;
 #[cfg(feature = "steel")]
 pub mod steel;

@@ -30,9 +30,10 @@ use bevy_log as log;
 use gantz_ca as ca;
 use gantz_collab::{Command, GossipMsg, PeerId, SessionId, proto};
 use gantz_core::compile::entrypoint::Entrypoint;
+use gantz_core::datum::Datum;
 use gantz_core::node;
 use gantz_egui::DynResponse;
-use gantz_egui::action::{Action, Source, Value};
+use gantz_egui::action::{Action, Source};
 use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 use web_time::Instant;
@@ -81,7 +82,7 @@ type PathKey = (SessionId, ca::Name, Vec<node::Id>);
 struct PendingWrite {
     /// Every value written this window, oldest first. Bounded by
     /// [`MAX_BATCHED_WRITES`].
-    values: Vec<Value>,
+    values: Vec<Datum>,
     /// The push-eval fused with these writes, when the node triggered one.
     eval: Option<Source>,
 }
@@ -612,9 +613,11 @@ pub fn apply_remote_actions(
                         let Some(vm) = vms.0.get_mut(&entity) else {
                             return;
                         };
-                        if let Err(e) =
-                            gantz_core::node::state::update_value(vm, &path, value.into())
-                        {
+                        if let Err(e) = gantz_core::node::state::update_value(
+                            vm,
+                            &path,
+                            gantz_core::datum::to_steel(&value),
+                        ) {
                             log::warn!("failed to apply remote state write: {e}");
                         }
                     });
@@ -691,16 +694,22 @@ fn trigger_guarded_eval(
 }
 
 /// A compact display form for a value in log and history lines.
-pub(crate) fn value_summary(value: &Value) -> String {
+pub(crate) fn value_summary(value: &Datum) -> String {
     match value {
-        Value::Unit => "()".to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Int(i) => i.to_string(),
-        Value::Num(n) => format!("{n:.4}"),
-        Value::Char(c) => format!("{c:?}"),
-        Value::Str(s) if s.chars().count() <= 16 => format!("{s:?}"),
-        Value::Str(s) => format!("{:?}…", s.chars().take(16).collect::<String>()),
-        Value::List(l) => format!("[{} items]", l.len()),
+        Datum::Null => "()".to_string(),
+        Datum::Bool(b) => b.to_string(),
+        Datum::I64(i) => i.to_string(),
+        Datum::U64(u) => u.to_string(),
+        Datum::F64(n) => format!("{n:.4}"),
+        Datum::Ratio(r) => format!("{}/{}", r.numer(), r.denom()),
+        Datum::Char(c) => format!("{c:?}"),
+        Datum::Str(s) | Datum::Sym(s) if s.chars().count() <= 16 => format!("{s:?}"),
+        Datum::Str(s) | Datum::Sym(s) => {
+            format!("{:?}…", s.chars().take(16).collect::<String>())
+        }
+        Datum::Bytes(b) => format!("[{} bytes]", b.len()),
+        Datum::Seq(l) => format!("[{} items]", l.len()),
+        Datum::Map(m) => format!("{{{} entries}}", m.len()),
     }
 }
 
@@ -745,7 +754,7 @@ mod tests {
     fn write(path: &[node::Id], v: f64) -> gantz_egui::action::StateWrite {
         gantz_egui::action::StateWrite {
             path: path.to_vec(),
-            value: Value::Num(v),
+            value: Datum::F64(v),
         }
     }
 
@@ -786,7 +795,7 @@ mod tests {
         let pending = outbox.pending.get(&key).expect("a pending write");
         assert_eq!(
             pending.values,
-            vec![Value::Num(1.0), Value::Num(2.0)],
+            vec![Datum::F64(1.0), Datum::F64(2.0)],
             "every step of the window must ship, oldest first"
         );
         assert!(
@@ -812,10 +821,10 @@ mod tests {
         let key = (session, name, path);
         let pending = outbox.pending.get(&key).expect("a pending write");
         assert_eq!(pending.values.len(), MAX_BATCHED_WRITES);
-        assert_eq!(pending.values.first(), Some(&Value::Num(2.0)));
+        assert_eq!(pending.values.first(), Some(&Datum::F64(2.0)));
         assert_eq!(
             pending.values.last(),
-            Some(&Value::Num((MAX_BATCHED_WRITES + 1) as f64))
+            Some(&Datum::F64((MAX_BATCHED_WRITES + 1) as f64))
         );
     }
 }

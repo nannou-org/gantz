@@ -11,9 +11,9 @@ repository.workspace = true
 [features]
 default = ["steel"]
 steel = ["dep:steel-core", "dep:gantz_core"]
-datum = ["dep:gantz_core"]
 
 [dependencies]
+gantz_ca.workspace = true
 gantz_core = { workspace = true, optional = true }
 steel-core = { workspace = true, optional = true }
 thiserror.workspace = true
