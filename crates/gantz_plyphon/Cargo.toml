@@ -31,7 +31,9 @@ gantz_core.workspace = true
 gantz_edit.workspace = true
 gantz_egui = { workspace = true, optional = true }
 gantz_format.workspace = true
+gantz_nodedef.workspace = true
 gantz_nodetag.workspace = true
+gantz_ui = { workspace = true, default-features = false, features = ["serde"] }
 hound.workspace = true
 log.workspace = true
 petgraph.workspace = true

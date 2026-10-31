@@ -57,8 +57,6 @@ pub use plyphon;
 /// [`plyphon::UnitRegistry`] at startup. See [`PlyphonPlugin::with_units`].
 type UnitRegistrar = Box<dyn Fn(&mut plyphon::UnitRegistry) + Send + Sync>;
 
-mod sample_load;
-
 use bevy_gantz::head::{HeadRef, HeadVms, OpenHead};
 use bevy_gantz::{EntrypointSet, EvalEpoch, Registry, VmSet};
 use bevy_gantz_egui::GraphCache;
@@ -239,8 +237,6 @@ impl Plugin for PlyphonPlugin {
             .init_resource::<GuiState>()
             .add_message::<DspSettingsChanged>()
             .register_response_with::<Config>(dispatch_dsp_settings)
-            .register_head_response::<gantz_plyphon::LoadSample>()
-            .add_observer(sample_load::on_load_sample)
             .add_systems(
                 PreUpdate,
                 (
@@ -264,14 +260,18 @@ impl Plugin for PlyphonPlugin {
         // Run once the `tick!` and `update!` drivers' triggered evaluations
         // have flushed, so the control values they queue are visible to the
         // param drain in the same frame.
-        app.add_systems(Update, drive_synths.after(VmSet).after(EntrypointSet));
-        // Commit a loaded sample before the driver derives the new graph.
+        // An imported sample commits before the driver derives the new graph.
         app.add_systems(
             Update,
-            sample_load::poll_sample_load
-                .run_if(resource_exists::<sample_load::SampleLoadTask>)
-                .before(drive_synths),
+            drive_synths
+                .after(VmSet)
+                .after(EntrypointSet)
+                .after(bevy_gantz_egui::node_import::poll_node_import),
         );
+        app.world_mut()
+            .get_resource_or_init::<bevy_gantz_egui::node_import::Importers>()
+            .0
+            .extend(gantz_plyphon::importers());
         // Keep the web audio callback's epoch anchor fresh.
         #[cfg(target_arch = "wasm32")]
         app.add_systems(Update, refresh_clock_offset.before(drive_synths));
@@ -2006,7 +2006,7 @@ fn write_tables(
             BufferKey::Scratch { head: h, path, .. } if *h == head => Some(path),
             _ => None,
         })
-        .filter(|path| gantz_plyphon::node::buffer::take_dirty(vm, path))
+        .filter(|path| take_dirty(vm, path))
         .cloned()
         .collect();
     for (key, buffer) in held.iter_mut() {
@@ -2027,7 +2027,7 @@ fn write_tables(
         if !buffer.table_pending {
             continue;
         }
-        let table = match gantz_plyphon::node::buffer::table(vm, path) {
+        let table = match table(vm, path) {
             Ok(table) => table,
             Err(e) => {
                 log::error!("bevy_gantz_plyphon: the table of `~buffer` {path:?} is invalid: {e}");
@@ -2129,6 +2129,34 @@ fn output_host() -> cpal::Host {
 /// silently. `epoch` is the shared monotonic clock the callback anchors the
 /// engine clock to. `unit_registrars` register any custom units into the
 /// controller's registry before the stream starts.
+/// Whether the `~buffer` at `path` in `vm` holds a new table. Clears the flag
+/// in its state.
+fn take_dirty(vm: &mut Engine, path: &[usize]) -> bool {
+    let Ok(Some(state)) = gantz_core::node::state::extract_value(vm, path) else {
+        return false;
+    };
+    let Ok(state) = gantz_core::datum::of_steel(&state) else {
+        return false;
+    };
+    let Some(cleared) = gantz_plyphon::node::buffer::take_dirty(&state) else {
+        return false;
+    };
+    let cleared = gantz_core::datum::to_steel(&cleared);
+    let _ = gantz_core::node::state::update_value(vm, path, cleared);
+    true
+}
+
+/// The latest table of the `~buffer` at `path` in `vm`.
+fn table(vm: &Engine, path: &[usize]) -> Result<Vec<f32>, gantz_plyphon::node::buffer::TableError> {
+    let Ok(Some(state)) = gantz_core::node::state::extract_value(vm, path) else {
+        return Ok(Vec::new());
+    };
+    let Ok(state) = gantz_core::datum::of_steel(&state) else {
+        return Ok(Vec::new());
+    };
+    gantz_plyphon::node::buffer::table(&state)
+}
+
 fn build_dsp_engine(epoch: EvalEpoch, unit_registrars: &[UnitRegistrar]) -> Option<DspEngine> {
     let host = output_host();
     let device = host.default_output_device()?;
@@ -2951,7 +2979,7 @@ mod tests {
             .expect("state read")
             .expect("state present");
         assert_eq!(
-            gantz_plyphon::param::pending_len(&out_state),
+            gantz_plyphon::param::pending_len(&gantz_core::datum::of_steel(&out_state).unwrap()),
             0,
             "the spawn drains the queue",
         );
@@ -3290,7 +3318,7 @@ mod tests {
             "index 0 reads the table: {v}"
         );
         assert!(
-            !gantz_plyphon::node::buffer::take_dirty(&mut vm, &path),
+            !take_dirty(&mut vm, &path),
             "the driver took the dirty flag",
         );
     }
@@ -3840,12 +3868,12 @@ mod tests {
         use gantz_core::data::erase_node_typed;
         let dg: gantz_ca::DataGraph = g.map(
             |_, n| match n {
-                TestN::Unit(s) => erase_node_typed(s).unwrap(),
-                TestN::Out(o) => erase_node_typed(o).unwrap(),
-                TestN::Pack(p) => erase_node_typed(p).unwrap(),
-                TestN::Unpack(u) => erase_node_typed(u).unwrap(),
-                TestN::Sample(s) => erase_node_typed(s).unwrap(),
-                TestN::Buffer(b) => erase_node_typed(b).unwrap(),
+                TestN::Unit(s) => gantz_nodedef::node_data(s).unwrap(),
+                TestN::Out(o) => gantz_nodedef::node_data(o).unwrap(),
+                TestN::Pack(p) => gantz_nodedef::node_data(p).unwrap(),
+                TestN::Unpack(u) => gantz_nodedef::node_data(u).unwrap(),
+                TestN::Sample(s) => gantz_nodedef::node_data(s).unwrap(),
+                TestN::Buffer(b) => gantz_nodedef::node_data(b).unwrap(),
                 TestN::Inlet => {
                     erase_node_typed(&gantz_core::node::graph::Inlet::default()).unwrap()
                 }

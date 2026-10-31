@@ -1,14 +1,16 @@
 //! The `~scopeout` node. It monitors a dsp signal into per-channel ring
 //! buffers, read out on a trigger.
 
-use gantz_core::node::{Conns, EvalConf, ExprCtx, ExprResult, MetaCtx, RegCtx};
-use gantz_core::steel::SteelVal;
+use gantz_ca::Datum;
+use gantz_nodedef::{ExprArgs, Meta, View};
 use gantz_nodetag::NodeTag;
+use gantz_ui::{self as ui, BindPath, Element};
 use plyphon::Rate;
 use plyphon::synthdef::{InputRef, UnitSpec};
 use serde::{Deserialize, Serialize};
 
 use crate::dsp::{DspBuilder, NodeDsp, Signal, ToNodeDsp, input_or_silent};
+use crate::view::{doc, edit_count, edit_dialer, row};
 
 /// A signal tap. It streams every sample of its input signal into
 /// per-channel ring buffers held in VM state. The audio driver writes them by
@@ -28,6 +30,12 @@ pub struct ScopeOut {
     #[serde(default = "default_size", skip_serializing_if = "is_default_size")]
     size: usize,
 }
+
+/// The edit of the ring length.
+const SIZE: &str = "size";
+
+/// The longest ring in frames.
+const MAX_SIZE: usize = 16_384;
 
 impl ScopeOut {
     /// The default ring-buffer length in frames a fresh `~scopeout` starts at.
@@ -52,59 +60,91 @@ impl Default for ScopeOut {
     }
 }
 
-impl gantz_core::Node for ScopeOut {
-    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
-        // Input 0 is the signal, a dsp edge of any channel width. Input 1 is
-        // the control trigger that reads the buffers out the outlets.
-        2
+impl gantz_nodedef::NodeDef for ScopeOut {
+    const TAG: &'static str = <Self as NodeTag>::TAG;
+
+    fn meta(&self) -> Meta {
+        Meta {
+            name: "~scopeout".into(),
+            description: "Scope a signal into per-channel ring buffers. Read them out on a trigger"
+                .into(),
+            // Input 0 is the signal, a dsp edge of any channel width. Input 1
+            // is the control trigger that reads the buffers out the outlets.
+            inputs: 2,
+            // Output 0 is the per-channel sample rings. Output 1 is the
+            // channel count.
+            outputs: 2,
+            // Fire the outlets only when the control trigger is active.
+            // Branch 0 activates both outputs, branch 1 activates neither. The
+            // branch the `expr` selects at eval time gates whether downstream
+            // nodes such as a `plot` evaluate. A push arriving through an
+            // inert dsp edge therefore never surfaces the buffer.
+            branches: [[true, true], [false, false]]
+                .map(|set| set.into_iter().collect())
+                .into_iter()
+                .collect(),
+            stateful: true,
+            ..Meta::default()
+        }
     }
 
-    fn n_outputs(&self, _ctx: MetaCtx) -> usize {
-        // Output 0 is the per-channel sample rings. Output 1 is the channel
-        // count.
-        2
-    }
-
-    fn stateful(&self, _ctx: MetaCtx) -> bool {
-        true
-    }
-
-    fn branches(&self, _ctx: MetaCtx) -> Vec<EvalConf> {
-        // Fire the outlets only when the control trigger is active. Branch 0
-        // activates both outputs, branch 1 activates neither. The branch the
-        // `expr` selects at eval time gates whether downstream nodes such as a
-        // `plot` evaluate. A push arriving through an inert dsp edge therefore
-        // never surfaces the buffer.
-        vec![
-            EvalConf::Set(Conns::try_from([true, true]).unwrap()),
-            EvalConf::Set(Conns::try_from([false, false]).unwrap()),
-        ]
-    }
-
-    fn register(&self, mut ctx: RegCtx<'_, '_>) {
-        let path = ctx.path();
-        gantz_core::node::state::init_value_if_absent(ctx.vm(), path, || {
-            SteelVal::ListV(Default::default())
-        })
-        .unwrap()
-    }
-
-    fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
-        // The per-channel ring buffers the audio driver maintains are output
+    fn expr(&self, ctx: ExprArgs<'_>) -> Result<String, String> {
+        // The per-channel ring buffers the DSP runtime maintains are output
         // 0. The channel count, the number of rings, is output 1. It is 0
-        // until the driver first writes. The trigger is input 1. Emit only
+        // until the runtime first writes. The trigger is input 1. Emit only
         // when it fired this eval, then `branches` gates the outlets. The dsp
-        // input at index 0 is inert here, since the driver fills the rings, so
-        // it is ignored.
-        let triggered = ctx.inputs().get(1).is_some_and(Option::is_some);
-        let src = if triggered {
+        // input at index 0 is inert here, since the runtime fills the rings,
+        // so it is ignored.
+        let triggered = ctx.inputs.get(1).is_some_and(Option::is_some);
+        let src = match triggered {
             // Branch 0, both outputs active, yields `(list rings channel-count)`.
-            "(list 0 (list state (length state)))"
-        } else {
+            true => "(list 0 (list state (length state)))",
             // Branch 1, no outputs active.
-            "(list 1 '())"
+            false => "(list 1 '())",
         };
-        gantz_core::node::parse_expr(src)
+        Ok(src.into())
+    }
+
+    fn init_state(&self) -> Option<Datum> {
+        Some(Datum::Seq(vec![]))
+    }
+
+    fn view(&self) -> View {
+        let size = ui::Dialer {
+            min: Some(1.0),
+            max: Some(MAX_SIZE as f64),
+            step: Some(1.0),
+            precision: Some(0),
+            label: Some("frames".into()),
+            tip: Some("the length of each ring, the frames that a read gives".into()),
+            ..edit_dialer(SIZE, self.size as f64)
+        };
+        // The buffered samples of each channel, stacked.
+        let rings = ui::Plot {
+            bind: Some(BindPath(vec![])),
+            h: Some(80.0),
+            ..ui::Plot::default()
+        };
+        let signal = "signal to sample into per-channel ring buffers (any channel width)";
+        let rings_doc = "one list of buffered samples per channel (oldest first)";
+        let count_doc = "the channel count (0 until the DSP runtime writes)";
+        View {
+            inputs: vec![
+                doc("signal", signal),
+                doc("bang", "trigger: output the buffered samples"),
+            ]
+            .into(),
+            outputs: vec![doc("list", rings_doc), doc("number", count_doc)],
+            rows: vec![row("size", Element::Dialer(size))],
+            inspector: Some(Element::Plot(rings)),
+            hide_state: true,
+            ..View::default()
+        }
+    }
+
+    fn edit(&self, edit: &str, value: &Datum) -> Option<Self> {
+        let size = edit_count(value, [1, MAX_SIZE]).filter(|_| edit == SIZE)?;
+        Some(ScopeOut { size })
     }
 }
 

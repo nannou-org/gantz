@@ -2,7 +2,8 @@
 
 use std::hash::{Hash, Hasher};
 
-use gantz_core::node::{ExprCtx, ExprResult, MetaCtx, RegCtx};
+use gantz_ca::Datum;
+use gantz_nodedef::{ExprArgs, Meta, View};
 use gantz_nodetag::NodeTag;
 use plyphon::Rate;
 use plyphon::synthdef::{InputRef, UnitSpec};
@@ -10,6 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::dsp::{DspBuilder, FadeSink, NodeDsp, Signal, ToNodeDsp, input_or_silent};
 use crate::param::{control_input_expr, param_name, param_state, plyphon_param};
+use crate::view::{LAG, MAX_LAG, doc, edit_secs, param_row};
 
 /// The audio output sink. Applies a master `gain` to its input signal and
 /// writes it to the output buses. A mono input is fanned across every device
@@ -69,30 +71,49 @@ impl Hash for Out {
     }
 }
 
-impl gantz_core::Node for Out {
-    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
-        // Input 0 is the audio signal, a dsp edge. Input 1 is the gain control.
-        2
+impl gantz_nodedef::NodeDef for Out {
+    const TAG: &'static str = <Self as NodeTag>::TAG;
+
+    fn meta(&self) -> Meta {
+        Meta {
+            name: "~out".into(),
+            description: "Audio output: master gain to the speakers".into(),
+            inputs: 2,
+            outputs: 0,
+            stateful: true,
+            ..Meta::default()
+        }
     }
 
-    fn stateful(&self, _ctx: MetaCtx) -> bool {
-        true
-    }
-
-    fn register(&self, mut ctx: RegCtx<'_, '_>) {
-        let path = ctx.path();
-        gantz_core::node::state::init_value_if_absent(ctx.vm(), path, || {
-            param_state(Self::DEFAULT_GAIN as f64)
-        })
-        .unwrap()
-    }
-
-    fn expr(&self, ctx: ExprCtx<'_, '_>) -> ExprResult {
+    fn expr(&self, ctx: ExprArgs<'_>) -> Result<String, String> {
         // A 0-output sink. The audio input at index 0 is a dsp edge handled by
         // the synthdef and ignored here. When the gain control at index 1 is
-        // connected, write it into state. The audio driver applies it via
+        // connected, write it into state. The DSP runtime applies it via
         // `set_control`.
-        control_input_expr(&ctx, self.n_dsp_inputs(), "'()")
+        Ok(control_input_expr(&ctx, self.n_dsp_inputs(), "'()"))
+    }
+
+    fn init_state(&self) -> Option<Datum> {
+        Some(param_state(Self::DEFAULT_GAIN as f64))
+    }
+
+    fn view(&self) -> View {
+        let signal = "signal to send to the audio output. Mono fans across every device \
+                      channel, wider signals write channel i to bus i";
+        let gain = "master gain control. Overrides the inspector value while connected";
+        let value = vec![crate::param::VALUE.to_string()];
+        View {
+            inputs: vec![doc("signal", signal), doc("number", gain)],
+            rows: vec![param_row("gain", value, [0.0, 1.0], "", self.gain_lag)],
+            hide_state: true,
+            ..View::default()
+        }
+    }
+
+    fn edit(&self, edit: &str, value: &Datum) -> Option<Self> {
+        let gain_lag =
+            edit_secs(value, MAX_LAG).filter(|_| edit.strip_prefix(LAG) == Some("gain"))?;
+        Some(Out { gain_lag })
     }
 }
 
@@ -125,7 +146,7 @@ impl NodeDsp for Out {
         let level = b.push_unit(UnitSpec {
             name: "BinaryOpUGen".to_string(),
             rate: Rate::Control,
-            inputs: vec![InputRef::Param(gain), fade],
+            inputs: vec![InputRef::Param(gain), fade].into(),
             num_outputs: 1,
             special_index: 2,
         });
@@ -142,7 +163,7 @@ impl NodeDsp for Out {
             let unit = b.push_unit(UnitSpec {
                 name: "BinaryOpUGen".to_string(),
                 rate: Rate::Audio,
-                inputs: vec![ch, level],
+                inputs: vec![ch, level].into(),
                 num_outputs: 1,
                 special_index: 2,
             });

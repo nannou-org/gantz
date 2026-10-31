@@ -48,18 +48,18 @@ impl gantz_core::Node for N {
         parse_expr("'()")
     }
 
-    fn n_inputs(&self, ctx: MetaCtx) -> usize {
+    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
         match self {
-            N::Unit(u) => gantz_core::Node::n_inputs(u, ctx),
+            N::Unit(u) => gantz_nodedef::NodeDef::meta(u).inputs,
             N::Outlet => 1,
-            N::Out(o) => gantz_core::Node::n_inputs(o, ctx),
+            N::Out(o) => gantz_nodedef::NodeDef::meta(o).inputs,
             N::Ref(_) | N::Inlet | N::Other => 0,
         }
     }
 
-    fn n_outputs(&self, ctx: MetaCtx) -> usize {
+    fn n_outputs(&self, _ctx: MetaCtx) -> usize {
         match self {
-            N::Unit(u) => gantz_core::Node::n_outputs(u, ctx),
+            N::Unit(u) => gantz_nodedef::NodeDef::meta(u).outputs,
             N::Inlet | N::Other => 1,
             N::Out(_) | N::Ref(_) | N::Outlet => 0,
         }

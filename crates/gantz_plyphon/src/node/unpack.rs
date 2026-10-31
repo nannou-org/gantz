@@ -1,10 +1,12 @@
 //! The `~unpack` node: split a channel group into mono outputs.
 
-use gantz_core::node::{ExprCtx, ExprResult, MetaCtx};
+use gantz_ca::Datum;
+use gantz_nodedef::{ExprArgs, Meta, View};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
 use crate::dsp::{DspBuilder, NodeDsp, Signal, ToNodeDsp, input_or_silent};
+use crate::view::{COUNT, MAX_COUNT, count_row, doc, edit_count};
 
 /// Split a channel group into `count` mono outputs, like Max's `mc.unpack~`
 /// or a VCV split. Output `i` carries the input's channel `i`, or silence
@@ -47,26 +49,48 @@ impl Default for Unpack {
     }
 }
 
-impl gantz_core::Node for Unpack {
-    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
+impl gantz_nodedef::NodeDef for Unpack {
+    const TAG: &'static str = <Self as NodeTag>::TAG;
+
+    fn meta(&self) -> Meta {
         // A single dsp signal input carrying the whole channel group.
-        1
+        Meta {
+            name: "~unpack".into(),
+            description: "Split a multichannel signal into mono outputs".into(),
+            inputs: 1,
+            outputs: self.count,
+            ..Meta::default()
+        }
     }
 
-    fn n_outputs(&self, _ctx: MetaCtx) -> usize {
-        self.count
-    }
-
-    fn expr(&self, _ctx: ExprCtx<'_, '_>) -> ExprResult {
+    fn expr(&self, _ctx: ExprArgs<'_>) -> Result<String, String> {
         // Steel-inert. The splitting happens at synthdef derivation.
         // Non-numeric placeholder outputs feed the inert dsp output edges, see
         // the `NodeDsp` docs. A single value for one output, a list of values
         // otherwise, per the multi-output expr contract.
-        let src = match self.count {
+        Ok(match self.count {
             1 => "'()".to_string(),
             n => format!("(list {})", vec!["'()"; n].join(" ")),
+        })
+    }
+
+    fn view(&self) -> View {
+        let output = |ix| {
+            let description = format!("channel {ix} of the input (silence past its width)");
+            doc("signal", description)
         };
-        gantz_core::node::parse_expr(&src)
+        let input = "signal to split into mono channels (any channel width)";
+        View {
+            inputs: vec![doc("signal", input)],
+            outputs: (0..self.count).map(output).collect(),
+            rows: vec![count_row(self.count, "the number of mono outputs")],
+            ..View::default()
+        }
+    }
+
+    fn edit(&self, edit: &str, value: &Datum) -> Option<Self> {
+        let count = edit_count(value, [1, MAX_COUNT]).filter(|_| edit == COUNT)?;
+        Some(Unpack { count })
     }
 }
 

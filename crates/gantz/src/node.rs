@@ -2,53 +2,43 @@
 /// from the registry's erased `NodeData` form and carries the set's `.gantz`
 /// sugar.
 ///
-/// This list is the app's wire-format manifest. Adding a node type to the app
-/// is one line here. The `codec_covers_every_node_set_case` and
-/// `node_set_addr_pins` gate tests enforce it.
+/// These kinds, with the DSP node definitions of `gantz_plyphon::node_defs`,
+/// are the app's wire-format manifest. Adding a node type to the app is one
+/// line here. The `codec_covers_every_node_set_case` and `node_set_addr_pins`
+/// gate tests enforce it.
 pub fn codec() -> gantz_egui::node::NodeCodec {
-    use gantz_egui::node::kind;
-    gantz_egui::node::NodeCodec::new(
-        sugars(),
-        [
-            kind::<gantz_core::node::Apply>(),
-            kind::<gantz_core::node::Branch>(),
-            kind::<gantz_core::node::Delay>(),
-            kind::<gantz_core::node::Expr>(),
-            kind::<gantz_core::node::Identity>(),
-            kind::<gantz_core::node::List>(),
-            kind::<gantz_core::node::graph::Inlet>(),
-            kind::<gantz_core::node::graph::Outlet>(),
-            kind::<gantz_egui::node::Bang>(),
-            kind::<gantz_io::Log>(),
-            kind::<gantz_io::MainBang>(),
-            kind::<gantz_egui::node::Number>(),
-            kind::<gantz_egui::node::FnNamedRef>(),
-            kind::<gantz_edit::NamedRef>(),
-            kind::<gantz_egui::node::Bind>(),
-            kind::<gantz_egui::node::Comment>(),
-            kind::<bevy_gantz_egui::node::LoadBang>(),
-            kind::<bevy_gantz_egui::node::UpdateBang>(),
-            kind::<bevy_gantz_egui::node::TickBang>(),
-            kind::<bevy_gantz_egui::node::Await>(),
-            kind::<bevy_gantz_egui::node::Sleep>(),
-            kind::<gantz_egui::node::Gui>(),
-            kind::<gantz_egui::node::Inspect>(),
-            kind::<gantz_egui::node::State>(),
-            kind::<gantz_egui::node::Plot>(),
-            kind::<gantz_plyphon::UnitNode>(),
-            kind::<gantz_plyphon::Out>(),
-            kind::<gantz_plyphon::ScopeOut>(),
-            kind::<gantz_plyphon::Pack>(),
-            kind::<gantz_plyphon::Sum>(),
-            kind::<gantz_plyphon::Unpack>(),
-            kind::<gantz_plyphon::Bus>(),
-            kind::<gantz_plyphon::Sample>(),
-            kind::<gantz_plyphon::Buffer>(),
-            kind::<gantz_plyphon::Envgen>(),
-            gantz_egui::node::def_kind::<gantz_pattern::Pmini>(),
-            gantz_egui::node::def_kind::<gantz_pattern::Pplot>(),
-        ],
-    )
+    use gantz_egui::node::{def_kind, dyn_def_kind, kind};
+    let kinds = [
+        kind::<gantz_core::node::Apply>(),
+        kind::<gantz_core::node::Branch>(),
+        kind::<gantz_core::node::Delay>(),
+        kind::<gantz_core::node::Expr>(),
+        kind::<gantz_core::node::Identity>(),
+        kind::<gantz_core::node::List>(),
+        kind::<gantz_core::node::graph::Inlet>(),
+        kind::<gantz_core::node::graph::Outlet>(),
+        kind::<gantz_egui::node::Bang>(),
+        kind::<gantz_io::Log>(),
+        kind::<gantz_io::MainBang>(),
+        kind::<gantz_egui::node::Number>(),
+        kind::<gantz_egui::node::FnNamedRef>(),
+        kind::<gantz_edit::NamedRef>(),
+        kind::<gantz_egui::node::Bind>(),
+        kind::<gantz_egui::node::Comment>(),
+        kind::<bevy_gantz_egui::node::LoadBang>(),
+        kind::<bevy_gantz_egui::node::UpdateBang>(),
+        kind::<bevy_gantz_egui::node::TickBang>(),
+        kind::<bevy_gantz_egui::node::Await>(),
+        kind::<bevy_gantz_egui::node::Sleep>(),
+        kind::<gantz_egui::node::Gui>(),
+        kind::<gantz_egui::node::Inspect>(),
+        kind::<gantz_egui::node::State>(),
+        kind::<gantz_egui::node::Plot>(),
+        def_kind::<gantz_pattern::Pmini>(),
+        def_kind::<gantz_pattern::Pplot>(),
+    ];
+    let dsp = gantz_plyphon::node_defs().into_iter().map(dyn_def_kind);
+    gantz_egui::node::NodeCodec::new(sugars(), kinds.into_iter().chain(dsp))
 }
 
 /// The `.gantz` keyword sugar of every domain's nodes.

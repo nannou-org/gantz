@@ -373,7 +373,7 @@ fn write_buffer(node: &Datum) -> String {
 /// the default ADSR. With `#:segs` there is no release point unless
 /// `#:release` gives one.
 fn envgen_spec(args: SugarArgs<'_>) -> Result<Datum, FormatError> {
-    let default = Envelope::default();
+    let default = crate::envelope::initial();
     let init = args.keyword_f64("init")?.map_or(default.init, |l| l as f32);
     let (segments, release) = match args.keyword_list("segs")? {
         Some(segs) => {
@@ -872,7 +872,7 @@ mod tests {
         assert_eq!(node.y_range(), [-1.0, 250.0]);
         assert_eq!(s.write_spec("Envgen", &d).as_deref(), Some(form));
         // The default segments without their release point need `#:segs`.
-        let mut no_release = Envelope::default();
+        let mut no_release = crate::envelope::initial();
         no_release.release = None;
         let d = envgen_datum(&Envgen::new(no_release.clone())).expect("datum");
         let written = s.write_spec("Envgen", &d).expect("form");

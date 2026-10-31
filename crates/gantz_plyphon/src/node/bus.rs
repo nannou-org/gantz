@@ -1,10 +1,11 @@
 //! The `~bus` node: a synthdef boundary on a signal wire.
 
-use gantz_core::node::{ExprCtx, ExprResult, MetaCtx};
+use gantz_nodedef::{ExprArgs, Meta, View};
 use gantz_nodetag::NodeTag;
 use serde::{Deserialize, Serialize};
 
 use crate::dsp::{DspBuilder, NodeDsp, Signal, ToNodeDsp, input_or_silent};
+use crate::view::doc;
 
 /// A synthdef boundary. Drop it on a signal wire to cut the derived synthdef
 /// there. The upstream region ends in an `Out` to a driver-allocated private
@@ -26,20 +27,41 @@ use crate::dsp::{DspBuilder, NodeDsp, Signal, ToNodeDsp, input_or_silent};
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq, Hash, NodeTag)]
 pub struct Bus {}
 
-impl gantz_core::Node for Bus {
-    fn n_inputs(&self, _ctx: MetaCtx) -> usize {
-        1
+impl gantz_nodedef::NodeDef for Bus {
+    const TAG: &'static str = <Self as NodeTag>::TAG;
+
+    fn meta(&self) -> Meta {
+        Meta {
+            name: "~bus".into(),
+            description: "Synthdef boundary: edits beyond it leave this side's synth running"
+                .into(),
+            inputs: 1,
+            outputs: 1,
+            ..Meta::default()
+        }
     }
 
-    fn n_outputs(&self, _ctx: MetaCtx) -> usize {
-        1
-    }
-
-    fn expr(&self, _ctx: ExprCtx<'_, '_>) -> ExprResult {
+    fn expr(&self, _ctx: ExprArgs<'_>) -> Result<String, String> {
         // Steel-inert. The boundary exists only at synthdef derivation. A
         // non-numeric placeholder output feeds the inert dsp output edge, see
         // the `NodeDsp` docs.
-        gantz_core::node::parse_expr("'()")
+        Ok("'()".into())
+    }
+
+    fn view(&self) -> View {
+        View {
+            inputs: vec![doc(
+                "signal",
+                "signal to carry across the synthdef boundary (any channel width)",
+            )]
+            .into(),
+            outputs: vec![doc(
+                "signal",
+                "the same signal, entering the downstream synthdef",
+            )]
+            .into(),
+            ..View::default()
+        }
     }
 }
 

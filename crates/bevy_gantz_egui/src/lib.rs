@@ -25,6 +25,7 @@ mod hooks;
 mod io;
 mod merge;
 pub mod node;
+pub mod node_import;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod pane_window;
 pub mod reg;
@@ -219,6 +220,7 @@ impl Plugin for GantzEguiPlugin {
             .register_head_response::<gantz_egui::Paste>()
             .register_head_response::<gantz_egui::Redo>()
             .register_head_response::<gantz_egui::Undo>()
+            .register_head_response::<gantz_egui::node::ImportIntoNode>()
             .register_response_with::<gantz_egui::EvalEntry>(dispatch_eval_entry)
             .register_response_with::<gantz_egui::StateWritten>(dispatch_state_written)
             .register_response_with::<gantz_egui::OpenHead>(dispatch_open_head)
@@ -257,6 +259,7 @@ impl Plugin for GantzEguiPlugin {
             .init_resource::<EdgeStyles>()
             .init_resource::<AudioHeads>()
             .init_resource::<StatusItems>()
+            .init_resource::<node_import::Importers>()
             // GUI state observers
             .add_observer(on_head_opened)
             .add_observer(on_head_changed)
@@ -295,6 +298,7 @@ impl Plugin for GantzEguiPlugin {
             .add_observer(on_import_palette)
             .add_observer(on_export_palette)
             .add_observer(on_import_file)
+            .add_observer(node_import::on_import_into_node)
             .add_observer(on_reset_base_graph)
             .add_observer(on_new_graph)
             .add_observer(on_remove_name)
@@ -308,6 +312,8 @@ impl Plugin for GantzEguiPlugin {
             .add_systems(
                 Update,
                 (
+                    node_import::poll_node_import
+                        .run_if(resource_exists::<node_import::NodeImportTask>),
                     // Re-pulls gui markers of dirty or recompiled heads. Runs
                     // after the entrypoint drivers so their pushes refresh
                     // markers the same frame.

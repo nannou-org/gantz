@@ -25,9 +25,8 @@ use bevy_gantz_egui::{GraphCache, NodeCodecRes};
 use bevy_gantz_plyphon::PlyphonPlugin;
 use bytemuck::{Pod, Zeroable};
 use gantz_ca::Head;
-use gantz_core::Node as GantzNode;
-use gantz_core::node::{ExprCtx, ExprResult, MetaCtx, parse_expr};
-use gantz_plyphon::{DspBuilder, NodeDsp, Signal, ToNodeDsp};
+use gantz_nodedef::{ExprArgs, Meta, NodeDef};
+use gantz_plyphon::{DspBuilder, NodeDsp, Signal};
 use plyphon::synthdef::{InputRef, UnitSpec};
 use plyphon::{
     BuildContext, BuildError, BuiltUnit, DoneAction, ProcessCtx, Rate, Unit, UnitDef, unit_spec,
@@ -75,22 +74,28 @@ impl UnitDef for SawCtor {
 
 // 2. A custom gantz DSP node emitting the `Saw` unit.
 
-/// A saw-oscillator DSP node. `gantz_core::Node` makes it a graph node. It is
-/// Steel-inert, since audio is plyphon's job. `NodeDsp` emits its UGen graph.
-/// `NodeUi` gives the erased UI node its minimal rendering.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, gantz_nodetag::NodeTag)]
+/// A saw-oscillator DSP node. `NodeDef` defines its node type, with no view
+/// beside its name. It is Steel-inert, since audio is plyphon's job.
+/// `NodeDsp` emits its UGen graph.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 struct SawNode {
     freq: f32,
 }
 
-impl GantzNode for SawNode {
-    fn n_outputs(&self, _: MetaCtx) -> usize {
-        1
+impl NodeDef for SawNode {
+    const TAG: &'static str = "SawNode";
+
+    fn meta(&self) -> Meta {
+        Meta {
+            name: "~saw".into(),
+            outputs: 1,
+            ..Meta::default()
+        }
     }
 
-    fn expr(&self, _: ExprCtx<'_, '_>) -> ExprResult {
+    fn expr(&self, _: ExprArgs<'_>) -> Result<String, String> {
         // Steel-inert. A placeholder output for the ignored dsp edge.
-        parse_expr("0")
+        Ok("0".into())
     }
 }
 
@@ -116,27 +121,6 @@ impl NodeDsp for SawNode {
     }
 }
 
-impl ToNodeDsp for SawNode {
-    fn to_node_dsp(&self) -> Option<&dyn NodeDsp> {
-        Some(self)
-    }
-}
-
-impl gantz_egui::NodeUi for SawNode {
-    fn name(&self, _: &gantz_egui::Env<'_>) -> std::borrow::Cow<'_, str> {
-        std::borrow::Cow::Borrowed("~saw")
-    }
-
-    fn ui(
-        &mut self,
-        _ctx: gantz_egui::NodeCtx,
-        uictx: egui_graph::NodeCtx,
-    ) -> gantz_egui::NodeUiResponse {
-        let framed = uictx.framed(|ui, _sockets| ui.label("~saw"));
-        gantz_egui::NodeUiResponse::new(framed)
-    }
-}
-
 // 3. The node codec over the `~saw` source and the reused `~out` sink.
 
 /// The value-level codec over the example's node set. The seam through which
@@ -145,8 +129,8 @@ fn codec() -> gantz_egui::node::NodeCodec {
     gantz_egui::node::NodeCodec::new(
         gantz_format::Sugars::default(),
         [
-            gantz_egui::node::kind::<SawNode>(),
-            gantz_egui::node::kind::<gantz_plyphon::Out>(),
+            gantz_egui::node::dyn_def_kind(gantz_plyphon::node_def::<SawNode>()),
+            gantz_egui::node::dyn_def_kind(gantz_plyphon::node_def::<gantz_plyphon::Out>()),
         ],
     )
 }
@@ -181,9 +165,8 @@ fn setup(mut registry: ResMut<Registry>, mut cache: ResMut<GraphCache>, mut cmds
     // The registry stores graphs as erased data. The graph address is always
     // computed on the erased form.
     let mut dg = gantz_ca::DataGraph::default();
-    let saw = dg.add_node(gantz_core::data::erase_node_typed(&SawNode { freq: 220.0 }).unwrap());
-    let out =
-        dg.add_node(gantz_core::data::erase_node_typed(&gantz_plyphon::Out::default()).unwrap());
+    let saw = dg.add_node(gantz_nodedef::node_data(&SawNode { freq: 220.0 }).unwrap());
+    let out = dg.add_node(gantz_nodedef::node_data(&gantz_plyphon::Out::default()).unwrap());
     dg.add_edge(saw, out, gantz_ca::Edge::from((0, 0)));
 
     let graph_ca = gantz_ca::graph_addr(&dg);
