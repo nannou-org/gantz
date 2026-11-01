@@ -16,7 +16,7 @@ pub mod node;
 pub mod plot;
 pub mod sugar;
 
-pub use node::{Pmini, builtins};
+pub use node::{Pkey, Pmini, Ppick, builtins};
 pub use plot::Pplot;
 pub use sugar::PatternSugar;
 

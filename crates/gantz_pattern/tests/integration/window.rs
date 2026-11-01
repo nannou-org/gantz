@@ -375,7 +375,7 @@ fn delivery() {
             "events_to_secs_spaces_onsets",
             "(equal? (list (list 10.0 #t) (list 10.1875 #t) (list 10.375 #t))
                      (pat/events->secs (pat/query (pat/euclid 3 8) (pat/span 0 1))
-                                       (list 10.0 (list (list 0 1 2.0)))))",
+                                       (list 10.0 (list (list 0 1 2.0)) 2)))",
         ),
         // An onset past a rate step takes the seconds of each segment.
         (
@@ -383,14 +383,15 @@ fn delivery() {
             "(equal? (list (list 1.0 #t) (list 1.5 #t) (list 1.625 #t) (list 1.75 #t))
                      (pat/events->secs (pat/query (pat/euclid 4 4) (pat/span 0 1))
                                        (list 1.0 (list (list 0 1/4 1/2)
-                                                       (list 1/4 1 2.0)))))",
+                                                       (list 1/4 1 2.0))
+                                             2)))",
         ),
         // Numeric values leave as floats.
         (
             "events_to_secs_numbers_leave_as_floats",
             "(equal? (list (list 5.0 0.25))
                      (pat/events->secs (pat/query (pat/pure 1/4) (pat/span 0 1))
-                                       (list 5.0 (list (list 0 1 1.0)))))",
+                                       (list 5.0 (list (list 0 1 1.0)) 1)))",
         ),
         // Window-chopped continuations and signal events are filtered out
         // of delivery.
@@ -416,6 +417,6 @@ fn delivery() {
         "()",
         "(pat/events->secs (list (pat/event 'x (pat/span 1/2 1) (pat/span 0 1))
                                  (pat/event 'y (pat/span 0 1/2) #f))
-                           (list 0.0 (list (list 0 1 1.0))))",
+                           (list 0.0 (list (list 0 1 1.0)) 1))",
     );
 }

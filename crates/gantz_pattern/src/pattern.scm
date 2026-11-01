@@ -58,6 +58,8 @@
          pat/appl
          pat/appr
          pat/merge-with
+         pat/key
+         pat/with
          pat/euclid-bools
          pat/euclid
          pat/euclid-off
@@ -66,6 +68,7 @@
          pat/window
          pat/events->secs
          pat/span-secs
+         pat/pick
          pat/euclid-with
          pat/as-span
          pat/plot-data)
@@ -484,6 +487,38 @@
       (pat/app pa (pat/map (lambda (bv) (lambda (av) (f av bv))) pb))
       pat/silence))
 
+;; A pattern of one-key maps, with each value of `p` under `key`.
+(define (pat/key key p)
+  (pat/map (lambda (v) (hash key v)) p))
+
+;; Union two event values. A key in both takes its value from `b`. A
+;; value that is not a map gives way to one that is.
+(define (pat//union a b)
+  (if (hash? a)
+      (if (hash? b) (hash-union b a) a)
+      b))
+
+;; Add the values of `pb` to the maps of `pa`, as Tidal's `#` does.
+;; Structure comes from `pa`. Each event queries `pb` over its whole, so
+;; a signal gives an event one value however a window chops it. An event
+;; with nothing from `pb` is dropped.
+(define (pat/with pa pb)
+  (lambda (span)
+    (list/flat-map
+     (lambda (ea)
+       (list/flat-map
+        (lambda (eb)
+          (let ((active (pat/span-intersect (pat/event-active ea)
+                                            (pat/event-active eb))))
+            (if active
+                (list (pat/event (pat//union (pat/event-value ea)
+                                             (pat/event-value eb))
+                                 active
+                                 (pat/event-whole ea)))
+                '())))
+        (pat//events pb (pat/event-whole-or-active ea))))
+     (pat//events pa span))))
+
 (define (pat//repeat v n acc)
   (if (<= n 0) acc (pat//repeat v (- n 1) (cons v acc))))
 
@@ -683,7 +718,8 @@
 ;; `t` is the eval time in seconds and `dt` the tick duration. `tempo` is
 ;; a number, a pattern of numbers or a pattern of maps with a `'cps` key.
 ;; Returns `(list span timing new-st)`. `span` is the window in cycles.
-;; `timing` is the `(list te segments)` that `pat/events->secs` reads.
+;; `timing` is the `(list te segments tempo)` that `pat/events->secs`
+;; reads.
 ;;
 ;; Each tick moves the playhead toward where it must be one tick from
 ;; now at the last rate, then adds the seconds that the tempo gives the
@@ -705,7 +741,7 @@
         (let ((s (if (pair? st) st (list 0 t 1.0 t))))
           (pat//advance (car s) (list-ref s 1) (list-ref s 2) (list-ref s 3)
                         t dt p))
-        (list (cons 0 0) (list 0.0 '()) st))))
+        (list (cons 0 0) (list 0.0 '() #f) st))))
 
 (define (pat//advance c te r last-t t dt tempo)
   (let ((target (+ t dt)))
@@ -718,7 +754,7 @@
         (let ((end (if (> gap 0) (+ c (pat/rationalize gap)) c)))
           (let ((segs (pat//tempo-segs tempo (cons c end) r)))
             (list (cons c end)
-                  (list from (reverse segs))
+                  (list from (reverse segs) tempo)
                   (list end
                         (+ from (pat//segs-secs segs))
                         (pat//segs-rate segs r)
@@ -737,6 +773,22 @@
              (cdr segs)
              x)))))
 
+;; The rate at cycle point `x` of a window, or `r` past its segments.
+(define (pat//point-rate segs x r)
+  (if (empty? segs)
+      r
+      (if (< x (list-ref (car segs) 1))
+          (list-ref (car segs) 2)
+          (pat//point-rate (cdr segs) x r))))
+
+;; The value of event `e` for delivery. `r` is the rate at its onset. A
+;; map gains its `'delta`, the seconds that the event's whole plays for.
+(define (pat//delivered e tempo r)
+  (let ((v (pat/event-value e)))
+    (if (hash? v)
+        (hash-insert v 'delta (pat/span-secs tempo (pat/event-whole e) r))
+        (pat//inexact v))))
+
 ;; Convert queried window events to a list of `(list seconds value)`
 ;; pairs for timestamped delivery paths.
 ;;
@@ -749,14 +801,29 @@
   (if (if (list? events)
           (if (list? timing) (not (empty? timing)) #f)
           #f)
-      (list/map
-       (lambda (e)
-         (list (pat//point-secs (car timing)
-                                (car (cdr timing))
-                                (car (pat/event-active e)))
-               (let ((v (pat/event-value e)))
-                 (if (number? v) (exact->inexact v) v))))
-       (list/filter pat/event-onset? events))
+      (let ((te (car timing))
+            (segs (list-ref timing 1))
+            (tempo (list-ref timing 2)))
+        (list/map
+         (lambda (e)
+           (let ((x (car (pat/event-active e))))
+             (list (pat//point-secs te segs x)
+                   (pat//delivered e tempo (pat//point-rate segs x 1.0)))))
+         (list/filter pat/event-onset? events)))
+      '()))
+
+;; Project `(seconds value)` pairs onto the `key` of their maps, for a
+;; control input. A pair whose value holds no such key is dropped.
+;; Numbers leave as floats.
+(define (pat/pick pairs key)
+  (if (list? pairs)
+      (list/flat-map
+       (lambda (pr)
+         (let ((m (car (cdr pr))))
+           (if (if (hash? m) (hash-contains? m key) #f)
+               (list (list (car pr) (pat//inexact (hash-ref m key))))
+               '())))
+       pairs)
       '()))
 
 ;; Apply the euclidean mask to the pattern. Structure comes from the
@@ -777,9 +844,9 @@
                (if (number? x) (cons 0 (pat/rationalize x)) #f))))
     (if s (if (< (car s) (cdr s)) s default) default)))
 
-;; An event value for plotting. A number becomes inexact. Any other value
-;; passes through for the plotter to classify.
-(define (pat//plot-value v)
+;; A value on its way out of pattern time. A number becomes inexact. Any
+;; other value passes through.
+(define (pat//inexact v)
   (if (number? v) (exact->inexact v) v))
 
 ;; The `i`th of `n` equal slices of `span`.
@@ -805,7 +872,7 @@
              (if (pat/event-whole e)
                  pts
                  (cons (list (exact->inexact (/ (+ (car a) (cdr a)) 2))
-                             (pat//plot-value (pat/event-value e)))
+                             (pat//inexact (pat/event-value e)))
                        pts))))
          '()
          (pat//events p (pat//span-slice span i n)))
@@ -831,7 +898,7 @@
                (if (pat/event-whole e)
                    (cons (list (exact->inexact (car a))
                                (exact->inexact (cdr a))
-                               (pat//plot-value (pat/event-value e))
+                               (pat//inexact (pat/event-value e))
                                (pat/event-onset? e))
                          segs)
                    segs)))
