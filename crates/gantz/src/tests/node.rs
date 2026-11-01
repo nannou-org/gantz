@@ -2884,14 +2884,27 @@ fn demo_state_round_trips_through_a_snapshot() {
     assert!(with_state > 0, "a demo has state");
 }
 
-/// Partial evals over demo.pat stay silent. The tick entrypoint is
-/// interleaved with the cps number node's push entrypoint. That push's
-/// cone reaches the pattern nodes without their pattern inputs. The
-/// pattern module guards its invocation sites against not-a-procedure
-/// application errors.
-#[test]
-fn demo_pattern_partial_evals_are_silent() {
+/// Tick the named pattern demo at 60 Hz, returning the `(seconds, freq)`
+/// pairs that its `~sinosc` queued, oldest first.
+///
+/// `dial_every` interleaves the push entrypoint of the demo's number. That
+/// push's cone reaches the pattern nodes without their pattern inputs, and
+/// no eval may error for it.
+fn play_pattern_demo(demo: &str, ticks: usize, dial_every: Option<usize>) -> Vec<(f64, f64)> {
+    play_pattern_session(demo, None, ticks, dial_every).0
+}
+
+/// [`play_pattern_demo`] as one session, with eval time from zero. The
+/// session starts from `restored` when given and also returns its final
+/// node state, with the queued pairs drained.
+fn play_pattern_session(
+    demo: &str,
+    restored: Option<&gantz_core::node::state::Snapshot>,
+    ticks: usize,
+    dial_every: Option<usize>,
+) -> (Vec<(f64, f64)>, gantz_core::node::state::Snapshot) {
     use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
+    use gantz_core::node::state;
 
     let merged = load_base().registry;
     let reified = reify_all(&merged);
@@ -2900,8 +2913,8 @@ fn demo_pattern_partial_evals_are_silent() {
     let reg_env = env(&merged, &reified, &builtins, &codec);
     let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
     let config = gantz_core::compile::Config::default();
-    let head = gantz_ca::Head::Branch(name("demo.pat"));
-    let graph = head_graph(&reified, &merged, &head).expect("demo.pat graph");
+    let head = gantz_ca::Head::Branch(name(demo));
+    let graph = head_graph(&reified, &merged, &head).expect("demo graph");
 
     let eps = push_pull_entrypoints(&get_node, graph);
 
@@ -2913,7 +2926,18 @@ fn demo_pattern_partial_evals_are_silent() {
         &crate::node::steel_modules(),
     )
     .unwrap_or_else(|e| panic!("init: {}", gantz_core::vm::error_chain(&e)));
+    if let Some(nodes) = restored {
+        state::restore(&mut vm, nodes).expect("restore the snapshot");
+    }
 
+    let push_fn = |ix: usize| {
+        eps.iter()
+            .find(|ep| {
+                ep.0.iter()
+                    .any(|s| s.kind == EvalKind::Push && s.path == [ix])
+            })
+            .map(|ep| entry_fn_name(&ep.id()))
+    };
     let tick_ix = graph
         .node_indices()
         .find(|&ix| {
@@ -2923,56 +2947,122 @@ fn demo_pattern_partial_evals_are_silent() {
         })
         .expect("tick node")
         .index();
-    let tick_ep = eps
-        .iter()
-        .find(|ep| {
-            ep.0.iter()
-                .any(|s| s.kind == EvalKind::Push && s.path == [tick_ix])
-        })
-        .expect("tick ep");
-    let tick_fn = entry_fn_name(&tick_ep.id());
-
-    let num_ix = graph
+    let tick_fn = push_fn(tick_ix).expect("tick ep");
+    let dial_fn = graph
         .node_indices()
         .find(|&ix| {
             (&*graph[ix] as &dyn std::any::Any)
                 .downcast_ref::<gantz_egui::node::Number>()
                 .is_some()
         })
-        .expect("number node")
-        .index();
-    let num_ep = eps
-        .iter()
-        .find(|ep| {
-            ep.0.iter()
-                .any(|s| s.kind == EvalKind::Push && s.path == [num_ix])
-        })
-        .cloned();
+        .and_then(|ix| push_fn(ix.index()));
 
     let mut t = 0.0f64;
-    let mut errs = 0usize;
-    for i in 0..3600 {
+    for i in 0..ticks {
         t += 1.0 / 60.0;
         vm.update_value(gantz_core::ARGS, gantz_core::args::time(t));
-        if let Err(e) = vm.call_function_by_name_with_args(&tick_fn, vec![]) {
-            if errs < 3 {
-                println!("tick {i} t={t}: ERR {e}");
-            }
-            errs += 1;
-        }
-        if i % 30 == 7 {
-            if let Some(ep) = &num_ep {
-                if let Err(e) = vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
-                {
-                    if errs < 6 {
-                        println!("dial {i}: ERR {e}");
-                    }
-                    errs += 1;
-                }
-            }
+        vm.call_function_by_name_with_args(&tick_fn, vec![])
+            .unwrap_or_else(|e| panic!("tick {i} t={t}: {e}"));
+        if dial_every.is_some_and(|n| i % n == 7) {
+            let dial_fn = dial_fn.as_ref().expect("dial ep");
+            vm.call_function_by_name_with_args(dial_fn, vec![])
+                .unwrap_or_else(|e| panic!("dial {i} t={t}: {e}"));
         }
     }
-    assert_eq!(errs, 0, "partial evals must not error");
+
+    let mut onsets = graph
+        .node_indices()
+        .filter_map(|ix| gantz_plyphon::param::drain_param_keyed(&mut vm, &[ix.index()], "freq"))
+        .map(|(_, pending)| pending)
+        .find(|pending| !pending.is_empty())
+        .unwrap_or_default();
+    onsets.sort_by(|a, b| a.0.total_cmp(&b.0));
+    (onsets, state::snapshot(&vm))
+}
+
+/// Assert that `got` starts with the `want` pairs, within 1 ns.
+fn assert_onsets(got: &[(f64, f64)], want: &[(f64, f64)]) {
+    assert!(got.len() >= want.len(), "too few onsets: {got:?}");
+    for (i, ((t, v), (want_t, want_v))) in got.iter().zip(want).enumerate() {
+        assert!(
+            (t - want_t).abs() < 1e-9 && v == want_v,
+            "onset {i}: got ({t}, {v}), want ({want_t}, {want_v})",
+        );
+    }
+}
+
+/// `demo.pat` plays through the tick-driven clock. The first tick starts
+/// cycle 0 and a cycle at the 1/2 cps dial takes two seconds.
+#[test]
+fn demo_pattern_plays_onsets() {
+    let start = 1.0 / 60.0;
+    let onsets = play_pattern_demo("demo.pat", 300, None);
+    let want = [
+        (start, 220.0),
+        (start + 2.0 / 3.0, 330.0),
+        (start + 1.0, 440.0),
+        (start + 4.0 / 3.0, 550.0),
+        (start + 2.0, 220.0),
+        (start + 2.0 + 2.0 / 3.0, 330.0),
+        (start + 3.0, 440.0),
+        (start + 3.0 + 1.0 / 3.0, 660.0),
+    ];
+    assert_onsets(&onsets, &want);
+}
+
+/// Partial evals over demo.pat stay silent. The tick entrypoint is
+/// interleaved with the cps number node's push entrypoint. The pattern
+/// module guards its invocation sites against not-a-procedure application
+/// errors, and the clock holds so that no window is lost to the push.
+#[test]
+fn demo_pattern_partial_evals_are_silent() {
+    let quiet = play_pattern_demo("demo.pat", 3600, None);
+    let dialed = play_pattern_demo("demo.pat", 3600, Some(30));
+    assert!(!quiet.is_empty(), "the demo must play");
+    assert_eq!(dialed, quiet, "a dial push must not change the onsets");
+}
+
+/// Clock state restored from an older session resumes the pattern where it
+/// was, at once, although eval time starts again from zero. The first
+/// session ends on cycle 5/4 at 1/2 cps.
+#[test]
+fn demo_pattern_resumes_from_a_snapshot() {
+    use gantz_core::node::state;
+
+    let (_, nodes) = play_pattern_session("demo.pat", None, 150, None);
+    let datum = gantz_ca::datum::to_datum(&nodes).expect("encode");
+    let stored: state::Snapshot = gantz_ca::datum::from_datum(datum).expect("decode");
+    let (onsets, _) = play_pattern_session("demo.pat", Some(&stored), 60, None);
+    let start = 1.0 / 60.0;
+    let want = [
+        (start + 1.0 / 6.0, 330.0),
+        (start + 0.5, 440.0),
+        (start + 5.0 / 6.0, 660.0),
+    ];
+    assert_onsets(&onsets, &want);
+}
+
+/// `demo.pat.cps` steps its cps each cycle, from `<1/2 1 2>`. So its
+/// cycles take 2, 1 and 1/2 seconds, with no jump between them.
+#[test]
+fn demo_pattern_cps_steps_each_cycle() {
+    let start = 1.0 / 60.0;
+    let onsets = play_pattern_demo("demo.pat.cps", 240, None);
+    let want = [
+        (start, 220.0),
+        (start + 2.0 / 3.0, 330.0),
+        (start + 1.0, 440.0),
+        (start + 4.0 / 3.0, 550.0),
+        (start + 2.0, 220.0),
+        (start + 2.0 + 1.0 / 3.0, 330.0),
+        (start + 2.5, 440.0),
+        (start + 2.0 + 2.0 / 3.0, 660.0),
+        (start + 3.0, 220.0),
+        (start + 3.0 + 1.0 / 6.0, 330.0),
+        (start + 3.25, 440.0),
+        (start + 3.0 + 1.0 / 3.0, 550.0),
+    ];
+    assert_onsets(&onsets, &want);
 }
 
 /// Resetting a demo re-parses the base and merges the demo's commit subset
