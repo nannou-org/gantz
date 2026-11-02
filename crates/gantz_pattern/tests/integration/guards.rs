@@ -144,50 +144,51 @@ fn combinators_wrapping_junk_are_silent() {
     }
 }
 
-// The windower and delivery helpers hold or stay silent on junk inputs.
+// The clock and delivery helpers hold or stay silent on junk inputs.
 #[test]
 fn junk_window_and_delivery_inputs() {
     let mut vm = new_pin_engine();
     let rows: &[(&str, &str, &str)] = &[
-        // The windower holds position on junk time or cps, leaving state
+        // The clock holds on a junk time, tick or tempo, leaving state
         // alone.
-        (
-            "window_with_junk_cps_holds",
-            "(((0 1) (0 1)) (1 2))",
-            "(let ((r (pat/window 1/2 0.5 '())))
-               (list (pin-span (car r)) (pin-num (car (cdr r)))))",
-        ),
         (
             "window_with_junk_time_holds",
             "(((0 1) (0 1)) (1 2))",
-            "(let ((r (pat/window 1/2 '() 1)))
-               (list (pin-span (car r)) (pin-num (car (cdr r)))))",
+            "(let ((r (pat/window (list 1/2 0.0 1.0 0.0) '() 0.1 1)))
+               (list (pin-span (car r)) (pin-num (car (list-ref r 2)))))",
+        ),
+        (
+            "window_with_junk_tick_holds",
+            "(((0 1) (0 1)) (1 2))",
+            "(let ((r (pat/window (list 1/2 0.0 1.0 0.0) 0.5 '() 1)))
+               (list (pin-span (car r)) (pin-num (car (list-ref r 2)))))",
+        ),
+        (
+            "window_with_junk_tempo_holds",
+            "(((0 1) (0 1)) (1 2))",
+            "(let ((r (pat/window (list 1/2 0.0 1.0 0.0) 0.5 0.1 '())))
+               (list (pin-span (car r)) (pin-num (car (list-ref r 2)))))",
         ),
         // Delivery with junk inputs emits nothing.
         (
             "events_to_secs_with_empty_events",
             "()",
-            "(pat/events->secs '() (pat/span 0 1) 0.0 1.0)",
+            "(pat/events->secs '() (list 0.0 (list (list 0 1 1.0))))",
         ),
         (
             "events_to_secs_with_junk_events",
             "()",
-            "(pat/events->secs 'junk (pat/span 0 1) 0.0 1.0)",
+            "(pat/events->secs 'junk (list 0.0 (list (list 0 1 1.0))))",
         ),
         (
-            "events_to_secs_with_junk_span",
+            "events_to_secs_with_junk_timing",
             "()",
-            "(pat/events->secs (pat/query (pat/pure 1) (pat/span 0 1)) '() 0.0 1.0)",
+            "(pat/events->secs (pat/query (pat/pure 1) (pat/span 0 1)) '())",
         ),
         (
-            "events_to_secs_with_junk_time",
+            "events_to_secs_with_a_span_as_timing",
             "()",
-            "(pat/events->secs (pat/query (pat/pure 1) (pat/span 0 1)) (pat/span 0 1) '() 1.0)",
-        ),
-        (
-            "events_to_secs_with_junk_cps",
-            "()",
-            "(pat/events->secs (pat/query (pat/pure 1) (pat/span 0 1)) (pat/span 0 1) 0.0 '())",
+            "(pat/events->secs (pat/query (pat/pure 1) (pat/span 0 1)) (pat/span 0 1))",
         ),
     ];
     for (case, expected, expr) in rows {

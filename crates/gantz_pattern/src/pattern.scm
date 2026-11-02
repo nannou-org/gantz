@@ -65,6 +65,7 @@
          pat/event-onset?
          pat/window
          pat/events->secs
+         pat/span-secs
          pat/euclid-with
          pat/as-span
          pat/plot-data)
@@ -596,58 +597,163 @@
           (if (< astart wstart) #f (not (< wstart astart))))
         #f)))
 
-;; The longest span a single window may cover, in cycles. Steady-state
-;; windows span tick-duration times cps cycles, so this sits far above
-;; sane configurations. It also bounds the events a single tick can
-;; produce. A jump beyond it, such as a cps change rescaling the
-;; timeline, resets rather than querying the whole gap.
+;; The largest gap in cycles that a tick may close in one window. A
+;; steady window spans tick-duration times cps cycles, so this sits far
+;; above sane configurations. A wider gap moves the clock to the eval
+;; time rather than the playhead, so a stall cannot flood downstream
+;; with a giant span.
 (define pat//max-window 8)
 
-;; Advance a tick-driven query window.
+;; The cps that an event value sets. A number sets itself and a map sets
+;; its `'cps` key. Anything else sets nothing. A value that is not
+;; positive also sets nothing, since a stopped clock can never reach the
+;; event that restarts it.
+(define (pat//rate v)
+  (let ((cps (if (hash? v) (hash-try-get v 'cps) v)))
+    (if (number? cps)
+        (if (> cps 0) (exact->inexact cps) #f)
+        #f)))
+
+;; A tempo input as a pattern. A number is a steady tempo and a function
+;; passes through. Anything else gives #f.
+(define (pat//tempo x)
+  (if (number? x) (pat/steady x) (if (function? x) x #f)))
+
+;; Push the abutting `(start end rate)` segments of `[start, end)` onto
+;; the reversed `segs`. `events` are the tempo events sorted by active
+;; start and `r` is the rate on entry. A gap holds the rate before it and
+;; an event that sets no rate is a gap. An event that overlaps an earlier
+;; one takes effect from where the earlier one ends.
+(define (pat//cycle-segs events start end r segs)
+  (if (empty? events)
+      (if (< start end) (cons (list start end r) segs) segs)
+      (let ((e (car events)))
+        (let ((a (pat/span-intersect (cons start end) (pat/event-active e)))
+              (v (pat//rate (pat/event-value e))))
+          (if (if a v #f)
+              (pat//cycle-segs (cdr events) (cdr a) end v
+                               (cons (list (car a) (cdr a) v)
+                                     (if (< start (car a))
+                                         (cons (list start (car a) r) segs)
+                                         segs)))
+              (pat//cycle-segs (cdr events) start end r segs))))))
+
+;; The rate at the end of the reversed `segs`, or `r` when there are none.
+(define (pat//segs-rate segs r)
+  (if (empty? segs) r (list-ref (car segs) 2)))
+
+;; The reversed `(start end rate)` segments of `tempo` over `span`, where
+;; `r` is the rate before the span. Each cycle has its own query, so that
+;; the sample of a signal never crosses a reset at a cycle boundary.
+(define (pat//tempo-segs tempo span r)
+  (list/fold
+   (lambda (segs cyc)
+     (pat//cycle-segs (pat/query tempo cyc) (car cyc) (cdr cyc)
+                      (pat//segs-rate segs r) segs))
+   '()
+   (pat/span-cycles span)))
+
+;; The seconds from cycle point `start` to `x` at the rate `r`.
+(define (pat//seg-secs start x r)
+  (/ (exact->inexact (- x start)) r))
+
+;; The seconds that `segs` take to play.
+(define (pat//segs-secs segs)
+  (list/fold
+   (lambda (secs s)
+     (+ secs (pat//seg-secs (car s) (list-ref s 1) (list-ref s 2))))
+   0.0
+   segs))
+
+;; The seconds that `span` takes to play under `tempo`, which `pat/window`
+;; describes. A gap in the tempo holds the last rate, which starts as
+;; `default`. Junk inputs take no time.
+(define (pat/span-secs tempo span default)
+  (let ((r (pat//rate default)))
+    (if (if r (pair? span) #f)
+        (pat//segs-secs (pat//tempo-segs (pat//tempo tempo) span r))
+        0.0)))
+
+;; Advance a tick-driven clock and return its next query window.
 ;;
-;; `st` is the previous cycle position, where any non-number means the
-;; first tick. `t` is the eval time in seconds and `cps` the tempo in
-;; cycles per second. Returns `(list span new-position)` where `span`
-;; runs from the previous position to the current one.
+;; `st` is the clock state `(list c te r last-t)`, where any non-pair
+;; means the first tick. `c` is the exact playhead in cycles, `te` the
+;; seconds at which the playhead plays, `r` the last rate in cycles per
+;; second and `last-t` the eval time of the last tick.
+;; `t` is the eval time in seconds and `dt` the tick duration. `tempo` is
+;; a number, a pattern of numbers or a pattern of maps with a `'cps` key.
+;; Returns `(list span timing new-st)`. `span` is the window in cycles.
+;; `timing` is the `(list te segments)` that `pat/events->secs` reads.
 ;;
-;; The position derives from absolute time snapped to the 1/1920-cycle
-;; grid. Successive spans therefore abut exactly, quantisation error never
-;; accumulates, and denominators stay bounded. The span is empty on the
-;; first tick and whenever the position has not advanced. Any position
-;; jump beyond `pat//max-window`, in either direction, also yields an
-;; empty span and continues from the new position. A cps change
-;; rescales the timeline, so its gap is dropped rather than replayed or
-;; fast-forwarded.
-(define (pat/window st t cps)
-  (if (if (number? t) (number? cps) #f)
-      (let ((pos (/ (exact (round (* t cps pat//grid))) pat//grid)))
-        (let ((prev (if (number? st) st pos)))
-          (list (if (< pos prev)
-                    (cons pos pos)
-                    (if (> (- pos prev) pat//max-window)
-                        (cons pos pos)
-                        (cons prev pos)))
-                pos)))
-      ;; A partial eval without a numeric time or cps holds position, an
-      ;; empty span and untouched state.
-      (list (cons 0 0) st)))
+;; Each tick moves the playhead toward where it must be one tick from
+;; now at the last rate, then adds the seconds that the tempo gives the
+;; new span to `te`. A tempo change makes that move too long or too short
+;; and the next tick corrects it. Event times do not depend on this, as
+;; `te` integrates the exact span. Spans abut, the playhead never jumps
+;; and the 1/1920 grid only picks the window boundaries.
+;;
+;; A gap in the tempo holds the last rate, which starts at 1. The first
+;; tick starts the playhead at cycle 0. `te` moves to the eval time when
+;; it trails by more than `pat//max-window` cycles, or when eval time
+;; runs backwards as state restored from an older session does. The
+;; playhead stays put, so the pattern resumes where it was. A partial
+;; eval without a numeric time or tick, or without a tempo, holds the
+;; clock and gives an empty span.
+(define (pat/window st t dt tempo)
+  (let ((p (pat//tempo tempo)))
+    (if (if (number? t) (if (number? dt) p #f) #f)
+        (let ((s (if (pair? st) st (list 0 t 1.0 t))))
+          (pat//advance (car s) (list-ref s 1) (list-ref s 2) (list-ref s 3)
+                        t dt p))
+        (list (cons 0 0) (list 0.0 '()) st))))
+
+(define (pat//advance c te r last-t t dt tempo)
+  (let ((target (+ t dt)))
+    (let ((from (if (if (< t last-t)
+                        #t
+                        (> (* (- target te) r) pat//max-window))
+                    t
+                    te)))
+      (let ((gap (* (- target from) r)))
+        (let ((end (if (> gap 0) (+ c (pat/rationalize gap)) c)))
+          (let ((segs (pat//tempo-segs tempo (cons c end) r)))
+            (list (cons c end)
+                  (list from (reverse segs))
+                  (list end
+                        (+ from (pat//segs-secs segs))
+                        (pat//segs-rate segs r)
+                        t))))))))
+
+;; The seconds at which cycle point `x` plays. `segs` are the abutting
+;; segments of a window and `te` the seconds of their start.
+(define (pat//point-secs te segs x)
+  (if (empty? segs)
+      te
+      (let ((s (car segs)))
+        (if (< x (list-ref s 1))
+            (+ te (pat//seg-secs (car s) x (list-ref s 2)))
+            (pat//point-secs
+             (+ te (pat//seg-secs (car s) (list-ref s 1) (list-ref s 2)))
+             (cdr segs)
+             x)))))
 
 ;; Convert queried window events to a list of `(list seconds value)`
 ;; pairs for timestamped delivery paths.
 ;;
-;; `span` is the queried window, `t` the eval time in seconds anchoring
-;; the span's start, and `cps` the tempo converting cycle offsets to
-;; seconds. Only onset events are kept, as window-chopped continuations
-;; of a sustained event would otherwise retrigger every tick. Times and
-;; numeric values leave as floats, since the delivery paths drop
-;; rationals.
-(define (pat/events->secs events span t cps)
+;; `timing` is the second element of the `pat/window` result that gave
+;; the queried span. Only onset events are kept, as window-chopped
+;; continuations of a sustained event would otherwise retrigger every
+;; tick. Times and numeric values leave as floats, since the delivery
+;; paths drop rationals.
+(define (pat/events->secs events timing)
   (if (if (list? events)
-          (if (pair? span) (if (number? t) (number? cps) #f) #f)
+          (if (list? timing) (not (empty? timing)) #f)
           #f)
       (list/map
        (lambda (e)
-         (list (+ t (exact->inexact (/ (- (car (pat/event-active e)) (car span)) cps)))
+         (list (pat//point-secs (car timing)
+                                (car (cdr timing))
+                                (car (pat/event-active e)))
                (let ((v (pat/event-value e)))
                  (if (number? v) (exact->inexact v) v))))
        (list/filter pat/event-onset? events))
