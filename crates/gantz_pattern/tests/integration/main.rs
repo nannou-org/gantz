@@ -8,6 +8,7 @@ mod constructors;
 mod euclid;
 mod guards;
 mod joins;
+mod maps;
 mod mini;
 mod plot;
 mod pmini;

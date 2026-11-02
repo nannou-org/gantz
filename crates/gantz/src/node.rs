@@ -34,7 +34,9 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
         kind::<gantz_egui::node::Inspect>(),
         kind::<gantz_egui::node::State>(),
         kind::<gantz_egui::node::Plot>(),
+        def_kind::<gantz_pattern::Pkey>(),
         def_kind::<gantz_pattern::Pmini>(),
+        def_kind::<gantz_pattern::Ppick>(),
         def_kind::<gantz_pattern::Pplot>(),
     ];
     let dsp = gantz_plyphon::node_defs().into_iter().map(dyn_def_kind);

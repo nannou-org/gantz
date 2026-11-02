@@ -173,12 +173,12 @@ fn junk_window_and_delivery_inputs() {
         (
             "events_to_secs_with_empty_events",
             "()",
-            "(pat/events->secs '() (list 0.0 (list (list 0 1 1.0))))",
+            "(pat/events->secs '() (list 0.0 (list (list 0 1 1.0)) 1))",
         ),
         (
             "events_to_secs_with_junk_events",
             "()",
-            "(pat/events->secs 'junk (list 0.0 (list (list 0 1 1.0))))",
+            "(pat/events->secs 'junk (list 0.0 (list (list 0 1 1.0)) 1))",
         ),
         (
             "events_to_secs_with_junk_timing",

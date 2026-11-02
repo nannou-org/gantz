@@ -131,7 +131,9 @@ fn builtins_match_expected_name_set() {
         "main!",
         "number",
         "outlet",
+        "pat.key",
         "pat.mini",
+        "pat.pick",
         "pat.plot",
         "plot",
         "sleep",
@@ -2891,14 +2893,15 @@ fn demo_state_round_trips_through_a_snapshot() {
 /// push's cone reaches the pattern nodes without their pattern inputs, and
 /// no eval may error for it.
 fn play_pattern_demo(demo: &str, ticks: usize, dial_every: Option<usize>) -> Vec<(f64, f64)> {
-    play_pattern_session(demo, None, ticks, dial_every).0
+    play_pattern_session(demo, "freq", None, ticks, dial_every).0
 }
 
-/// [`play_pattern_demo`] as one session, with eval time from zero. The
-/// session starts from `restored` when given and also returns its final
-/// node state, with the queued pairs drained.
+/// [`play_pattern_demo`] as one session, with eval time from zero, that reads
+/// the queue of `param`. The session starts from `restored` when given and
+/// also returns its final node state, with the queued pairs drained.
 fn play_pattern_session(
     demo: &str,
+    param: &str,
     restored: Option<&gantz_core::node::state::Snapshot>,
     ticks: usize,
     dial_every: Option<usize>,
@@ -2972,7 +2975,7 @@ fn play_pattern_session(
 
     let mut onsets = graph
         .node_indices()
-        .filter_map(|ix| gantz_plyphon::param::drain_param_keyed(&mut vm, &[ix.index()], "freq"))
+        .filter_map(|ix| gantz_plyphon::param::drain_param_keyed(&mut vm, &[ix.index()], param))
         .map(|(_, pending)| pending)
         .find(|pending| !pending.is_empty())
         .unwrap_or_default();
@@ -3029,10 +3032,10 @@ fn demo_pattern_partial_evals_are_silent() {
 fn demo_pattern_resumes_from_a_snapshot() {
     use gantz_core::node::state;
 
-    let (_, nodes) = play_pattern_session("demo.pat", None, 150, None);
+    let (_, nodes) = play_pattern_session("demo.pat", "freq", None, 150, None);
     let datum = gantz_ca::datum::to_datum(&nodes).expect("encode");
     let stored: state::Snapshot = gantz_ca::datum::from_datum(datum).expect("decode");
-    let (onsets, _) = play_pattern_session("demo.pat", Some(&stored), 60, None);
+    let (onsets, _) = play_pattern_session("demo.pat", "freq", Some(&stored), 60, None);
     let start = 1.0 / 60.0;
     let want = [
         (start + 1.0 / 6.0, 330.0),
@@ -3040,6 +3043,29 @@ fn demo_pattern_resumes_from_a_snapshot() {
         (start + 5.0 / 6.0, 660.0),
     ];
     assert_onsets(&onsets, &want);
+}
+
+/// `demo.pat.maps` reads its cps from its events, so its cycles take 2 and 1
+/// seconds. `pat.pick` routes each key to its control at the same times.
+#[test]
+fn demo_pattern_maps_route_keys() {
+    let start = 1.0 / 60.0;
+    let onsets = |param| play_pattern_session("demo.pat.maps", param, None, 180, None).0;
+    let times = [
+        start,
+        start + 2.0 / 3.0,
+        start + 1.0,
+        start + 4.0 / 3.0,
+        start + 2.0,
+        start + 2.0 + 1.0 / 3.0,
+        start + 2.5,
+        start + 2.0 + 2.0 / 3.0,
+    ];
+    let freqs = [220.0, 330.0, 440.0, 550.0, 220.0, 330.0, 440.0, 660.0];
+    let amps = [1.0, 0.25, 0.25, 0.5, 1.0, 0.25, 0.25, 0.5];
+    let pairs = |values: [f64; 8]| -> Vec<(f64, f64)> { times.into_iter().zip(values).collect() };
+    assert_onsets(&onsets("freq"), &pairs(freqs));
+    assert_onsets(&onsets("b"), &pairs(amps));
 }
 
 /// `demo.pat.cps` steps its cps each cycle, from `<1/2 1 2>`. So its
