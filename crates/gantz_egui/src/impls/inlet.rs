@@ -17,7 +17,7 @@ impl NodeUi for gantz_core::node::graph::Inlet {
         let framed = uictx.framed(|ui, _sockets| {
             let name = self.name(ctx.env());
             let ix = inlet_ix(ctx.path(), ctx.inlets());
-            let text = format!("{}[{}]", name, ix);
+            let text = super::marker_label(&name, ix, &self.ty);
             ui.add(egui::Label::new(text).selectable(false))
         });
         super::marker_hover(&framed.inner.response, &self.ty, &self.description);
