@@ -15,7 +15,7 @@ use crate::dsp::{BufferAccess, DspBuilder, NodeDsp, NodeRate, Signal, ToNodeDsp}
 use crate::param::{control_inputs_expr, param_name, params_state, plyphon_param};
 use crate::units::{Emit, In, UnitDesc, UnitRate, unit_desc};
 use crate::view::{
-    LAG, MAX_LAG, RATE, doc, edit_dialer, edit_rate, edit_secs, param_row, rate_row, row,
+    LAG, MAX_LAG, RATE, doc, edit_dialer, edit_rate, edit_secs, param_doc, param_row, rate_row, row,
 };
 
 /// A node wrapping one plyphon unit generator, driven entirely by its
@@ -392,13 +392,7 @@ impl gantz_nodedef::NodeDef for UnitNode {
 fn socket_doc(socket: &In) -> Option<SocketDoc> {
     match socket {
         In::Signal { doc: d, .. } | In::Group { doc: d, .. } => Some(doc("signal", *d)),
-        In::Param { doc: d, .. } => {
-            let description = format!(
-                "{d} - a connected signal drives it directly, a connected number overrides \
-                 the inspector value"
-            );
-            Some(doc("signal | number", description))
-        }
+        In::Param { doc: d, .. } => Some(param_doc(d)),
         In::Buffer { doc: d, access, .. } => {
             let note = match access {
                 BufferAccess::Read => "a `~sample` or `~buffer`",

@@ -12,7 +12,9 @@ use crate::envelope::{Envelope, Segment};
 use crate::node::is_default;
 use crate::node::unit::channel_select;
 use crate::param::{control_inputs_expr, param_name, plyphon_param, sync_params_state};
-use crate::view::{RATE, doc, edit_dialer, edit_rate, edit_toggle, rate_row, row, state_row};
+use crate::view::{
+    RATE, doc, edit_dialer, edit_rate, edit_toggle, param_doc, rate_row, row, state_row,
+};
 
 /// An envelope generator. It plays its [`Envelope`] with plyphon's `EnvGen`.
 ///
@@ -27,9 +29,10 @@ use crate::view::{RATE, doc, edit_dialer, edit_rate, edit_toggle, rate_row, row,
 /// segment next starts. An edit to the number of segments, the release point
 /// or the rate derives a new synthdef.
 ///
-/// Each of the four inputs takes a dsp signal, or a number from the control
-/// side. The gate is read once per block, so a trigger into the gate must
-/// last at least one block, for example a `kr` `~impulse`.
+/// Each of the four inputs takes a dsp signal, or from the control side a
+/// number or a schedule of `(seconds value)` pairs. The gate is read once
+/// per block, so a trigger into the gate must last at least one block, for
+/// example a `kr` `~impulse`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, NodeTag)]
 pub struct Envgen {
     #[serde(flatten)]
@@ -322,10 +325,7 @@ impl gantz_nodedef::NodeDef for Envgen {
         ));
         rows.push(release_row(&self.env));
         rows.extend(self.env.segments.iter().enumerate().map(segment_row));
-        let inputs = SOCKETS
-            .iter()
-            .map(|s| doc("signal | number", s.doc))
-            .collect();
+        let inputs = SOCKETS.iter().map(|s| param_doc(s.doc)).collect();
         View {
             inputs,
             outputs: vec![doc("signal", "the envelope")],

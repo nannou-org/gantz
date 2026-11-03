@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::dsp::{DspBuilder, FadeSink, NodeDsp, Signal, ToNodeDsp, input_or_silent};
 use crate::param::{control_input_expr, param_name, param_state, plyphon_param};
-use crate::view::{LAG, MAX_LAG, doc, edit_secs, param_row};
+use crate::view::{LAG, MAX_LAG, SCHEDULE_DOC, doc, edit_secs, param_row};
 
 /// The audio output sink. Applies a master `gain` to its input signal and
 /// writes it to the output buses. A mono input is fanned across every device
@@ -100,10 +100,13 @@ impl gantz_nodedef::NodeDef for Out {
     fn view(&self) -> View {
         let signal = "signal to send to the audio output. Mono fans across every device \
                       channel, wider signals write channel i to bus i";
-        let gain = "master gain control. Overrides the inspector value while connected";
+        let gain = format!(
+            "master gain control. A connected number overrides the inspector value, and \
+             {SCHEDULE_DOC}"
+        );
         let value = vec![crate::param::VALUE.to_string()];
         View {
-            inputs: vec![doc("signal", signal), doc("number", gain)],
+            inputs: vec![doc("signal", signal), doc("number | schedule", gain)],
             rows: vec![param_row(
                 "gain",
                 "gain",

@@ -25,9 +25,23 @@ pub(crate) const COUNT: &str = "count";
 /// The most sockets that a node with a socket count has.
 pub(crate) const MAX_COUNT: usize = 64;
 
+/// How a param socket takes a schedule from the control side. See
+/// [`control_input_expr`](crate::param::control_input_expr).
+pub(crate) const SCHEDULE_DOC: &str =
+    "a schedule of (seconds value) pairs sets each value at its time";
+
 /// The doc of a socket whose values have the type `ty`.
 pub(crate) fn doc(ty: &str, description: impl Into<String>) -> SocketDoc {
     SocketDoc::new(ty, &description.into())
+}
+
+/// The doc of a param socket, which takes a signal, a number or a schedule.
+pub(crate) fn param_doc(description: &str) -> SocketDoc {
+    let description = format!(
+        "{description} - a connected signal drives it directly, a connected number overrides \
+         the inspector value, and {SCHEDULE_DOC}"
+    );
+    doc("signal | number | schedule", description)
 }
 
 /// A row of one line in the inspector's table.
