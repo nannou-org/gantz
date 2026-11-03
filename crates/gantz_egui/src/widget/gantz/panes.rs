@@ -1502,15 +1502,15 @@ pub(super) fn node_palette(
     // whose reference would form a cycle back to the editing graph. The reserved
     // nested-graph entry always mints a fresh child, so it is never cyclic. A
     // replace hides it, since a fresh nested graph has no sockets to keep.
-    let types: Vec<&str> = env
-        .node_types()
-        .into_iter()
-        .filter(|&k| match k == NESTED_GRAPH_TYPE {
-            true => replace.is_none(),
-            false => editing.is_none_or(|e| !env.would_ref_cycle(k, e)),
-        })
-        .collect();
-    let cmds = types.iter().map(|&k| NodeTyCmd { env, name: k });
+    let cmds = || {
+        env.node_types()
+            .into_iter()
+            .filter(|&k| match k == NESTED_GRAPH_TYPE {
+                true => replace.is_none(),
+                false => editing.is_none_or(|e| !env.would_ref_cycle(k, e)),
+            })
+            .map(|k| NodeTyCmd { env, name: k })
+    };
 
     // The chosen node type becomes a creation or replace payload. The reserved
     // `NESTED_GRAPH_TYPE` routes to the registry-aware nested-graph op. The

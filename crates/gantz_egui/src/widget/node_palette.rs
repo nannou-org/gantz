@@ -69,13 +69,13 @@ impl NodePalette {
     /// Show the node palette, if it is visible.
     ///
     /// `area` is the rect the palette is centered over, for example the graph
-    /// scene.
+    /// scene. `commands` runs only while the palette is visible.
     #[must_use = "Returns the command that was selected"]
     pub fn show<T, I>(
         &mut self,
         egui_ctx: &egui::Context,
         area: egui::Rect,
-        commands: I,
+        commands: impl FnOnce() -> I,
     ) -> Option<T>
     where
         T: Command,
@@ -87,7 +87,7 @@ impl NodePalette {
             return None;
         }
 
-        let commands: Vec<T> = commands.into_iter().collect();
+        let commands: Vec<T> = commands().into_iter().collect();
         let size = egui::vec2(
             SIZE.x.at_most(area.width() - 16.0),
             SIZE.y.at_most(area.height() - 16.0),
@@ -424,7 +424,7 @@ mod tests {
         palette.open();
         for _ in 0..3 {
             let _ = ctx.run_ui(Default::default(), |ui| {
-                let _ = palette.show(ui.ctx(), area, [TestCommand]);
+                let _ = palette.show(ui.ctx(), area, || [TestCommand]);
             });
         }
         let id = egui::Id::new("Node Palette");
