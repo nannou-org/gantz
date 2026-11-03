@@ -938,10 +938,10 @@ fn nodes(
                 } else {
                     demo_btn.on_disabled_hover_text("no associated demo");
                 }
-                // "open graph" for nodes that reference a named graph.
+                // "open <name>" for nodes that reference a named graph.
                 if let Some(head) = entry.inst.node.nav_head(registry) {
                     if ui
-                        .button("open graph")
+                        .button(format!("open {head}"))
                         .on_hover_text("open the referenced graph in a new tab")
                         .clicked()
                     {

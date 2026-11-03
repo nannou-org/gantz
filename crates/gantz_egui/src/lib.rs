@@ -300,8 +300,9 @@ pub trait NodeUi: gantz_core::Node + Send + Sync {
     /// The head this node navigates to when entered, if any.
     ///
     /// Returned for nodes that reference a named graph, such as
-    /// [`NamedRef`](gantz_edit::NamedRef). Double-clicking enters it in place,
-    /// and the scene offers an "open in new tab" context-menu action.
+    /// [`NamedRef`](gantz_edit::NamedRef) and a `fn` node. Double-clicking
+    /// enters it, and the scene's context menu offers `open <name>` to open
+    /// it in a new tab.
     fn nav_head(&self, _env: &Env<'_>) -> Option<gantz_ca::Head> {
         None
     }

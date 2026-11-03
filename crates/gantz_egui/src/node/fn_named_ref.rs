@@ -14,6 +14,10 @@ impl NodeUi for FnNamedRef {
         "fn".into()
     }
 
+    fn nav_head(&self, _registry: &Env<'_>) -> Option<gantz_ca::Head> {
+        Some(gantz_ca::Head::Branch(self.0.name().clone()))
+    }
+
     fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
         let registry = ctx.env();
         let name_str = self.0.name().to_string();
@@ -62,6 +66,9 @@ impl NodeUi for FnNamedRef {
         });
         let mut resp = NodeUiResponse::new(framed);
         resp.set_changed(changed);
+        if resp.framed.inner.response.double_clicked() {
+            crate::impls::named_ref::emit_enter(&self.0, &mut resp);
+        }
         resp
     }
 
