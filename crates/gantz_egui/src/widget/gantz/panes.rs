@@ -1615,8 +1615,9 @@ pub(super) fn node_inspector<'a>(
                     let frame = widget::kit::card_frame(ui, is_selected);
                     // Each node gets its own id scope, so its table, grids and
                     // popups keep their state apart from the other nodes.
-                    let frame_resp = ui
-                        .push_id(id, |ui| {
+                    let card_id = ui.id().with(("card", head, id));
+                    let card = widget::kit::lazy_item(ui, card_id, |ui| {
+                        ui.push_id(id, |ui| {
                             frame.show(ui, |ui| {
                                 widget::kit::exact_width(ui, |ui| {
                                     widget::kit::card_controls(ui);
@@ -1678,10 +1679,10 @@ pub(super) fn node_inspector<'a>(
                                 })
                             })
                         })
-                        .inner;
+                    });
                     responses.extend(crate::action::state_written(&mut writes));
                     if is_selected && selected_rect.is_none() {
-                        selected_rect = Some(frame_resp.response.rect);
+                        selected_rect = Some(card.response.rect);
                     }
                 }
 

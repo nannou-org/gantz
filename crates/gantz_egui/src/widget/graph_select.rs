@@ -73,6 +73,21 @@ pub struct GraphSelectResponse {
     pub join_ticket: Option<String>,
 }
 
+/// A row of the list of graphs.
+enum Row<'a> {
+    /// A named graph. `base` marks a base graph.
+    Named {
+        name: &'a Name,
+        ca: gantz_ca::CommitAddr,
+        base: bool,
+    },
+    /// An open graph with no name.
+    Unnamed {
+        ca: gantz_ca::CommitAddr,
+        timestamp: &'a gantz_ca::Timestamp,
+    },
+}
+
 impl<'a> GraphSelect<'a> {
     pub fn new(
         registry: &'a crate::Env<'a>,
@@ -153,7 +168,6 @@ impl<'a> GraphSelect<'a> {
             });
         });
 
-        let names = crate::reg::names(self.registry.registry);
         // Captured by `show_named` to surface each named graph's description and
         // input/output docs on hover.
         let registry = self.registry;
@@ -258,27 +272,11 @@ impl<'a> GraphSelect<'a> {
             });
 
         ui.add_space(SECTION_GAP);
-        // List all the graphs, named then unnamed.
+        // List all the graphs, named then unnamed. Only the rows in view are
+        // built, as a store can hold many graphs.
+        let rows = rows(self.registry.registry, self.base_names, self.heads, &state);
         egui::ScrollArea::vertical().show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = ROW_GAP;
-            // Names fall into three groups.
-            // 1. User-named, non-demo
-            // 2. Base-named, non-demo
-            // 3. All demos, alphabetical, regardless of user or base
-            let is_base = |name: &Name| self.base_names.contains_key(name);
-            let is_demo = self::is_demo;
-            // Nested `parent:child` graphs are hidden from the root list.
-            // They are reached by navigating into their parent.
-            let is_nested = |name: &Name| name.is_nested();
-            let matches_filter = |name: &str| {
-                state.name_filter.is_empty()
-                    || state
-                        .name_filter
-                        .split_whitespace()
-                        .all(|s| name.contains(s))
-            };
-
-            let mut visited = HashSet::new();
             let collab = self.collab;
 
             // Show a named graph row and its right-click menu, and handle
@@ -316,8 +314,6 @@ impl<'a> GraphSelect<'a> {
                 });
                 // Only named non-base rows offer an `×` and are deletable.
                 let deletable = res.delete.is_some();
-                // The associated demo to offer, if any.
-                let demo = registry.demo_graph(&name_str);
                 res.row.context_menu(|ui| {
                     if ui.button("open").clicked() {
                         response.replaced = Some(head.clone());
@@ -327,7 +323,8 @@ impl<'a> GraphSelect<'a> {
                         response.opened = Some(head.clone());
                         ui.close();
                     }
-                    if let Some(demo_name) = &demo {
+                    // The associated demo to offer, if any.
+                    if let Some(demo_name) = &registry.demo_graph(&name_str) {
                         if ui
                             .button("demo")
                             .on_hover_text("open the associated demo in a new tab")
@@ -353,96 +350,38 @@ impl<'a> GraphSelect<'a> {
                 }
             };
 
-            // 1. User-named, non-demo.
-            for (name, ca) in names
-                .iter()
-                .filter(|(n, _)| !is_base(n) && !is_demo(n) && !is_nested(n))
-            {
-                if !matches_filter(&name.to_string()) {
-                    continue;
-                }
-                visited.insert(*ca);
-                show_named(
-                    ui,
-                    name,
-                    ca,
-                    false,
-                    self.heads,
-                    self.focused_head,
-                    &mut response,
-                );
-            }
-
-            // 2. Base-named, non-demo. Hidden when the `base` filter is off.
-            for (name, ca) in names
-                .iter()
-                .filter(|(n, _)| state.show_base && is_base(n) && !is_demo(n) && !is_nested(n))
-            {
-                if !matches_filter(&name.to_string()) {
-                    continue;
-                }
-                visited.insert(*ca);
-                show_named(
-                    ui,
-                    name,
-                    ca,
-                    true,
-                    self.heads,
-                    self.focused_head,
-                    &mut response,
-                );
-            }
-
-            // 3. All demos, alphabetical, regardless of user or base. Hidden
-            //    when the `demo` filter is off. Shown even if also a base.
-            for (name, ca) in names
-                .iter()
-                .filter(|(n, _)| state.show_demo && is_demo(n) && !is_nested(n))
-            {
-                if !matches_filter(&name.to_string()) {
-                    continue;
-                }
-                visited.insert(*ca);
-                show_named(
-                    ui,
-                    name,
-                    ca,
-                    is_base(name),
-                    self.heads,
-                    self.focused_head,
-                    &mut response,
-                );
-            }
-
-            // Collect commit addresses for open unnamed heads. Named ones
-            // are already shown.
-            let open_head_cas: HashSet<_> = self
-                .heads
-                .iter()
-                .filter_map(|head| match head {
-                    gantz_ca::Head::Branch(_) => None,
-                    gantz_ca::Head::Commit(ca) => Some(*ca),
-                })
-                .collect();
-
-            // Show only unnamed commits that are currently open as heads.
-            for (ca, commit) in commits_by_recency(self.registry.registry)
-                .into_iter()
-                .filter(|(ca, _)| !visited.contains(ca) && open_head_cas.contains(ca))
-            {
-                if !state.name_filter.is_empty() {
-                    let ca_str = format!("{ca}");
-                    if !state.name_filter.split(" ").all(|s| ca_str.contains(s)) {
-                        continue;
+            for row in &rows {
+                let row_id = match row {
+                    Row::Named { name, .. } => self.id.with(("named", name)),
+                    Row::Unnamed { ca, .. } => self.id.with(("unnamed", ca)),
+                };
+                super::kit::lazy_item(ui, row_id, |ui| match *row {
+                    Row::Named { name, ca, base } => show_named(
+                        ui,
+                        name,
+                        &ca,
+                        base,
+                        self.heads,
+                        self.focused_head,
+                        &mut response,
+                    ),
+                    Row::Unnamed { ca, timestamp } => {
+                        let head = gantz_ca::Head::Commit(ca);
+                        let row_type = HeadRowType::Unnamed(timestamp);
+                        let res = head_row(
+                            self.heads,
+                            &head,
+                            row_type,
+                            &ca,
+                            self.focused_head,
+                            None,
+                            ui,
+                        );
+                        if res.row.clicked() {
+                            click_head(ui, self.heads, self.focused_head, head, &mut response);
+                        }
                     }
-                }
-
-                let head = gantz_ca::Head::Commit(*ca);
-                let row_type = HeadRowType::Unnamed(&commit.timestamp);
-                let res = head_row(self.heads, &head, row_type, ca, self.focused_head, None, ui);
-                if res.row.clicked() {
-                    click_head(ui, self.heads, self.focused_head, head, &mut response);
-                }
+                });
             }
         });
 
@@ -462,6 +401,69 @@ pub fn commits_by_recency(
     let mut commits: Vec<_> = reg.commits().iter().collect();
     commits.sort_by(|(_, a), (_, b)| b.timestamp.cmp(&a.timestamp));
     commits
+}
+
+/// The rows of the list of graphs in the order they show.
+///
+/// Names fall into three groups. User-named graphs that are not demos come
+/// first, then base graphs that are not demos, then all demos. The open graphs
+/// with no name follow, newest first. A nested `parent:child` graph is hidden,
+/// as it is reached through its parent.
+fn rows<'a>(
+    registry: &'a gantz_ca::Registry,
+    base_names: &crate::reg::Names,
+    heads: &[gantz_ca::Head],
+    state: &GraphSelectState,
+) -> Vec<Row<'a>> {
+    let matches = |text: String| {
+        state
+            .name_filter
+            .split_whitespace()
+            .all(|s| text.contains(s))
+    };
+    let unfiltered = state.name_filter.is_empty();
+    let named: Vec<(&Name, gantz_ca::CommitAddr)> = registry
+        .heads()
+        .filter(|(name, _)| !name.is_nested() && (unfiltered || matches(name.to_string())))
+        .collect();
+    let is_base = |name: &Name| base_names.contains_key(name);
+    let row = |&(name, ca): &(&'a Name, gantz_ca::CommitAddr)| Row::Named {
+        name,
+        ca,
+        base: is_base(name),
+    };
+    let user = named.iter().filter(|(n, _)| !is_base(n) && !is_demo(n));
+    let base = named
+        .iter()
+        .filter(|(n, _)| state.show_base && is_base(n) && !is_demo(n));
+    let demo = named.iter().filter(|(n, _)| state.show_demo && is_demo(n));
+    let mut rows: Vec<Row<'a>> = user.chain(base).chain(demo).map(row).collect();
+
+    // An open commit with a name already has its row.
+    let shown: HashSet<gantz_ca::CommitAddr> = rows
+        .iter()
+        .filter_map(|row| match row {
+            Row::Named { ca, .. } => Some(*ca),
+            Row::Unnamed { .. } => None,
+        })
+        .collect();
+    let mut unnamed: Vec<(gantz_ca::CommitAddr, &gantz_ca::Timestamp)> = heads
+        .iter()
+        .filter_map(|head| match head {
+            gantz_ca::Head::Commit(ca) if !shown.contains(ca) => Some(*ca),
+            _ => None,
+        })
+        .filter(|ca| unfiltered || matches(ca.to_string()))
+        .filter_map(|ca| Some((ca, &registry.commits().get(&ca)?.timestamp)))
+        .collect();
+    unnamed.sort_by(|a, b| b.1.cmp(a.1).then(a.0.cmp(&b.0)));
+    unnamed.dedup_by_key(|(ca, _)| *ca);
+    rows.extend(
+        unnamed
+            .into_iter()
+            .map(|(ca, timestamp)| Row::Unnamed { ca, timestamp }),
+    );
+    rows
 }
 
 /// Whether the name is in the `demo.` namespace of demo graphs.

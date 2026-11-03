@@ -102,6 +102,33 @@ pub fn exact_width<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui
     inner
 }
 
+/// Show an item of a vertical list, or only take its space while it is out of
+/// view.
+///
+/// A scroll area lays out every item on every frame, so a long list spends
+/// most of its time on items that do not show. An item out of view takes the
+/// height it had when it last showed, so an item always shows on its first
+/// frame. `id` must be unique to the item. The inner value is `None` for an
+/// item out of view.
+pub fn lazy_item<R>(
+    ui: &mut egui::Ui,
+    id: egui::Id,
+    add_contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> egui::InnerResponse<Option<R>> {
+    let last_height: Option<f32> = ui.ctx().data(|d| d.get_temp(id));
+    if let Some(height) = last_height {
+        let size = egui::vec2(ui.available_width(), height);
+        if !ui.is_rect_visible(egui::Rect::from_min_size(ui.cursor().min, size)) {
+            let (_, response) = ui.allocate_exact_size(size, egui::Sense::hover());
+            return egui::InnerResponse::new(None, response);
+        }
+    }
+    let shown = ui.scope(add_contents);
+    let height = shown.response.rect.height();
+    ui.ctx().data_mut(|d| d.insert_temp(id, height));
+    egui::InnerResponse::new(Some(shown.inner), shown.response)
+}
+
 /// Fill the controls in a nested card with the pane's colour, so that they
 /// stand apart from the card as wells. On an outlined card they keep their
 /// own fill, as the card is the pane's colour.
