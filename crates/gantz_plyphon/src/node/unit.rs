@@ -316,13 +316,15 @@ impl gantz_nodedef::NodeDef for UnitNode {
                 // Param values live in keyed state. Lags are structural.
                 In::Param {
                     name,
+                    header,
                     min,
                     max,
                     suffix,
                     ..
                 } => {
                     let at = vec![name.to_string(), crate::param::VALUE.to_string()];
-                    rows.push(param_row(name, at, [*min, *max], suffix, self.lag(name)));
+                    let range = [*min, *max];
+                    rows.push(param_row(name, header, at, range, suffix, self.lag(name)));
                 }
                 // Init-only values are baked into the def as constants, so an
                 // edit is structural and re-derives.
@@ -645,6 +647,24 @@ mod tests {
         let ron = ron::to_string(&node).expect("serialize");
         let back: UnitNode = ron::from_str(&ron).expect("deserialize");
         assert_eq!(node, back);
+    }
+
+    // `~mul` heads its `b` row `factor`, and the value and the lag still key
+    // on `b`, so stored state and lags keep their meaning.
+    #[test]
+    fn a_row_header_keeps_the_param_keys() {
+        let node = UnitNode::from_unit("Mul").expect("Mul row");
+        let view = gantz_nodedef::NodeDef::view(&node);
+        let row = view.rows.iter().find(|r| r.label == "factor");
+        let Some(Element::Row(ui::Row { children, .. })) = row.map(|r| &r.ui) else {
+            panic!("no factor row: {:?}", view.rows);
+        };
+        let [Element::Dialer(value), Element::Dialer(lag)] = children.as_slice() else {
+            panic!("children: {children:?}");
+        };
+        let at = vec!["b".to_string(), crate::param::VALUE.to_string()];
+        assert_eq!(value.at, Some(ui::At(at)));
+        assert_eq!(lag.on, Some(ui::Edit(format!("{LAG}b"))));
     }
 
     #[test]

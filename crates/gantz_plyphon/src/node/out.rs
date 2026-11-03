@@ -104,7 +104,14 @@ impl gantz_nodedef::NodeDef for Out {
         let value = vec![crate::param::VALUE.to_string()];
         View {
             inputs: vec![doc("signal", signal), doc("number", gain)],
-            rows: vec![param_row("gain", value, [0.0, 1.0], "", self.gain_lag)],
+            rows: vec![param_row(
+                "gain",
+                "gain",
+                value,
+                [0.0, 1.0],
+                "",
+                self.gain_lag,
+            )],
             hide_state: true,
             ..View::default()
         }
