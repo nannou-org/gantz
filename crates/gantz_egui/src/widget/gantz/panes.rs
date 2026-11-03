@@ -131,20 +131,21 @@ where
         Some(head) => {
             let merge_resolutions = &mut state.merge_resolutions;
             let head_state = state.open_heads.entry(head.clone()).or_default();
-            let names = crate::reg::names(gantz.env.registry);
             let is_base = match &head {
                 gantz_ca::Head::Branch(name) => base_names.contains_key(name),
                 _ => false,
             };
             let immutable = head_immutable(&head, gantz.base_immutable, base_names);
 
-            // Collect the `demo.` names for the dropdown.
-            let demo_names: Vec<String> = names
-                .iter()
-                .filter(|(n, _)| widget::graph_select::is_demo(n))
-                .map(|(n, _)| n.to_string())
+            // Collect the root `demo.` names for the dropdown. A root name is
+            // its single segment.
+            let demo_names: Vec<&str> = gantz
+                .env
+                .registry
+                .heads()
+                .filter(|(n, _)| !n.is_nested() && widget::graph_select::is_demo(n))
+                .map(|(n, _)| n.segments()[0].as_str())
                 .collect();
-            let demo_names_vec: Vec<&str> = demo_names.iter().map(|s| s.as_str()).collect();
 
             // Look up the current demo association for this head.
             let current_demo = match &head {
@@ -169,10 +170,10 @@ where
             });
 
             let res = pane_ui(ui, |ui| {
-                let mut config = widget::GraphConfig::new(&head, head_state, &names)
+                let mut config = widget::GraphConfig::new(&head, head_state, gantz.env.registry)
                     .is_base(is_base)
                     .immutable(immutable)
-                    .demo_names(&demo_names_vec)
+                    .demo_names(&demo_names)
                     .current_demo(current_demo.as_deref())
                     .current_description(current_description.as_deref())
                     .keep_state(keep_state)
@@ -692,7 +693,8 @@ fn render_node_view<Access>(
                         let &[n_ix] = path.as_slice() else {
                             return None;
                         };
-                        let (inlets, outlets) = crate::inlet_outlet_ids(env, data.graph);
+                        let (inlets, outlets) =
+                            crate::inlet_outlet_ids(env, data.graph, Some(&*data.instances));
                         let n_id = graph_scene::NodeIndex::new(n_ix);
                         let weight = data.graph.node_weight(n_id)?;
                         // Panes render sequentially, so each take and
@@ -1170,7 +1172,7 @@ fn gui_preview_node(
     decoded: &gantz_ui::Decoded,
     ui: &mut egui::Ui,
 ) -> Vec<crate::response::DynResponse> {
-    let (inlets, outlets) = crate::inlet_outlet_ids(env, graph);
+    let (inlets, outlets) = crate::inlet_outlet_ids(env, graph, None);
     let head_ca: Option<gantz_ca::ContentAddr> = env
         .registry
         .head_commit(head)
@@ -1237,7 +1239,7 @@ fn gui_preview_tree(
     decoded: &gantz_ui::Decoded,
     ui: &mut egui::Ui,
 ) -> Vec<crate::response::DynResponse> {
-    let (inlets, outlets) = crate::inlet_outlet_ids(env, graph);
+    let (inlets, outlets) = crate::inlet_outlet_ids(env, graph, None);
     // The focused head's committed graph address. Resolver hops into
     // instances go through the registry, since instances always resolve
     // committed children.
@@ -1604,7 +1606,7 @@ pub(super) fn node_inspector<'a>(
             .show(ui, |ui| {
                 let graph = &mut *root;
                 let ids: Vec<_> = graph.node_identifiers().collect();
-                let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
+                let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph, Some(&*instances));
                 // The rect of the first selected node, used to scroll to it.
                 let mut selected_rect: Option<egui::Rect> = None;
                 // VM-state writes recorded by each node's `NodeCtx`. They

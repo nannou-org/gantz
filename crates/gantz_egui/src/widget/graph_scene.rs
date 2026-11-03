@@ -760,7 +760,7 @@ fn nodes(
     let get_node = |ca: &gantz_ca::ContentAddr| registry.node(ca);
     let meta_ctx = gantz_core::node::MetaCtx::new(&get_node);
     let node_ids: Vec<_> = graph.node_identifiers().collect();
-    let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph);
+    let (inlets, outlets) = crate::inlet_outlet_ids(registry, graph, Some(&*instances));
     let mut node_responses = Vec::with_capacity(node_ids.len());
     let mut nodes_to_reset = Vec::new();
     let mut request_layout = false;

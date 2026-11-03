@@ -388,11 +388,11 @@ fn rename_tab<Access>(
 ) where
     Access: HeadAccess,
 {
-    let names = crate::reg::names(cx.gantz.env.registry);
+    let registry = cx.gantz.env.registry;
     let res = ui
         .scope(|ui| {
             ui.set_max_width(160.0);
-            widget::head_name_edit(head, &mut rename.text, &names, ui)
+            widget::head_name_edit(head, &mut rename.text, registry, ui)
         })
         .inner;
     if rename.request_focus {

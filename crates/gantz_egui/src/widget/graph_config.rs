@@ -11,7 +11,7 @@ use super::head_name_edit::{head_name, head_name_edit};
 pub struct GraphConfig<'a> {
     head: &'a gantz_ca::Head,
     head_state: &'a mut OpenHeadState,
-    names: &'a [(gantz_ca::Name, gantz_ca::CommitAddr)],
+    registry: &'a gantz_ca::Registry,
     is_base: bool,
     immutable: bool,
     demo_names: &'a [&'a str],
@@ -57,12 +57,12 @@ impl<'a> GraphConfig<'a> {
     pub fn new(
         head: &'a gantz_ca::Head,
         head_state: &'a mut OpenHeadState,
-        names: &'a [(gantz_ca::Name, gantz_ca::CommitAddr)],
+        registry: &'a gantz_ca::Registry,
     ) -> Self {
         Self {
             head,
             head_state,
-            names,
+            registry,
             is_base: false,
             immutable: false,
             demo_names: &[],
@@ -183,7 +183,7 @@ impl<'a> GraphConfig<'a> {
                 new_branch = ui
                     .scope(|ui| {
                         ui.set_max_width(control_w);
-                        head_name_edit(self.head, &mut name, self.names, ui)
+                        head_name_edit(self.head, &mut name, self.registry, ui)
                     })
                     .inner
                     .new_branch;

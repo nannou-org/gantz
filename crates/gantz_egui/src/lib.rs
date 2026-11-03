@@ -951,11 +951,13 @@ impl<'a> NodeCtx<'a> {
 
 /// The IDs of the inlet and outlet nodes.
 ///
-/// Weights reify transiently through the codec. A weight that fails to
+/// A node with a valid entry in `instances` reads its role from that entry.
+/// Other weights reify transiently through the codec. A weight that fails to
 /// reify, such as one with an unknown tag, contributes no inlet or outlet.
 pub(crate) fn inlet_outlet_ids(
     env: &Env<'_>,
     g: &gantz_ca::DataGraph,
+    instances: Option<&crate::node::NodeInstances>,
 ) -> (Vec<node::Id>, Vec<node::Id>) {
     use gantz_core::node::Role;
     let get_node = |ca: &gantz_ca::ContentAddr| env.node(ca);
@@ -963,10 +965,16 @@ pub(crate) fn inlet_outlet_ids(
     let mut inlets = vec![];
     let mut outlets = vec![];
     for n_ref in g.node_references() {
-        let Ok(inst) = env.codec.reify(n_ref.weight()) else {
-            continue;
+        let ix = n_ref.id().index();
+        let cached = instances.and_then(|i| i.peek(ix, n_ref.weight()));
+        let role = match cached {
+            Some(inst) => inst.node.role(ctx),
+            None => match env.codec.reify(n_ref.weight()) {
+                Ok(inst) => inst.node.role(ctx),
+                Err(_) => continue,
+            },
         };
-        match inst.node.role(ctx) {
+        match role {
             Role::Inlet => inlets.push(n_ref.id().index()),
             Role::Outlet => outlets.push(n_ref.id().index()),
             Role::Plain | Role::Delay => (),

@@ -452,12 +452,23 @@ impl Default for FollowSelectionConfig {
 /// value would leave a stale copy behind in egui's per-type persisted map on
 /// every dev build. egui never evicts entries of a type the running build no
 /// longer uses. The persisted memory would bloat without bound.
-pub(super) fn load_ron<T: serde::de::DeserializeOwned>(
-    ctx: &egui::Context,
-    id: egui::Id,
-) -> Option<T> {
+///
+/// The parsed value also lives in temp memory beside the RON it came from, so
+/// a load parses only when the RON has changed. egui never persists temp
+/// memory.
+pub(super) fn load_ron<T>(ctx: &egui::Context, id: egui::Id) -> Option<T>
+where
+    T: serde::de::DeserializeOwned + Clone + Send + Sync + 'static,
+{
     let ron = ctx.memory_mut(|m| m.data.get_persisted::<String>(id))?;
-    ron::from_str(&ron).ok()
+    let parsed = ctx.data(|d| d.get_temp::<std::sync::Arc<(String, T)>>(id));
+    if let Some(parsed) = parsed.filter(|p| p.0 == ron) {
+        return Some(parsed.1.clone());
+    }
+    let value: T = ron::from_str(&ron).ok()?;
+    let parsed = std::sync::Arc::new((ron, value.clone()));
+    ctx.data_mut(|d| d.insert_temp(id, parsed));
+    Some(value)
 }
 
 /// Persist a value to egui memory as a RON `String`. See [`load_ron`].
@@ -468,10 +479,10 @@ pub(super) fn store_ron<T: serde::Serialize>(ctx: &egui::Context, id: egui::Id, 
 }
 
 /// Load a tile tree from egui's persisted memory. See [`load_ron`].
-pub(super) fn load_tree<P: serde::de::DeserializeOwned>(
-    ctx: &egui::Context,
-    id: egui::Id,
-) -> Option<egui_tiles::Tree<P>> {
+pub(super) fn load_tree<P>(ctx: &egui::Context, id: egui::Id) -> Option<egui_tiles::Tree<P>>
+where
+    P: serde::de::DeserializeOwned + Clone + Send + Sync + 'static,
+{
     load_ron(ctx, id)
 }
 
