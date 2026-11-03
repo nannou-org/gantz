@@ -482,11 +482,6 @@ pub(super) fn simplify_tree(tree: &mut egui_tiles::Tree<Pane>, ctx: &egui::Conte
     }
 }
 
-/// The gap between sibling tiles, in points. It must match the default
-/// `egui_tiles::Behavior::gap_width`, which is not overridden, so imposed
-/// pixel sizes are exact and do not drift when re-imposed each frame.
-const TILE_GAP: f32 = 1.0;
-
 /// The minimum sidebar width and tray height, in points.
 const MIN_PANE_SIZE: f32 = 80.0;
 
@@ -610,9 +605,12 @@ pub(super) fn impose_fixed_sizes(
         return;
     };
     // Both columns span the full height, so the tray's available height is the
-    // area height less the gap. The sidebar's available width likewise.
+    // area height less one gap. The sidebar's available width likewise. The
+    // gap must be the one the layout uses, or the imposed sizes shift with the
+    // window size.
+    let gap = state.style.shape.separator_width;
     if state.view_toggles.sidebar_open {
-        let avail = area.width() - TILE_GAP;
+        let avail = area.width() - gap;
         let width = state
             .sidebar_width
             .clamp(MIN_PANE_SIZE, (avail - MIN_PANE_SIZE).max(MIN_PANE_SIZE));
@@ -630,7 +628,7 @@ pub(super) fn impose_fixed_sizes(
         || state.view_toggles.gui_preview
         || state.view_toggles.gui_tree
     {
-        let avail = area.height() - TILE_GAP;
+        let avail = area.height() - gap;
         let height = state
             .tray_height
             .clamp(MIN_PANE_SIZE, (avail - MIN_PANE_SIZE).max(MIN_PANE_SIZE));
@@ -657,6 +655,7 @@ pub(super) fn capture_fixed_sizes(
     state: &mut GantzState,
     area: egui::Rect,
 ) {
+    let gap = state.style.shape.separator_width;
     let Some(anchors) = layout_anchors(tree) else {
         return;
     };
@@ -666,12 +665,9 @@ pub(super) fn capture_fixed_sizes(
     // visibility from frame start. Capturing against a stale layout would
     // compute the column's size against the wrong set of visible siblings.
     if tree.is_visible(anchors.left_column) {
-        if let Some(width) = linear_child_points(
-            tree,
-            anchors.root,
-            anchors.left_column,
-            area.width() - TILE_GAP,
-        ) {
+        if let Some(width) =
+            linear_child_points(tree, anchors.root, anchors.left_column, area.width() - gap)
+        {
             if width > 1.0 {
                 state.sidebar_width = width;
             }
@@ -682,7 +678,7 @@ pub(super) fn capture_fixed_sizes(
             tree,
             anchors.right_column,
             anchors.tray,
-            area.height() - TILE_GAP,
+            area.height() - gap,
         ) {
             if height > 1.0 {
                 state.tray_height = height;
@@ -1106,7 +1102,7 @@ mod tests {
         else {
             panic!("root is not a linear container");
         };
-        let avail = 1000.0 - TILE_GAP;
+        let avail = 1000.0 - state.style.shape.separator_width;
         // The sidebar gets the fixed width. The main area gets the remainder.
         assert!((root.shares[anchors.left_column] - 240.0).abs() < 0.01);
         assert!((root.shares[anchors.right_column] - (avail - 240.0)).abs() < 0.01);
@@ -1124,6 +1120,29 @@ mod tests {
         impose_fixed_sizes(&mut tree, &state, area);
         capture_fixed_sizes(&tree, &mut state, area);
         assert!((state.sidebar_width - 240.0).abs() < 0.01);
+    }
+
+    /// The sidebar lays out at the stored width at any window width. The split
+    /// below is the one `egui_tiles` makes, less the gap of the style.
+    #[test]
+    fn imposed_sidebar_width_holds_as_the_window_resizes() {
+        let mut tree = create_tree();
+        let anchors = layout_anchors(&tree).unwrap();
+        let mut state = GantzState::new();
+        state.view_toggles.sidebar_open = true;
+        state.sidebar_width = 240.0;
+        let gap = state.style.shape.separator_width;
+        for width in [800.0, 1000.0, 1600.0] {
+            let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 800.0));
+            impose_fixed_sizes(&mut tree, &state, area);
+            let Some(egui_tiles::Container::Linear(root)) = tree.tiles.get_container(anchors.root)
+            else {
+                panic!("root is not a linear container");
+            };
+            let columns = [anchors.left_column, anchors.right_column];
+            let widths = root.shares.split(&columns, width - gap);
+            assert!((widths[0] - 240.0).abs() < 0.01, "{width}: {widths:?}");
+        }
     }
 
     /// Reopening the sidebar must not inflate its width. On the open-transition
@@ -1163,7 +1182,11 @@ mod tests {
         });
         let mut tree = egui_tiles::Tree::new("test", root, tiles);
         let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
-        impose_min_sizes(&mut tree, TILE_GAP, area);
+        impose_min_sizes(
+            &mut tree,
+            GantzState::new().style.shape.separator_width,
+            area,
+        );
 
         let Some(egui_tiles::Container::Linear(l)) = tree.tiles.get_container(root) else {
             panic!("root is not a linear container");
@@ -1181,7 +1204,11 @@ mod tests {
     fn impose_min_sizes_keeps_log_width() {
         let mut tree = create_tree();
         let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480.0, 800.0));
-        impose_min_sizes(&mut tree, TILE_GAP, area);
+        impose_min_sizes(
+            &mut tree,
+            GantzState::new().style.shape.separator_width,
+            area,
+        );
 
         let logs = tree.tiles.find_pane(&Pane::Logs).unwrap();
         let parent = tree.tiles.parent_of(logs).unwrap();
@@ -1209,7 +1236,11 @@ mod tests {
         let before = before.shares.clone();
 
         let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
-        impose_min_sizes(&mut tree, TILE_GAP, area);
+        impose_min_sizes(
+            &mut tree,
+            GantzState::new().style.shape.separator_width,
+            area,
+        );
 
         let Some(egui_tiles::Container::Linear(after)) =
             tree.tiles.get_container(anchors.left_column)
