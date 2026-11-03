@@ -355,6 +355,9 @@ pub struct TextInput {
     pub hint: Option<String>,
     /// Whether the text shows in a monospace font, as code does.
     pub mono: bool,
+    /// Whether the input draws its box. Without it the input shows as plain
+    /// text that a click edits.
+    pub frame: bool,
     /// Whether a commit to bound state also queues a push eval at the bound
     /// node.
     pub push: bool,
@@ -871,6 +874,7 @@ impl Default for TextInput {
             value: None,
             hint: None,
             mono: false,
+            frame: true,
             push: true,
             tip: None,
             key: None,

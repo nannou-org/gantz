@@ -590,6 +590,7 @@ fn elem(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, expr: Datum) -> Elem
             let value = a.string("value");
             let hint = a.string("hint");
             let mono = a.bool_or("mono", false);
+            let frame = a.bool_or("frame", true);
             let push = a.bool_or("push", true);
             let tip = a.string("tip");
             let key = a.key();
@@ -603,6 +604,7 @@ fn elem(ctx: &mut Ctx, path: &mut Vec<usize>, depth: usize, expr: Datum) -> Elem
                 value,
                 hint,
                 mono,
+                frame,
                 push,
                 tip,
                 key,

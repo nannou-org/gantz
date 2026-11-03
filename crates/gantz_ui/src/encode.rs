@@ -144,6 +144,7 @@ pub fn encode(elem: &Element) -> Datum {
             push_string(&mut attrs, "value", &e.value);
             push_string(&mut attrs, "hint", &e.hint);
             push_bool(&mut attrs, "mono", e.mono, false);
+            push_bool(&mut attrs, "frame", e.frame, true);
             push_bool(&mut attrs, "push", e.push, true);
             push_string(&mut attrs, "tip", &e.tip);
             push_key(&mut attrs, &e.key);
@@ -699,6 +700,7 @@ mod tests {
             field: field("src"),
             hint: Some("bd sn".into()),
             mono: true,
+            frame: false,
             ..TextInput::default()
         }));
     }
