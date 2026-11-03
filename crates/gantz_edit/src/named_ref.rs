@@ -209,13 +209,19 @@ pub fn named_ref_of(weight: &NodeData) -> Option<NamedRef> {
     if weight.tag != <NamedRef as NodeTag>::TAG {
         return None;
     }
-    match gantz_core::data::reify_node_concrete::<NamedRef>(weight) {
-        Ok(named_ref) => Some(named_ref),
-        Err(e) => {
-            log::error!("failed to decode a stored `NamedRef`: {e}");
-            None
-        }
+    decoded(weight, gantz_core::data::reify_node_concrete(weight))
+}
+
+/// The [`NamedRef`] stored in `weight` when it is a `NamedRef` or the inner
+/// reference of an `FnNamedRef`.
+///
+/// Both follow the name they hold, so a resync or a rename must reach both.
+/// A tag-matched weight that fails to decode is logged and read as `None`.
+pub fn any_named_ref_of(weight: &NodeData) -> Option<NamedRef> {
+    if weight.tag != <node::Fn<NamedRef> as NodeTag>::TAG {
+        return named_ref_of(weight);
     }
+    decoded(weight, gantz_core::data::reify_node_concrete(weight)).map(|f: node::Fn<_>| f.0)
 }
 
 /// Run `f` over the [`NamedRef`] stored in `weight`, writing the rewritten
@@ -228,22 +234,49 @@ pub fn named_ref_of(weight: &NodeData) -> Option<NamedRef> {
 ///
 /// [`edit_node_typed`]: gantz_core::data::edit_node_typed
 pub fn with_named_ref_mut(weight: &mut NodeData, f: impl FnOnce(&mut NamedRef) -> bool) -> bool {
-    use gantz_core::data::{EditNodeError, edit_node_typed};
     if weight.tag != <NamedRef as NodeTag>::TAG {
         return false;
     }
-    match edit_node_typed(weight, f) {
+    let edit = gantz_core::data::edit_node_typed(weight, f);
+    edited(weight, edit)
+}
+
+/// [`with_named_ref_mut`], which also reaches the inner reference of an
+/// `FnNamedRef`. See [`any_named_ref_of`].
+pub fn with_any_named_ref_mut(
+    weight: &mut NodeData,
+    f: impl FnOnce(&mut NamedRef) -> bool,
+) -> bool {
+    if weight.tag != <node::Fn<NamedRef> as NodeTag>::TAG {
+        return with_named_ref_mut(weight, f);
+    }
+    let edit = gantz_core::data::edit_node_typed(weight, |n: &mut node::Fn<_>| f(&mut n.0));
+    edited(weight, edit)
+}
+
+/// The decoded node, or `None` after a log of why `weight` failed to decode.
+fn decoded<T>(weight: &NodeData, node: Result<T, gantz_core::data::ReifyNodeError>) -> Option<T> {
+    node.inspect_err(|e| log::error!("failed to decode a stored `{}`: {e}", weight.tag))
+        .ok()
+}
+
+/// Whether an edit of `weight` changed it. A failed edit is logged and
+/// reports no change.
+fn edited(weight: &NodeData, edit: Result<bool, gantz_core::data::EditNodeError>) -> bool {
+    use gantz_core::data::EditNodeError;
+    match edit {
         Ok(changed) => changed,
         Err(EditNodeError::Lossy(lost)) => {
             log::warn!(
-                "a `NamedRef` holds data this gantz does not recognise ({}), so it keeps its \
+                "a `{}` holds data this gantz does not recognise ({}), so it keeps its \
                  reference",
+                weight.tag,
                 lost.join(", "),
             );
             false
         }
         Err(e) => {
-            log::error!("failed to edit a stored `NamedRef`: {e}");
+            log::error!("failed to edit a stored `{}`: {e}", weight.tag);
             false
         }
     }
