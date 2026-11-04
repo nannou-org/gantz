@@ -5,8 +5,9 @@
 //! as a [`BaseSource`] into [`BaseSources`] from `Plugin::build`. On every
 //! startup, [`load`] parses each source and merges it into the user's
 //! registry. The merge replaces existing names, so base nodes reset to their
-//! shipped form on each launch. To customize a base node, duplicate it under
-//! a new name.
+//! shipped form on each launch. A stored name nested under a base node that
+//! the base does not define is dropped. To customize a base node, duplicate
+//! it under a new name.
 //!
 //! A source may reference names another source defines. [`load`] runs to a
 //! fixpoint, so a domain's base graph can compose the core source's graphs.
@@ -66,7 +67,9 @@ pub struct ExportPaths {
 }
 
 /// Startup system that parses each embedded base source and merges it into
-/// the registry. Populates [`BaseNames`] and [`BaseNameSources`].
+/// the registry. Populates [`BaseNames`] and [`BaseNameSources`]. Then drops
+/// the stored names nested under a base name that the base does not define.
+/// See [`gantz_edit::base::stale_nested`].
 ///
 /// A source may reference names another source defines, so loading runs to a
 /// fixpoint. See [`gantz_edit::base::load_to_fixpoint`]. Push order does not
@@ -121,6 +124,10 @@ pub fn load(
     });
     for (ix, e) in failed {
         log::error!("base source `{}`: {e}", sources.0[ix].name);
+    }
+    for name in gantz_edit::base::stale_nested(&registry, &base_names.0) {
+        log::info!("dropped `{name}`, a nested name that the base does not define");
+        registry.remove_head(&name);
     }
     // The merged base graphs must be reified before any typed reads.
     refresh_cache(&registry, &mut cache, &codec.0);
