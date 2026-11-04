@@ -997,13 +997,25 @@ pub(super) fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &View
             tree.set_visible(id, visible);
         }
     }
-    // A container is visible when any child is.
-    for &id in &ids {
-        if let Some(container) = tree.tiles.get_container(id) {
-            let has_visible_child = container.children().any(|&id| tree.is_visible(id));
-            tree.set_visible(id, has_visible_child);
-        }
+    if let Some(root) = tree.root() {
+        set_container_visibility(tree, root);
     }
+}
+
+/// Make each container at or under `id` visible when any of its children is.
+/// Children go first, so a container never reads a stale visibility of a child.
+/// Returns whether `id` is visible.
+fn set_container_visibility(tree: &mut egui_tiles::Tree<Pane>, id: egui_tiles::TileId) -> bool {
+    let Some(container) = tree.tiles.get_container(id) else {
+        return tree.is_visible(id);
+    };
+    let children: Vec<_> = container.children().copied().collect();
+    let mut visible = false;
+    for child in children {
+        visible |= set_container_visibility(tree, child);
+    }
+    tree.set_visible(id, visible);
+    visible
 }
 
 /// Show `pane` and bring its tab to the front on the next pass. Patch-only
@@ -1075,6 +1087,20 @@ mod tests {
         set_tile_visibility(&mut tree, &state.view_toggles);
         assert!(tree.is_visible(tree.tiles.find_pane(&Pane::Graphs).unwrap()));
         assert!(tree.is_visible(tree.tiles.find_pane(&Pane::Logs).unwrap()));
+    }
+
+    /// A closed sidebar hides its column on the first pass over a fresh tree,
+    /// whatever order the tiles are stored in. A column shown for one frame
+    /// would lay out at its default share, and that size would be captured as
+    /// the sidebar width.
+    #[test]
+    fn closed_sidebar_column_hides_on_a_fresh_tree() {
+        for _ in 0..32 {
+            let mut tree = create_tree();
+            let anchors = layout_anchors(&tree).unwrap();
+            set_tile_visibility(&mut tree, &ViewToggles::default());
+            assert!(!tree.is_visible(anchors.left_column));
+        }
     }
 
     /// The fixed sidebar width must be imposed on the sidebar, not the main
