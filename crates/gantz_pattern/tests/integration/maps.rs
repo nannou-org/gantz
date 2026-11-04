@@ -97,40 +97,22 @@ fn map_patterns() {
 fn delivery_of_maps() {
     let mut vm = new_pin_engine();
     let rows: &[(&str, &str)] = &[
-        // A delivered map gains the seconds of its whole, which can run past
-        // the window. A quarter cycle at 2 cps takes 1/8 s.
+        // A delivered map keeps its keys and gains none.
         (
-            "delta_in_seconds",
-            "(let ((pairs (pat/events->secs
-                            (pat/query (pat/key 'n (pat/fast 4 (pat/pure 1))) (pat/span 0 1/8))
-                            (list 10.0 (list (list 0 1/8 2.0)) 2))))
-               (= 0.125 (hash-ref (car (cdr (car pairs))) 'delta)))",
+            "maps_stay_as_they_are",
+            "(let ((m (car (cdr (car (pat/events->secs
+                                       (pat/query (pat/key 'n (pat/pure 1)) (pat/span 0 1/4))
+                                       0.0
+                                       (list (list 0 1/4 1.0))))))))
+               (if (= 1 (hash-ref m 'n)) (not (hash-contains? m 'delta)) #f))",
         ),
-        // A cps change after the onset still counts. The event takes 1/2
-        // cycle at 1 cps and 1/2 cycle at 2 cps.
-        (
-            "delta_follows_the_cps_past_the_window",
-            "(let ((pairs (pat/events->secs
-                            (pat/query (pat/key 'n (pat/pure 1)) (pat/span 0 1/4))
-                            (list 0.0
-                                  (list (list 0 1/4 1.0))
-                                  (pat/fastcat (list (pat/pure 1) (pat/pure 2)))))))
-               (= 0.75 (hash-ref (car (cdr (car pairs))) 'delta)))",
-        ),
-        // A gap in the cps holds the cps at the onset.
-        (
-            "delta_holds_the_onset_rate_over_gaps",
-            "(let ((pairs (pat/events->secs
-                            (pat/query (pat/key 'n (pat/pure 1)) (pat/span 0 1/4))
-                            (list 0.0 (list (list 0 1/4 4.0)) pat/silence))))
-               (= 0.25 (hash-ref (car (cdr (car pairs))) 'delta)))",
-        ),
-        // A value that is not a map stays as it is.
+        // A number leaves as a float.
         (
             "numbers_stay_plain",
             "(equal? (list (list 0.0 1.0))
                      (pat/events->secs (pat/query (pat/pure 1) (pat/span 0 1/4))
-                                       (list 0.0 (list (list 0 1/4 1.0)) 1)))",
+                                       0.0
+                                       (list (list 0 1/4 1.0))))",
         ),
     ];
     for (case, snippet) in rows {

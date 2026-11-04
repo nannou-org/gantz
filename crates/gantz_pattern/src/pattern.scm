@@ -67,7 +67,6 @@
          pat/event-onset?
          pat/window
          pat/events->secs
-         pat/span-secs
          pat/pick
          pat/euclid-with
          pat/as-span
@@ -696,15 +695,6 @@
    0.0
    segs))
 
-;; The seconds that `span` takes to play at `cps`, which `pat/window`
-;; describes. A gap in `cps` holds the last cps, which starts as
-;; `default`. Junk inputs take no time.
-(define (pat/span-secs cps span default)
-  (let ((r (pat//cps default)))
-    (if (if r (pair? span) #f)
-        (pat//segs-secs (pat//cps-segs (pat//cps-pattern cps) span r))
-        0.0)))
-
 ;; Advance a tick-driven clock and return its next query window.
 ;;
 ;; `st` is the clock state `(list c te r last-t)`, where any non-pair
@@ -713,9 +703,11 @@
 ;; eval time of the last tick.
 ;; `t` is the eval time in seconds and `dt` the tick duration. `cps` is a
 ;; number or a pattern of numbers.
-;; Returns `(list span timing new-st)`. `span` is the window in cycles.
-;; `timing` is the `(list te segments cps)` that `pat/events->secs`
-;; reads.
+;;
+;; Returns `(list span secs segs start-cps new-st)`. `span` is the window
+;; in cycles and `secs` the seconds at which its start plays. `segs` are
+;; the abutting `(start end cps)` segments of the span, in order.
+;; `start-cps` is the cps at the start of the span.
 ;;
 ;; Each tick moves the playhead toward where it must be one tick from
 ;; now at the last cps, then adds the seconds that `cps` gives the new
@@ -730,14 +722,14 @@
 ;; runs backwards as state restored from an older session does. The
 ;; playhead stays put, so the pattern resumes where it was. A partial
 ;; eval without a numeric time or tick, or without `cps`, holds the
-;; clock and gives an empty span.
+;; clock. Its span is then empty at the playhead.
 (define (pat/window st t dt cps)
   (let ((p (pat//cps-pattern cps)))
     (if (if (number? t) (if (number? dt) p #f) #f)
         (let ((s (if (pair? st) st (list 0 t 1.0 t))))
           (pat//advance (car s) (list-ref s 1) (list-ref s 2) (list-ref s 3)
                         t dt p))
-        (list (cons 0 0) (list 0.0 '() #f) st))))
+        (pat//held st t))))
 
 (define (pat//advance c te r last-t t dt cps)
   (let ((target (+ t dt)))
@@ -749,12 +741,24 @@
       (let ((gap (* (- target from) r)))
         (let ((end (if (> gap 0) (+ c (pat/rationalize gap)) c)))
           (let ((segs (pat//cps-segs cps (cons c end) r)))
-            (list (cons c end)
-                  (list from (reverse segs) cps)
-                  (list end
-                        (+ from (pat//segs-secs segs))
-                        (pat//segs-cps segs r)
-                        t))))))))
+            (let ((ordered (reverse segs)))
+              (list (cons c end)
+                    from
+                    ordered
+                    (if (empty? ordered) r (list-ref (car ordered) 2))
+                    (list end
+                          (+ from (pat//segs-secs segs))
+                          (pat//segs-cps segs r)
+                          t)))))))))
+
+;; The window of a clock that does not advance. Its span is empty at the
+;; playhead of `st`. A clock with no state yet sits at cycle 0 at time `t`,
+;; at the start cps of 1.
+(define (pat//held st t)
+  (if (pair? st)
+      (let ((c (car st)))
+        (list (cons c c) (list-ref st 1) '() (list-ref st 2) st))
+      (list (cons 0 0) (if (number? t) t 0.0) '() 1.0 st)))
 
 ;; The seconds at which cycle point `x` plays. `segs` are the abutting
 ;; segments of a window and `te` the seconds of their start.
@@ -769,43 +773,22 @@
              (cdr segs)
              x)))))
 
-;; The cps at cycle point `x` of a window, or `r` past its segments.
-(define (pat//point-cps segs x r)
-  (if (empty? segs)
-      r
-      (if (< x (list-ref (car segs) 1))
-          (list-ref (car segs) 2)
-          (pat//point-cps (cdr segs) x r))))
-
-;; The value of event `e` for delivery. `r` is the cps at its onset. A
-;; map gains its `'delta`, the seconds that the event's whole plays for.
-(define (pat//delivered e cps r)
-  (let ((v (pat/event-value e)))
-    (if (hash? v)
-        (hash-insert v 'delta (pat/span-secs cps (pat/event-whole e) r))
-        (pat//inexact v))))
-
-;; Convert queried window events to a list of `(list seconds value)`
+;; The onsets among queried window events, as `(list seconds value)`
 ;; pairs for timestamped delivery paths.
 ;;
-;; `timing` is the second element of the `pat/window` result that gave
-;; the queried span. Only onset events are kept, as window-chopped
-;; continuations of a sustained event would otherwise retrigger every
-;; tick. Times and numeric values leave as floats, since the delivery
-;; paths drop rationals.
-(define (pat/events->secs events timing)
-  (if (if (list? events)
-          (if (list? timing) (not (empty? timing)) #f)
-          #f)
-      (let ((te (car timing))
-            (segs (list-ref timing 1))
-            (cps (list-ref timing 2)))
-        (list/map
-         (lambda (e)
-           (let ((x (car (pat/event-active e))))
-             (list (pat//point-secs te segs x)
-                   (pat//delivered e cps (pat//point-cps segs x 1.0)))))
-         (list/filter pat/event-onset? events)))
+;; `secs` and `segs` are the seconds and the segments that `pat/window`
+;; gave with the queried span. Only onset events are kept, as
+;; window-chopped continuations of a sustained event would otherwise
+;; retrigger every tick. Times and numeric values leave as floats, since
+;; the delivery paths drop rationals.
+(define (pat/events->secs events secs segs)
+  (if (if (list? events) (if (number? secs) (list? segs) #f) #f)
+      (list/map
+       (lambda (e)
+         (list (exact->inexact
+                (pat//point-secs secs segs (car (pat/event-active e))))
+               (pat//inexact (pat/event-value e))))
+       (list/filter pat/event-onset? events))
       '()))
 
 ;; Project `(seconds value)` pairs onto the `key` of their maps, for a

@@ -18,6 +18,7 @@
   (-> ref3 (ref4 1))
   (-> ref4 ref5)
   (-> (ref3 1) (ref5 1))
+  (-> (ref3 2) (ref5 2))
   (-> ref5 ~sinosc6)
   (-> ~sinosc6 ~out7))
 
@@ -41,6 +42,7 @@
   (-> ref3 (ref4 1))
   (-> ref4 ref5)
   (-> (ref3 1) (ref5 1))
+  (-> (ref3 2) (ref5 2))
   (-> ref5 ~sinosc6)
   (-> ~sinosc6 ~out7))
 
@@ -84,6 +86,7 @@
   (-> ref10 (ref11 1))
   (-> ref11 ref12)
   (-> (ref10 1) (ref12 1))
+  (-> (ref10 2) (ref12 2))
   (-> ref12 pat.pick13)
   (-> ref12 pat.pick14)
   (-> pat.pick13 ~sinosc15)
@@ -294,13 +297,15 @@
   (-> expr0 outlet2))
 
 (graph pat.sched
-  (expr0 (expr (pat/events->secs $events $timing) #:require "gantz/pattern"))
+  (expr0 (expr (pat/events->secs $events $secs $segs) #:require "gantz/pattern"))
   (inlet1 (inlet "events" "queried window events"))
-  (inlet2 (inlet "timing" "seconds of the window"))
-  (outlet3 (outlet "list" "(seconds value) onset pairs"))
+  (inlet2 (inlet "number" "seconds at the start of the window"))
+  (inlet3 (inlet "segments" "the (start end cps) segments of the window"))
+  (outlet4 (outlet "list" "(seconds value) pairs of the onsets"))
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
-  (-> expr0 outlet3))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
 
 (graph pat.shift
   (expr0 (expr (pat/shift (pat/rationalize $amount) $p) #:require "gantz/pattern"))
@@ -358,19 +363,27 @@
   (-> expr0 outlet3))
 
 (graph pat.window
-  (expr0 (expr (let ((r (pat/window state (hash-ref %args 'time) $tick $cps))) (begin (set! state (list-ref r 2)) r)) #:require "gantz/pattern"))
+  (expr0 (expr (let ((r (pat/window state (hash-ref %args 'time) $tick $cps))) (begin (set! state (list-ref r 4)) r)) #:require "gantz/pattern"))
   (inlet1 (inlet "tick" "tick duration in seconds"))
   (inlet2 (inlet "cps" "a number or a pattern of numbers"))
   (expr3 (expr (list-ref $window 0)))
   (expr4 (expr (list-ref $window 1)))
-  (outlet5 (outlet "span" "the window since the previous tick"))
-  (outlet6 (outlet "timing" "seconds of the window"))
+  (expr5 (expr (list-ref $window 2)))
+  (expr6 (expr (list-ref $window 3)))
+  (outlet7 (outlet "span" "the cycles of this tick"))
+  (outlet8 (outlet "number" "seconds at the start of the span"))
+  (outlet9 (outlet "segments" "the (start end cps) segments of the span"))
+  (outlet10 (outlet "number" "cps at the start of the span"))
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> expr0 expr3)
   (-> expr0 expr4)
-  (-> expr3 outlet5)
-  (-> expr4 outlet6))
+  (-> expr0 expr5)
+  (-> expr0 expr6)
+  (-> expr3 outlet7)
+  (-> expr4 outlet8)
+  (-> expr5 outlet9)
+  (-> expr6 outlet10))
 
 (graph pat.with
   (expr0 (expr (pat/with $pa $pb) #:require "gantz/pattern"))
@@ -403,7 +416,7 @@
   (pat.query "Query a pattern over a span for its sorted events.")
   (pat.rand "A seeded signal of random floats in [0, 1).")
   (pat.saw "A 0 to 1 ramp signal each cycle.")
-  (pat.sched "Window events as (seconds value) onset pairs for delivery, timed by the window.")
+  (pat.sched "The onsets among queried window events, as (seconds value) pairs. The seconds and segments of the window time them.")
   (pat.shift "Shift a pattern later in time.")
   (pat.silence "The empty pattern.")
   (pat.slow "Slow a pattern down by a factor.")
@@ -411,7 +424,7 @@
   (pat.stack "Layer patterns on top of each other.")
   (pat.steady "A continuous constant signal.")
   (pat.timecat "Concatenate patterns within a single cycle, each taking a share by its weight.")
-  (pat.window "Advance a tick-driven clock at a steady or patterned cps. Gives the query window in cycles and its timing in seconds.")
+  (pat.window "Advance a tick-driven clock at a steady or patterned cps. Gives the cycles of this tick, the seconds at which they start, the cps of each part of them and the cps at their start.")
   (pat.with "Add the values of one pattern to the maps of another, with structure from the first."))
 
 (layout demo.pat
