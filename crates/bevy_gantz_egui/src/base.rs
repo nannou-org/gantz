@@ -24,7 +24,6 @@
 //! writes every source back to its own file and demo reset re-parses the
 //! right source.
 
-use crate::reg::{GraphCache, refresh_cache};
 use bevy_ecs::prelude::*;
 use bevy_gantz::Registry;
 use bevy_log as log;
@@ -78,7 +77,6 @@ pub struct ExportPaths {
 pub fn load(
     sources: Res<BaseSources>,
     mut registry: ResMut<Registry>,
-    mut cache: ResMut<GraphCache>,
     codec: Res<NodeCodecRes>,
     mut base_names: ResMut<BaseNames>,
     mut name_sources: ResMut<BaseNameSources>,
@@ -129,8 +127,6 @@ pub fn load(
         log::info!("dropped `{name}`, a nested name that the base does not define");
         registry.remove_head(&name);
     }
-    // The merged base graphs must be reified before any typed reads.
-    refresh_cache(&registry, &mut cache, &codec.0);
 }
 
 /// System that exports every named graph back to its owning source's file.

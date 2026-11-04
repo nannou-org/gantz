@@ -78,6 +78,7 @@ fn main() {
                 setup_gui_state,
                 bevy_gantz_egui::base::load.after(setup_gui_state),
                 app::setup_open.after(bevy_gantz_egui::base::load),
+                bevy_gantz_egui::fill_cache.after(bevy_gantz_egui::base::load),
             ),
         )
         .add_systems(EguiPrimaryContextPass, app::load_egui_memory)

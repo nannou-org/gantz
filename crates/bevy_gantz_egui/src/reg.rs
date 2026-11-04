@@ -114,6 +114,21 @@ pub fn refresh_cache(reg: &Registry, cache: &mut GraphCache, codec: &NodeCodec) 
     }
 }
 
+/// Startup system that reifies the registry's graphs into the cache, so typed
+/// reads are served from the first frame.
+///
+/// Run it once the registry holds only what the session keeps, after the base
+/// loads and after any prune. A graph that only an earlier base or a dropped
+/// name held is then never reified. So a node type that only such graphs used
+/// can leave the node set with no errors at launch.
+pub fn fill_cache(
+    registry: Res<Registry>,
+    mut cache: ResMut<GraphCache>,
+    codec: Res<NodeCodecRes>,
+) {
+    refresh_cache(&registry, &mut cache, &codec.0);
+}
+
 /// Prune unreachable content and metadata from the registry, dropping the
 /// pruned graphs' cache entries with them.
 pub fn prune_unused(

@@ -69,7 +69,9 @@ use io::{
 };
 pub use merge::{on_merge_head, seed_view};
 pub use node::{builtins, entrypoints};
-pub use reg::{BuiltinNodes, GraphCache, env, lookup_node, prune_unused, refresh_cache};
+pub use reg::{
+    BuiltinNodes, GraphCache, env, fill_cache, lookup_node, prune_unused, refresh_cache,
+};
 pub use remote::{
     RenameHeadEvent, ResetHeadEvent, ResyncRefsEvent, SyncRemoteTip, on_rename_head, on_reset_head,
     on_resync_refs, on_sync_remote_tip,
