@@ -4,7 +4,10 @@ use crate::{
     datum::{self, Datum},
     node::{self, Node},
 };
-use gantz_ca::{CommitAddr, Head, Liveness, MergePolicy, Name, Registry, SectionDecl, section_get};
+use gantz_ca::{
+    CommitAddr, Head, Key, Liveness, MergePolicy, Name, Registry, SectionDecl, section_get,
+};
+use std::collections::BTreeSet;
 use steel::{
     SteelErr, SteelVal,
     gc::Gc,
@@ -63,17 +66,18 @@ pub type Snapshot = Vec<(Vec<node::Id>, Datum)>;
 /// once, when the commit does, and a state change makes no sync traffic.
 pub struct Snapshots;
 
-/// The registry section of the named graphs that do not keep their node state.
-/// A head keeps its state unless its name is here.
+/// The registry section of the named graphs that keep their node state. A head
+/// keeps its state only if its name is here, so a graph with no name never
+/// does.
 ///
 /// An entry rides with the name, so the choice survives an edit.
-pub struct Volatile;
+pub struct Keep;
 
 /// The id of the [`Snapshots`] section.
 pub const SNAPSHOTS_ID: &str = "gantz.state";
 
-/// The id of the [`Volatile`] section.
-pub const VOLATILE_ID: &str = "gantz.state.volatile";
+/// The id of the [`Keep`] section.
+pub const KEEP_ID: &str = "gantz.state.keep";
 
 /// The ident of the node identity tree. It holds an opaque identity value per
 /// node, at the node's path followed by `ID_KEY`, with the same nesting as
@@ -96,8 +100,8 @@ impl SectionDecl for Snapshots {
     type Value = Snapshot;
 }
 
-impl SectionDecl for Volatile {
-    const ID: &'static str = VOLATILE_ID;
+impl SectionDecl for Keep {
+    const ID: &'static str = KEEP_ID;
     const POLICY: MergePolicy = MergePolicy::KeepExisting;
     const LIVENESS: Liveness = Liveness::WithName;
     type Key = Name;
@@ -243,11 +247,31 @@ pub fn restore_head(registry: &Registry, head: &Head, vm: &mut Engine) -> Result
     }
 }
 
-/// Whether `head` keeps its node state. See [`Volatile`].
+/// Whether `head` keeps its node state. See [`Keep`].
 pub fn keeps(registry: &Registry, head: &Head) -> bool {
     match head {
-        Head::Branch(name) => section_get::<Volatile>(registry, name).is_none(),
-        Head::Commit(_) => true,
+        Head::Branch(name) => section_get::<Keep>(registry, name).is_some(),
+        Head::Commit(_) => false,
+    }
+}
+
+/// Remove each snapshot of `registry` that no head restores. Only a name that
+/// keeps its state restores a snapshot, the one of the commit it points to.
+pub fn retain_kept(registry: &mut Registry) {
+    let kept: BTreeSet<CommitAddr> = registry
+        .heads()
+        .filter(|(name, _)| section_get::<Keep>(registry, name).is_some())
+        .map(|(_, ca)| ca)
+        .collect();
+    let unkept: Vec<Key> = registry
+        .section(SNAPSHOTS_ID)
+        .into_iter()
+        .flat_map(|section| section.entries.keys())
+        .filter(|key| !matches!(key, Key::Commit(ca) if kept.contains(ca)))
+        .cloned()
+        .collect();
+    for key in &unkept {
+        registry.remove_section_entry(SNAPSHOTS_ID, key);
     }
 }
 

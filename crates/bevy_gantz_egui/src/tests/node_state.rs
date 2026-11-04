@@ -84,11 +84,20 @@ fn set_value(app: &mut bevy_app::App, h: &Head, val: f64) {
     state::update_value(vm, &[0], SteelVal::NumV(val)).unwrap();
 }
 
+/// Make the named graph keep its node state.
+fn keep(app: &mut bevy_app::App, n: &str) {
+    let mut registry = app.world_mut().resource_mut::<Registry>();
+    gantz_ca::section_insert::<state::Keep>(&mut registry.0, name(n), &true).unwrap();
+}
+
 /// An app with `alpha` and `other` open, since the last head never closes.
+/// Both keep their node state.
 fn app_with_two_heads() -> (bevy_app::App, Head, Head) {
     let mut app = super::test_app(|| {});
     let alpha = commit(&mut app, "alpha", graph(1.0));
     let other = commit(&mut app, "other", graph(2.0));
+    keep(&mut app, "alpha");
+    keep(&mut app, "other");
     trigger(&mut app, head::OpenEvent(alpha.clone()));
     trigger(&mut app, head::OpenEvent(other.clone()));
     (app, alpha, other)
@@ -198,9 +207,25 @@ fn a_commit_with_no_snapshot_starts_from_its_initial_state() {
     assert_eq!(value(&mut app, &alpha), SteelVal::NumV(3.0));
 }
 
-/// A head with no name keeps its state too, by its commit.
+/// A graph keeps no node state unless it opts in. It stores nothing and starts
+/// from its initial state each time it opens.
 #[test]
-fn an_unnamed_head_keeps_its_state() {
+fn a_graph_keeps_no_state_by_default() {
+    let mut app = super::test_app(|| {});
+    let alpha = commit(&mut app, "alpha", graph(1.0));
+    let other = commit(&mut app, "other", graph(2.0));
+    trigger(&mut app, head::OpenEvent(alpha.clone()));
+    trigger(&mut app, head::OpenEvent(other));
+    set_value(&mut app, &alpha, 9.0);
+    trigger(&mut app, head::CloseEvent(alpha.clone()));
+    assert!(snapshot(&app, &alpha).is_none());
+    trigger(&mut app, head::OpenEvent(alpha.clone()));
+    assert_eq!(value(&mut app, &alpha), SteelVal::NumV(1.0));
+}
+
+/// A head with no name has no keep toggle, so it keeps no state.
+#[test]
+fn an_unnamed_head_keeps_no_state() {
     let mut app = super::test_app(|| {});
     let other = commit(&mut app, "other", graph(2.0));
     let unnamed = Head::Commit(unnamed_commit(&mut app, graph(1.0)));
@@ -209,7 +234,7 @@ fn an_unnamed_head_keeps_its_state() {
     set_value(&mut app, &unnamed, 9.0);
     trigger(&mut app, head::CloseEvent(unnamed.clone()));
     trigger(&mut app, head::OpenEvent(unnamed.clone()));
-    assert_eq!(value(&mut app, &unnamed), SteelVal::NumV(9.0));
+    assert_eq!(value(&mut app, &unnamed), SteelVal::NumV(1.0));
 }
 
 /// The first snapshot of a commit replaces the one of its nearest ancestor,
@@ -239,6 +264,7 @@ fn a_snapshot_of_a_held_commit_stays() {
     app.world_mut()
         .resource_mut::<Registry>()
         .set_head(fork.clone(), first);
+    keep(&mut app, "fork");
     commit(&mut app, "alpha", graph(3.0));
     trigger(&mut app, head::OpenEvent(alpha.clone()));
     trigger(&mut app, head::CloseEvent(alpha.clone()));
@@ -254,10 +280,10 @@ fn set_keep(app: &mut bevy_app::App, n: &str, keep: bool) {
     trigger(app, crate::ForApp(toggle));
 }
 
-/// Turning the toggle off drops the stored state. The graph then stores
-/// nothing and starts from its initial state each time it opens.
+/// Turning the toggle off drops the stored state, so the graph starts from its
+/// initial state at its next open.
 #[test]
-fn a_volatile_graph_starts_from_its_initial_state() {
+fn a_graph_that_stops_keeping_its_state_drops_it() {
     let (mut app, alpha, _other) = app_with_two_heads();
     app.add_observer(crate::graphs::on_set_keep_state);
     set_value(&mut app, &alpha, 9.0);
@@ -265,19 +291,14 @@ fn a_volatile_graph_starts_from_its_initial_state() {
     assert!(snapshot(&app, &alpha).is_some());
     set_keep(&mut app, "alpha", false);
     assert!(snapshot(&app, &alpha).is_none());
-
-    trigger(&mut app, head::OpenEvent(alpha.clone()));
-    assert_eq!(value(&mut app, &alpha), SteelVal::NumV(1.0));
-    set_value(&mut app, &alpha, 9.0);
-    trigger(&mut app, head::CloseEvent(alpha.clone()));
-    assert!(snapshot(&app, &alpha).is_none());
     trigger(&mut app, head::OpenEvent(alpha.clone()));
     assert_eq!(value(&mut app, &alpha), SteelVal::NumV(1.0));
 }
 
-/// A snapshot that reaches a volatile graph from elsewhere stays out of it.
+/// A snapshot that reaches a graph that keeps no state from elsewhere stays
+/// out of it.
 #[test]
-fn a_volatile_graph_ignores_a_stored_snapshot() {
+fn a_graph_that_keeps_no_state_ignores_a_stored_snapshot() {
     let (mut app, alpha, _other) = app_with_two_heads();
     app.add_observer(crate::graphs::on_set_keep_state);
     set_keep(&mut app, "alpha", false);

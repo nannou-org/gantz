@@ -70,7 +70,7 @@ impl<'a> GraphConfig<'a> {
             base_sources: &[],
             current_base_source: None,
             current_description: None,
-            keep_state: true,
+            keep_state: false,
             env: None,
             collab: None,
         }

@@ -221,10 +221,10 @@ fn run_push_by_label_or_path() {
 }
 
 /// A run starts from the node state that a file stores for the commit of the
-/// graph, unless the graph does not keep its state.
+/// graph, if the graph keeps its state.
 #[test]
 fn run_restores_stored_state() {
-    use gantz_core::node::state::{Snapshots, Volatile};
+    use gantz_core::node::state::{Keep, Snapshots};
     let codec = conf().codec;
     let text = "(graph g (s (state #:init 1)) (show log) (-> s show))";
     let mut registry = gantz_edit::format::from_str(text, BASE_TIMESTAMP, codec.data()).unwrap();
@@ -244,10 +244,10 @@ fn run_restores_stored_state() {
         assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
         output.stdout
     };
-    assert_eq!(run(&registry), "5\n");
-
-    gantz_ca::section_insert::<Volatile>(&mut registry, name.clone(), &true).unwrap();
     assert_eq!(run(&registry), "1.0\n");
+
+    gantz_ca::section_insert::<Keep>(&mut registry, name.clone(), &true).unwrap();
+    assert_eq!(run(&registry), "5\n");
 }
 
 #[test]
