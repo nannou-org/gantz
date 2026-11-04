@@ -10,12 +10,19 @@
 
 (require "gantz/list")
 
-(provide sched/pick)
+(provide sched/map
+         sched/pick)
 
 ;; A value on its way to a control input. A number becomes inexact. Any
 ;; other value passes through.
 (define (sched//inexact v)
   (if (number? v) (exact->inexact v) v))
+
+;; Apply `f` to the value of each pair of `schedule`. The times stay.
+(define (sched/map f schedule)
+  (if (if (function? f) (list? schedule) #f)
+      (list/map (lambda (pr) (list (car pr) (f (car (cdr pr))))) schedule)
+      '()))
 
 ;; Project the maps of `schedule` onto their `key`, for a control input. A
 ;; pair whose value holds no such key is dropped. Numbers leave as floats.

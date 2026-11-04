@@ -4,6 +4,17 @@
 use crate::common::{assert_pinned, new_pin_engine};
 
 #[test]
+fn map() {
+    let mut vm = new_pin_engine();
+    assert_pinned(
+        &mut vm,
+        "maps_values_and_keeps_seconds",
+        "((1.0 2) (1.5 3))",
+        "(sched/map (lambda (v) (+ v 1)) (list (list 1.0 1) (list 1.5 2)))",
+    );
+}
+
+#[test]
 fn pick() {
     let mut vm = new_pin_engine();
     let rows: &[(&str, &str, &str)] = &[

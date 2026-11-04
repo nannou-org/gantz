@@ -394,6 +394,15 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph sched.map
+  (expr0 (expr (sched/map $f $schedule) #:require "gantz/sched"))
+  (inlet1 (inlet "function" "value mapping"))
+  (inlet2 (inlet "schedule" "(seconds value) pairs"))
+  (outlet3 (outlet "schedule" "(seconds value) pairs of mapped values"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (descriptions
   (demo.pat "A mini-notation frequency pattern queried per tick plays a sine and plots two cycles. Edit the string and dial the cps.")
   (demo.pat.cps "A second pattern sets the cps, which steps each cycle without a jump in position. Edit either string.")
@@ -425,7 +434,8 @@
   (pat.steady "A continuous constant signal.")
   (pat.timecat "Concatenate patterns within a single cycle, each taking a share by its weight.")
   (pat.window "Advance a tick-driven clock at a steady or patterned cps. Gives the cycles of this tick, the seconds at which they start, the cps of each part of them and the cps at their start.")
-  (pat.with "Add the values of one pattern to the maps of another, with structure from the first."))
+  (pat.with "Add the values of one pattern to the maps of another, with structure from the first.")
+  (sched.map "Apply a function to the value of each pair of a schedule."))
 
 (layout demo.pat
   (comment9 0 0)

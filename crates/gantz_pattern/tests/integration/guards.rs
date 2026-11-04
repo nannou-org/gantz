@@ -201,3 +201,20 @@ fn junk_window_and_delivery_inputs() {
         "(equal? '() (pat/rationalize '()))",
     );
 }
+
+// A map of a schedule with a missing input gives no pairs.
+#[test]
+fn junk_schedule_inputs_are_silent() {
+    let mut vm = new_pin_engine();
+    for junk in JUNK {
+        for (name, expr) in [
+            (
+                "function",
+                format!("(sched/map {junk} (list (list 1.0 1)))"),
+            ),
+            ("schedule", format!("(sched/map (lambda (v) v) {junk})")),
+        ] {
+            assert_pinned(&mut vm, &format!("{name} of {junk}"), "()", &expr);
+        }
+    }
+}
