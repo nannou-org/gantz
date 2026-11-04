@@ -13,6 +13,7 @@ mod mini;
 mod plot;
 mod pmini;
 mod rand;
+mod readers;
 mod sched;
 mod span;
 mod window;

@@ -65,8 +65,10 @@
          pat/euclid-off
          pat/euclid-full
          pat/event-onset?
+         pat/event-phase
          pat/window
          pat/events->secs
+         pat/at
          pat/euclid-with
          pat/as-span
          pat/plot-data)
@@ -630,6 +632,16 @@
           (if (< astart wstart) #f (not (< wstart astart))))
         #f)))
 
+;; How far the active part of `e` starts through its whole, from 0 to 1.
+;; For an event from `pat/at`, this is how far its cycle point is through
+;; it. A signal has no whole, so it has no phase and gives #f.
+(define (pat/event-phase e)
+  (let ((w (pat/event-whole e)))
+    (if w
+        (exact->inexact
+         (/ (- (car (pat/event-active e)) (car w)) (- (cdr w) (car w))))
+        #f)))
+
 ;; The largest gap in cycles that a tick may close in one window. A
 ;; steady window spans tick-duration times cps cycles, so this sits far
 ;; above sane configurations. A wider gap moves the clock to the eval
@@ -788,6 +800,18 @@
                 (pat//point-secs secs segs (car (pat/event-active e))))
                (pat//inexact (pat/event-value e))))
        (list/filter pat/event-onset? events))
+      '()))
+
+;; The events of `p` that are alive at cycle point `x`. The query covers
+;; one step of the grid at `x`, and a part of an event that starts later in
+;; that step does not count, so each event counts once. A partial eval
+;; with no cycle point gives no events.
+(define (pat/at p x)
+  (if (number? x)
+      (let ((x (pat/rationalize x)))
+        (list/filter
+         (lambda (e) (not (< x (car (pat/event-active e)))))
+         (pat/query p (cons x (+ x (/ 1 pat//grid))))))
       '()))
 
 ;; Apply the euclidean mask to the pattern. Structure comes from the

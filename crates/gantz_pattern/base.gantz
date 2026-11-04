@@ -158,6 +158,15 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph pat.at
+  (expr0 (expr (pat/at $p $x) #:require "gantz/pattern"))
+  (inlet1 (inlet "pattern" "pattern to read"))
+  (inlet2 (inlet "cycle" "the cycle point"))
+  (outlet3 (outlet "events" "the events alive at the cycle point"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (graph pat.degradeby
   (expr0 (expr (pat/degrade-by $seed $prob $p) #:require "gantz/pattern"))
   (inlet1 (inlet "seed" "seed for the drops"))
@@ -409,6 +418,7 @@
   (demo.pat.maps "Patterns join into one map per event. An expr reads the cps of each map for the clock, and `sched.pick` routes each key to a control.")
   (demo.pat.plot "Every kind of event value in `pat.plot` nodes. Numbers, symbols, overlapping symbols, bools, a signal, maps stacked and expanded, lists and opaque values.")
   (pat.app "Apply a pattern of functions to a pattern of values.")
+  (pat.at "The events of a pattern that are alive at a cycle point. `pat/event-phase` gives how far the point is through each of them.")
   (pat.degradeby "Drop events at random with a given probability.")
   (pat.euclid "K onsets distributed over N slots per cycle.")
   (pat.euclidfull "Euclidean onsets elongated to fill the gaps.")

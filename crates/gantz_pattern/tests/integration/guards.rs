@@ -218,3 +218,18 @@ fn junk_schedule_inputs_are_silent() {
         }
     }
 }
+
+// A reader with a missing input reads nothing.
+#[test]
+fn junk_reader_inputs_are_silent() {
+    let mut vm = new_pin_engine();
+    for junk in JUNK {
+        let expr = format!("(pat/at {junk} 1/4)");
+        assert_pinned(&mut vm, &format!("pattern of {junk}"), "()", &expr);
+    }
+    // A number is a valid cycle point.
+    for junk in JUNK.iter().filter(|junk| **junk != "7") {
+        let expr = format!("(pat/at (pat/pure 1) {junk})");
+        assert_pinned(&mut vm, &format!("point of {junk}"), "()", &expr);
+    }
+}
