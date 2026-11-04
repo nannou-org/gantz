@@ -60,7 +60,7 @@
   (pat.pick12 (pat.pick "freq"))
   (pat.pick13 (pat.pick "amp"))
   (~sinosc14 ~sinosc)
-  (~mul15 ~mul)
+  (~mul15 (~mul #:b-lag 0.05))
   (~out16 ~out)
   (pat.plot17 (pat.plot #:end 2 #:width 240))
   (comment18 (comment "# maps\npatterns join into one map per event.\ncps comes from the events themselves." 300 57))
