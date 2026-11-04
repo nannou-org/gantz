@@ -153,6 +153,13 @@
   (-> ~osc4 ~out5)
   (-> load-bang6 number1))
 
+(graph mtof
+  (inlet0 (inlet "number" "a MIDI note number"))
+  (expr1 (expr (* 440.0 (expt 2.0 (/ (- $note 69) 12.0)))))
+  (outlet2 (outlet "number" "the frequency in Hz"))
+  (-> inlet0 expr1)
+  (-> expr1 outlet2))
+
 (graph saw-table
   (inlet0 (inlet "number" "the number of partials"))
   (expr1 (expr (range 1 (+ (exact (round $h)) 1))))
@@ -301,6 +308,7 @@
   (demo.sine "A sine wave into the audio output - the simplest DSP graph.")
   (demo.waveshape "A sine into a tanh waveshaper. Dial the number to raise the drive.")
   (demo.wavetable "A list of numbers fills a wavetable buffer for an oscillator. Dial the number of harmonics to fill the table and hear the tone change.")
+  (mtof "Turns a MIDI note number into a frequency in Hz. Note 69 is 440 Hz, and each step of 12 doubles the frequency. `~midicps` does the same to a signal.")
   (saw-table "A saw wave table of 512 points. It sums h partials, each a sine over its number.")
   (~scopeplot "Plots the signal that passes through it, and passes the signal on unchanged. Drop it on any dsp edge to watch the audio there. Set the plot bounds in the inspector."))
 
@@ -410,6 +418,12 @@
   (~osc4 0 340)
   (~out5 0 400)
   (camera 180 210 1))
+
+(layout mtof
+  (expr1 0 60)
+  (inlet0 0 0)
+  (outlet2 0 120)
+  (camera 180 60 1))
 
 (layout saw-table
   (comment5 600 60)
