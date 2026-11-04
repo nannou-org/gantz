@@ -322,6 +322,16 @@ pub fn remap_root(
     remap_in(vm, ROOT_IDS, mapping)
 }
 
+/// Drop the state and the identity of every node in `vm`, so the next
+/// register initializes each node afresh.
+pub fn clear(vm: &mut Engine) {
+    for root in [ROOT_STATE, ROOT_IDS] {
+        if vm.extract_value(root).is_ok() {
+            vm.update_value(root, SteelVal::empty_hashmap());
+        }
+    }
+}
+
 /// Extract the value for the node with the given ID.
 pub fn extract_value(vm: &Engine, node_path: &[usize]) -> Result<Option<SteelVal>, SteelErr> {
     extract_in(vm, ROOT_STATE, node_path)
@@ -638,6 +648,17 @@ mod tests {
         assert_eq!(id_at(&vm, &[0]), Some(SteelVal::IntV(1)));
         assert_eq!(id_at(&vm, &[0, 4]), Some(SteelVal::IntV(2)));
         assert_eq!(id_at(&vm, &[1]), None);
+    }
+
+    /// A clear drops the state and the identity of every node.
+    #[test]
+    fn a_clear_drops_state_and_identities() {
+        let mut vm = vm(&[&[0], &[1, 2]]);
+        update_value(&mut vm, &[1, 2], SteelVal::IntV(7)).unwrap();
+        clear(&mut vm);
+        assert_eq!(extract_value(&vm, &[1, 2]).unwrap(), None);
+        assert_eq!(id_at(&vm, &[0]), None);
+        assert_eq!(id_at(&vm, &[1, 2]), None);
     }
 
     /// Identities do not show in the state tree, and state migrations work

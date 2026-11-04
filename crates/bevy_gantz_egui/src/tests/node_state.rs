@@ -7,11 +7,16 @@ use gantz_core::node::state::{self, Snapshots};
 use gantz_egui::node::{Init, State};
 use steel::SteelVal;
 
+/// A state node that starts at `init`.
+fn node(init: f64) -> gantz_ca::NodeData {
+    let node = State::new(Some(Init::Number(init)));
+    gantz_core::data::erase_node_typed(&node).unwrap()
+}
+
 /// A one node graph of a state node that starts at `init`.
 fn graph(init: f64) -> gantz_ca::DataGraph {
-    let node = State::new(Some(Init::Number(init)));
     let mut dg = gantz_ca::DataGraph::default();
-    dg.add_node(gantz_core::data::erase_node_typed(&node).unwrap());
+    dg.add_node(node(init));
     dg
 }
 
@@ -123,6 +128,63 @@ fn a_replaced_head_keeps_its_state() {
     trigger(&mut app, head::ReplaceEvent(alpha.clone()));
     let nodes = snapshot(&app, &other).expect("the snapshot of the head it left");
     assert_eq!(nodes[0].1, gantz_ca::Datum::F64(7.0));
+}
+
+/// Loading another head into the tab carries none of the state of the head it
+/// leaves, even where the two graphs hold an equal node.
+#[test]
+fn a_loaded_head_takes_none_of_the_state_it_replaces() {
+    let (mut app, _alpha, other) = app_with_two_heads();
+    let mut dg = graph(2.0);
+    dg.add_node(node(5.0));
+    let beta = commit(&mut app, "beta", dg);
+    set_value(&mut app, &other, 9.0);
+    trigger(&mut app, head::ReplaceEvent(beta.clone()));
+    assert_eq!(value(&mut app, &beta), SteelVal::NumV(2.0));
+}
+
+/// Loading a head into the tab restores its stored state, as opening it does.
+#[test]
+fn a_loaded_head_restores_its_state() {
+    let (mut app, alpha, other) = app_with_two_heads();
+    set_value(&mut app, &alpha, 9.0);
+    trigger(&mut app, head::CloseEvent(alpha.clone()));
+    set_value(&mut app, &other, 4.0);
+    trigger(&mut app, head::ReplaceEvent(alpha.clone()));
+    assert_eq!(value(&mut app, &alpha), SteelVal::NumV(9.0));
+}
+
+/// A load keeps the VM of the tab, and with it the modules that the VM
+/// loaded, as a new VM costs much more than a compile.
+#[test]
+fn a_load_keeps_the_vm() {
+    let (mut app, alpha, other) = app_with_two_heads();
+    let mark = "%test-mark";
+    let e = entity(&mut app, &other);
+    let mut vms = app.world_mut().non_send_mut::<head::HeadVms>();
+    vms.0
+        .get_mut(&e)
+        .unwrap()
+        .register_value(mark, SteelVal::IntV(1));
+    trigger(&mut app, head::CloseEvent(alpha.clone()));
+    trigger(&mut app, head::ReplaceEvent(alpha.clone()));
+    let vms = app.world().non_send::<head::HeadVms>();
+    assert_eq!(vms.0[&e].extract_value(mark).ok(), Some(SteelVal::IntV(1)));
+}
+
+/// A load whose graph fails to compile leaves the tab with no VM, so the
+/// module of the graph that it left never runs on the new state.
+#[test]
+fn a_failed_load_leaves_no_vm() {
+    let (mut app, _alpha, other) = app_with_two_heads();
+    let e = entity(&mut app, &other);
+    let mut unknown = node(1.0);
+    unknown.tag = "Unknown".to_string();
+    let mut dg = gantz_ca::DataGraph::default();
+    dg.add_node(unknown);
+    let broken = commit(&mut app, "broken", dg);
+    trigger(&mut app, head::ReplaceEvent(broken));
+    assert!(!app.world().non_send::<head::HeadVms>().0.contains_key(&e));
 }
 
 /// A commit with no snapshot starts from the initial state of its graph.
