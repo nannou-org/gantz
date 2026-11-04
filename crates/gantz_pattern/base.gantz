@@ -275,6 +275,19 @@
   (-> inlet3 (expr0 2))
   (-> expr0 outlet4))
 
+(graph pat.nudge
+  (expr0 (expr (pat/nudge $x $secs $cps $held) #:require "gantz/pattern"))
+  (inlet1 (inlet "cycle" "the cycle point to move"))
+  (inlet2 (inlet "number" "seconds to move later, or earlier when negative"))
+  (inlet3 (inlet "cps" "a number or a pattern of numbers"))
+  (inlet4 (inlet "number" "cps at the cycle point, which a gap in the cps holds"))
+  (outlet5 (outlet "cycle" "the moved cycle point"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> inlet4 (expr0 3))
+  (-> expr0 outlet5))
+
 (graph pat.pure
   (expr0 (expr (pat/pure $v) #:require "gantz/pattern"))
   (inlet1 (inlet "value" "event value"))
@@ -431,6 +444,7 @@
   (pat.map "Map a function over a pattern's values.")
   (pat.mapevents "Map a function over a pattern's events, spans included.")
   (pat.mergewith "Combine the values of two patterns with a function where their events meet.")
+  (pat.nudge "Move a cycle point by a number of seconds at a steady or patterned cps, for a target with its own latency. A cps change between the two points counts.")
   (pat.pure "Repeat a value once per cycle.")
   (pat.query "Query a pattern over a span for its sorted events.")
   (pat.rand "A seeded signal of random floats in [0, 1).")

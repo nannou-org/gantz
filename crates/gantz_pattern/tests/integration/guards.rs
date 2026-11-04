@@ -233,3 +233,20 @@ fn junk_reader_inputs_are_silent() {
         assert_pinned(&mut vm, &format!("point of {junk}"), "()", &expr);
     }
 }
+
+// A nudge with a missing input gives its cycle point back.
+#[test]
+fn junk_nudge_inputs_keep_the_point() {
+    let mut vm = new_pin_engine();
+    // A number is a valid number of seconds, cps and held cps.
+    for junk in JUNK.iter().filter(|junk| **junk != "7") {
+        for (name, expr) in [
+            ("seconds", format!("(pat/nudge 1/4 {junk} 1 1)")),
+            ("cps", format!("(pat/nudge 1/4 0.25 {junk} 1)")),
+            ("held cps", format!("(pat/nudge 1/4 0.25 1 {junk})")),
+        ] {
+            let expr = format!("(pin-num {expr})");
+            assert_pinned(&mut vm, &format!("{name} of {junk}"), "(1 4)", &expr);
+        }
+    }
+}

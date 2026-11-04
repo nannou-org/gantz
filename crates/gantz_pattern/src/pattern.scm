@@ -69,6 +69,7 @@
          pat/window
          pat/events->secs
          pat/at
+         pat/nudge
          pat/euclid-with
          pat/as-span
          pat/plot-data)
@@ -813,6 +814,56 @@
          (lambda (e) (not (< x (car (pat/event-active e)))))
          (pat/query p (cons x (+ x (/ 1 pat//grid))))))
       '()))
+
+;; The cycle point `secs` after cycle point `x` at `cps`, or before it
+;; when `secs` is negative. A target whose output leads another reads
+;; behind by the difference, and a target whose output lags reads ahead by
+;; its latency. A cps change between the two points counts, so the same
+;; seconds cover a different number of cycles on each side of it. `held`
+;; is the cps at `x`, which a gap in `cps` holds. A partial eval with a
+;; missing input gives `x` back.
+(define (pat/nudge x secs cps held)
+  (let ((p (pat//cps-pattern cps))
+        (r (pat//cps held)))
+    (if (if (number? x) (if (number? secs) (if p r #f) #f) #f)
+        (let ((x (pat/rationalize x)))
+          (if (< secs 0)
+              (pat//seek-back p x (- 0 secs) r)
+              (pat//seek-ahead p x secs r)))
+        x)))
+
+;; Each cycle has its own query, as in `pat//cps-segs`.
+(define (pat//seek-ahead cps x secs r)
+  (let ((end (+ (floor x) 1)))
+    (pat//seek-ahead-segs cps end
+                          (reverse (pat//cps-segs cps (cons x end) r))
+                          secs r)))
+
+(define (pat//seek-ahead-segs cps end segs secs r)
+  (if (empty? segs)
+      (pat//seek-ahead cps end secs r)
+      (let ((s (car segs)))
+        (let ((dur (pat//seg-secs (car s) (list-ref s 1) (list-ref s 2))))
+          (if (< secs dur)
+              (+ (car s) (pat/rationalize (* secs (list-ref s 2))))
+              (pat//seek-ahead-segs cps end (cdr segs) (- secs dur)
+                                    (list-ref s 2)))))))
+
+(define (pat//seek-back cps x secs r)
+  (let ((start (- (ceiling x) 1)))
+    (pat//seek-back-segs cps start
+                         (pat//cps-segs cps (cons start x) r)
+                         secs r)))
+
+(define (pat//seek-back-segs cps start segs secs r)
+  (if (empty? segs)
+      (pat//seek-back cps start secs r)
+      (let ((s (car segs)))
+        (let ((dur (pat//seg-secs (car s) (list-ref s 1) (list-ref s 2))))
+          (if (< secs dur)
+              (- (list-ref s 1) (pat/rationalize (* secs (list-ref s 2))))
+              (pat//seek-back-segs cps start (cdr segs) (- secs dur)
+                                   (list-ref s 2)))))))
 
 ;; Apply the euclidean mask to the pattern. Structure comes from the
 ;; mask's onsets, values from `p`.

@@ -1,5 +1,6 @@
 //! Tests of the readers that work at a cycle point. They cover the events
-//! alive there and how far the point is through each of them.
+//! alive there, how far the point is through each of them, and the move of
+//! a point by seconds.
 
 use crate::common::{assert_pinned, assert_steel_true, new_pin_engine};
 use gantz_core::steel::steel_vm::engine::Engine;
@@ -94,5 +95,51 @@ fn alive_through_a_cps_drop() {
         &mut vm,
         "no_tick_goes_blank",
         "(= 0 (blank-ticks (pat/pure 1) (pat/fastcat (list (pat/pure 1) (pat/pure 1/2)))))",
+    );
+}
+
+/// Seconds cover the cycles that the cps gives them, on each side of a change.
+#[test]
+fn nudge() {
+    let mut vm = new_pin_engine();
+    let drop = "(pat/fastcat (list (pat/pure 1) (pat/pure 1/2)))";
+    let gap = "(pat/fastcat (list (pat/pure 1) pat/silence))";
+    let rows: &[(&str, &str, String)] = &[
+        ("steady", "(5 8)", "(pat/nudge 1/2 1/4 1/2 1/2)".to_string()),
+        ("zero", "(1 2)", "(pat/nudge 1/2 0.0 1/2 1/2)".to_string()),
+        ("back", "(3 8)", "(pat/nudge 1/2 -1/4 1/2 1/2)".to_string()),
+        (
+            "across_a_cycle",
+            "(9 8)",
+            "(pat/nudge 7/8 1/2 1/2 1/2)".to_string(),
+        ),
+        (
+            "across_a_drop",
+            "(5 8)",
+            format!("(pat/nudge 1/4 1/2 {drop} 1)"),
+        ),
+        (
+            "back_across_a_drop",
+            "(1 4)",
+            format!("(pat/nudge 5/8 -1/2 {drop} 1)"),
+        ),
+        (
+            "a_gap_holds_the_cps",
+            "(3 4)",
+            format!("(pat/nudge 1/2 1/2 {gap} 1/2)"),
+        ),
+        (
+            "a_float_point_snaps_to_the_grid",
+            "(5 8)",
+            "(pat/nudge 0.5 1/4 1/2 1/2)".to_string(),
+        ),
+    ];
+    for (case, expected, expr) in rows {
+        assert_pinned(&mut vm, case, expected, &format!("(pin-num {expr})"));
+    }
+    assert_steel_true(
+        &mut vm,
+        "a_reader_sees_the_later_phase",
+        "(= 0.375 (pat/event-phase (car (pat/at (pat/pure 7) (pat/nudge 1/4 0.25 1/2 1/2)))))",
     );
 }
