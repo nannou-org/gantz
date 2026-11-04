@@ -1,16 +1,16 @@
 //! `.gantz` keyword sugar for the pattern node set.
 //!
 //! [`PatternSugar`] provides `(pat.mini "notation")`, `(pat.key "key")`,
-//! `(pat.pick "key")` and `(pat.plot <keyword>...)`. Compose it with the
+//! `(sched.pick "key")` and `(pat.plot <keyword>...)`. Compose it with the
 //! other crates' sugars via [`gantz_format::Sugars`]. The keywords from
 //! before the `pat.` namespace, `pmini` and `pplot`, still read.
 
 use crate::plot as pplot;
-use crate::{Pkey, Pmini, Ppick, Pplot};
+use crate::{Pkey, Pmini, Pplot, SchedPick};
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
 use gantz_nodedef::NodeDef;
 
-/// Keyword sugar for [`Pmini`], [`Pkey`], [`Ppick`] and [`Pplot`].
+/// Keyword sugar for [`Pmini`], [`Pkey`], [`SchedPick`] and [`Pplot`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PatternSugar;
 
@@ -20,8 +20,8 @@ pub const MINI: &str = "pat.mini";
 /// The [`Pkey`] keyword, also its builtin name.
 pub const KEY: &str = "pat.key";
 
-/// The [`Ppick`] keyword, also its builtin name.
-pub const PICK: &str = "pat.pick";
+/// The [`SchedPick`] keyword, also its builtin name.
+pub const PICK: &str = "sched.pick";
 
 /// The [`Pmini`] keyword from before the `pat.` namespace.
 const OLD_MINI: &str = "pmini";
@@ -34,7 +34,7 @@ impl Sugar for PatternSugar {
                 Ok(Some(node_datum(Pmini::TAG, vec![("src", Datum::Str(src))])))
             }
             KEY => Ok(Some(key_datum(Pkey::TAG, args.str_at(0)))),
-            PICK => Ok(Some(key_datum(Ppick::TAG, args.str_at(0)))),
+            PICK => Ok(Some(key_datum(SchedPick::TAG, args.str_at(0)))),
             pplot::KEYWORD | pplot::OLD_KEYWORD => pplot::read_spec(args).map(Some),
             _ => Ok(None),
         }
@@ -47,7 +47,7 @@ impl Sugar for PatternSugar {
                 vec![("src", Datum::Str(String::new()))],
             )),
             KEY => Some(key_datum(Pkey::TAG, None)),
-            PICK => Some(key_datum(Ppick::TAG, None)),
+            PICK => Some(key_datum(SchedPick::TAG, None)),
             pplot::KEYWORD | pplot::OLD_KEYWORD => pplot::read_bare(),
             _ => None,
         }
@@ -58,7 +58,7 @@ impl Sugar for PatternSugar {
             let src = node.get("src").and_then(Datum::as_str).unwrap_or("");
             return Some(format!("({MINI} {src:?})"));
         }
-        if tag == Pkey::TAG || tag == Ppick::TAG {
+        if tag == Pkey::TAG || tag == SchedPick::TAG {
             let keyword = self.keyword_for_tag(tag)?;
             let key = node.get("key").and_then(Datum::as_str).unwrap_or("");
             return Some(format!("({keyword} {key:?})"));
@@ -76,7 +76,7 @@ impl Sugar for PatternSugar {
         if tag == Pkey::TAG {
             return Some(KEY);
         }
-        if tag == Ppick::TAG {
+        if tag == SchedPick::TAG {
             return Some(PICK);
         }
         if tag == Pplot::TAG {
@@ -133,7 +133,7 @@ mod tests {
     // an empty key.
     #[test]
     fn keyed_nodes_round_trip() {
-        for (keyword, tag) in [(KEY, Pkey::TAG), (PICK, Ppick::TAG)] {
+        for (keyword, tag) in [(KEY, Pkey::TAG), (PICK, SchedPick::TAG)] {
             let text = format!(r#"({keyword} "freq")"#);
             let d = read(&text);
             assert_eq!(d.get("key").and_then(Datum::as_str), Some("freq"));

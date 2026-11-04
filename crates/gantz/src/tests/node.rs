@@ -133,7 +133,7 @@ fn builtins_match_expected_name_set() {
         "outlet",
         "pat.key",
         "pat.mini",
-        "pat.pick",
+        "sched.pick",
         "pat.plot",
         "plot",
         "sleep",
@@ -3046,7 +3046,7 @@ fn demo_pattern_resumes_from_a_snapshot() {
 }
 
 /// `demo.pat.maps` reads its cps from its events, so its cycles take 2 and 1
-/// seconds. `pat.pick` routes each key to its control at the same times.
+/// seconds. `sched.pick` routes each key to its control at the same times.
 #[test]
 fn demo_pattern_maps_route_keys() {
     let start = 1.0 / 60.0;

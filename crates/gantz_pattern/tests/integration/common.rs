@@ -1,5 +1,5 @@
-//! Shared test harness. An engine with the `gantz/pattern` module
-//! plus the pin-projection helpers.
+//! Shared test harness. An engine with the `gantz/pattern` and
+//! `gantz/sched` modules plus the pin-projection helpers.
 //!
 //! Steel 0.8.2's `equal?` cannot compare rationals nested in containers.
 //! See the canary test in `span.rs`. So expected values are compared via
@@ -17,6 +17,7 @@ use gantz_core::steel::steel_vm::engine::Engine;
 /// never depends on the test-only projection format.
 pub const PIN: &str = r#"
 (require "gantz/pattern")
+(require "gantz/sched")
 (define (pin-map f xs)
   (if (empty? xs) '() (cons (f (car xs)) (pin-map f (cdr xs)))))
 (define (pin-num x)

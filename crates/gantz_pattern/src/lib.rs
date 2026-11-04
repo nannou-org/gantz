@@ -10,13 +10,18 @@
 //! Events carry an `active` span where the value applies within the
 //! query, and a `whole` span carrying the event's full structure. Whole
 //! is absent for continuous signals.
+//!
+//! A reader turns the onsets of a pattern into a schedule, a list of
+//! `(seconds value)` pairs. The [`SCHED_MODULE`] Steel module works on
+//! schedules, and a control input such as a synth parameter sets each value
+//! at its time.
 
 pub mod mini;
 pub mod node;
 pub mod plot;
 pub mod sugar;
 
-pub use node::{Pkey, Pmini, Ppick, builtins};
+pub use node::{Pkey, Pmini, SchedPick, builtins};
 pub use plot::Pplot;
 pub use sugar::PatternSugar;
 
@@ -30,10 +35,14 @@ use gantz_core::vm::SteelModule;
 /// provided names carry the `pat/` prefix.
 pub const MODULE: SteelModule = SteelModule::new("gantz/pattern", include_str!("pattern.scm"));
 
-/// The Steel modules this domain needs: `gantz/rng`, `gantz/pattern` and the
-/// layout fn of `pat.plot`, `gantz/pattern-plot`.
+/// The `gantz/sched` Steel module. All provided names carry the `sched/`
+/// prefix.
+pub const SCHED_MODULE: SteelModule = SteelModule::new("gantz/sched", include_str!("sched.scm"));
+
+/// The Steel modules this domain needs: `gantz/rng`, `gantz/pattern`,
+/// `gantz/sched` and the layout fn of `pat.plot`, `gantz/pattern-plot`.
 pub fn modules() -> &'static [SteelModule] {
-    const MODULES: &[SteelModule] = &[gantz_rng::MODULE, MODULE, plot::MODULE];
+    const MODULES: &[SteelModule] = &[gantz_rng::MODULE, MODULE, SCHED_MODULE, plot::MODULE];
     MODULES
 }
 

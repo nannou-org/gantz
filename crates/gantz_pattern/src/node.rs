@@ -82,13 +82,12 @@ pub struct Pkey {
     key: String,
 }
 
-/// Project `(seconds value)` pairs onto a key of their maps, for a control
-/// input.
+/// Project the maps of a schedule onto a key, for a control input.
 ///
 /// The key is part of the node's identity, so editing it recompiles. An
 /// empty key delivers nothing.
 #[derive(Clone, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub struct Ppick {
+pub struct SchedPick {
     key: String,
 }
 
@@ -104,10 +103,10 @@ impl Pkey {
     }
 }
 
-impl Ppick {
+impl SchedPick {
     /// A node for the given key.
     pub fn new(key: impl Into<String>) -> Self {
-        Ppick { key: key.into() }
+        SchedPick { key: key.into() }
     }
 
     /// The key.
@@ -150,34 +149,37 @@ impl NodeDef for Pkey {
     }
 }
 
-impl NodeDef for Ppick {
-    const TAG: &'static str = "Ppick";
+impl NodeDef for SchedPick {
+    const TAG: &'static str = "SchedPick";
 
     fn meta(&self) -> Meta {
         Meta {
             name: PICK.into(),
-            description: "Project (seconds value) pairs onto a key of their maps".into(),
+            description: "Project the maps of a schedule onto a key".into(),
             inputs: 1,
             outputs: 1,
-            requires: vec!["gantz/pattern".into()],
+            requires: vec!["gantz/sched".into()],
             ..Meta::default()
         }
     }
 
-    /// The projection of the input pairs. An invalid key is a compile error
-    /// of the node, as for invalid mini-notation.
+    /// The projection of the input schedule. An invalid key is a compile
+    /// error of the node, as for invalid mini-notation.
     fn expr(&self, ctx: ExprArgs<'_>) -> Result<String, String> {
         let input = ctx.inputs.first().copied().flatten();
         Ok(match (key_lit(&self.key)?, input) {
-            (Some(key), Some(pairs)) => format!("(pat/pick {pairs} {key})"),
+            (Some(key), Some(schedule)) => format!("(sched/pick {schedule} {key})"),
             _ => "'()".to_string(),
         })
     }
 
     fn view(&self) -> View {
         View {
-            inputs: vec![SocketDoc::new("list", "(seconds value) pairs of maps")],
-            outputs: vec![SocketDoc::new("list", "(seconds value) pairs of the key")],
+            inputs: vec![SocketDoc::new("schedule", "(seconds map) pairs")],
+            outputs: vec![SocketDoc::new(
+                "schedule",
+                "(seconds value) pairs of the key",
+            )],
             body: Some(key_editor()),
             ..View::default()
         }
@@ -215,7 +217,7 @@ pub fn builtins() -> Vec<gantz_core::Builtin> {
     vec![
         builtin(MINI, gantz_nodedef::node_data(&Pmini::default())),
         builtin(KEY, gantz_nodedef::node_data(&Pkey::default())),
-        builtin(PICK, gantz_nodedef::node_data(&Ppick::default())),
+        builtin(PICK, gantz_nodedef::node_data(&SchedPick::default())),
         builtin(
             crate::plot::KEYWORD,
             gantz_nodedef::node_data(&crate::Pplot::default()),
@@ -267,9 +269,9 @@ mod tests {
     #[test]
     fn keyed_exprs() {
         let key = |k: &str, input| key_ctx(input, |ctx| Pkey::new(k).expr(ctx));
-        let pick = |k: &str, input| key_ctx(input, |ctx| Ppick::new(k).expr(ctx));
+        let pick = |k: &str, input| key_ctx(input, |ctx| SchedPick::new(k).expr(ctx));
         assert_eq!(key("freq", Some("p")).unwrap(), "(pat/key 'freq p)");
-        assert_eq!(pick("freq", Some("l")).unwrap(), "(pat/pick l 'freq)");
+        assert_eq!(pick("freq", Some("l")).unwrap(), "(sched/pick l 'freq)");
         assert_eq!(key("", Some("p")).unwrap(), "pat/silence");
         assert_eq!(key("freq", None).unwrap(), "pat/silence");
         assert_eq!(pick("", Some("l")).unwrap(), "'()");

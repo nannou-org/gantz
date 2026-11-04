@@ -67,7 +67,6 @@
          pat/event-onset?
          pat/window
          pat/events->secs
-         pat/pick
          pat/euclid-with
          pat/as-span
          pat/plot-data)
@@ -773,8 +772,8 @@
              (cdr segs)
              x)))))
 
-;; The onsets among queried window events, as `(list seconds value)`
-;; pairs for timestamped delivery paths.
+;; The onsets among queried window events, as a schedule of
+;; `(list seconds value)` pairs for timestamped delivery paths.
 ;;
 ;; `secs` and `segs` are the seconds and the segments that `pat/window`
 ;; gave with the queried span. Only onset events are kept, as
@@ -789,20 +788,6 @@
                 (pat//point-secs secs segs (car (pat/event-active e))))
                (pat//inexact (pat/event-value e))))
        (list/filter pat/event-onset? events))
-      '()))
-
-;; Project `(seconds value)` pairs onto the `key` of their maps, for a
-;; control input. A pair whose value holds no such key is dropped.
-;; Numbers leave as floats.
-(define (pat/pick pairs key)
-  (if (list? pairs)
-      (list/flat-map
-       (lambda (pr)
-         (let ((m (car (cdr pr))))
-           (if (if (hash? m) (hash-contains? m key) #f)
-               (list (list (car pr) (pat//inexact (hash-ref m key))))
-               '())))
-       pairs)
       '()))
 
 ;; Apply the euclidean mask to the pattern. Structure comes from the
