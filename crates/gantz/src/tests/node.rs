@@ -2768,14 +2768,7 @@ fn demo_pplot_plots_every_source() {
     use gantz_core::compile::entry_fn_name;
     use gantz_core::steel::SteelVal;
 
-    let ts = gantz_edit::base::BASE_TIMESTAMP;
-    let mut merged = DataReg::default();
-    for bytes in [gantz_base::BYTES, gantz_pattern::BASE_BYTES] {
-        let export: DataReg =
-            gantz_edit::export::parse_export_at(bytes, ts, crate::node::codec().data())
-                .expect("parse");
-        merged.merge(export);
-    }
+    let merged = load_base().registry;
     let reified = reify_all(&merged);
     let builtins = builtins_with_instances(&crate::conf());
     let codec = crate::node::codec();
@@ -2906,6 +2899,19 @@ fn play_pattern_session(
     ticks: usize,
     dial_every: Option<usize>,
 ) -> (Vec<(f64, f64)>, gantz_core::node::state::Snapshot) {
+    watch_pattern_session(demo, param, restored, ticks, dial_every, |_| ())
+}
+
+/// [`play_pattern_session`] that shows the node state to `watch` after each
+/// tick.
+fn watch_pattern_session(
+    demo: &str,
+    param: &str,
+    restored: Option<&gantz_core::node::state::Snapshot>,
+    ticks: usize,
+    dial_every: Option<usize>,
+    mut watch: impl FnMut(&gantz_core::node::state::Snapshot),
+) -> (Vec<(f64, f64)>, gantz_core::node::state::Snapshot) {
     use gantz_core::compile::{EvalKind, entry_fn_name, push_pull_entrypoints};
     use gantz_core::node::state;
 
@@ -2966,6 +2972,7 @@ fn play_pattern_session(
         vm.update_value(gantz_core::ARGS, gantz_core::args::time(t));
         vm.call_function_by_name_with_args(&tick_fn, vec![])
             .unwrap_or_else(|e| panic!("tick {i} t={t}: {e}"));
+        watch(&state::snapshot(&vm));
         if dial_every.is_some_and(|n| i % n == 7) {
             let dial_fn = dial_fn.as_ref().expect("dial ep");
             vm.call_function_by_name_with_args(dial_fn, vec![])
@@ -3089,6 +3096,65 @@ fn demo_pattern_cps_steps_each_cycle() {
         (start + 3.0 + 1.0 / 3.0, 550.0),
     ];
     assert_onsets(&onsets, &want);
+}
+
+/// `demo.pat.targets` plays and draws a pattern at 1/2 cps. `pat.sched` gives
+/// the sound each start. `pat.at` gives the canvas one bar on every tick, and
+/// the bar falls over the phase of its event. `pat.nudge` holds the picture
+/// back by 50 ms, which is three ticks.
+#[test]
+fn demo_pattern_targets_share_a_pattern() {
+    use gantz_ca::Datum;
+
+    // The path of the node that stores the panels of the canvas.
+    const PANELS: [usize; 2] = [23, 1];
+    let bars = |nodes: &gantz_core::node::state::Snapshot| -> Vec<f64> {
+        let (_, panels) = nodes
+            .iter()
+            .find(|(path, _)| path == &PANELS)
+            .expect("panels in the state");
+        let Datum::Seq(panels) = panels else {
+            panic!("panels: {panels:?}");
+        };
+        let Datum::Seq(panel) = &panels[0] else {
+            panic!("panel: {:?}", panels[0]);
+        };
+        panel[2..]
+            .iter()
+            .map(|bar| match bar {
+                Datum::Seq(bar) => match bar[4] {
+                    Datum::F64(height) => height,
+                    ref other => panic!("height: {other:?}"),
+                },
+                other => panic!("bar: {other:?}"),
+            })
+            .collect()
+    };
+    let mut frames = Vec::new();
+    let watch = |nodes: &gantz_core::node::state::Snapshot| frames.push(bars(nodes));
+    let (freqs, _) = watch_pattern_session("demo.pat.targets", "freq", None, 240, None, watch);
+
+    let start = 1.0 / 60.0;
+    let freq = |note: f64| 440.0 * 2f64.powf((note - 69.0) / 12.0);
+    let want = [
+        (start, freq(60.0)),
+        (start + 2.0 / 3.0, freq(63.0)),
+        (start + 1.0, freq(65.0)),
+        (start + 4.0 / 3.0, freq(67.0)),
+        (start + 2.0, freq(60.0)),
+    ];
+    assert_onsets(&freqs, &want);
+
+    assert!(frames.iter().all(|bars| bars.len() == 1), "{frames:?}");
+    let first = &frames[3..43];
+    assert!(
+        frames[0][0] < 0.1,
+        "the tail of the event before: {frames:?}"
+    );
+    assert_eq!(first[0], [1.0], "a new event starts at full height");
+    // The clock starts at 1 cps, so a tick can hold while it settles.
+    assert!(first.windows(2).all(|w| w[1][0] <= w[0][0]), "{first:?}");
+    assert!(first[39][0] < 0.05, "{first:?}");
 }
 
 /// Resetting a demo re-parses the base and merges the demo's commit subset
