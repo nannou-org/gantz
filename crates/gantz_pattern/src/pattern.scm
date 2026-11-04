@@ -639,15 +639,11 @@
 ;; with a giant span.
 (define pat//max-window 8)
 
-;; The cps that an event value sets. A number sets itself and a map sets
-;; its `'cps` key. Anything else sets nothing. A value that is not
-;; positive also sets nothing, since a stopped clock can never reach the
-;; event that restarts it.
+;; The cps that a value sets. A positive number sets itself. Anything else
+;; sets nothing. A value that is not positive sets nothing, since a
+;; stopped clock can never reach the event that restarts it.
 (define (pat//cps v)
-  (let ((cps (if (hash? v) (hash-try-get v 'cps) v)))
-    (if (number? cps)
-        (if (> cps 0) (exact->inexact cps) #f)
-        #f)))
+  (if (number? v) (if (> v 0) (exact->inexact v) #f) #f))
 
 ;; A cps input as a pattern. A number is a steady cps and a function
 ;; passes through. Anything else gives #f.
@@ -716,7 +712,7 @@
 ;; seconds at which the playhead plays, `r` the last cps and `last-t` the
 ;; eval time of the last tick.
 ;; `t` is the eval time in seconds and `dt` the tick duration. `cps` is a
-;; number, a pattern of numbers or a pattern of maps with a `'cps` key.
+;; number or a pattern of numbers.
 ;; Returns `(list span timing new-st)`. `span` is the window in cycles.
 ;; `timing` is the `(list te segments cps)` that `pat/events->secs`
 ;; reads.

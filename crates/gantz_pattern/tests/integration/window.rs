@@ -145,19 +145,13 @@ fn window_steps() {
             "(pin-window (pat/window (list 0 0.0 4.0 0.0) 0.0 0.25
                            (pat/fastcat (list pat/silence (pat/pure 2)))))",
         ),
-        // A map sets the cps through its cps key. A map without one is
-        // a gap, as are values that cannot set a cps.
+        // Only a positive number sets a cps. Any other value is a gap, a
+        // map with a cps key included.
         (
-            "map_sets_cps",
-            "(((0 1) (1 1)) 0.0 (((0 1) (1 1) 2.0)) ((1 1) 0.5 2.0))",
-            "(pin-window (pat/window (list 0 0.0 1.0 0.0) 0.0 1.0
-                           (pat/pure (hash 'cps 2 'freq 440))))",
-        ),
-        (
-            "map_without_cps_holds",
+            "map_holds",
             "(((0 1) (1 1)) 0.0 (((0 1) (1 1) 1.0)) ((1 1) 1.0 1.0))",
             "(pin-window (pat/window (list 0 0.0 1.0 0.0) 0.0 1.0
-                           (pat/pure (hash 'freq 440))))",
+                           (pat/pure (hash 'cps 2 'freq 440))))",
         ),
         (
             "zero_cps_holds",
@@ -260,19 +254,20 @@ fn clock_scenarios() {
                      (ticks-from 1.0 1300 60.0 0.0 (lambda (t) 1/20)))
                (list 1.0 3.857142857142857 6.714285714285714 9.571428571428571))",
         ),
-        // A cps carried by map events applies across the rests between
-        // them, as the same pattern feeds the clock and the query. A cycle
-        // holds 1 cps for its first half and 2 cps for its second half.
+        // A cps read out of map events applies across the rests between
+        // them, as in `demo.pat.maps`. A cycle holds 1 cps for its first
+        // half and 2 cps for its second half.
         (
-            "cps_on_events_holds_across_rests",
+            "cps_of_events_holds_across_rests",
             "(let ((p (pat/appl (pat/map (lambda (f) (hash 'freq f))
                                          (pat/fast 2 (pat/fastcat (list (pat/pure 220)
                                                                         pat/silence))))
                                 (pat/map (lambda (c) (lambda (m) (hash-insert m 'cps c)))
                                          (pat/fastcat (list (pat/pure 1) (pat/pure 2)))))))
-               (times-close?
-                 (play p (ticks-from 1.0 150 60.0 0.0 (lambda (t) p)))
-                 (list 1.0 1.5 1.75 2.25 2.5 3.0)))",
+               (let ((cps (pat/map (lambda (m) (hash-ref m 'cps)) p)))
+                 (times-close?
+                   (play p (ticks-from 1.0 150 60.0 0.0 (lambda (t) cps)))
+                   (list 1.0 1.5 1.75 2.25 2.5 3.0))))",
         ),
         // A cps change neither jumps nor replays. Every onset stays in
         // order, and the 9 s at 1/2 cps and 11 s at 3/5 cps give 45 onsets.
@@ -329,11 +324,6 @@ fn span_secs() {
             "3/4",
             "(pat/span-secs (pat/fastcat (list (pat/pure 1) (pat/pure 2)))
                             (pat/span 0 1) 1.0)",
-        ),
-        (
-            "map_cps",
-            "1/4",
-            "(pat/span-secs (pat/pure (hash 'cps 2)) (pat/span 0 1/2) 1.0)",
         ),
         (
             "gaps_hold_from_the_default",
