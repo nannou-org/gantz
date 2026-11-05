@@ -9,7 +9,7 @@ mod inlet;
 mod list;
 mod log;
 mod main_bang;
-mod named_ref;
+pub(crate) mod named_ref;
 mod outlet;
 
 /// The `desired_width` a syntax-highlighted code [`egui::TextEdit`] needs so its
@@ -33,6 +33,16 @@ fn code_edit_desired_width(
     galley.rect.width().ceil() + margin.sum().x + 1.0
 }
 
+/// The text of an inlet or outlet node, such as `in[0] tick`. The index comes
+/// first as it is the identity of the socket, and `ty` is what a reader wants
+/// to know about it.
+fn marker_label(name: &str, ix: usize, ty: &str) -> String {
+    match ty {
+        "" => format!("{name}[{ix}]"),
+        ty => format!("{name}[{ix}] {ty}"),
+    }
+}
+
 /// Show the type and description of an inlet or outlet `node` while the
 /// pointer is over it, at once and without the usual tooltip delay. An empty
 /// type or description says so.
@@ -50,4 +60,15 @@ fn marker_hover(node: &egui::Response, ty: &str, description: &str) {
             false => ui.label(description),
         };
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::marker_label;
+
+    #[test]
+    fn a_marker_shows_its_index_then_its_type() {
+        assert_eq!(marker_label("in", 1, "clock"), "in[1] clock");
+        assert_eq!(marker_label("out", 0, ""), "out[0]");
+    }
 }

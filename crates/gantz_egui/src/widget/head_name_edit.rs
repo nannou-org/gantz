@@ -21,10 +21,12 @@ pub struct HeadNameEditResponse {
 pub fn head_name_edit(
     head: &gantz_ca::Head,
     name: &mut String,
-    names: &[(gantz_ca::Name, gantz_ca::CommitAddr)],
+    registry: &gantz_ca::Registry,
     ui: &mut egui::Ui,
 ) -> HeadNameEditResponse {
-    let name_exists = names.iter().any(|(n, _)| n.to_string() == *name);
+    let name_exists = name
+        .parse::<gantz_ca::Name>()
+        .is_ok_and(|n| registry.named_commit(&n).is_some());
     let is_current_name = matches!(head, gantz_ca::Head::Branch(n) if n.to_string() == *name);
     let is_empty = name.is_empty();
     let has_separator = name.contains(gantz_ca::name::SEP);

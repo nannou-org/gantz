@@ -85,6 +85,7 @@ fn main() {
                 bevy_gantz_egui::prune_unused
                     .after(setup_resources)
                     .after(app::setup_open),
+                bevy_gantz_egui::fill_cache.after(bevy_gantz_egui::prune_unused),
             ),
         )
         .add_systems(EguiPrimaryContextPass, app::load_egui_memory);
@@ -198,12 +199,7 @@ fn setup_resources(
         }
     }
     let gui_state = bevy_gantz_egui::storage::load_gui_state(&*storage);
-    // Reify the loaded registry's graphs so typed reads are served from the
-    // first frame.
-    let mut cache = bevy_gantz_egui::GraphCache::default();
-    bevy_gantz_egui::refresh_cache(&registry, &mut cache, &node::codec());
     cmds.insert_resource(registry);
-    cmds.insert_resource(cache);
     cmds.insert_resource(persist::Persisted(persisted));
     cmds.insert_resource(gui_state);
 }

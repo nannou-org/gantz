@@ -2,7 +2,6 @@
 
 use super::graph_select::{GraphSelectResponse, click_head, commits_by_recency};
 use super::head_row::{HeadRowType, head_row};
-use std::collections::HashMap;
 
 /// A widget for viewing commit history.
 pub struct HistoryView<'a> {
@@ -86,7 +85,7 @@ impl<'a> HistoryView<'a> {
         });
 
         let commits = commits_by_recency(self.registry.registry);
-        let commit_map: HashMap<_, _> = commits.iter().map(|(ca, c)| (*ca, *c)).collect();
+        let commit_map = self.registry.registry.commits();
 
         let filtered_cas: Option<std::collections::HashSet<gantz_ca::CommitAddr>> = match state.mode
         {
@@ -124,15 +123,17 @@ impl<'a> HistoryView<'a> {
         egui::ScrollArea::vertical()
             .auto_shrink(egui::Vec2b::FALSE)
             .show(ui, |ui| {
+                // Only the rows in view are built, as a history can be long.
                 for (ca, commit) in filtered_commits {
-                    let head = gantz_ca::Head::Commit(*ca);
-                    let row_type = HeadRowType::Unnamed(&commit.timestamp);
-                    let res =
-                        head_row(self.heads, &head, row_type, ca, self.focused_head, None, ui);
-
-                    if res.row.clicked() {
-                        click_head(ui, self.heads, self.focused_head, head, &mut response);
-                    }
+                    super::kit::lazy_item(ui, self.id.with(ca), |ui| {
+                        let head = gantz_ca::Head::Commit(*ca);
+                        let row_type = HeadRowType::Unnamed(&commit.timestamp);
+                        let res =
+                            head_row(self.heads, &head, row_type, ca, self.focused_head, None, ui);
+                        if res.row.clicked() {
+                            click_head(ui, self.heads, self.focused_head, head, &mut response);
+                        }
+                    });
                 }
             });
 

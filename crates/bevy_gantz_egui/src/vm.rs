@@ -80,9 +80,12 @@ fn compile_components(result: Result<Compiled, CompileError>) -> (head::Module, 
 ///
 /// VM presence in [`head::HeadVms`] decides between a fresh `init` and an
 /// in-place `compile`. Absent means a fresh init, for a newly opened head or
-/// when a replace or move found no node-identity mapping to migrate state
-/// through. Present means an in-place compile, which preserves node state
-/// across graph edits, config changes, replaces and moves.
+/// when a move found no node-identity mapping to migrate state through. A head
+/// marked with [`head::ReloadState`], after a load into its tab or a reset,
+/// also takes a fresh init. That init reuses the VM with its node state
+/// cleared, so it keeps the modules that the VM loaded. A fresh init restores
+/// the state stored for the head. Present means an in-place compile, which
+/// preserves node state across graph edits, config changes and moves.
 pub fn sync(
     registry: Res<Registry>,
     mut cache: ResMut<GraphCache>,
@@ -93,9 +96,10 @@ pub fn sync(
     modules: Res<SteelModules>,
     setups: Res<VmSetups>,
     mut vms: NonSendMut<head::HeadVms>,
-    mut heads_query: Query<head::OpenHeadData, With<head::OpenHead>>,
+    mut heads_query: Query<(head::OpenHeadData, Has<head::ReloadState>), With<head::OpenHead>>,
+    mut cmds: Commands,
 ) {
-    for mut data in heads_query.iter_mut() {
+    for (mut data, reload) in heads_query.iter_mut() {
         let Some(graph_ca) = registry.head_commit(&data.head_ref.0).map(|c| c.graph) else {
             continue;
         };
@@ -106,13 +110,16 @@ pub fn sync(
         if data.compiled_inputs.0 == Some(inputs) {
             continue;
         }
+        // A reload takes the VM out, so a failure below leaves no VM, as a
+        // failed init does.
+        let reused = reload.then(|| vms.remove(&data.entity)).flatten();
 
         // Compilation reads the reified cache at the committed address.
         // Ensure the committed graph and its transitive references first. A
         // reify failure marks the attempt in `CompiledInputs`, so there is no
         // per-frame retry. It surfaces a compile diagnostic attributed to the
         // failing node so the scene glows its placeholder. Any previous VM
-        // stays evaluable.
+        // that a reload did not take out stays evaluable.
         let reify = |nd: &ca::NodeData| codec.0.reify(nd).map(|inst| inst.node);
         if let Err(e) = cache.0.ensure_with(&registry, [graph_ca.into()], reify) {
             log::error!("cannot compile head: {e}");
@@ -151,8 +158,17 @@ pub fn sync(
         let entrypoints = collect_entrypoints(&ep_fns, &get_node, graph);
         let result = match vms.get_mut(&data.entity) {
             None => {
-                let mut vm = gantz_core::vm::new_engine(&modules.0);
-                setups.0.iter().for_each(|setup| setup(&mut vm));
+                let mut vm = match reused {
+                    Some(mut vm) => {
+                        gantz_core::node::state::clear(&mut vm);
+                        vm
+                    }
+                    None => {
+                        let mut vm = gantz_core::vm::new_engine(&modules.0);
+                        setups.0.iter().for_each(|setup| setup(&mut vm));
+                        vm
+                    }
+                };
                 gantz_core::graph::register(&get_node, graph, &[], &mut vm);
                 head::restore_state(&registry, &data.head_ref.0, &mut vm);
                 gantz_core::vm::compile(&get_node, graph, &mut vm, &entrypoints, &config.0).map(
@@ -167,6 +183,9 @@ pub fn sync(
                 gantz_core::vm::compile(&get_node, graph, vm, &entrypoints, &config.0)
             }
         };
+        if reload {
+            cmds.entity(data.entity).remove::<head::ReloadState>();
+        }
         let (module, diagnostics) = compile_components(result);
         *data.module = module;
         *data.diagnostics = diagnostics;

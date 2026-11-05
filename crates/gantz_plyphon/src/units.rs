@@ -56,8 +56,11 @@ pub enum In {
     /// keyed VM state, see [`param`](crate::param). Its smoothing lag lives in
     /// the node weight.
     Param {
-        /// The param's name, its VM-state key, inspector label and sugar stem.
+        /// The param's name, its VM-state key and sugar stem.
         name: &'static str,
+        /// The header of the inspector row. It is the name, unless another
+        /// word reads better.
+        header: &'static str,
         /// The value a fresh node starts at.
         default: f32,
         /// The inspector's drag range minimum.
@@ -347,11 +350,37 @@ const fn par(
 ) -> In {
     In::Param {
         name,
+        header: name,
         default,
         min,
         max,
         suffix,
         doc,
+    }
+}
+
+/// Give an [`In::Param`] row entry a header other than its name. Other
+/// entries pass through.
+const fn header(header: &'static str, input: In) -> In {
+    match input {
+        In::Param {
+            name,
+            default,
+            min,
+            max,
+            suffix,
+            doc,
+            ..
+        } => In::Param {
+            name,
+            header,
+            default,
+            min,
+            max,
+            suffix,
+            doc,
+        },
+        other => other,
     }
 }
 
@@ -475,10 +504,14 @@ const fn kr_only(desc: UnitDesc) -> UnitDesc {
 
 /// A binary-operator row. It emits a `BinaryOpUGen` selecting the operator
 /// at the given `special_index`, with a pure signal input `a` and a hybrid
-/// param input `b`. This is a macro rather than a `const fn` so that each
-/// row's input slice is a promotable literal.
+/// param input `b`. A trailing `header: "word"` heads the `b` row with that
+/// word in place of `b`. This is a macro rather than a `const fn` so that
+/// each row's input slice is a promotable literal.
 macro_rules! bop {
     ($kw:literal, $unit:literal, $ix:literal, $b:literal, $b_doc:literal, $out:literal, $doc:literal $(,)?) => {
+        bop!($kw, $unit, $ix, $b, $b_doc, $out, $doc, header: "b")
+    };
+    ($kw:literal, $unit:literal, $ix:literal, $b:literal, $b_doc:literal, $out:literal, $doc:literal, header: $header:literal $(,)?) => {
         UnitDesc {
             keyword: $kw,
             unit: $unit,
@@ -489,7 +522,7 @@ macro_rules! bop {
             rate: UnitRate::Any,
             inputs: &[
                 sig("a", "left operand signal"),
-                par("b", $b, -10_000.0, 10_000.0, "", $b_doc),
+                header($header, par("b", $b, -10_000.0, 10_000.0, "", $b_doc)),
             ],
             outputs: &[$out],
             doc: $doc,
@@ -3333,6 +3366,7 @@ pub static UNITS: &[UnitDesc] = &[
         "a * b",
         "Multiply the two inputs (ring modulation when both are signals, \
          a gain otherwise)",
+        header: "factor",
     ),
     bop!(
         "~idiv",

@@ -143,7 +143,7 @@ impl NodeDef for Pkey {
         View {
             inputs: vec![SocketDoc::new("pattern", "the values")],
             outputs: vec![SocketDoc::new("pattern", "one-key maps of the values")],
-            body: Some(key_editor()),
+            body: Some(key_editor("key")),
             ..View::default()
         }
     }
@@ -180,20 +180,33 @@ impl NodeDef for SchedPick {
                 "schedule",
                 "(seconds value) pairs of the key",
             )],
-            body: Some(key_editor()),
+            body: Some(key_editor("pick")),
             ..View::default()
         }
     }
 }
 
-/// An editor of a node's `key` field. An edit commits once typing pauses or
-/// the editor loses focus.
-fn key_editor() -> gantz_ui::Element {
-    gantz_ui::Element::TextInput(gantz_ui::TextInput {
+/// An editor of a node's `key` field, after a weak `label` that names what
+/// the node does with the key, as a number shows its label. The field has no
+/// box, so the node reads apart from mini notation and code. An edit commits
+/// once typing pauses or the editor loses focus.
+fn key_editor(label: &str) -> gantz_ui::Element {
+    let label = gantz_ui::Element::Label(gantz_ui::Label {
+        text: label.into(),
+        tone: Some(gantz_ui::Tone::Weak),
+        mono: true,
+        ..gantz_ui::Label::default()
+    });
+    let field = gantz_ui::Element::TextInput(gantz_ui::TextInput {
         field: Some(gantz_ui::Field("key".into())),
         hint: Some(KEY_HINT.into()),
         mono: true,
+        frame: false,
         ..gantz_ui::TextInput::default()
+    });
+    gantz_ui::Element::Row(gantz_ui::Row {
+        children: vec![label, field],
+        ..gantz_ui::Row::default()
     })
 }
 

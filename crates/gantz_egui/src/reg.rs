@@ -328,11 +328,6 @@ pub fn head_graph_addr(reg: &ca::Registry, name: &ca::Name) -> Option<ca::GraphA
     reg.commits().get(&head_ca).map(|commit| commit.graph)
 }
 
-/// All name and head commit pairs, in name order.
-pub fn names(reg: &ca::Registry) -> Vec<(ca::Name, ca::CommitAddr)> {
-    reg.heads().map(|(name, ca)| (name.clone(), ca)).collect()
-}
-
 /// The output count of the node at `rel_path` within the graph referenced by
 /// `ca`, resolved via [`Env::node_at`].
 ///

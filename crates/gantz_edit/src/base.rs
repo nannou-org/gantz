@@ -80,6 +80,24 @@ pub fn with_old_names(
     seed
 }
 
+/// The stored names that are nested under a base name and that the base does
+/// not define.
+///
+/// A base name resets to its shipped graph on each launch, so no graph of the
+/// base holds such a name. It is left from an earlier base, for example after
+/// a nested graph was renamed or removed. A host drops these on launch.
+pub fn stale_nested(registry: &gantz_ca::Registry, base: &Names) -> Vec<Name> {
+    registry
+        .heads()
+        .map(|(name, _)| name)
+        .filter(|name| !base.contains_key(*name))
+        .filter(|name| {
+            std::iter::successors(name.parent(), Name::parent).any(|p| base.contains_key(&p))
+        })
+        .cloned()
+        .collect()
+}
+
 fn name(s: &str) -> Name {
     let Ok(name) = s.parse();
     name
@@ -174,5 +192,29 @@ mod tests {
         assert_eq!(get("uirow:1"), Some(ga(2)));
         assert_eq!(get("uicol"), Some(ga(4)));
         assert_eq!(seed.len(), 6);
+    }
+
+    /// Only the names under a base name that the base does not define are
+    /// stale, at any depth. Names outside the base stay.
+    #[test]
+    fn names_nested_under_base_names_go_stale() {
+        let ca = |b: u8| CommitAddr::from(gantz_ca::ContentAddr::from([b; 32]));
+        let base = Names::from([(name("demo"), ca(1)), (name("demo:bell"), ca(2))]);
+        let mut registry = gantz_ca::Registry::default();
+        let stored = [
+            "demo",
+            "demo:bell",
+            "demo:pluck",
+            "demo:pluck:env",
+            "mine",
+            "mine:child",
+            "demo2:pluck",
+        ];
+        for (i, n) in stored.into_iter().enumerate() {
+            registry.set_head(name(n), ca(i as u8 + 10));
+        }
+        let mut stale = stale_nested(&registry, &base);
+        stale.sort();
+        assert_eq!(stale, [name("demo:pluck"), name("demo:pluck:env")]);
     }
 }

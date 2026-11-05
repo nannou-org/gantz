@@ -266,8 +266,8 @@ pub(super) fn create_tree() -> egui_tiles::Tree<Pane> {
 /// Insert a [`Pane::NodeView`] for `(head, path)` into the top-level `tree`, or
 /// activate the existing one. Views are deduped by head and path. `ty_name`
 /// is the node's type name used for the tab title. New views land in the
-/// tray, a layout-safe default that is opaque to the fixed-size anchors. The
-/// user can then drag them anywhere in the tree.
+/// tray, a layout-safe default. The user can then drag them anywhere in the
+/// tree.
 pub(super) fn add_node_view_pane(
     tree: &mut egui_tiles::Tree<Pane>,
     head: gantz_ca::Head,
@@ -369,14 +369,14 @@ pub(super) fn replace_child(
     }
 }
 
-/// Insert a new tile for `pane`, defaulting to the tray. If the layout is no
-/// longer canonical, for example the tray was moved into a column beside the
-/// graph scene, dock beside the graph scene so the pane joins the main area.
-/// Never fall back to the root, since its split holds the fixed sidebar.
+/// Insert a new tile for `pane`, defaulting to the tray. If the layout has no
+/// tray, for example the tray was moved above the graph scene, dock beside
+/// the graph scene so the pane joins the main area. Never fall back to the
+/// root, since its split holds the fixed sidebar.
 fn insert_tray_pane(tree: &mut egui_tiles::Tree<Pane>, pane: Pane) {
     let pane_id = tree.tiles.insert_pane(pane);
-    let container = layout_anchors(tree)
-        .map(|a| a.tray)
+    let container = tray_split(tree)
+        .map(|split| split.fixed)
         .or_else(|| {
             tree.tiles
                 .find_pane(&Pane::GraphScene)
@@ -409,12 +409,7 @@ fn sibling_share(tree: &egui_tiles::Tree<Pane>, container: egui_tiles::TileId) -
     else {
         return 1.0;
     };
-    let children: Vec<_> = l
-        .children
-        .iter()
-        .copied()
-        .filter(|&c| tree.is_visible(c))
-        .collect();
+    let children = visible_children(tree, l);
     if children.is_empty() {
         return 1.0;
     }
@@ -482,11 +477,6 @@ pub(super) fn simplify_tree(tree: &mut egui_tiles::Tree<Pane>, ctx: &egui::Conte
     }
 }
 
-/// The gap between sibling tiles, in points. It must match the default
-/// `egui_tiles::Behavior::gap_width`, which is not overridden, so imposed
-/// pixel sizes are exact and do not drift when re-imposed each frame.
-const TILE_GAP: f32 = 1.0;
-
 /// The minimum sidebar width and tray height, in points.
 const MIN_PANE_SIZE: f32 = 80.0;
 
@@ -517,85 +507,94 @@ pub(super) fn pane_min_size(pane: &Pane) -> egui::Vec2 {
     }
 }
 
-/// The tiles whose Linear share splits hold the sidebar width and tray height,
-/// when the tree has its default top-level shape.
-struct LayoutAnchors {
-    /// The root horizontal Linear, `[left_column | right_column]`.
-    pub(super) root: egui_tiles::TileId,
-    pub(super) left_column: egui_tiles::TileId,
-    /// The right column vertical Linear, `[graph_scene / tray]`.
-    pub(super) right_column: egui_tiles::TileId,
-    pub(super) graph_scene: egui_tiles::TileId,
-    pub(super) tray: egui_tiles::TileId,
+/// A child of a Linear container that keeps its size in points as the window
+/// resizes, such as the sidebar or the tray. The child that holds the graph
+/// scene takes the change.
+struct FixedSplit {
+    /// The Linear container.
+    container: egui_tiles::TileId,
+    /// The child with the fixed size.
+    fixed: egui_tiles::TileId,
+    /// The child that is the graph scene or holds it.
+    main: egui_tiles::TileId,
 }
 
-/// Identify the layout anchors, or `None` if the tree is not in its default
-/// top-level shape, for example mid-drag or after the user rearranged panes.
-/// In that case the proportional layout is left untouched.
-fn layout_anchors(tree: &egui_tiles::Tree<Pane>) -> Option<LayoutAnchors> {
-    // The scene may share its row with graph panes. Then the row stands in
-    // for the scene.
-    let scene = tree.tiles.find_pane(&Pane::GraphScene)?;
-    let parent = tree.tiles.parent_of(scene)?;
-    let (graph_scene, right_column) =
-        match linear_children(tree, parent, egui_tiles::LinearDir::Horizontal) {
-            Some(_) => (parent, tree.tiles.parent_of(parent)?),
-            None => (scene, parent),
-        };
-    let root = tree.root()?;
-    let &[a, b] = linear_children(tree, root, egui_tiles::LinearDir::Horizontal)?.as_slice() else {
-        return None;
-    };
-    let left_column = match (a == right_column, b == right_column) {
-        (false, true) => a,
-        (true, false) => b,
-        _ => return None,
-    };
-    let &[c, d] = linear_children(tree, right_column, egui_tiles::LinearDir::Vertical)?.as_slice()
-    else {
-        return None;
-    };
-    let tray = match (c == graph_scene, d == graph_scene) {
-        (true, false) => d,
-        (false, true) => c,
-        _ => return None,
-    };
-    Some(LayoutAnchors {
-        root,
-        left_column,
-        right_column,
-        graph_scene,
-        tray,
+/// The split of the sidebar, the first column that does not hold the graph
+/// scene in the outermost horizontal split on the path to the scene. See
+/// [`outer_split`].
+fn sidebar_split(tree: &egui_tiles::Tree<Pane>) -> Option<FixedSplit> {
+    let (container, columns) = outer_split(tree, egui_tiles::LinearDir::Horizontal)?;
+    let main = scene_child(tree, container)?;
+    let fixed = columns.into_iter().find(|&c| c != main)?;
+    Some(FixedSplit {
+        container,
+        fixed,
+        main,
     })
 }
 
-/// The children of `id` if it is a Linear container with direction `dir`.
-fn linear_children(
+/// The split of the tray, the last row that does not hold the graph scene in
+/// the outermost vertical split on the path to the scene. See
+/// [`outer_split`].
+fn tray_split(tree: &egui_tiles::Tree<Pane>) -> Option<FixedSplit> {
+    let (container, rows) = outer_split(tree, egui_tiles::LinearDir::Vertical)?;
+    let main = scene_child(tree, container)?;
+    let fixed = rows.into_iter().rev().find(|&r| r != main)?;
+    Some(FixedSplit {
+        container,
+        fixed,
+        main,
+    })
+}
+
+/// The outermost Linear with direction `dir` on the path from the root to the
+/// graph scene, and its children.
+///
+/// Only Linears of the other direction lie above it, so it spans the full
+/// extent of the area along `dir`. `None` when a tile that is not a Linear
+/// comes first.
+fn outer_split(
     tree: &egui_tiles::Tree<Pane>,
-    id: egui_tiles::TileId,
     dir: egui_tiles::LinearDir,
-) -> Option<Vec<egui_tiles::TileId>> {
-    match tree.tiles.get_container(id)? {
-        egui_tiles::Container::Linear(l) if l.dir == dir => Some(l.children.clone()),
-        _ => None,
+) -> Option<(egui_tiles::TileId, Vec<egui_tiles::TileId>)> {
+    let mut id = tree.root()?;
+    loop {
+        match tree.tiles.get_container(id)? {
+            egui_tiles::Container::Linear(l) if l.dir == dir => {
+                return Some((id, l.children.clone()));
+            }
+            egui_tiles::Container::Linear(_) => id = scene_child(tree, id)?,
+            _ => return None,
+        }
     }
 }
 
-/// Set the two shares of a binary Linear container.
-fn set_linear_shares(
-    tree: &mut egui_tiles::Tree<Pane>,
+/// The child of `container` that is the graph scene or holds it.
+fn scene_child(
+    tree: &egui_tiles::Tree<Pane>,
     container: egui_tiles::TileId,
-    a: egui_tiles::TileId,
-    a_share: f32,
-    b: egui_tiles::TileId,
-    b_share: f32,
-) {
-    if let Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(l))) =
-        tree.tiles.get_mut(container)
-    {
-        l.shares.set_share(a, a_share);
-        l.shares.set_share(b, b_share);
+) -> Option<egui_tiles::TileId> {
+    let mut id = tree.tiles.find_pane(&Pane::GraphScene)?;
+    loop {
+        let parent = tree.tiles.parent_of(id)?;
+        if parent == container {
+            return Some(id);
+        }
+        id = parent;
     }
+}
+
+/// The visible children of `linear`.
+fn visible_children(
+    tree: &egui_tiles::Tree<Pane>,
+    linear: &egui_tiles::Linear,
+) -> Vec<egui_tiles::TileId> {
+    linear
+        .children
+        .iter()
+        .copied()
+        .filter(|&c| tree.is_visible(c))
+        .collect()
 }
 
 /// Impose the stored sidebar width and tray height in points on the tree's
@@ -606,42 +605,61 @@ pub(super) fn impose_fixed_sizes(
     state: &GantzState,
     area: egui::Rect,
 ) {
-    let Some(anchors) = layout_anchors(tree) else {
-        return;
-    };
-    // Both columns span the full height, so the tray's available height is the
-    // area height less the gap. The sidebar's available width likewise.
+    // The sidebar spans the full width and the tray's column the full height.
+    // The gap must be the one the layout uses, or the imposed sizes shift with
+    // the window size.
+    let gap = state.style.shape.separator_width;
     if state.view_toggles.sidebar_open {
-        let avail = area.width() - TILE_GAP;
-        let width = state
-            .sidebar_width
-            .clamp(MIN_PANE_SIZE, (avail - MIN_PANE_SIZE).max(MIN_PANE_SIZE));
-        set_linear_shares(
-            tree,
-            anchors.root,
-            anchors.left_column,
-            width,
-            anchors.right_column,
-            (avail - width).max(1.0),
-        );
+        if let Some(split) = sidebar_split(tree) {
+            impose_split(tree, &split, state.sidebar_width, area.width(), gap);
+        }
     }
     if state.view_toggles.logs
         || state.view_toggles.steel
         || state.view_toggles.gui_preview
         || state.view_toggles.gui_tree
     {
-        let avail = area.height() - TILE_GAP;
-        let height = state
-            .tray_height
-            .clamp(MIN_PANE_SIZE, (avail - MIN_PANE_SIZE).max(MIN_PANE_SIZE));
-        set_linear_shares(
-            tree,
-            anchors.right_column,
-            anchors.graph_scene,
-            (avail - height).max(1.0),
-            anchors.tray,
-            height,
-        );
+        if let Some(split) = tray_split(tree) {
+            impose_split(tree, &split, state.tray_height, area.height(), gap);
+        }
+    }
+}
+
+/// Give the fixed child of `split` `size` points of its container's `extent`.
+/// The other children keep the points their shares give them, and the main
+/// child takes the rest. All shares are then in points. Nothing changes while
+/// the fixed child is hidden.
+fn impose_split(
+    tree: &mut egui_tiles::Tree<Pane>,
+    split: &FixedSplit,
+    size: f32,
+    extent: f32,
+    gap: f32,
+) {
+    let Some(egui_tiles::Container::Linear(l)) = tree.tiles.get_container(split.container) else {
+        return;
+    };
+    let visible = visible_children(tree, l);
+    let total: f32 = visible.iter().map(|&c| l.shares[c]).sum();
+    if !visible.contains(&split.fixed) || total <= 0.0 {
+        return;
+    }
+    let avail = linear_avail(extent, gap, visible.len());
+    let others: Vec<_> = visible
+        .into_iter()
+        .filter(|&c| c != split.fixed && c != split.main)
+        .map(|c| (c, avail * l.shares[c] / total))
+        .collect();
+    let free = avail - others.iter().map(|&(_, points)| points).sum::<f32>();
+    let size = size.clamp(MIN_PANE_SIZE, (free - MIN_PANE_SIZE).max(MIN_PANE_SIZE));
+    if let Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(l))) =
+        tree.tiles.get_mut(split.container)
+    {
+        l.shares.set_share(split.fixed, size);
+        l.shares.set_share(split.main, (free - size).max(1.0));
+        for (c, points) in others {
+            l.shares.set_share(c, points);
+        }
     }
 }
 
@@ -657,58 +675,45 @@ pub(super) fn capture_fixed_sizes(
     state: &mut GantzState,
     area: egui::Rect,
 ) {
-    let Some(anchors) = layout_anchors(tree) else {
-        return;
-    };
-    // Gate on the laid-out visibility, not `sidebar_open`. The hamburger can
-    // flip `sidebar_open` mid-frame, but `set_tile_visibility` only runs at the
-    // frame start, so the layout and the captured share reflect the
-    // visibility from frame start. Capturing against a stale layout would
-    // compute the column's size against the wrong set of visible siblings.
-    if tree.is_visible(anchors.left_column) {
-        if let Some(width) = linear_child_points(
-            tree,
-            anchors.root,
-            anchors.left_column,
-            area.width() - TILE_GAP,
-        ) {
-            if width > 1.0 {
-                state.sidebar_width = width;
-            }
-        }
+    let gap = state.style.shape.separator_width;
+    let width = sidebar_split(tree).and_then(|split| fixed_points(tree, &split, area.width(), gap));
+    if let Some(width) = width.filter(|&w| w > 1.0) {
+        state.sidebar_width = width;
     }
-    if tree.is_visible(anchors.tray) {
-        if let Some(height) = linear_child_points(
-            tree,
-            anchors.right_column,
-            anchors.tray,
-            area.height() - TILE_GAP,
-        ) {
-            if height > 1.0 {
-                state.tray_height = height;
-            }
-        }
+    let height = tray_split(tree).and_then(|split| fixed_points(tree, &split, area.height(), gap));
+    if let Some(height) = height.filter(|&h| h > 1.0) {
+        state.tray_height = height;
     }
 }
 
-/// The points a Linear child currently occupies, derived from its share of the
-/// visible children, mirroring `egui_tiles::Shares::split`.
-fn linear_child_points(
+/// The points the fixed child of `split` occupies of its container's
+/// `extent`, mirroring `egui_tiles::Shares::split`.
+///
+/// `None` while the child is laid out hidden. Gate on the laid-out
+/// visibility, not `sidebar_open`. The hamburger can flip `sidebar_open`
+/// mid-frame, but `set_tile_visibility` only runs at the frame start, so the
+/// layout and the captured share reflect the visibility from frame start.
+/// Capturing against a stale layout would compute the child's size against the
+/// wrong set of visible siblings.
+fn fixed_points(
     tree: &egui_tiles::Tree<Pane>,
-    container: egui_tiles::TileId,
-    child: egui_tiles::TileId,
-    available: f32,
+    split: &FixedSplit,
+    extent: f32,
+    gap: f32,
 ) -> Option<f32> {
-    let egui_tiles::Container::Linear(l) = tree.tiles.get_container(container)? else {
+    let egui_tiles::Container::Linear(l) = tree.tiles.get_container(split.container)? else {
         return None;
     };
-    let total: f32 = l
-        .children
-        .iter()
-        .filter(|&&c| tree.is_visible(c))
-        .map(|&c| l.shares[c])
-        .sum();
-    (total > 0.0).then(|| available * l.shares[child] / total)
+    let visible = visible_children(tree, l);
+    let total: f32 = visible.iter().map(|&c| l.shares[c]).sum();
+    let avail = linear_avail(extent, gap, visible.len());
+    (visible.contains(&split.fixed) && total > 0.0).then(|| avail * l.shares[split.fixed] / total)
+}
+
+/// The points that `n` children of a Linear container share of its `extent`,
+/// less the gaps between them.
+fn linear_avail(extent: f32, gap: f32, n: usize) -> f32 {
+    extent - gap * n.saturating_sub(1) as f32
 }
 
 /// The minimum extent of `id` along `dir`, in points.
@@ -739,12 +744,7 @@ fn min_extent(
             .map(|child| min_extent(tree, child, dir, gap))
             .unwrap_or(0.0),
         egui_tiles::Tile::Container(egui_tiles::Container::Linear(l)) => {
-            let children: Vec<_> = l
-                .children
-                .iter()
-                .copied()
-                .filter(|&c| tree.is_visible(c))
-                .collect();
+            let children = visible_children(tree, l);
             if children.is_empty() {
                 return 0.0;
             }
@@ -820,12 +820,7 @@ fn impose_linear_min(
     // shares. The borrow ends before the tree is mutated.
     let (dir, children, points, available) = match tree.tiles.get(id) {
         Some(egui_tiles::Tile::Container(egui_tiles::Container::Linear(l))) => {
-            let children: Vec<_> = l
-                .children
-                .iter()
-                .copied()
-                .filter(|&c| tree.is_visible(c))
-                .collect();
+            let children = visible_children(tree, l);
             let axis_extent = match l.dir {
                 egui_tiles::LinearDir::Horizontal => rect.width(),
                 egui_tiles::LinearDir::Vertical => rect.height(),
@@ -1001,13 +996,25 @@ pub(super) fn set_tile_visibility(tree: &mut egui_tiles::Tree<Pane>, view: &View
             tree.set_visible(id, visible);
         }
     }
-    // A container is visible when any child is.
-    for &id in &ids {
-        if let Some(container) = tree.tiles.get_container(id) {
-            let has_visible_child = container.children().any(|&id| tree.is_visible(id));
-            tree.set_visible(id, has_visible_child);
-        }
+    if let Some(root) = tree.root() {
+        set_container_visibility(tree, root);
     }
+}
+
+/// Make each container at or under `id` visible when any of its children is.
+/// Children go first, so a container never reads a stale visibility of a child.
+/// Returns whether `id` is visible.
+fn set_container_visibility(tree: &mut egui_tiles::Tree<Pane>, id: egui_tiles::TileId) -> bool {
+    let Some(container) = tree.tiles.get_container(id) else {
+        return tree.is_visible(id);
+    };
+    let children: Vec<_> = container.children().copied().collect();
+    let mut visible = false;
+    for child in children {
+        visible |= set_container_visibility(tree, child);
+    }
+    tree.set_visible(id, visible);
+    visible
 }
 
 /// Show `pane` and bring its tab to the front on the next pass. Patch-only
@@ -1081,20 +1088,31 @@ mod tests {
         assert!(tree.is_visible(tree.tiles.find_pane(&Pane::Logs).unwrap()));
     }
 
+    /// A closed sidebar hides its column on the first pass over a fresh tree,
+    /// whatever order the tiles are stored in. A column shown for one frame
+    /// would lay out at its default share, and that size would be captured as
+    /// the sidebar width.
+    #[test]
+    fn closed_sidebar_column_hides_on_a_fresh_tree() {
+        for _ in 0..32 {
+            let mut tree = create_tree();
+            let sidebar = sidebar_split(&tree).unwrap();
+            set_tile_visibility(&mut tree, &ViewToggles::default());
+            assert!(!tree.is_visible(sidebar.fixed));
+        }
+    }
+
     /// The fixed sidebar width must be imposed on the sidebar, not the main
     /// area. The anchors must identify the sidebar as the column that does
     /// not contain the graph scene.
     #[test]
     fn impose_sets_sidebar_width_on_left_column() {
         let mut tree = create_tree();
-        let anchors = layout_anchors(&tree).expect("default tree has layout anchors");
+        let split = sidebar_split(&tree).expect("the default tree has a sidebar");
 
         let graph_scene = tree.tiles.find_pane(&Pane::GraphScene).unwrap();
-        assert_ne!(anchors.left_column, anchors.right_column);
-        assert_eq!(
-            tree.tiles.parent_of(graph_scene),
-            Some(anchors.right_column)
-        );
+        assert_ne!(split.fixed, split.main);
+        assert_eq!(tree.tiles.parent_of(graph_scene), Some(split.main));
 
         let mut state = GantzState::new();
         state.view_toggles.sidebar_open = true;
@@ -1102,14 +1120,14 @@ mod tests {
         let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
         impose_fixed_sizes(&mut tree, &state, area);
 
-        let Some(egui_tiles::Container::Linear(root)) = tree.tiles.get_container(anchors.root)
+        let Some(egui_tiles::Container::Linear(root)) = tree.tiles.get_container(split.container)
         else {
             panic!("root is not a linear container");
         };
-        let avail = 1000.0 - TILE_GAP;
+        let avail = 1000.0 - state.style.shape.separator_width;
         // The sidebar gets the fixed width. The main area gets the remainder.
-        assert!((root.shares[anchors.left_column] - 240.0).abs() < 0.01);
-        assert!((root.shares[anchors.right_column] - (avail - 240.0)).abs() < 0.01);
+        assert!((root.shares[split.fixed] - 240.0).abs() < 0.01);
+        assert!((root.shares[split.main] - (avail - 240.0)).abs() < 0.01);
     }
 
     /// `capture_fixed_sizes` must recover the same width `impose_fixed_sizes`
@@ -1126,15 +1144,138 @@ mod tests {
         assert!((state.sidebar_width - 240.0).abs() < 0.01);
     }
 
+    /// The sidebar lays out at the stored width at any window width. The split
+    /// below is the one `egui_tiles` makes, less the gap of the style.
+    #[test]
+    fn imposed_sidebar_width_holds_as_the_window_resizes() {
+        let mut tree = create_tree();
+        let split = sidebar_split(&tree).unwrap();
+        let mut state = GantzState::new();
+        state.view_toggles.sidebar_open = true;
+        state.sidebar_width = 240.0;
+        let gap = state.style.shape.separator_width;
+        for width in [800.0, 1000.0, 1600.0] {
+            let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 800.0));
+            impose_fixed_sizes(&mut tree, &state, area);
+            let Some(egui_tiles::Container::Linear(root)) =
+                tree.tiles.get_container(split.container)
+            else {
+                panic!("root is not a linear container");
+            };
+            let columns = [split.fixed, split.main];
+            let widths = root.shares.split(&columns, width - gap);
+            assert!((widths[0] - 240.0).abs() < 0.01, "{width}: {widths:?}");
+        }
+    }
+
+    /// The points that `child` of the Linear `container` lays out at, as
+    /// `egui_tiles` splits the container's `extent`.
+    fn laid_out_points(
+        tree: &egui_tiles::Tree<Pane>,
+        container: egui_tiles::TileId,
+        child: egui_tiles::TileId,
+        extent: f32,
+        gap: f32,
+    ) -> f32 {
+        let Some(egui_tiles::Container::Linear(l)) = tree.tiles.get_container(container) else {
+            panic!("not a linear container");
+        };
+        let visible = visible_children(tree, l);
+        let points = l
+            .shares
+            .split(&visible, linear_avail(extent, gap, visible.len()));
+        let ix = visible.iter().position(|&c| c == child).expect("visible");
+        points[ix]
+    }
+
+    /// A pane dropped between the scene and the tray adds a row to their
+    /// column. The sidebar width and the tray height must still hold.
+    #[test]
+    fn fixed_sizes_hold_with_a_row_between_scene_and_tray() {
+        let mut tree = create_tree();
+        let sidebar = sidebar_split(&tree).unwrap();
+        let tray = tray_split(&tree).unwrap();
+        let pane = tree.tiles.insert_pane(node_view("main", &[1]));
+        tree.move_tile_to_container(pane, tray.container, 1, true);
+        assert_eq!(tray_split(&tree).map(|s| s.fixed), Some(tray.fixed));
+        let mut state = GantzState::new();
+        state.view_toggles.sidebar_open = true;
+        state.view_toggles.logs = true;
+        state.sidebar_width = 240.0;
+        state.tray_height = 200.0;
+        let gap = state.style.shape.separator_width;
+        for [w, h] in [[800.0, 600.0], [1000.0, 800.0], [1600.0, 1000.0]] {
+            let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h));
+            impose_fixed_sizes(&mut tree, &state, area);
+            let width = laid_out_points(&tree, sidebar.container, sidebar.fixed, w, gap);
+            let height = laid_out_points(&tree, tray.container, tray.fixed, h, gap);
+            assert!((width - 240.0).abs() < 0.01, "{w}: {width}");
+            assert!((height - 200.0).abs() < 0.01, "{h}: {height}");
+        }
+    }
+
+    /// A pane dropped beside the main column adds a column to the root. The
+    /// sidebar width must still hold, and the new column keeps a share.
+    #[test]
+    fn sidebar_width_holds_beside_a_third_column() {
+        let mut tree = create_tree();
+        let sidebar = sidebar_split(&tree).unwrap();
+        let pane = tree.tiles.insert_pane(node_view("main", &[1]));
+        tree.move_tile_to_container(pane, sidebar.container, usize::MAX, true);
+        assert_eq!(sidebar_split(&tree).map(|s| s.fixed), Some(sidebar.fixed));
+        let mut state = GantzState::new();
+        state.view_toggles.sidebar_open = true;
+        state.sidebar_width = 240.0;
+        let gap = state.style.shape.separator_width;
+        for w in [800.0, 1000.0, 1600.0] {
+            let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, 800.0));
+            impose_fixed_sizes(&mut tree, &state, area);
+            let width = laid_out_points(&tree, sidebar.container, sidebar.fixed, w, gap);
+            let column = laid_out_points(&tree, sidebar.container, pane, w, gap);
+            assert!((width - 240.0).abs() < 0.01, "{w}: {width}");
+            assert!(column > MIN_PANE_SIZE, "{w}: {column}");
+        }
+    }
+
+    /// A pane dropped below the whole layout wraps the root in a vertical split.
+    /// The sidebar is then no child of the root, and its width must still hold.
+    /// The new row is the outermost bottom row, so it takes the tray height.
+    #[test]
+    fn fixed_sizes_hold_above_a_full_width_row() {
+        let mut tree = create_tree();
+        let sidebar = sidebar_split(&tree).unwrap();
+        let pane = tree.tiles.insert_pane(node_view("main", &[1]));
+        let root = tree
+            .tiles
+            .insert_vertical_tile(vec![sidebar.container, pane]);
+        tree.root = Some(root);
+        assert_eq!(sidebar_split(&tree).map(|s| s.fixed), Some(sidebar.fixed));
+        assert_eq!(tray_split(&tree).map(|s| s.fixed), Some(pane));
+        let mut state = GantzState::new();
+        state.view_toggles.sidebar_open = true;
+        state.view_toggles.logs = true;
+        state.sidebar_width = 240.0;
+        state.tray_height = 200.0;
+        let gap = state.style.shape.separator_width;
+        for [w, h] in [[800.0, 600.0], [1000.0, 800.0], [1600.0, 1000.0]] {
+            let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(w, h));
+            impose_fixed_sizes(&mut tree, &state, area);
+            let width = laid_out_points(&tree, sidebar.container, sidebar.fixed, w, gap);
+            let height = laid_out_points(&tree, root, pane, h, gap);
+            assert!((width - 240.0).abs() < 0.01, "{w}: {width}");
+            assert!((height - 200.0).abs() < 0.01, "{h}: {height}");
+        }
+    }
+
     /// Reopening the sidebar must not inflate its width. On the open-transition
     /// frame `sidebar_open` is already true but the layout still has the left
     /// column hidden. Capturing then would size it against the wrong siblings.
     #[test]
     fn capture_skips_while_sidebar_laid_out_hidden() {
         let mut tree = create_tree();
-        let anchors = layout_anchors(&tree).unwrap();
+        let split = sidebar_split(&tree).unwrap();
         // The layout has the sidebar hidden, as at frame start.
-        tree.set_visible(anchors.left_column, false);
+        tree.set_visible(split.fixed, false);
         let mut state = GantzState::new();
         // `sidebar_open` was just toggled on mid-frame.
         state.view_toggles.sidebar_open = true;
@@ -1163,7 +1304,11 @@ mod tests {
         });
         let mut tree = egui_tiles::Tree::new("test", root, tiles);
         let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1000.0, 800.0));
-        impose_min_sizes(&mut tree, TILE_GAP, area);
+        impose_min_sizes(
+            &mut tree,
+            GantzState::new().style.shape.separator_width,
+            area,
+        );
 
         let Some(egui_tiles::Container::Linear(l)) = tree.tiles.get_container(root) else {
             panic!("root is not a linear container");
@@ -1181,7 +1326,11 @@ mod tests {
     fn impose_min_sizes_keeps_log_width() {
         let mut tree = create_tree();
         let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(480.0, 800.0));
-        impose_min_sizes(&mut tree, TILE_GAP, area);
+        impose_min_sizes(
+            &mut tree,
+            GantzState::new().style.shape.separator_width,
+            area,
+        );
 
         let logs = tree.tiles.find_pane(&Pane::Logs).unwrap();
         let parent = tree.tiles.parent_of(logs).unwrap();
@@ -1200,38 +1349,35 @@ mod tests {
     #[test]
     fn impose_min_sizes_leaves_proportional_layout() {
         let mut tree = create_tree();
-        let anchors = layout_anchors(&tree).unwrap();
-        let Some(egui_tiles::Container::Linear(before)) =
-            tree.tiles.get_container(anchors.left_column)
+        let split = sidebar_split(&tree).unwrap();
+        let Some(egui_tiles::Container::Linear(before)) = tree.tiles.get_container(split.fixed)
         else {
             panic!("the left column is not a linear container");
         };
         let before = before.shares.clone();
 
         let area = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 800.0));
-        impose_min_sizes(&mut tree, TILE_GAP, area);
+        impose_min_sizes(
+            &mut tree,
+            GantzState::new().style.shape.separator_width,
+            area,
+        );
 
-        let Some(egui_tiles::Container::Linear(after)) =
-            tree.tiles.get_container(anchors.left_column)
+        let Some(egui_tiles::Container::Linear(after)) = tree.tiles.get_container(split.fixed)
         else {
             panic!("the left column is not a linear container");
         };
         assert_eq!(before, after.shares);
     }
 
-    /// Breaking the canonical layout used to make a new pane fall back to the
-    /// root and land as a sliver. It must dock beside the graph scene instead.
+    /// With no tray, a new pane must not fall back to the root and land as a
+    /// sliver. It must dock beside the graph scene instead.
     #[test]
-    fn insert_tray_pane_avoids_root_when_anchors_break() {
+    fn insert_tray_pane_avoids_root_without_a_tray() {
         let mut tree = create_tree();
-        let anchors = layout_anchors(&tree).unwrap();
-        // Simulate moving the sole visible tray pane to a column beside the
-        // graph scene. The tray loses its canonical two-child shape.
-        let steel = tree.tiles.find_pane(&Pane::Steel).unwrap();
-        tree.set_visible(steel, false);
-        let logs = tree.tiles.find_pane(&Pane::Logs).unwrap();
-        tree.move_tile_to_container(logs, anchors.right_column, 0, true);
-        assert!(layout_anchors(&tree).is_none());
+        let tray = tray_split(&tree).unwrap();
+        tree.remove_recursively(tray.fixed);
+        assert!(tray_split(&tree).is_none());
 
         let pane = node_view("main", &[1]);
         insert_tray_pane(&mut tree, pane.clone());
@@ -1244,7 +1390,7 @@ mod tests {
                 _ => None,
             })
             .expect("new pane is in the tree");
-        assert_eq!(tree.tiles.parent_of(id), Some(anchors.right_column));
+        assert_eq!(tree.tiles.parent_of(id), Some(tray.container));
         assert_ne!(tree.tiles.parent_of(id), tree.root());
     }
 }

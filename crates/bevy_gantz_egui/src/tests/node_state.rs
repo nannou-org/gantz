@@ -7,11 +7,16 @@ use gantz_core::node::state::{self, Snapshots};
 use gantz_egui::node::{Init, State};
 use steel::SteelVal;
 
+/// A state node that starts at `init`.
+fn node(init: f64) -> gantz_ca::NodeData {
+    let node = State::new(Some(Init::Number(init)));
+    gantz_core::data::erase_node_typed(&node).unwrap()
+}
+
 /// A one node graph of a state node that starts at `init`.
 fn graph(init: f64) -> gantz_ca::DataGraph {
-    let node = State::new(Some(Init::Number(init)));
     let mut dg = gantz_ca::DataGraph::default();
-    dg.add_node(gantz_core::data::erase_node_typed(&node).unwrap());
+    dg.add_node(node(init));
     dg
 }
 
@@ -79,11 +84,20 @@ fn set_value(app: &mut bevy_app::App, h: &Head, val: f64) {
     state::update_value(vm, &[0], SteelVal::NumV(val)).unwrap();
 }
 
+/// Make the named graph keep its node state.
+fn keep(app: &mut bevy_app::App, n: &str) {
+    let mut registry = app.world_mut().resource_mut::<Registry>();
+    gantz_ca::section_insert::<state::Keep>(&mut registry.0, name(n), &true).unwrap();
+}
+
 /// An app with `alpha` and `other` open, since the last head never closes.
+/// Both keep their node state.
 fn app_with_two_heads() -> (bevy_app::App, Head, Head) {
     let mut app = super::test_app(|| {});
     let alpha = commit(&mut app, "alpha", graph(1.0));
     let other = commit(&mut app, "other", graph(2.0));
+    keep(&mut app, "alpha");
+    keep(&mut app, "other");
     trigger(&mut app, head::OpenEvent(alpha.clone()));
     trigger(&mut app, head::OpenEvent(other.clone()));
     (app, alpha, other)
@@ -125,6 +139,63 @@ fn a_replaced_head_keeps_its_state() {
     assert_eq!(nodes[0].1, gantz_ca::Datum::F64(7.0));
 }
 
+/// Loading another head into the tab carries none of the state of the head it
+/// leaves, even where the two graphs hold an equal node.
+#[test]
+fn a_loaded_head_takes_none_of_the_state_it_replaces() {
+    let (mut app, _alpha, other) = app_with_two_heads();
+    let mut dg = graph(2.0);
+    dg.add_node(node(5.0));
+    let beta = commit(&mut app, "beta", dg);
+    set_value(&mut app, &other, 9.0);
+    trigger(&mut app, head::ReplaceEvent(beta.clone()));
+    assert_eq!(value(&mut app, &beta), SteelVal::NumV(2.0));
+}
+
+/// Loading a head into the tab restores its stored state, as opening it does.
+#[test]
+fn a_loaded_head_restores_its_state() {
+    let (mut app, alpha, other) = app_with_two_heads();
+    set_value(&mut app, &alpha, 9.0);
+    trigger(&mut app, head::CloseEvent(alpha.clone()));
+    set_value(&mut app, &other, 4.0);
+    trigger(&mut app, head::ReplaceEvent(alpha.clone()));
+    assert_eq!(value(&mut app, &alpha), SteelVal::NumV(9.0));
+}
+
+/// A load keeps the VM of the tab, and with it the modules that the VM
+/// loaded, as a new VM costs much more than a compile.
+#[test]
+fn a_load_keeps_the_vm() {
+    let (mut app, alpha, other) = app_with_two_heads();
+    let mark = "%test-mark";
+    let e = entity(&mut app, &other);
+    let mut vms = app.world_mut().non_send_mut::<head::HeadVms>();
+    vms.0
+        .get_mut(&e)
+        .unwrap()
+        .register_value(mark, SteelVal::IntV(1));
+    trigger(&mut app, head::CloseEvent(alpha.clone()));
+    trigger(&mut app, head::ReplaceEvent(alpha.clone()));
+    let vms = app.world().non_send::<head::HeadVms>();
+    assert_eq!(vms.0[&e].extract_value(mark).ok(), Some(SteelVal::IntV(1)));
+}
+
+/// A load whose graph fails to compile leaves the tab with no VM, so the
+/// module of the graph that it left never runs on the new state.
+#[test]
+fn a_failed_load_leaves_no_vm() {
+    let (mut app, _alpha, other) = app_with_two_heads();
+    let e = entity(&mut app, &other);
+    let mut unknown = node(1.0);
+    unknown.tag = "Unknown".to_string();
+    let mut dg = gantz_ca::DataGraph::default();
+    dg.add_node(unknown);
+    let broken = commit(&mut app, "broken", dg);
+    trigger(&mut app, head::ReplaceEvent(broken));
+    assert!(!app.world().non_send::<head::HeadVms>().0.contains_key(&e));
+}
+
 /// A commit with no snapshot starts from the initial state of its graph.
 #[test]
 fn a_commit_with_no_snapshot_starts_from_its_initial_state() {
@@ -136,9 +207,25 @@ fn a_commit_with_no_snapshot_starts_from_its_initial_state() {
     assert_eq!(value(&mut app, &alpha), SteelVal::NumV(3.0));
 }
 
-/// A head with no name keeps its state too, by its commit.
+/// A graph keeps no node state unless it opts in. It stores nothing and starts
+/// from its initial state each time it opens.
 #[test]
-fn an_unnamed_head_keeps_its_state() {
+fn a_graph_keeps_no_state_by_default() {
+    let mut app = super::test_app(|| {});
+    let alpha = commit(&mut app, "alpha", graph(1.0));
+    let other = commit(&mut app, "other", graph(2.0));
+    trigger(&mut app, head::OpenEvent(alpha.clone()));
+    trigger(&mut app, head::OpenEvent(other));
+    set_value(&mut app, &alpha, 9.0);
+    trigger(&mut app, head::CloseEvent(alpha.clone()));
+    assert!(snapshot(&app, &alpha).is_none());
+    trigger(&mut app, head::OpenEvent(alpha.clone()));
+    assert_eq!(value(&mut app, &alpha), SteelVal::NumV(1.0));
+}
+
+/// A head with no name has no keep toggle, so it keeps no state.
+#[test]
+fn an_unnamed_head_keeps_no_state() {
     let mut app = super::test_app(|| {});
     let other = commit(&mut app, "other", graph(2.0));
     let unnamed = Head::Commit(unnamed_commit(&mut app, graph(1.0)));
@@ -147,7 +234,7 @@ fn an_unnamed_head_keeps_its_state() {
     set_value(&mut app, &unnamed, 9.0);
     trigger(&mut app, head::CloseEvent(unnamed.clone()));
     trigger(&mut app, head::OpenEvent(unnamed.clone()));
-    assert_eq!(value(&mut app, &unnamed), SteelVal::NumV(9.0));
+    assert_eq!(value(&mut app, &unnamed), SteelVal::NumV(1.0));
 }
 
 /// The first snapshot of a commit replaces the one of its nearest ancestor,
@@ -177,6 +264,7 @@ fn a_snapshot_of_a_held_commit_stays() {
     app.world_mut()
         .resource_mut::<Registry>()
         .set_head(fork.clone(), first);
+    keep(&mut app, "fork");
     commit(&mut app, "alpha", graph(3.0));
     trigger(&mut app, head::OpenEvent(alpha.clone()));
     trigger(&mut app, head::CloseEvent(alpha.clone()));
@@ -192,10 +280,10 @@ fn set_keep(app: &mut bevy_app::App, n: &str, keep: bool) {
     trigger(app, crate::ForApp(toggle));
 }
 
-/// Turning the toggle off drops the stored state. The graph then stores
-/// nothing and starts from its initial state each time it opens.
+/// Turning the toggle off drops the stored state, so the graph starts from its
+/// initial state at its next open.
 #[test]
-fn a_volatile_graph_starts_from_its_initial_state() {
+fn a_graph_that_stops_keeping_its_state_drops_it() {
     let (mut app, alpha, _other) = app_with_two_heads();
     app.add_observer(crate::graphs::on_set_keep_state);
     set_value(&mut app, &alpha, 9.0);
@@ -203,19 +291,14 @@ fn a_volatile_graph_starts_from_its_initial_state() {
     assert!(snapshot(&app, &alpha).is_some());
     set_keep(&mut app, "alpha", false);
     assert!(snapshot(&app, &alpha).is_none());
-
-    trigger(&mut app, head::OpenEvent(alpha.clone()));
-    assert_eq!(value(&mut app, &alpha), SteelVal::NumV(1.0));
-    set_value(&mut app, &alpha, 9.0);
-    trigger(&mut app, head::CloseEvent(alpha.clone()));
-    assert!(snapshot(&app, &alpha).is_none());
     trigger(&mut app, head::OpenEvent(alpha.clone()));
     assert_eq!(value(&mut app, &alpha), SteelVal::NumV(1.0));
 }
 
-/// A snapshot that reaches a volatile graph from elsewhere stays out of it.
+/// A snapshot that reaches a graph that keeps no state from elsewhere stays
+/// out of it.
 #[test]
-fn a_volatile_graph_ignores_a_stored_snapshot() {
+fn a_graph_that_keeps_no_state_ignores_a_stored_snapshot() {
     let (mut app, alpha, _other) = app_with_two_heads();
     app.add_observer(crate::graphs::on_set_keep_state);
     set_keep(&mut app, "alpha", false);

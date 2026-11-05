@@ -15,7 +15,7 @@ use crate::dsp::{BufferAccess, DspBuilder, NodeDsp, NodeRate, Signal, ToNodeDsp}
 use crate::param::{control_inputs_expr, param_name, params_state, plyphon_param};
 use crate::units::{Emit, In, UnitDesc, UnitRate, unit_desc};
 use crate::view::{
-    LAG, MAX_LAG, RATE, doc, edit_dialer, edit_rate, edit_secs, param_row, rate_row, row,
+    LAG, MAX_LAG, RATE, doc, edit_dialer, edit_rate, edit_secs, param_doc, param_row, rate_row, row,
 };
 
 /// A node wrapping one plyphon unit generator, driven entirely by its
@@ -316,13 +316,15 @@ impl gantz_nodedef::NodeDef for UnitNode {
                 // Param values live in keyed state. Lags are structural.
                 In::Param {
                     name,
+                    header,
                     min,
                     max,
                     suffix,
                     ..
                 } => {
                     let at = vec![name.to_string(), crate::param::VALUE.to_string()];
-                    rows.push(param_row(name, at, [*min, *max], suffix, self.lag(name)));
+                    let range = [*min, *max];
+                    rows.push(param_row(name, header, at, range, suffix, self.lag(name)));
                 }
                 // Init-only values are baked into the def as constants, so an
                 // edit is structural and re-derives.
@@ -390,13 +392,7 @@ impl gantz_nodedef::NodeDef for UnitNode {
 fn socket_doc(socket: &In) -> Option<SocketDoc> {
     match socket {
         In::Signal { doc: d, .. } | In::Group { doc: d, .. } => Some(doc("signal", *d)),
-        In::Param { doc: d, .. } => {
-            let description = format!(
-                "{d} - a connected signal drives it directly, a connected number overrides \
-                 the inspector value"
-            );
-            Some(doc("signal | number", description))
-        }
+        In::Param { doc: d, .. } => Some(param_doc(d)),
         In::Buffer { doc: d, access, .. } => {
             let note = match access {
                 BufferAccess::Read => "a `~sample` or `~buffer`",
@@ -645,6 +641,24 @@ mod tests {
         let ron = ron::to_string(&node).expect("serialize");
         let back: UnitNode = ron::from_str(&ron).expect("deserialize");
         assert_eq!(node, back);
+    }
+
+    // `~mul` heads its `b` row `factor`, and the value and the lag still key
+    // on `b`, so stored state and lags keep their meaning.
+    #[test]
+    fn a_row_header_keeps_the_param_keys() {
+        let node = UnitNode::from_unit("Mul").expect("Mul row");
+        let view = gantz_nodedef::NodeDef::view(&node);
+        let row = view.rows.iter().find(|r| r.label == "factor");
+        let Some(Element::Row(ui::Row { children, .. })) = row.map(|r| &r.ui) else {
+            panic!("no factor row: {:?}", view.rows);
+        };
+        let [Element::Dialer(value), Element::Dialer(lag)] = children.as_slice() else {
+            panic!("children: {children:?}");
+        };
+        let at = vec!["b".to_string(), crate::param::VALUE.to_string()];
+        assert_eq!(value.at, Some(ui::At(at)));
+        assert_eq!(lag.on, Some(ui::Edit(format!("{LAG}b"))));
     }
 
     #[test]

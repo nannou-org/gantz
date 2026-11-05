@@ -25,9 +25,23 @@ pub(crate) const COUNT: &str = "count";
 /// The most sockets that a node with a socket count has.
 pub(crate) const MAX_COUNT: usize = 64;
 
+/// How a param socket takes a schedule from the control side. See
+/// [`control_input_expr`](crate::param::control_input_expr).
+pub(crate) const SCHEDULE_DOC: &str =
+    "a schedule of (seconds value) pairs sets each value at its time";
+
 /// The doc of a socket whose values have the type `ty`.
 pub(crate) fn doc(ty: &str, description: impl Into<String>) -> SocketDoc {
     SocketDoc::new(ty, &description.into())
+}
+
+/// The doc of a param socket, which takes a signal, a number or a schedule.
+pub(crate) fn param_doc(description: &str) -> SocketDoc {
+    let description = format!(
+        "{description} - a connected signal drives it directly, a connected number overrides \
+         the inspector value, and {SCHEDULE_DOC}"
+    );
+    doc("signal | number | schedule", description)
 }
 
 /// A row of one line in the inspector's table.
@@ -53,11 +67,13 @@ pub(crate) fn edit_dialer(edit: &str, value: f64) -> ui::Dialer {
     }
 }
 
-/// The row of a param whose value lives in the node's state at the keys
-/// `at`, beside a dialer for its smoothing `lag` that sends the `lag:<key>`
-/// edit. The value dialer ranges over `min..=max` with the unit `suffix`.
+/// The row of the param `name`, headed `header`, whose value lives in the
+/// node's state at the keys `at`, beside a dialer for its smoothing `lag` that
+/// sends the `lag:<name>` edit. The value dialer ranges over `min..=max` with
+/// the unit `suffix`.
 pub(crate) fn param_row(
     name: &str,
+    header: &str,
     at: Vec<String>,
     [min, max]: [f32; 2],
     suffix: &str,
@@ -72,7 +88,7 @@ pub(crate) fn param_row(
         step: Some(step),
         prefix: (!suffix.is_empty()).then(|| format!("{} ", suffix.trim())),
         push: false,
-        tip: Some(format!("the {name}. A connected number overrides it")),
+        tip: Some(format!("the {header}. A connected number overrides it")),
         ..ui::Dialer::default()
     };
     let lag = ui::Dialer {
@@ -86,7 +102,7 @@ pub(crate) fn param_row(
     };
     let children = vec![Element::Dialer(value), Element::Dialer(lag)];
     row(
-        name,
+        header,
         Element::Row(ui::Row {
             children,
             ..ui::Row::default()

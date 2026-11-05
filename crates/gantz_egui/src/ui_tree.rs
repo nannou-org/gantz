@@ -750,6 +750,9 @@ impl Walk<'_> {
             .font(font.clone())
             .margin(margin)
             .desired_width(width.ceil() + margin.sum().x + 1.0);
+        if !t.frame {
+            edit = edit.frame(egui::Frame::NONE);
+        }
         if let Some(hint) = &t.hint {
             edit = edit.hint_text(hint);
         }

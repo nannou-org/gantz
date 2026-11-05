@@ -14,6 +14,10 @@ impl NodeUi for FnNamedRef {
         "fn".into()
     }
 
+    fn nav_head(&self, _registry: &Env<'_>) -> Option<gantz_ca::Head> {
+        Some(gantz_ca::Head::Branch(self.0.name().clone()))
+    }
+
     fn ui(&mut self, ctx: NodeCtx, uictx: egui_graph::NodeCtx) -> NodeUiResponse {
         let registry = ctx.env();
         let name_str = self.0.name().to_string();
@@ -62,6 +66,9 @@ impl NodeUi for FnNamedRef {
         });
         let mut resp = NodeUiResponse::new(framed);
         resp.set_changed(changed);
+        if resp.framed.inner.response.double_clicked() {
+            crate::impls::named_ref::emit_enter(&self.0, &mut resp);
+        }
         resp
     }
 
@@ -73,19 +80,19 @@ impl NodeUi for FnNamedRef {
         let mut resp = InspectorRowsResponse::default();
         let row_h = node_inspector::table_row_h(body.ui_mut());
 
-        // ComboBox to select which node to reference.
+        // ComboBox to select which node to reference. The names are found only
+        // while the list is open, as the search walks every graph.
         body.row(row_h, |mut row| {
             row.col(|ui| {
                 ui.label("node");
             });
             row.col(|ui| {
                 let registry = ctx.env();
-                let names = registry.fn_node_names();
                 let current = self.0.name().to_string();
                 egui::ComboBox::from_id_salt("node-select")
                     .selected_text(&current)
                     .show_ui(ui, |ui| {
-                        for name in names.iter() {
+                        for name in registry.fn_node_names().iter() {
                             if ui.selectable_label(current == *name, name).clicked() {
                                 if let Some(ca) = registry.name_ca(name) {
                                     let name = name.parse().expect("infallible");

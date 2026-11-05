@@ -126,7 +126,8 @@ pub fn unique_root_name(registry: &gantz_ca::Registry) -> Option<Name> {
 
 /// The registry subset transitively reachable from only the given heads. The
 /// walk reads the stored graphs' structural refs and blobs columns. It is a
-/// pure data walk with no node lookups.
+/// pure data walk with no node lookups. Node state rides only with a name that
+/// keeps it.
 fn export_heads_registry(
     registry: &gantz_ca::Registry,
     heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
@@ -135,14 +136,17 @@ fn export_heads_registry(
         .into_iter()
         .filter_map(|head| registry.head_commit_ca(head.borrow()));
     let live = gantz_ca::closure_from(registry, seeds);
-    gantz_ca::export(registry, &live)
+    let mut export_registry = gantz_ca::export(registry, &live);
+    state::retain_kept(&mut export_registry);
+    export_registry
 }
 
 /// Serialize an export for the given heads as `.gantz` text.
 ///
 /// Covers both export-head and export-all-named. The export contains the heads'
 /// transitively required content along with their views, demos and
-/// descriptions. File IO stays with the caller.
+/// descriptions, and the node state of each name that keeps it. File IO stays
+/// with the caller.
 pub fn export_heads_sexpr(
     registry: &gantz_ca::Registry,
     heads: impl IntoIterator<Item = impl std::borrow::Borrow<gantz_ca::Head>>,
@@ -171,6 +175,7 @@ pub fn export_heads_sexpr_named(
 /// Used for per-source base write-back, where a source's file must contain
 /// only its own graphs. Refs into other sources stay by name. Loading
 /// resolves them through the seeded parse in [`parse_export_seeded_at`].
+/// Node state rides only with a name that keeps it.
 pub fn export_names_sexpr_named(
     registry: &gantz_ca::Registry,
     names: impl IntoIterator<Item = impl AsRef<str>>,
@@ -204,6 +209,7 @@ pub fn export_names_sexpr_named(
     for name in extra {
         export_registry.remove_head(&name);
     }
+    state::retain_kept(&mut export_registry);
     crate::format::to_string_named(&export_registry, codec)
 }
 
@@ -629,15 +635,18 @@ mod tests {
     }
 
     /// Exporting heads as text carries transitive deps and sections through
-    /// a parse and merge into a fresh registry.
+    /// a parse and merge into a fresh registry. Node state rides only with a
+    /// name that keeps it.
     #[test]
     fn export_heads_text_round_trip() {
         use crate::test_node::{TestGraph, codec, commit_named, expr, named_ref};
+        use gantz_core::node::state::{Keep, Snapshots};
 
         let mut reg = gantz_ca::Registry::default();
         let mut leaf_g = TestGraph::default();
         leaf_g.add_node(expr("(+ 1 1)"));
-        let (_, leaf_ga) = commit_named(&mut reg, Duration::from_secs(1), &leaf_g, &name("leaf"));
+        let (leaf_ca, leaf_ga) =
+            commit_named(&mut reg, Duration::from_secs(1), &leaf_g, &name("leaf"));
         let mut root_g = TestGraph::default();
         root_g.add_node(named_ref("leaf", leaf_ga));
         let (root_ca, root_ga) =
@@ -651,8 +660,9 @@ mod tests {
             (vec![1, 2], gantz_ca::Datum::ratio(1, 3).unwrap()),
             (vec![3], gantz_ca::Datum::F64(0.5)),
         ];
-        type Snapshots = gantz_core::node::state::Snapshots;
         gantz_ca::section_insert::<Snapshots>(&mut reg, root_ca, &state).unwrap();
+        gantz_ca::section_insert::<Snapshots>(&mut reg, leaf_ca, &state).unwrap();
+        gantz_ca::section_insert::<Keep>(&mut reg, name("root"), &true).unwrap();
 
         let heads = [
             gantz_ca::Head::Branch(name("root")),
@@ -678,6 +688,30 @@ mod tests {
         );
         let restored = gantz_ca::section_get::<Snapshots>(&fresh, &root_ca);
         assert_eq!(restored, Some(state), "node state survives");
+        assert!(gantz_ca::section_get::<Snapshots>(&fresh, &leaf_ca).is_none());
+    }
+
+    /// A base write-back carries the node state of a name that keeps it and
+    /// leaves out the state of a name that does not.
+    #[test]
+    fn names_export_carries_only_kept_state() {
+        use crate::test_node::{TestGraph, codec, commit_named, expr};
+        use gantz_core::node::state::{Keep, Snapshots};
+
+        let mut reg = gantz_ca::Registry::default();
+        let mut g = TestGraph::default();
+        g.add_node(expr("(+ 1 1)"));
+        let (kept_ca, _) = commit_named(&mut reg, Duration::from_secs(1), &g, &name("kept"));
+        g.add_node(expr("(+ 2 2)"));
+        let (other_ca, _) = commit_named(&mut reg, Duration::from_secs(2), &g, &name("other"));
+        let state = vec![(vec![0], gantz_ca::Datum::F64(0.5))];
+        gantz_ca::section_insert::<Snapshots>(&mut reg, kept_ca, &state).unwrap();
+        gantz_ca::section_insert::<Snapshots>(&mut reg, other_ca, &state).unwrap();
+        gantz_ca::section_insert::<Keep>(&mut reg, name("kept"), &true).unwrap();
+
+        let text = export_names_sexpr_named(&reg, ["kept", "other"], &codec()).unwrap();
+        assert!(text.contains(&ContentAddr::from(kept_ca).to_string()));
+        assert!(!text.contains(&ContentAddr::from(other_ca).to_string()));
     }
 
     #[test]

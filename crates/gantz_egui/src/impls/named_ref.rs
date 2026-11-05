@@ -123,20 +123,11 @@ impl NodeUi for NamedRef {
         resp.set_changed(changed);
         resp.payloads.extend(payloads);
 
-        // Enter the referenced graph on double-click. A nested graph is entered
-        // in place. The focused tab navigates to it and the breadcrumb returns
-        // to the parent. A reference to a root graph opens as a new tab.
-        // Either way, the scene's open-in-new-tab context-menu action opens it
-        // as a separate tab. See `nav_head`. Clicks consumed by marker body
-        // widgets never reach this node-area response, so double-clicking a
-        // dialer edits it rather than navigating.
+        // Clicks consumed by marker body widgets never reach this node-area
+        // response, so double-clicking a dialer edits it rather than
+        // navigating.
         if resp.framed.inner.response.double_clicked() {
-            let head = gantz_ca::Head::Branch(self.name().clone());
-            if self.is_nested() {
-                resp.emit(ReplaceHead(head));
-            } else {
-                resp.emit(OpenHead(head));
-            }
+            emit_enter(self, &mut resp);
         }
 
         resp
@@ -393,6 +384,20 @@ impl NodeUi for NamedRef {
             }
         }
         resp
+    }
+}
+
+/// Enter the graph that `named` refers to, as a double-click on its node does.
+/// A nested graph is entered in place. The focused tab navigates to it and the
+/// breadcrumb returns to the parent. A root graph opens as a new tab. Either
+/// way, the scene's context menu can open it as a separate tab. See
+/// [`NodeUi::nav_head`](crate::NodeUi::nav_head).
+pub(crate) fn emit_enter(named: &NamedRef, resp: &mut NodeUiResponse) {
+    let head = gantz_ca::Head::Branch(named.name().clone());
+    if named.is_nested() {
+        resp.emit(ReplaceHead(head));
+    } else {
+        resp.emit(OpenHead(head));
     }
 }
 

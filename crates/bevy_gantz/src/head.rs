@@ -49,6 +49,17 @@ pub struct OpenHead;
 #[derive(Component, Default)]
 pub struct PendingLoad;
 
+/// Marks an open head whose node state starts afresh at its next compile, as
+/// after a load into its tab or a reset.
+///
+/// The UI layer's `vm::sync` clears the node state of the VM, registers the
+/// graph, restores the state stored for the head and removes the marker. The
+/// VM keeps the modules that it loaded, so this costs much less than a new VM.
+/// A failed compile drops the VM, so the module of the graph that the tab
+/// showed before never runs on the new state.
+#[derive(Component)]
+pub struct ReloadState;
+
 /// The [`gantz_ca::Head`], a branch or commit reference.
 #[derive(Component, Clone)]
 pub struct HeadRef(pub ca::Head);
@@ -193,13 +204,13 @@ pub struct CommittedEvent {
 /// Per-head VMs stored in a NonSend resource, keyed by entity because
 /// `Engine` is not `Send`.
 ///
-/// A head's VM owns its graph's runtime node state. When replace or move
-/// point a head at a different graph, they keep the VM and migrate its
-/// node state through the commits' node-identity mapping. See
-/// [`crate::vm::migrate_vm_state`]. They also reset
-/// [`crate::vm::CompiledInputs`] so `vm::sync` recompiles. A same-graph move
-/// keeps the VM, its state and the memo. The VM is dropped and re-initialized
-/// with default state only when no mapping can be derived.
+/// A head's VM owns its graph's runtime node state. When a move points a head
+/// at a different graph, it keeps the VM and migrates its node state through
+/// the commits' node-identity mapping. See [`crate::vm::migrate_vm_state`].
+/// It also resets [`crate::vm::CompiledInputs`] so `vm::sync` recompiles. A
+/// same-graph move keeps the VM, its state and the memo. The VM is dropped
+/// and re-initialized only when no mapping can be derived. A replace loads
+/// another head, so none of the old state stays. See [`ReloadState`].
 #[derive(Default)]
 pub struct HeadVms(pub HashMap<Entity, Engine>);
 
@@ -220,8 +231,7 @@ struct Retarget {
     new_commit: Option<ca::CommitAddr>,
     /// The new commit's graph, the head's new working copy.
     graph: ca::DataGraph,
-    /// Whether the tab loaded another head, so its load is pending. See
-    /// [`PendingLoad`].
+    /// Whether the tab loads another head. See [`reload`].
     load: bool,
 }
 
@@ -434,21 +444,19 @@ pub fn forget_state(registry: &mut ca::Registry, head: &ca::Head) {
 
 /// Observer for [`ResetStateEvent`].
 ///
-/// Removes the stored state of the head. An open head also drops its VM and
-/// its compile memo, so `vm::sync` starts it afresh, and its load is pending.
+/// Removes the stored state of the head. An open head also starts from the
+/// initial state of its graph at its next compile, see [`ReloadState`], and
+/// its load is pending.
 pub fn on_reset_state(
     trigger: On<ResetStateEvent>,
     mut cmds: Commands,
     mut registry: ResMut<Registry>,
-    mut vms: NonSendMut<HeadVms>,
     heads: Query<(Entity, &HeadRef), With<OpenHead>>,
 ) {
     let ResetStateEvent(head) = trigger.event();
     forget_state(&mut registry.0, head);
     if let Some(entity) = find_entity(head, &heads) {
-        vms.remove(&entity);
-        cmds.entity(entity)
-            .insert((crate::vm::CompiledInputs::default(), PendingLoad));
+        reload(&mut cmds, entity);
     }
 }
 
@@ -490,6 +498,10 @@ pub fn on_open(
 }
 
 /// Observer for [`ReplaceEvent`].
+///
+/// Stores the state of the head that the tab leaves. At its next compile the
+/// tab takes the state stored for the new head, as a newly opened head does,
+/// and none of the old state. See [`ReloadState`]. Its load is pending.
 pub fn on_replace(
     trigger: On<ReplaceEvent>,
     mut cmds: Commands,
@@ -516,7 +528,6 @@ pub fn on_replace(
     if let Ok(data) = data.get(entity) {
         save_state(&mut registry, &vms, data);
     }
-    // The tab loads another head, so its load is pending.
     let change = Retarget {
         entity,
         old_head: (**old_head).clone(),
@@ -676,10 +687,11 @@ pub fn on_move_head(
 /// Point an open head at another commit and announce it with a
 /// [`ChangedEvent`]. Shared by [`on_replace`] and [`on_move_head`].
 ///
-/// A same-graph change is layout-only. It keeps the VM, its node state and
-/// the compile memo, so `vm::sync` skips recompilation. Otherwise the node
-/// state migrates through the commits' node-identity mapping and the memo
-/// resets, so `vm::sync` recompiles.
+/// A load starts the node state afresh, see [`reload`]. A move to a commit of
+/// the same graph is layout-only. It keeps the VM, its node state and the
+/// compile memo, so `vm::sync` skips recompilation. Any other move migrates
+/// the node state through the commits' node-identity mapping and resets the
+/// memo, so `vm::sync` recompiles.
 fn retarget(cmds: &mut Commands, registry: &Registry, vms: &mut HeadVms, change: Retarget) {
     let Retarget {
         entity,
@@ -695,14 +707,14 @@ fn retarget(cmds: &mut Commands, registry: &Registry, vms: &mut HeadVms, change:
         (graph_of(old_commit), graph_of(new_commit)),
         (Some(a), Some(b)) if a == b
     );
-    let mut head = cmds.entity(entity);
-    head.insert((HeadRef(new_head.clone()), WorkingGraph(graph)));
+    cmds.entity(entity)
+        .insert((HeadRef(new_head.clone()), WorkingGraph(graph)));
     if load {
-        head.insert(PendingLoad);
-    }
-    if !same_graph {
+        reload(cmds, entity);
+    } else if !same_graph {
         crate::vm::migrate_vm_state(registry, vms, entity, old_commit, new_commit);
-        head.insert(crate::vm::CompiledInputs::default());
+        cmds.entity(entity)
+            .insert(crate::vm::CompiledInputs::default());
     }
     cmds.trigger(ChangedEvent {
         entity,
@@ -712,6 +724,17 @@ fn retarget(cmds: &mut Commands, registry: &Registry, vms: &mut HeadVms, change:
         new_commit,
         same_graph,
     });
+}
+
+/// Mark the node state of the open head `entity` to start afresh at its next
+/// compile, see [`ReloadState`], and its load as pending. The reset compile
+/// memo makes `vm::sync` compile it.
+fn reload(cmds: &mut Commands, entity: Entity) {
+    cmds.entity(entity).insert((
+        crate::vm::CompiledInputs::default(),
+        PendingLoad,
+        ReloadState,
+    ));
 }
 
 #[cfg(test)]

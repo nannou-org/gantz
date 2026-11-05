@@ -2,17 +2,17 @@
 //!
 //! When a named graph is edited it commits to a new address. Every graph that
 //! references it by name must then follow. [`resync`] brings all sync-enabled
-//! [`NamedRef`]s up to their name's current commit. It recommits any graph
-//! whose references changed. This is the headless counterpart of the
-//! inspector's render-time auto-sync. It is also the mechanism by which
-//! editing a nested graph propagates up to its parents.
+//! [`NamedRef`]s up to their name's current commit, the one inside a `fn-ref`
+//! included. It recommits any graph whose references changed. This is the
+//! headless counterpart of the inspector's render-time auto-sync. It is also
+//! the mechanism by which editing a nested graph propagates up to its parents.
 //!
 //! The whole cascade operates on the registry's stored [`DataGraph`]s
-//! directly. Each `NamedRef` weight is rewritten in place via a tag-gated
-//! monomorphic round-trip in [`with_named_ref_mut`]. No node-set type parameter
-//! is involved.
+//! directly. Each reference weight is rewritten in place via a tag-gated
+//! monomorphic round-trip in [`with_any_named_ref_mut`]. No node-set type
+//! parameter is involved.
 
-use crate::named_ref::{NamedRef, named_ref_of, with_named_ref_mut};
+use crate::named_ref::{NamedRef, any_named_ref_of, with_any_named_ref_mut};
 use gantz_ca::{CommitAddr, DataGraph, GraphAddr, Name, Registry};
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::time::Duration;
@@ -38,23 +38,23 @@ pub struct Renamed {
     pub moves: Vec<Moved>,
 }
 
-/// Every [`NamedRef`] in `graph` as its name, the graph it points at and
-/// whether it follows the name's latest commit. Nodes that fail to decode
-/// are skipped.
+/// Every [`NamedRef`] in `graph`, the one inside a `fn-ref` included, as its
+/// name, the graph it points at and whether it follows the name's latest
+/// commit. Nodes that fail to decode are skipped.
 pub fn named_refs(graph: &DataGraph) -> impl Iterator<Item = (Name, GraphAddr, bool)> + '_ {
     graph.node_weights().filter_map(|weight| {
-        let named_ref = named_ref_of(weight)?;
+        let named_ref = any_named_ref_of(weight)?;
         let graph = GraphAddr::from(named_ref.content_addr());
         Some((named_ref.name().clone(), graph, named_ref.sync()))
     })
 }
 
-/// Apply `mutate` to every [`NamedRef`] weight of `graph`, returning whether
-/// any reference changed.
+/// Apply `mutate` to every [`NamedRef`] of `graph`, the one inside a `fn-ref`
+/// included, returning whether any reference changed.
 fn rewrite_refs(graph: &mut DataGraph, mut mutate: impl FnMut(&mut NamedRef) -> bool) -> bool {
     let mut changed = false;
     for weight in graph.node_weights_mut() {
-        changed |= with_named_ref_mut(weight, &mut mutate);
+        changed |= with_any_named_ref_mut(weight, &mut mutate);
     }
     changed
 }
@@ -276,7 +276,7 @@ pub fn session_scope(registry: &Registry, root: &Name) -> BTreeSet<Name> {
             continue;
         };
         for weight in graph.node_weights() {
-            if let Some(named_ref) = named_ref_of(weight) {
+            if let Some(named_ref) = any_named_ref_of(weight) {
                 if named_ref.sync() && !scope.contains(named_ref.name()) {
                     queue.push_back(named_ref.name().clone());
                 }
@@ -421,6 +421,7 @@ pub fn carry_views(registry: &mut Registry, moves: &[Moved]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::named_ref::{named_ref_of, with_named_ref_mut};
     use gantz_ca::{ContentAddr, Datum, NodeData};
     use std::time::Duration;
 
@@ -564,6 +565,36 @@ mod tests {
         let refs: Vec<_> = named_refs(graph).map(|(n, ga, _)| (n, ga)).collect();
         assert_eq!(refs.len(), 1, "{refs:?}");
         refs.into_iter().next().unwrap()
+    }
+
+    // A `fn-ref` follows its name as a `ref` does, so an edit of a nested
+    // graph reaches the parent that holds it in a `fn-ref`.
+    #[test]
+    fn resync_follows_a_fn_ref() {
+        let mut registry = Registry::default();
+        commit_refs(&mut registry, "voice:bell", &[]);
+        let bell: Name = "voice:bell".parse().unwrap();
+        let ref_ = gantz_core::node::Ref::new(graph_of(&registry, "voice:bell").into());
+        let fn_ref = gantz_core::node::Fn(NamedRef::with_sync(bell.clone(), ref_));
+        let mut voice = DataGraph::default();
+        voice.add_node(gantz_core::data::erase_node_typed(&fn_ref).unwrap());
+        let graph_ca = gantz_ca::graph_addr(&voice);
+        let name: Name = "voice".parse().unwrap();
+        registry.commit_graph_to_name(Duration::from_secs(1), graph_ca, || voice, &name);
+        assert!(scope_names(&registry, "voice").contains(&bell));
+
+        commit_refs(&mut registry, "voice:bell", &[("elsewhere", false)]);
+        let moved = resync(&mut registry, Duration::from_secs(2));
+
+        assert_eq!(moved.len(), 1);
+        let bell_graph = graph_of(&registry, "voice:bell");
+        assert_eq!(only_ref(&registry, "voice"), (bell, bell_graph));
+        let voice = registry.graph(&graph_of(&registry, "voice")).unwrap();
+        let tag = <gantz_core::node::Fn<NamedRef> as gantz_nodetag::NodeTag>::TAG;
+        assert!(
+            voice.node_weights().all(|w| w.tag == tag),
+            "a fn-ref stays one"
+        );
     }
 
     #[test]

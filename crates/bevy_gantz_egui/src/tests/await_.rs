@@ -199,12 +199,12 @@ fn state_migration_carries_and_cancels_pending_tasks() {
     assert!(flag.get(), "dropped state should cancel the pending task");
 }
 
-/// In-flight awaits survive a reindexing graph change. Replace the head with
-/// a child commit in which a leading node is removed, so every node's index
+/// In-flight awaits survive a reindexing graph change. Move the head to a
+/// child commit in which a leading node is removed, so every node's index
 /// shifts. `migrate_vm_state` remaps the node state and with it the pending
 /// task, so the result still delivers at the new path.
 #[test]
-fn pending_await_survives_reindexing_replace() {
+fn pending_await_survives_reindexing_move() {
     use bevy_ecs::prelude::*;
     use bevy_gantz::{Registry, head, timestamp};
     use std::time::{Duration, Instant};
@@ -265,7 +265,7 @@ fn pending_await_survives_reindexing_replace() {
         assert!(await_::pending_handle(&state(vm, await_n.index())).is_some());
     }
 
-    // Replace the head with the child commit while the task is pending. The
+    // Move the head to the child commit while the task is pending. The
     // chain-tracked matching remaps await from 2 to 1 and inspect from 3 to 2.
     let child_ca = gantz_ca::graph_addr(&child_dg);
     let child_commit = {
@@ -273,8 +273,10 @@ fn pending_await_survives_reindexing_replace() {
         registry.commit_graph(timestamp(), Some(base_commit), child_ca, move || child_dg)
     };
     super::refresh_app_cache(&mut app);
-    app.world_mut()
-        .trigger(head::ReplaceEvent(gantz_ca::Head::Commit(child_commit)));
+    app.world_mut().trigger(head::MoveHeadEvent {
+        entity: head_entity,
+        target: child_commit,
+    });
 
     // The result must deliver to the inspect sink at its new index.
     let deadline = Instant::now() + Duration::from_secs(10);
@@ -289,7 +291,7 @@ fn pending_await_survives_reindexing_replace() {
         }
         assert!(
             Instant::now() < deadline,
-            "await result was not delivered after the reindexing replace",
+            "await result was not delivered after the reindexing move",
         );
         std::thread::sleep(Duration::from_millis(5));
     }

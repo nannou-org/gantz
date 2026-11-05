@@ -59,10 +59,10 @@ pub(crate) fn on_set_keep_state(
 ) {
     let gantz_egui::SetKeepState { name, keep } = &trigger.event().0;
     if *keep {
-        ca::section_remove::<state::Volatile>(&mut registry.0, name);
-    } else {
-        ca::section_insert::<state::Volatile>(&mut registry.0, name.clone(), &true)
+        ca::section_insert::<state::Keep>(&mut registry.0, name.clone(), &true)
             .expect("a `bool` always encodes as a datum");
+    } else {
+        ca::section_remove::<state::Keep>(&mut registry.0, name);
         head::forget_state(&mut registry.0, &ca::Head::Branch(name.clone()));
     }
 }

@@ -76,7 +76,7 @@
 //! | `(dialer)` | number | `bind`, `min`, `max`, `step` (numbers), `precision` (int), `label`, `prefix`, `suffix` (strings), `push` (bool, default `#t`), `style` (reserved: `slider`/`knob`) |
 //! | `(toggle)` | bool | `bind`, `label`, `push` (default `#t`) |
 //! | `(choice)` | one of its options | `bind`, `options` (list of symbols) |
-//! | `(text-input)` | string | `bind`, `hint` (string), `mono` (bool, default `#f`), `push` (default `#t`). An edit commits on focus loss, on enter or once typing pauses |
+//! | `(text-input)` | string | `bind`, `hint` (string), `mono` (bool, default `#f`), `frame` (bool, default `#t`, without it the input shows as plain text), `push` (default `#t`). An edit commits on focus loss, on enter or once typing pauses |
 //! | `(bound)` | number or `#f` | `bind`, `label` (string). A checkbox sets the state to the number beside it, or clears it to `#f` |
 //! | `(button)` | none | `bind`, `label`. A press queues a push eval, bang semantics stay in the node's expression |
 //! | `(file)` | none, it imports into the node that owns the tree | `on` (edit), `import` (an importer's name), `label`, `tip`. A press picks a file for the host's importer. See [`File`] |
