@@ -3231,6 +3231,91 @@ fn demo_pattern_voices_sum_three_bells() {
     assert_onsets(&queue(&GATE, "gate"), &gate);
 }
 
+/// `demo.sched` splits one pattern into a bass and a bell at 1/2 cps, and
+/// the two voices share one def. The bass holds its gate for the length of
+/// each note. The bell drops the notes up to 64 and gives the rest a 10 ms
+/// pulse.
+#[test]
+fn demo_sched_plays_bass_and_bell() {
+    use bevy_gantz_plyphon::plyphon;
+
+    // The `ref`s of the two voices, and the `~dc` and `~envgen` of a voice.
+    const BASS: usize = 14;
+    const BELL: usize = 21;
+    const PITCH: usize = 4;
+    const GATE: usize = 6;
+
+    let registry: DataReg = load_base().registry;
+    let reified = reify_all(&registry);
+    let demo = "demo.sched";
+    let head = gantz_ca::Head::Branch(name(demo));
+    let graph = head_graph(&reified, &registry, &head).expect(demo);
+    let flat = gantz_plyphon::flatten_from_registry(graph, &reified).expect(demo);
+    let children = gantz_plyphon::flatten_instance_children(&flat, &reified).expect(demo);
+    let resolve = |ca: &gantz_ca::ContentAddr| children.get(ca);
+    let mut cache = gantz_plyphon::DefCache::new();
+    let template = gantz_plyphon::derive_template(&flat, 2, &resolve, &mut cache)
+        .unwrap_or_else(|e| panic!("derive failed: {e}"));
+    let parts = gantz_plyphon::instantiate(&template, &cache);
+    let (mut controller, _nrt, _world) = plyphon::engine(plyphon::Options::default());
+    for part in &parts {
+        controller.add_synthdef((*part.def).clone());
+        controller
+            .ensure_compiled(&part.def.name)
+            .unwrap_or_else(|e| panic!("def failed to build: {e:?}"));
+    }
+    let voices: Vec<_> = parts
+        .iter()
+        .filter(|p| p.def.units.iter().any(|u| u.name == "EnvGen"))
+        .collect();
+    assert_eq!(voices.len(), 2, "one part per voice");
+    assert_eq!(voices[0].def.name, voices[1].def.name, "one def");
+
+    let (_, nodes) = play_pattern_session(demo, "freq", None, 240, None);
+    let queue = |path: &[usize], key: &str| -> Vec<(f64, f64)> {
+        let (_, state) = nodes
+            .iter()
+            .find(|(p, _)| p == path)
+            .unwrap_or_else(|| panic!("no state at {path:?}"));
+        let (_, pending, _) = gantz_plyphon::param::drain(state, Some(key))
+            .unwrap_or_else(|| panic!("no {key} at {path:?}"));
+        pending
+    };
+    // A close and the next open can share a time, so check each on its own.
+    let gate = |voice: usize, level: f64| -> Vec<(f64, f64)> {
+        queue(&[voice, GATE], "gate")
+            .into_iter()
+            .filter(|&(_, v)| v == level)
+            .collect()
+    };
+    let s = 1.0 / 60.0;
+    let freq = |note: f64| 440.0 * 2f64.powf((note - 69.0) / 12.0);
+
+    let pitch = [
+        (s, freq(48.0)),
+        (s + 0.5, freq(43.0)),
+        (s + 0.75, freq(45.0)),
+        (s + 2.0, freq(48.0)),
+    ];
+    assert_onsets(&queue(&[BASS, PITCH], "value"), &pitch);
+    let opens = [(s, 1.0), (s + 0.5, 1.0), (s + 0.75, 1.0), (s + 2.0, 1.0)];
+    assert_onsets(&gate(BASS, 1.0), &opens);
+    let closes = [(s + 0.5, 0.0), (s + 0.75, 0.0), (s + 1.0, 0.0)];
+    assert_onsets(&gate(BASS, 0.0), &closes);
+
+    let pitch = [
+        (s + 1.0, freq(67.0)),
+        (s + 1.75, freq(69.0)),
+        (s + 3.0, freq(72.0)),
+        (s + 3.75, freq(69.0)),
+    ];
+    assert_onsets(&queue(&[BELL, PITCH], "value"), &pitch);
+    let opens = [(s + 1.0, 1.0), (s + 1.75, 1.0), (s + 3.0, 1.0)];
+    assert_onsets(&gate(BELL, 1.0), &opens);
+    let closes = [(s + 1.01, 0.0), (s + 1.76, 0.0), (s + 3.01, 0.0)];
+    assert_onsets(&gate(BELL, 0.0), &closes);
+}
+
 /// Resetting a demo re-parses the base and merges the demo's commit subset
 /// back in. The base's hand-authored graphs are stamped at the fixed
 /// `gantz_edit::base::BASE_TIMESTAMP`, so the re-parse reproduces
