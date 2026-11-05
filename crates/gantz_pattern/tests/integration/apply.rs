@@ -79,6 +79,28 @@ fn apply_family_events() {
                (pat/merge-with + (pat/fast 2 (pat/pure 1)) (pat/fast 3 (pat/pure 10)))
                (pat/span 0 1)))",
         ),
+        // The one-sided merges take the wholes of one side, as appl and appr
+        // do.
+        (
+            "merge_withl_sums_with_left_structure",
+            "(((11 1) ((0 1) (1 3)) ((0 1) (1 2))) \
+              ((11 1) ((1 3) (1 2)) ((0 1) (1 2))) \
+              ((11 1) ((1 2) (2 3)) ((1 2) (1 1))) \
+              ((11 1) ((2 3) (1 1)) ((1 2) (1 1))))",
+            "(pin-events (pat/query
+               (pat/merge-withl + (pat/fast 2 (pat/pure 1)) (pat/fast 3 (pat/pure 10)))
+               (pat/span 0 1)))",
+        ),
+        (
+            "merge_withr_sums_with_right_structure",
+            "(((11 1) ((0 1) (1 3)) ((0 1) (1 3))) \
+              ((11 1) ((1 3) (1 2)) ((1 3) (2 3))) \
+              ((11 1) ((1 2) (2 3)) ((1 3) (2 3))) \
+              ((11 1) ((2 3) (1 1)) ((2 3) (1 1))))",
+            "(pin-events (pat/query
+               (pat/merge-withr + (pat/fast 2 (pat/pure 1)) (pat/fast 3 (pat/pure 10)))
+               (pat/span 0 1)))",
+        ),
         // pat/map transforms values leaving spans untouched, pat/filter
         // keeps matching values, pat/filter-events sees whole events.
         (

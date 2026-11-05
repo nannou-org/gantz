@@ -37,6 +37,10 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
         def_kind::<gantz_pattern::Pkey>(),
         def_kind::<gantz_pattern::Pmini>(),
         def_kind::<gantz_pattern::SchedPick>(),
+        def_kind::<gantz_pattern::Pget>(),
+        def_kind::<gantz_pattern::Plensecs>(),
+        def_kind::<gantz_pattern::SchedGate>(),
+        def_kind::<gantz_pattern::SchedSplit>(),
         def_kind::<gantz_pattern::Pplot>(),
     ];
     let dsp = gantz_plyphon::node_defs().into_iter().map(dyn_def_kind);

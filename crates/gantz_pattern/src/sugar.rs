@@ -1,16 +1,16 @@
 //! `.gantz` keyword sugar for the pattern node set.
 //!
-//! [`PatternSugar`] provides `(pat.mini "notation")`, `(pat.key "key")`,
-//! `(sched.pick "key")` and `(pat.plot <keyword>...)`. Compose it with the
+//! [`PatternSugar`] provides `(pat.mini "notation")`, the keyed nodes such as
+//! `(pat.key "key")`, `(sched.split "key" n)` and `(pat.plot <keyword>...)`. Compose it with the
 //! other crates' sugars via [`gantz_format::Sugars`]. The keywords from
 //! before the `pat.` namespace, `pmini` and `pplot`, still read.
 
 use crate::plot as pplot;
-use crate::{Pkey, Pmini, Pplot, SchedPick};
+use crate::{Pget, Pkey, Plensecs, Pmini, Pplot, SchedGate, SchedPick, SchedSplit};
 use gantz_format::{Datum, FormatError, Sugar, SugarArgs, node_datum};
 use gantz_nodedef::NodeDef;
 
-/// Keyword sugar for [`Pmini`], [`Pkey`], [`SchedPick`] and [`Pplot`].
+/// Keyword sugar for [`Pmini`], the keyed nodes and [`Pplot`].
 #[derive(Clone, Copy, Debug, Default)]
 pub struct PatternSugar;
 
@@ -23,6 +23,30 @@ pub const KEY: &str = "pat.key";
 /// The [`SchedPick`] keyword, also its builtin name.
 pub const PICK: &str = "sched.pick";
 
+/// The [`Pget`] keyword, also its builtin name.
+pub const GET: &str = "pat.get";
+
+/// The [`Plensecs`] keyword, also its builtin name.
+pub const LENSECS: &str = "pat.lensecs";
+
+/// The [`SchedGate`] keyword, also its builtin name.
+pub const GATE: &str = "sched.gate";
+
+/// The [`SchedSplit`] keyword, also its builtin name.
+pub const SPLIT: &str = "sched.split";
+
+/// The nodes with a key and no other field, as their keywords and tags.
+const KEYED: &[(&str, &str)] = &[
+    (KEY, Pkey::TAG),
+    (PICK, SchedPick::TAG),
+    (GET, Pget::TAG),
+    (LENSECS, Plensecs::TAG),
+    (GATE, SchedGate::TAG),
+];
+
+/// The count of outputs of a [`SchedSplit`] written without one.
+const SPLIT_DEFAULT: u64 = 2;
+
 /// The [`Pmini`] keyword from before the `pat.` namespace.
 const OLD_MINI: &str = "pmini";
 
@@ -33,10 +57,17 @@ impl Sugar for PatternSugar {
                 let src = args.str_at(0).unwrap_or_default();
                 Ok(Some(node_datum(Pmini::TAG, vec![("src", Datum::Str(src))])))
             }
-            KEY => Ok(Some(key_datum(Pkey::TAG, args.str_at(0)))),
-            PICK => Ok(Some(key_datum(SchedPick::TAG, args.str_at(0)))),
+            SPLIT => {
+                let n = match args.int_at(1)? {
+                    Some(n) => {
+                        u64::try_from(n).map_err(|_| args.malformed_at(1, "a negative count"))?
+                    }
+                    None => SPLIT_DEFAULT,
+                };
+                Ok(Some(split_datum(args.str_at(0), n)))
+            }
             pplot::KEYWORD | pplot::OLD_KEYWORD => pplot::read_spec(args).map(Some),
-            _ => Ok(None),
+            head => Ok(keyed_tag(head).map(|tag| key_datum(tag, args.str_at(0)))),
         }
     }
 
@@ -46,10 +77,9 @@ impl Sugar for PatternSugar {
                 Pmini::TAG,
                 vec![("src", Datum::Str(String::new()))],
             )),
-            KEY => Some(key_datum(Pkey::TAG, None)),
-            PICK => Some(key_datum(SchedPick::TAG, None)),
+            SPLIT => Some(split_datum(None, SPLIT_DEFAULT)),
             pplot::KEYWORD | pplot::OLD_KEYWORD => pplot::read_bare(),
-            _ => None,
+            keyword => keyed_tag(keyword).map(|tag| key_datum(tag, None)),
         }
     }
 
@@ -58,10 +88,13 @@ impl Sugar for PatternSugar {
             let src = node.get("src").and_then(Datum::as_str).unwrap_or("");
             return Some(format!("({MINI} {src:?})"));
         }
-        if tag == Pkey::TAG || tag == SchedPick::TAG {
-            let keyword = self.keyword_for_tag(tag)?;
-            let key = node.get("key").and_then(Datum::as_str).unwrap_or("");
-            return Some(format!("({keyword} {key:?})"));
+        let key = || node.get("key").and_then(Datum::as_str).unwrap_or("");
+        if tag == SchedSplit::TAG {
+            let n = node.get("n").and_then(Datum::as_i64).unwrap_or(0);
+            return Some(format!("({SPLIT} {:?} {n})", key()));
+        }
+        if let Some(keyword) = keyed_keyword(tag) {
+            return Some(format!("({keyword} {:?})", key()));
         }
         if tag == Pplot::TAG {
             return pplot::write_spec(node);
@@ -73,11 +106,11 @@ impl Sugar for PatternSugar {
         if tag == Pmini::TAG {
             return Some(MINI);
         }
-        if tag == Pkey::TAG {
-            return Some(KEY);
+        if tag == SchedSplit::TAG {
+            return Some(SPLIT);
         }
-        if tag == SchedPick::TAG {
-            return Some(PICK);
+        if let Some(keyword) = keyed_keyword(tag) {
+            return Some(keyword);
         }
         if tag == Pplot::TAG {
             return Some(pplot::KEYWORD);
@@ -86,10 +119,35 @@ impl Sugar for PatternSugar {
     }
 }
 
+/// The tag of the keyed node with the given keyword.
+fn keyed_tag(keyword: &str) -> Option<&'static str> {
+    KEYED
+        .iter()
+        .find(|(k, _)| *k == keyword)
+        .map(|(_, tag)| *tag)
+}
+
+/// The keyword of the keyed node with the given tag.
+fn keyed_keyword(tag: &str) -> Option<&'static str> {
+    KEYED
+        .iter()
+        .find(|(_, t)| *t == tag)
+        .map(|(keyword, _)| *keyword)
+}
+
 /// The stored form of a keyed node.
 fn key_datum(tag: &str, key: Option<String>) -> Datum {
     let key = Datum::Str(key.unwrap_or_default());
     node_datum(tag, vec![("key", key)])
+}
+
+/// The stored form of a [`SchedSplit`] node.
+fn split_datum(key: Option<String>, n: u64) -> Datum {
+    let key = Datum::Str(key.unwrap_or_default());
+    node_datum(
+        SchedSplit::TAG,
+        vec![("key", key), ("n", Datum::from_u64(n))],
+    )
 }
 
 #[cfg(test)]
@@ -133,7 +191,7 @@ mod tests {
     // an empty key.
     #[test]
     fn keyed_nodes_round_trip() {
-        for (keyword, tag) in [(KEY, Pkey::TAG), (PICK, SchedPick::TAG)] {
+        for &(keyword, tag) in KEYED {
             let text = format!(r#"({keyword} "freq")"#);
             let d = read(&text);
             assert_eq!(d.get("key").and_then(Datum::as_str), Some("freq"));
@@ -142,5 +200,22 @@ mod tests {
             let empty = node_datum(tag, vec![("key", Datum::Str(String::new()))]);
             assert_eq!(PatternSugar.read_bare(keyword), Some(empty));
         }
+    }
+
+    // `(sched.split "key" n)` round-trips through read and write. Without a
+    // count, and bare, it reads with two outputs.
+    #[test]
+    fn split_round_trips() {
+        let d = read(r#"(sched.split "voice" 4)"#);
+        assert_eq!(d.get("key").and_then(Datum::as_str), Some("voice"));
+        assert_eq!(d.get("n").and_then(Datum::as_i64), Some(4));
+        assert_eq!(
+            PatternSugar.write_spec(SchedSplit::TAG, &d).as_deref(),
+            Some(r#"(sched.split "voice" 4)"#),
+        );
+        assert_eq!(PatternSugar.keyword_for_tag(SchedSplit::TAG), Some(SPLIT));
+        let two = split_datum(Some("voice".into()), 2);
+        assert_eq!(read(r#"(sched.split "voice")"#), two);
+        assert_eq!(PatternSugar.read_bare(SPLIT), Some(split_datum(None, 2)));
     }
 }

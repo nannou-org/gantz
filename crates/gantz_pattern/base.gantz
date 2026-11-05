@@ -58,7 +58,7 @@
   (pat.key6 (pat.key "cps"))
   (ref7 (ref pat.with #:sync))
   (ref8 (ref pat.with #:sync))
-  (expr9 (expr (pat/map (lambda (m) (hash-ref m 'cps)) $p) #:require "gantz/pattern"))
+  (pat.get9 (pat.get "cps"))
   (ref10 (ref pat.window #:sync))
   (ref11 (ref pat.query #:sync))
   (ref12 (ref pat.sched #:sync))
@@ -82,10 +82,10 @@
   (-> pat.key4 (ref7 1))
   (-> ref7 ref8)
   (-> pat.key6 (ref8 1))
-  (-> ref8 expr9)
+  (-> ref8 pat.get9)
   (-> ref8 ref11)
   (-> ref8 pat.plot18)
-  (-> expr9 (ref10 1))
+  (-> pat.get9 (ref10 1))
   (-> ref10 (ref11 1))
   (-> ref11 ref12)
   (-> (ref10 1) (ref12 1))
@@ -323,16 +323,18 @@
   (inlet0 (inlet "schedule" "(seconds note) pairs"))
   (fnref1 (fn-ref mtof #:sync))
   (ref2 (ref sched.map #:sync))
-  (ref3 (ref demo.pat.voices:bell:trig #:sync))
+  (ref3 (ref sched.trig #:sync))
   (~dc4 ~dc)
   (~sinosc5 ~sinosc)
   (~envgen6 (~envgen #:segs ((0.3 0.005) (0 1.5 -4))))
   (~mul7 ~mul)
   (outlet8 (outlet "signal" "the bell"))
-  (comment9 (comment "# bell\n`mtof` turns each note into a pitch, and `trig`\nstarts the envelope. `~dc` holds the pitch. it\nstarts at 0 hz, so the bell is silent until its\nfirst event." 420 95))
+  (comment9 (comment "# bell\n`mtof` turns each note into a pitch, and\n`sched.trig` opens the gate of the envelope for\n10 ms at each note. `~dc` holds the pitch. it\nstarts at 0 hz, so the bell is silent until its\nfirst event." 420 110))
+  (expr10 (expr 0.01))
   (-> inlet0 fnref1)
   (-> inlet0 (ref2 1))
   (-> inlet0 ref3)
+  (-> expr10 (ref3 1))
   (-> fnref1 ref2)
   (-> ref2 ~dc4)
   (-> ~dc4 ~sinosc5)
@@ -341,24 +343,29 @@
   (-> ~envgen6 (~mul7 1))
   (-> ~mul7 outlet8))
 
-(graph demo.pat.voices:bell:trig
-  (inlet0 (inlet "schedule" "(seconds value) pairs"))
-  (expr1 (expr (transduce $pairs
-  (flat-mapping
-    (lambda (p)
-      (list (list (car p) 1.0)
-            (list (+ (car p) 0.01) 0.0))))
-  (into-list))))
-  (outlet2 (outlet "schedule" "(seconds gate) pairs"))
-  (comment3 (comment "# trig\neach event opens the gate, and 10 ms later it\ncloses again - used to create a \"rising edge\" for an `~envgen`" 362 68))
-  (-> inlet0 expr1)
-  (-> expr1 outlet2))
-
 (graph pat.app
   (expr0 (expr (pat/app $pv $pf) #:require "gantz/pattern"))
   (inlet1 (inlet "pattern" "pattern of values"))
   (inlet2 (inlet "pattern" "pattern of functions"))
   (outlet3 (outlet "pattern" "functions applied at intersections"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph pat.appl
+  (expr0 (expr (pat/appl $pv $pf) #:require "gantz/pattern"))
+  (inlet1 (inlet "pattern" "pattern of values, which gives the structure"))
+  (inlet2 (inlet "pattern" "pattern of functions"))
+  (outlet3 (outlet "pattern" "functions applied where events meet"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph pat.appr
+  (expr0 (expr (pat/appr $pv $pf) #:require "gantz/pattern"))
+  (inlet1 (inlet "pattern" "pattern of values"))
+  (inlet2 (inlet "pattern" "pattern of functions, which gives the structure"))
+  (outlet3 (outlet "pattern" "functions applied where events meet"))
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
@@ -412,6 +419,38 @@
   (-> inlet3 (expr0 2))
   (-> expr0 outlet4))
 
+(graph pat.event
+  (expr0 (expr (pat/event $value $active $whole) #:require "gantz/pattern"))
+  (inlet1 (inlet "value" "event value"))
+  (inlet2 (inlet "span" "the active span"))
+  (inlet3 (inlet "span" "the whole span, or #f for a signal"))
+  (outlet4 (outlet "event" "the event"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
+
+(graph pat.eventactive
+  (expr0 (expr (pat/event-active $e) #:require "gantz/pattern"))
+  (inlet1 (inlet "event" "an event"))
+  (outlet2 (outlet "span" "the active span"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(graph pat.eventvalue
+  (expr0 (expr (pat/event-value $e) #:require "gantz/pattern"))
+  (inlet1 (inlet "event" "an event"))
+  (outlet2 (outlet "value" "event value"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(graph pat.eventwhole
+  (expr0 (expr (pat/event-whole $e) #:require "gantz/pattern"))
+  (inlet1 (inlet "event" "an event"))
+  (outlet2 (outlet "span" "the whole span, or #f for a signal"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
 (graph pat.fast
   (expr0 (expr (pat/fast (pat/rationalize $rate) $p) #:require "gantz/pattern"))
   (inlet1 (inlet "number" "speed factor"))
@@ -437,10 +476,46 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph pat.filterevents
+  (expr0 (expr (pat/filter-events $f $p) #:require "gantz/pattern"))
+  (inlet1 (inlet "function" "event predicate"))
+  (inlet2 (inlet "pattern" "input pattern"))
+  (outlet3 (outlet "pattern" "events that satisfy the predicate"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph pat.fitcycle
+  (expr0 (expr (pat/fit-cycle $dst $p) #:require "gantz/pattern"))
+  (inlet1 (inlet "span" "the span to fit a cycle into"))
+  (inlet2 (inlet "pattern" "input pattern"))
+  (outlet3 (outlet "pattern" "the pattern with cycle 0 fitted into the span"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph pat.fitspan
+  (expr0 (expr (pat/fit-span $src $dst $p) #:require "gantz/pattern"))
+  (inlet1 (inlet "span" "the span of the pattern to fit"))
+  (inlet2 (inlet "span" "the span to fit it into"))
+  (inlet3 (inlet "pattern" "input pattern"))
+  (outlet4 (outlet "pattern" "the pattern with the first span fitted into the second"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
+
 (graph pat.indices
   (expr0 (expr (begin $b pat/indices) #:require "gantz/pattern"))
   (inlet1 (inlet "bang" "trigger"))
   (outlet2 (outlet "pattern" "each cycle's index once per cycle"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(graph pat.innerjoin
+  (expr0 (expr (pat/inner-join $pp) #:require "gantz/pattern"))
+  (inlet1 (inlet "pattern" "pattern of patterns"))
+  (outlet2 (outlet "pattern" "inner events, with the structure of the inner patterns"))
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
@@ -469,11 +544,42 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph pat.maplen
+  (expr0 (expr (pat/map-len $f $p) #:require "gantz/pattern"))
+  (inlet1 (inlet "function" "maps a length in cycles to a new length"))
+  (inlet2 (inlet "pattern" "input pattern"))
+  (outlet3 (outlet "pattern" "events with new lengths and the same starts"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (graph pat.mergewith
   (expr0 (expr (pat/merge-with $f $pa $pb) #:require "gantz/pattern"))
   (inlet1 (inlet "function" "combines a value from each pattern"))
   (inlet2 (inlet "pattern" "first pattern"))
   (inlet3 (inlet "pattern" "second pattern"))
+  (outlet4 (outlet "pattern" "combined values where events meet"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
+
+(graph pat.mergewithl
+  (expr0 (expr (pat/merge-withl $f $pa $pb) #:require "gantz/pattern"))
+  (inlet1 (inlet "function" "combines a value from each pattern"))
+  (inlet2 (inlet "pattern" "first pattern, which gives the structure"))
+  (inlet3 (inlet "pattern" "second pattern"))
+  (outlet4 (outlet "pattern" "combined values where events meet"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
+
+(graph pat.mergewithr
+  (expr0 (expr (pat/merge-withr $f $pa $pb) #:require "gantz/pattern"))
+  (inlet1 (inlet "function" "combines a value from each pattern"))
+  (inlet2 (inlet "pattern" "first pattern"))
+  (inlet3 (inlet "pattern" "second pattern, which gives the structure"))
   (outlet4 (outlet "pattern" "combined values where events meet"))
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
@@ -492,6 +598,13 @@
   (-> inlet3 (expr0 2))
   (-> inlet4 (expr0 3))
   (-> expr0 outlet5))
+
+(graph pat.outerjoin
+  (expr0 (expr (pat/outer-join $pp) #:require "gantz/pattern"))
+  (inlet1 (inlet "pattern" "pattern of patterns"))
+  (outlet2 (outlet "pattern" "inner values, with the structure of the outer pattern"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
 
 (graph pat.pure
   (expr0 (expr (pat/pure $v) #:require "gantz/pattern"))
@@ -523,6 +636,15 @@
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
+(graph pat.scalelen
+  (expr0 (expr (pat/scale-len $k $p) #:require "gantz/pattern"))
+  (inlet1 (inlet "factor" "a number or a pattern of numbers"))
+  (inlet2 (inlet "pattern" "input pattern"))
+  (outlet3 (outlet "pattern" "events with scaled lengths and the same starts"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (graph pat.sched
   (expr0 (expr (pat/events->secs $events $secs $segs) #:require "gantz/pattern"))
   (inlet1 (inlet "events" "queried window events"))
@@ -533,6 +655,28 @@
   (-> inlet2 (expr0 1))
   (-> inlet3 (expr0 2))
   (-> expr0 outlet4))
+
+(graph pat.secs
+  (expr0 (expr (pat/secs $from $to $cps $held) #:require "gantz/pattern"))
+  (inlet1 (inlet "cycle" "the first cycle point"))
+  (inlet2 (inlet "cycle" "the second cycle point"))
+  (inlet3 (inlet "cps" "a number or a pattern of numbers"))
+  (inlet4 (inlet "number" "cps at the first point, which a gap in the cps holds"))
+  (outlet5 (outlet "number" "seconds from the first point to the second, negative when the second is earlier"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> inlet4 (expr0 3))
+  (-> expr0 outlet5))
+
+(graph pat.segment
+  (expr0 (expr (pat/segment $n $p) #:require "gantz/pattern"))
+  (inlet1 (inlet "number" "events per cycle"))
+  (inlet2 (inlet "pattern" "input pattern"))
+  (outlet3 (outlet "pattern" "n events per cycle with the values of the pattern"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
 
 (graph pat.shift
   (expr0 (expr (pat/shift (pat/rationalize $amount) $p) #:require "gantz/pattern"))
@@ -563,6 +707,52 @@
   (expr0 (expr (pat/slowcat (if (list? $ps) $ps (list $ps))) #:require "gantz/pattern"))
   (inlet1 (inlet "pattern(s)" "patterns in connection order"))
   (outlet2 (outlet "pattern" "one pattern per cycle"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(graph pat.span
+  (expr0 (expr (pat/span (pat/rationalize $start) (pat/rationalize $end)) #:require "gantz/pattern"))
+  (inlet1 (inlet "number" "start in cycles"))
+  (inlet2 (inlet "number" "end in cycles"))
+  (outlet3 (outlet "span" "the span"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph pat.spancycles
+  (expr0 (expr (pat/span-cycles $s) #:require "gantz/pattern"))
+  (inlet1 (inlet "span" "a span"))
+  (outlet2 (outlet "list" "the parts of the span in each cycle"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(graph pat.spanend
+  (expr0 (expr (pat/span-end $s) #:require "gantz/pattern"))
+  (inlet1 (inlet "span" "a span"))
+  (outlet2 (outlet "number" "end in cycles"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(graph pat.spanintersect
+  (expr0 (expr (pat/span-intersect $a $b) #:require "gantz/pattern"))
+  (inlet1 (inlet "span" "first span"))
+  (inlet2 (inlet "span" "second span"))
+  (outlet3 (outlet "span" "the part both share, or #f when they share none"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph pat.spanlen
+  (expr0 (expr (pat/span-len $s) #:require "gantz/pattern"))
+  (inlet1 (inlet "span" "a span"))
+  (outlet2 (outlet "number" "length in cycles"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(graph pat.spanstart
+  (expr0 (expr (pat/span-start $s) #:require "gantz/pattern"))
+  (inlet1 (inlet "span" "a span"))
+  (outlet2 (outlet "number" "start in cycles"))
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
@@ -621,6 +811,15 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph sched.filter
+  (expr0 (expr (sched/filter $f $schedule) #:require "gantz/sched"))
+  (inlet1 (inlet "function" "value predicate"))
+  (inlet2 (inlet "schedule" "(seconds value) pairs"))
+  (outlet3 (outlet "schedule" "the pairs whose values satisfy the predicate"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (graph sched.map
   (expr0 (expr (sched/map $f $schedule) #:require "gantz/sched"))
   (inlet1 (inlet "function" "value mapping"))
@@ -630,10 +829,19 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph sched.trig
+  (expr0 (expr (sched/trig $schedule $len) #:require "gantz/sched"))
+  (inlet1 (inlet "schedule" "(seconds value) pairs"))
+  (inlet2 (inlet "number" "pulse length in seconds"))
+  (outlet3 (outlet "schedule" "(seconds gate) pairs, 1.0 to open and 0.0 to close"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (descriptions
   (demo.pat "A mini-notation frequency pattern queried per tick plays a sine and plots two cycles. Edit the string and dial the cps.")
   (demo.pat.cps "A second pattern sets the cps, which steps each cycle without a jump in position. Edit either string.")
-  (demo.pat.maps "Patterns join into one map per event. An expr reads the cps of each map for the clock, and `sched.pick` routes each key to a control.")
+  (demo.pat.maps "Patterns join into one map per event. `pat.get` reads the cps of each map for the clock, and `sched.pick` routes each key to a control.")
   (demo.pat.plot "Every kind of event value in `pat.plot` nodes. Numbers, symbols, overlapping symbols, bools, a signal, maps stacked and expanded, lists and opaque values.")
   (demo.pat.targets "One pattern plays a sine and draws on a canvas. `pat.sched` gives the onsets of each tick to the sound, and `pat.at` gives the events alive at the playhead to the canvas. Edit the strings and dial the cps.")
   (demo.pat.targets:canvas "Draws the figures that `demo.pat.targets` gives on a canvas, in its node.")
@@ -641,37 +849,61 @@
   (demo.pat.targets:sound "Turns the keys of an event value of `demo.pat.targets` into the keys of the sound.")
   (demo.pat.voices "Three patterns each play a bell, and the bells sum into one reverb. Edit the strings and dial the cps.")
   (demo.pat.voices:bell "A bell for `demo.pat.voices`. Each note sets the pitch and starts the envelope.")
-  (demo.pat.voices:bell:trig "Turns each event of `demo.pat.voices:bell` into a gate pulse of 10 ms, which starts its envelope.")
   (pat.app "Apply a pattern of functions to a pattern of values.")
+  (pat.appl "Apply a pattern of functions to a pattern of values, with the structure of the values.")
+  (pat.appr "Apply a pattern of functions to a pattern of values, with the structure of the functions.")
   (pat.at "The events of a pattern that are alive at a cycle point. `pat/event-phase` gives how far the point is through each of them.")
   (pat.degradeby "Drop events at random with a given probability.")
   (pat.euclid "K onsets distributed over N slots per cycle.")
   (pat.euclidfull "Euclidean onsets elongated to fill the gaps.")
   (pat.euclidoff "Euclidean onsets rotated left by an offset.")
+  (pat.event "Make an event from its value, its active span and its whole span.")
+  (pat.eventactive "The active span of an event, where its value applies within a query.")
+  (pat.eventvalue "The value of an event.")
+  (pat.eventwhole "The whole span of an event, which a signal does not have.")
   (pat.fast "Speed a pattern up by a factor.")
   (pat.fastcat "Concatenate patterns within a single cycle.")
   (pat.filter "Keep events whose values satisfy a predicate.")
+  (pat.filterevents "Keep events that satisfy a predicate of the event.")
+  (pat.fitcycle "Fit one cycle of a pattern into a span.")
+  (pat.fitspan "Fit one span of a pattern into another span.")
   (pat.indices "Each cycle's index, once per cycle.")
+  (pat.innerjoin "Flatten a pattern of patterns, with the structure of the inner patterns.")
   (pat.join "Flatten a pattern of patterns, keeping both structures.")
   (pat.map "Map a function over a pattern's values.")
   (pat.mapevents "Map a function over a pattern's events, spans included.")
+  (pat.maplen "Give each event the length that a function returns for its length in cycles. The starts stay.")
   (pat.mergewith "Combine the values of two patterns with a function where their events meet.")
+  (pat.mergewithl "Combine the values of two patterns with a function where their events meet, with the structure of the first.")
+  (pat.mergewithr "Combine the values of two patterns with a function where their events meet, with the structure of the second.")
   (pat.nudge "Move a cycle point by a number of seconds at a steady or patterned cps, for a target with its own latency. A cps change between the two points counts.")
+  (pat.outerjoin "Flatten a pattern of patterns, with the structure of the outer pattern.")
   (pat.pure "Repeat a value once per cycle.")
   (pat.query "Query a pattern over a span for its sorted events.")
   (pat.rand "A seeded signal of random floats in [0, 1).")
   (pat.saw "A 0 to 1 ramp signal each cycle.")
+  (pat.scalelen "Multiply the length of each event by a factor, a number or a pattern of numbers. The starts stay.")
   (pat.sched "The onsets among queried window events, as a schedule of (seconds value) pairs. The seconds and segments of the window time them.")
+  (pat.secs "The seconds between two cycle points at a steady or patterned cps, the inverse of `pat.nudge`.")
+  (pat.segment "Sample a pattern into a number of events per cycle.")
   (pat.shift "Shift a pattern later in time.")
   (pat.silence "The empty pattern.")
   (pat.slow "Slow a pattern down by a factor.")
   (pat.slowcat "Concatenate patterns, one per cycle.")
+  (pat.span "Make a span from its start and end in cycles.")
+  (pat.spancycles "Split a span at the cycle boundaries.")
+  (pat.spanend "The end of a span in cycles.")
+  (pat.spanintersect "The part that two spans share.")
+  (pat.spanlen "The length of a span in cycles.")
+  (pat.spanstart "The start of a span in cycles.")
   (pat.stack "Layer patterns on top of each other.")
   (pat.steady "A continuous constant signal.")
   (pat.timecat "Concatenate patterns within a single cycle, each taking a share by its weight.")
   (pat.window "Advance a tick-driven clock at a steady or patterned cps. Gives the cycles of this tick, the seconds at which they start, the cps of each part of them and the cps at their start.")
   (pat.with "Add the values of one pattern to the maps of another, with structure from the first.")
-  (sched.map "Apply a function to the value of each pair of a schedule."))
+  (sched.filter "Keep the pairs of a schedule whose values satisfy a predicate.")
+  (sched.map "Apply a function to the value of each pair of a schedule.")
+  (sched.trig "A gate pulse of a fixed length at each pair of a schedule, to start an envelope."))
 
 (layout demo.pat
   (comment9 0 0)
@@ -705,7 +937,7 @@
   (comment19 194 -30)
   (comment20 895 400)
   (comment21 -87 527)
-  (expr9 535 400)
+  (pat.get9 535 400)
   (pat.key2 280 220)
   (pat.key4 505 220)
   (pat.key6 685 220)
@@ -852,6 +1084,7 @@
 
 (layout demo.pat.voices:bell
   (comment9 0 0)
+  (expr10 225 190)
   (fnref1 0 180)
   (inlet0 50 120)
   (outlet8 0 550)
@@ -862,10 +1095,3 @@
   (~mul7 0 490)
   (~sinosc5 0 370)
   (camera 217.5 291 1))
-
-(layout demo.pat.voices:bell:trig
-  (comment3 0 -14)
-  (expr1 0 140)
-  (inlet0 0 80)
-  (outlet2 0 286)
-  (camera 188.5 152 1))
