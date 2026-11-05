@@ -112,13 +112,18 @@ impl NodeUi for FnNamedRef {
         resp
     }
 
-    fn socket_doc(&self, _: &Env<'_>, kind: SocketKind, _ix: usize) -> Option<SocketDoc> {
-        Some(match kind {
-            SocketKind::Input => SocketDoc::ty("bang")
-                .with_description("trigger to emit the named graph as a lambda"),
-            SocketKind::Output => {
-                SocketDoc::ty("function").with_description("lambda wrapping the named graph")
-            }
-        })
+    /// After the bang, each input is an input of the named graph. A
+    /// connected one binds its value when the lambda is made.
+    fn socket_doc(&self, env: &Env<'_>, kind: SocketKind, ix: usize) -> Option<SocketDoc> {
+        match (kind, ix) {
+            (SocketKind::Input, 0) => Some(
+                SocketDoc::ty("bang")
+                    .with_description("trigger to emit the named graph as a lambda"),
+            ),
+            (SocketKind::Input, ix) => self.0.socket_doc(env, kind, ix - 1),
+            (SocketKind::Output, _) => Some(SocketDoc::ty("function").with_description(
+                "lambda wrapping the named graph, with an argument for each input left open",
+            )),
+        }
     }
 }

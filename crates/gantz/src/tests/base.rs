@@ -125,3 +125,28 @@ fn map_and_literal_nodes() {
     );
     assert_eq!(call(r#"(literal "1/3")"#, &["'bang"], ""), "1/3");
 }
+
+/// A `fn` binds the inputs of its graph that are connected, so `map` can
+/// call a graph of two inputs with one.
+#[test]
+fn fn_binds_connected_inputs() {
+    let scale = "(graph scale (x inlet) (n inlet) (o outlet) (e (expr (* $x $n)))
+      (-> x e) (-> n (e 1)) (-> e o))";
+    let prog = format!(
+        "{scale}
+(graph prog (m main!) (show log)
+  (n (expr (begin $m 10))) (f (fn-ref scale)) (xs (expr (begin $m '(1 2 3))))
+  (each (ref map))
+  (-> m n) (-> m f) (-> m xs) (-> n (f 2)) (-> f each) (-> xs (each 1)) (-> each show))"
+    );
+    let conf = conf();
+    let mut sources = headless::base_sources(&conf);
+    sources.push(headless::Source {
+        label: "prog.gantz".to_string(),
+        bytes: std::borrow::Cow::Owned(prog.into_bytes()),
+    });
+    let target = sources.len() - 1;
+    let output = gantz_cli::run_graph(&conf, &sources, target, Some("prog"), None, &[]);
+    assert!(output.diagnostics.is_empty(), "{:?}", output.diagnostics);
+    assert_eq!(output.stdout, "(10 20 30)\n");
+}
