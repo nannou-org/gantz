@@ -3913,6 +3913,13 @@ dependencies = [
 [[package]]
 name = "gantz_base"
 version = "0.3.1"
+dependencies = [
+ "gantz_core",
+ "gantz_format",
+ "gantz_nodedef",
+ "gantz_ui",
+ "serde",
+]
 
 [[package]]
 name = "gantz_ca"
