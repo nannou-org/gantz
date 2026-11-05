@@ -266,7 +266,9 @@
                  e))
               (pat//events p (pat/span-map (lambda (t) (- t amount)) span)))))
 
-;; Concatenate the patterns, one pattern per cycle.
+;; Concatenate the patterns, one pattern per cycle. As in Tidal's `cat`,
+;; each pattern plays its own cycles in turn: cycle `c` plays cycle
+;; `(c - ix) / n` of the pattern at `ix = c mod n`.
 (define (pat/slowcat ps)
   (let ((n (length ps)))
     (if (zero? n)
@@ -274,8 +276,11 @@
         (lambda (span)
           (list/flat-map
            (lambda (cyc)
-             (let ((ix (modulo (floor (car cyc)) n)))
-               (pat//events (list-ref ps ix) cyc)))
+             (let ((c (floor (car cyc))))
+               (let ((ix (modulo c n)))
+                 (pat//events
+                  (pat/shift (- c (quotient (- c ix) n)) (list-ref ps ix))
+                  cyc))))
            (pat/span-cycles span))))))
 
 ;; Concatenate the patterns so they all fit within a single cycle.
