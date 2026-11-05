@@ -1,5 +1,5 @@
-//! Apply-family tests covering each variant's whole derivation and the
-//! continuous-side degradation to a #f whole.
+//! Apply-family tests covering each variant's whole derivation, and how a
+//! one-sided variant samples a signal on its other side.
 
 use crate::common::{assert_pinned, new_pin_engine};
 
@@ -42,14 +42,31 @@ fn apply_family_events() {
               ((3 1) ((2 3) (1 1)) ((2 3) (1 1))))",
             &appr,
         ),
-        // The structure fn only applies when both wholes are present. A
-        // continuous function pattern degrades even appl's whole to #f.
+        // A one-sided variant keeps the whole of its structure side when the
+        // other side is a signal.
         (
-            "appl_against_signal_degrades_whole",
-            "(((2 1) ((0 1) (1 1)) #f))",
+            "appl_against_signal_keeps_whole",
+            "(((2 1) ((0 1) (1 1)) ((0 1) (1 1))))",
             "(pin-events (pat/query
                (pat/appl (pat/pure 1) (pat/steady (lambda (v) (+ v 1))))
                (pat/span 0 1)))",
+        ),
+        // The other side is queried over each whole, so a signal gives each
+        // event one value, the value at the middle of its whole. A query
+        // that chops an event gives it the same value.
+        (
+            "appr_samples_a_signal_per_event",
+            "(((1 4) ((0 1) (1 2)) ((0 1) (1 2))) ((3 4) ((1 2) (1 1)) ((1 2) (1 1))))",
+            "(pin-events (pat/query
+               (pat/appr pat/saw (pat/fast 2 (pat/pure (lambda (v) v))))
+               (pat/span 0 1)))",
+        ),
+        (
+            "appr_signal_value_holds_through_a_chop",
+            "(((1 4) ((1 8) (1 4)) ((0 1) (1 2))))",
+            "(pin-events (pat/query
+               (pat/appr pat/saw (pat/fast 2 (pat/pure (lambda (v) v))))
+               (pat/span 1/8 1/4)))",
         ),
         // merge-with combines values at intersections with app structure.
         (

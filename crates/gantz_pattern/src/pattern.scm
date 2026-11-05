@@ -443,42 +443,62 @@
           (pat//events (pat/event-value oe) (cons start start)))))
      (pat//events pp q-span))))
 
+;; `(list (f v))`, or no values when `f` is not a function.
+(define (pat//applied f v)
+  (if (function? f) (list (f v)) '()))
+
 ;; Apply a pattern of functions `pf` to a pattern of values `pv`. Both
-;; sides are queried with the original query span. Each intersection of
-;; active spans yields an event. Its whole is `(structure left-whole
-;; right-whole)` when both wholes are present, else #f.
-(define (pat//apply pv pf structure)
+;; sides are queried with the query span. Each intersection of active
+;; spans yields an event. Its whole is the intersection of both wholes
+;; when both are present, else #f. A value of `pf` that is not a function
+;; yields no event.
+(define (pat/app pv pf)
   (lambda (span)
     (list/flat-map
      (lambda (ev)
        (list/flat-map
         (lambda (ef)
           (let ((active (pat/span-intersect (pat/event-active ev)
-                                            (pat/event-active ef)))
-                (f (pat/event-value ef)))
+                                            (pat/event-active ef))))
             (if active
-                (if (function? f)
-                    (let ((lw (pat/event-whole ev))
-                          (rw (pat/event-whole ef)))
-                      (list (pat/event (f (pat/event-value ev))
+                (list/map (lambda (v)
+                            (pat/event v
                                        active
-                                       (if lw (if rw (structure lw rw) #f) #f))))
-                    '())
+                                       (pat//whole-intersect (pat/event-whole ev)
+                                                             (pat/event-whole ef))))
+                          (pat//applied (pat/event-value ef) (pat/event-value ev)))
                 '())))
         (pat//events pf span)))
      (pat//events pv span))))
 
-;; Apply with structure from the intersection of both wholes.
-(define (pat/app pv pf)
-  (pat//apply pv pf pat/span-intersect))
+;; Join the events of `ps`, the side with the structure, with the events
+;; of `po` that meet them, as Tidal's `<*` and `*>` do. Each event of `ps`
+;; queries `po` over its whole, or over its active span when it has none,
+;; so a signal gives one value however a query chops the event. Each
+;; intersection of active spans yields an event with the whole of the
+;; `ps` event for each value in `(combine s-value o-value)`.
+(define (pat//app-side ps po combine)
+  (lambda (span)
+    (list/flat-map
+     (lambda (es)
+       (list/flat-map
+        (lambda (eo)
+          (let ((active (pat/span-intersect (pat/event-active es)
+                                            (pat/event-active eo))))
+            (if active
+                (list/map (lambda (v) (pat/event v active (pat/event-whole es)))
+                          (combine (pat/event-value es) (pat/event-value eo)))
+                '())))
+        (pat//events po (pat/event-whole-or-active es))))
+     (pat//events ps span))))
 
 ;; Apply with structure from the value pattern `pv`.
 (define (pat/appl pv pf)
-  (pat//apply pv pf (lambda (l r) l)))
+  (pat//app-side pv pf (lambda (v f) (pat//applied f v))))
 
 ;; Apply with structure from the function pattern `pf`.
 (define (pat/appr pv pf)
-  (pat//apply pv pf (lambda (l r) r)))
+  (pat//app-side pf pv pat//applied))
 
 ;; Merge two patterns by calling `(f a-value b-value)` at every
 ;; intersection of active spans. Structure is the intersection of both
@@ -500,25 +520,10 @@
       b))
 
 ;; Add the values of `pb` to the maps of `pa`, as Tidal's `#` does.
-;; Structure comes from `pa`. Each event queries `pb` over its whole, so
-;; a signal gives an event one value however a window chops it. An event
-;; with nothing from `pb` is dropped.
+;; Structure comes from `pa`, as [`pat/appl`] has. An event with nothing
+;; from `pb` is dropped.
 (define (pat/with pa pb)
-  (lambda (span)
-    (list/flat-map
-     (lambda (ea)
-       (list/flat-map
-        (lambda (eb)
-          (let ((active (pat/span-intersect (pat/event-active ea)
-                                            (pat/event-active eb))))
-            (if active
-                (list (pat/event (pat//union (pat/event-value ea)
-                                             (pat/event-value eb))
-                                 active
-                                 (pat/event-whole ea)))
-                '())))
-        (pat//events pb (pat/event-whole-or-active ea))))
-     (pat//events pa span))))
+  (pat//app-side pa pb (lambda (a b) (list (pat//union a b)))))
 
 (define (pat//repeat v n acc)
   (if (<= n 0) acc (pat//repeat v (- n 1) (cons v acc))))
