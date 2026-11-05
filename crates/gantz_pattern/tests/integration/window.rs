@@ -1,10 +1,10 @@
-//! Tempo clock and delivery-helper tests.
+//! Clock and delivery-helper tests.
 
 use crate::common::{assert_pinned, assert_steel_true, new_pin_engine};
 use gantz_core::steel::steel_vm::engine::Engine;
 
 /// Steel helpers that drive the clock over a list of ticks. A tick is a
-/// `(list time dt tempo)`, with `'()` as `dt` for a partial eval.
+/// `(list time dt cps)`, with `'()` as `dt` for a partial eval.
 const PLAY: &str = r#"
 (require "gantz/list")
 
@@ -46,18 +46,18 @@ const PLAY: &str = r#"
               (abut-loop (cdr ticks) (list-ref r 2) (cdr (car r)))
               #f)))))
 
-;; `n` ticks from `t` at `hz` under the tempo `(tempo-at time)`. `jitter`
+;; `n` ticks from `t` at `hz`, with the cps `(cps-at time)`. `jitter`
 ;; moves each tick by up to that many seconds, from a fixed sequence.
-(define (ticks-from t n hz jitter tempo-at)
-  (ticks-loop t 0 n hz jitter tempo-at '()))
+(define (ticks-from t n hz jitter cps-at)
+  (ticks-loop t 0 n hz jitter cps-at '()))
 
-(define (ticks-loop t i n hz jitter tempo-at acc)
+(define (ticks-loop t i n hz jitter cps-at acc)
   (if (>= i n)
       (reverse acc)
       (ticks-loop (+ (+ t (/ 1.0 hz))
                      (* jitter (/ (exact->inexact (- (modulo (* i 7919) 13) 6)) 6.0)))
-                  (+ i 1) n hz jitter tempo-at
-                  (cons (list t (/ 1.0 hz) (tempo-at t)) acc))))
+                  (+ i 1) n hz jitter cps-at
+                  (cons (list t (/ 1.0 hz) (cps-at t)) acc))))
 
 ;; Whether each time sits within 1 ns of its expected time. Extra onsets
 ;; past the end of `want` are ignored, as ticks can overrun the score.
@@ -82,7 +82,7 @@ const PLAY: &str = r#"
 
 ;; One onset per quarter cycle.
 (define fours (pat/fast 4 (pat/pure 1)))
-;; A tempo of 1/2, 1 then 2 cycles per second, stepping per cycle.
+;; A cps of 1/2, 1 then 2, stepping per cycle.
 (define stepped (pat/slowcat (list (pat/pure 1/2) (pat/pure 1) (pat/pure 2))))
 "#;
 
@@ -98,22 +98,22 @@ fn window_steps() {
     let mut vm = new_play_engine();
     let rows: &[(&str, &str, &str)] = &[
         // The first tick starts the playhead at cycle 0 on the eval time,
-        // at a rate of 1. Cycle 0 therefore lands in the first window.
+        // at a cps of 1. Cycle 0 therefore lands in the first window.
         (
             "first_tick_starts_at_cycle_zero",
             "(((0 1) (1 2)) 10.0 (((0 1) (1 2) 1.0)) ((1 2) 10.5 1.0))",
             "(pin-window (pat/window void 10.0 0.5 1))",
         ),
-        // A span closes the gap to one tick ahead, at the last rate.
+        // A span closes the gap to one tick ahead, at the last cps.
         (
             "span_covers_up_to_one_tick_ahead",
             "(((1 1) (2 1)) 1.0 (((1 1) (2 1) 2.0)) ((2 1) 1.5 2.0))",
             "(pin-window (pat/window (list 1 1.0 2.0 0.0) 1.0 0.5 2))",
         ),
-        // The tempo sets the seconds of the span, however long it is. The
-        // new rate takes effect within the span and sets the next one.
+        // The cps sets the seconds of the span, however long it is. The
+        // new cps takes effect within the span and sets the next one.
         (
-            "tempo_sets_the_span_seconds",
+            "cps_sets_the_span_seconds",
             "(((0 1) (1 2)) 10.0 (((0 1) (1 2) 2.0)) ((1 2) 10.25 2.0))",
             "(pin-window (pat/window void 10.0 0.5 2))",
         ),
@@ -124,7 +124,7 @@ fn window_steps() {
             "(((1 1) (1 1)) 5.0 () ((1 1) 5.0 1.0))",
             "(pin-window (pat/window (list 1 5.0 1.0 0.0) 1.0 1.0 1))",
         ),
-        // A rate step inside a span splits it, so seconds stay exact.
+        // A cps step inside a span splits it, so seconds stay exact.
         (
             "steps_split_the_span",
             "(((0 1) (1 1)) 0.0 (((0 1) (1 2) 1.0) ((1 2) (1 1) 2.0)) ((1 1) 0.75 2.0))",
@@ -138,15 +138,15 @@ fn window_steps() {
             "(pin-window (pat/window (list 1/2 0.0 1.0 0.0) 0.0 1.0
                            (pat/slowcat (list (pat/pure 1) (pat/pure 2)))))",
         ),
-        // A gap in the tempo holds the last rate.
+        // A gap in the cps holds the last cps.
         (
             "gaps_hold_the_last_rate",
             "(((0 1) (1 1)) 0.0 (((0 1) (1 2) 4.0) ((1 2) (1 1) 2.0)) ((1 1) 0.375 2.0))",
             "(pin-window (pat/window (list 0 0.0 4.0 0.0) 0.0 0.25
                            (pat/fastcat (list pat/silence (pat/pure 2)))))",
         ),
-        // A map sets the rate through its cps key. A map without one is
-        // a gap, as are values that cannot set a rate.
+        // A map sets the cps through its cps key. A map without one is
+        // a gap, as are values that cannot set a cps.
         (
             "map_sets_cps",
             "(((0 1) (1 1)) 0.0 (((0 1) (1 1) 2.0)) ((1 1) 0.5 2.0))",
@@ -174,7 +174,7 @@ fn window_steps() {
             "(((0 1) (1 1)) 0.0 (((0 1) (1 1) 1.0)) ((1 1) 1.0 1.0))",
             "(pin-window (pat/window (list 0 0.0 1.0 0.0) 0.0 1.0 (pat/pure 'fast)))",
         ),
-        // Where tempo events overlap, a later one starts when the earlier
+        // Where cps events overlap, a later one starts when the earlier
         // one ends.
         (
             "overlap_earliest_wins",
@@ -227,19 +227,19 @@ fn clock_scenarios() {
     let mut vm = new_play_engine();
     let rows: &[(&str, &str)] = &[
         (
-            "spans_abut_under_a_changing_tempo",
+            "spans_abut_under_a_changing_cps",
             "(abut? (ticks-from 1.0 600 60.0 0.0 (lambda (t) stepped)))",
         ),
         // Cycles take 2, 1 and 1/2 seconds.
         (
-            "tempo_steps_are_exact",
+            "cps_steps_are_exact",
             "(times-close?
                (play fours (ticks-from 1.0 240 60.0 0.0 (lambda (t) stepped)))
                (list 1.0 1.5 2.0 2.5 3.0 3.25 3.5 3.75 4.0 4.125 4.25 4.375 4.5))",
         ),
-        // Discrete tempos are exact at any tick rate.
+        // A cps that steps is exact at any tick rate.
         (
-            "tempo_steps_are_exact_at_a_slow_tick",
+            "cps_steps_are_exact_at_a_slow_tick",
             "(times-close?
                (play fours (ticks-from 1.0 28 7.0 0.0 (lambda (t) stepped)))
                (list 1.0 1.5 2.0 2.5 3.0 3.25 3.5 3.75 4.0 4.125 4.25 4.375 4.5))",
@@ -278,14 +278,14 @@ fn clock_scenarios() {
         // order, and the 9 s at 1/2 cps and 11 s at 3/5 cps give 45 onsets.
         (
             "dial_up_keeps_order",
-            "(let ((tempo (lambda (t) (if (< t 10.0) 1/2 3/5))))
-               (let ((onsets (play fours (ticks-from 1.0 1200 60.0 0.0 tempo))))
+            "(let ((cps-at (lambda (t) (if (< t 10.0) 1/2 3/5))))
+               (let ((onsets (play fours (ticks-from 1.0 1200 60.0 0.0 cps-at))))
                  (if (ordered? onsets) (= 45 (length onsets)) #f)))",
         ),
         (
             "dial_down_keeps_order",
-            "(let ((tempo (lambda (t) (if (< t 10.0) 3/5 1/2))))
-               (let ((onsets (play fours (ticks-from 1.0 1200 60.0 0.0 tempo))))
+            "(let ((cps-at (lambda (t) (if (< t 10.0) 3/5 1/2))))
+               (let ((onsets (play fours (ticks-from 1.0 1200 60.0 0.0 cps-at))))
                  (ordered? onsets)))",
         ),
         // The dial's push evaluates the clock with no tick. The clock
@@ -320,18 +320,18 @@ fn span_secs() {
     let mut vm = new_pin_engine();
     let rows: &[(&str, &str, &str)] = &[
         (
-            "number_tempo",
+            "number_cps",
             "1/2",
             "(pat/span-secs 2 (pat/span 0 1) 1.0)",
         ),
         (
-            "pattern_tempo_spans_steps",
+            "pattern_cps_spans_steps",
             "3/4",
             "(pat/span-secs (pat/fastcat (list (pat/pure 1) (pat/pure 2)))
                             (pat/span 0 1) 1.0)",
         ),
         (
-            "map_tempo",
+            "map_cps",
             "1/4",
             "(pat/span-secs (pat/pure (hash 'cps 2)) (pat/span 0 1/2) 1.0)",
         ),
@@ -348,7 +348,7 @@ fn span_secs() {
                             (pat/span 0 2) 1.0)",
         ),
         (
-            "junk_tempo_holds_the_default",
+            "junk_cps_holds_the_default",
             "2",
             "(pat/span-secs '() (pat/span 0 1) 1/2)",
         ),
@@ -377,7 +377,7 @@ fn delivery() {
                      (pat/events->secs (pat/query (pat/euclid 3 8) (pat/span 0 1))
                                        (list 10.0 (list (list 0 1 2.0)) 2)))",
         ),
-        // An onset past a rate step takes the seconds of each segment.
+        // An onset past a cps step takes the seconds of each segment.
         (
             "events_to_secs_walks_the_segments",
             "(equal? (list (list 1.0 #t) (list 1.5 #t) (list 1.625 #t) (list 1.75 #t))

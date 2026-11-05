@@ -357,9 +357,9 @@
   (-> expr0 outlet3))
 
 (graph pat.window
-  (expr0 (expr (let ((r (pat/window state (hash-ref %args 'time) $tick $tempo))) (begin (set! state (list-ref r 2)) r)) #:require "gantz/pattern"))
+  (expr0 (expr (let ((r (pat/window state (hash-ref %args 'time) $tick $cps))) (begin (set! state (list-ref r 2)) r)) #:require "gantz/pattern"))
   (inlet1 (inlet "tick" "tick duration in seconds"))
-  (inlet2 (inlet "tempo" "cps as a number, a pattern of numbers, or a pattern of maps with a cps key"))
+  (inlet2 (inlet "cps" "a number, a pattern of numbers, or a pattern of maps with a cps key"))
   (expr3 (expr (list-ref $window 0)))
   (expr4 (expr (list-ref $window 1)))
   (outlet5 (outlet "span" "the window since the previous tick"))
@@ -382,7 +382,7 @@
 
 (descriptions
   (demo.pat "A mini-notation frequency pattern queried per tick plays a sine and plots two cycles. Edit the string and dial the cps.")
-  (demo.pat.cps "A second pattern sets the cps, so the rate steps each cycle without a jump in position. Edit either string.")
+  (demo.pat.cps "A second pattern sets the cps, which steps each cycle without a jump in position. Edit either string.")
   (demo.pat.maps "Patterns join into one map per event. The same pattern feeds the clock and the query, so the cps comes from the events, and `pat.pick` routes each key to a control.")
   (demo.pat.plot "Every kind of event value in `pat.plot` nodes. Numbers, symbols, overlapping symbols, bools, a signal, maps stacked and expanded, lists and opaque values.")
   (pat.app "Apply a pattern of functions to a pattern of values.")
@@ -410,7 +410,7 @@
   (pat.stack "Layer patterns on top of each other.")
   (pat.steady "A continuous constant signal.")
   (pat.timecat "Concatenate patterns within a single cycle, each taking a share by its weight.")
-  (pat.window "Advance a tick-driven clock under a tempo. Gives the query window in cycles and its timing in seconds.")
+  (pat.window "Advance a tick-driven clock at a steady or patterned cps. Gives the query window in cycles and its timing in seconds.")
   (pat.with "Add the values of one pattern to the maps of another, with structure from the first."))
 
 (layout demo.pat

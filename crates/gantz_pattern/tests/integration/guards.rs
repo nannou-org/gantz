@@ -149,7 +149,7 @@ fn combinators_wrapping_junk_are_silent() {
 fn junk_window_and_delivery_inputs() {
     let mut vm = new_pin_engine();
     let rows: &[(&str, &str, &str)] = &[
-        // The clock holds on a junk time, tick or tempo, leaving state
+        // The clock holds on a junk time, tick or cps, leaving state
         // alone.
         (
             "window_with_junk_time_holds",
@@ -164,7 +164,7 @@ fn junk_window_and_delivery_inputs() {
                (list (pin-span (car r)) (pin-num (car (list-ref r 2)))))",
         ),
         (
-            "window_with_junk_tempo_holds",
+            "window_with_junk_cps_holds",
             "(((0 1) (0 1)) (1 2))",
             "(let ((r (pat/window (list 1/2 0.0 1.0 0.0) 0.5 0.1 '())))
                (list (pin-span (car r)) (pin-num (car (list-ref r 2)))))",
