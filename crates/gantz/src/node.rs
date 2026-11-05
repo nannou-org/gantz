@@ -34,9 +34,16 @@ pub fn codec() -> gantz_egui::node::NodeCodec {
         kind::<gantz_egui::node::Inspect>(),
         kind::<gantz_egui::node::State>(),
         kind::<gantz_egui::node::Plot>(),
+        def_kind::<gantz_base::Get>(),
+        def_kind::<gantz_base::Set>(),
+        def_kind::<gantz_base::Literal>(),
         def_kind::<gantz_pattern::Pkey>(),
         def_kind::<gantz_pattern::Pmini>(),
         def_kind::<gantz_pattern::SchedPick>(),
+        def_kind::<gantz_pattern::Pget>(),
+        def_kind::<gantz_pattern::Plensecs>(),
+        def_kind::<gantz_pattern::SchedGate>(),
+        def_kind::<gantz_pattern::SchedSplit>(),
         def_kind::<gantz_pattern::Pplot>(),
     ];
     let dsp = gantz_plyphon::node_defs().into_iter().map(dyn_def_kind);
@@ -48,6 +55,7 @@ pub fn sugars() -> gantz_format::Sugars {
     gantz_format::Sugars::default()
         .with(gantz_format::CoreSugar)
         .with(gantz_io::IoSugar)
+        .with(gantz_base::BaseSugar)
         .with(gantz_egui::EguiSugar)
         .with(bevy_gantz_egui::BevySugar)
         .with(gantz_plyphon::PlyphonSugar)
@@ -61,6 +69,7 @@ pub fn builtins() -> gantz_core::Builtins {
         gantz_core::node::builtins()
             .into_iter()
             .chain(gantz_io::builtins())
+            .chain(gantz_base::builtins())
             .chain(gantz_egui::builtins())
             .chain(bevy_gantz_egui::builtins())
             .chain(gantz_plyphon::builtins())

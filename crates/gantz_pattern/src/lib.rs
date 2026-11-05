@@ -21,7 +21,7 @@ pub mod node;
 pub mod plot;
 pub mod sugar;
 
-pub use node::{Pkey, Pmini, SchedPick, builtins};
+pub use node::{Pget, Pkey, Plensecs, Pmini, SchedGate, SchedPick, SchedSplit, builtins};
 pub use plot::Pplot;
 pub use sugar::PatternSugar;
 

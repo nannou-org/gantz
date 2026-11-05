@@ -50,6 +50,13 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph ceil
+  (expr0 (expr (ceiling $x)))
+  (inlet1 (inlet "number" "value"))
+  (outlet2 (outlet "number" "smallest integer not below the value"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
 (graph concat
   (expr0 (expr (list/concat $lists) #:require "gantz/list"))
   (inlet1 (inlet "list" "a list of lists, or one list per wire"))
@@ -767,6 +774,13 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph floor
+  (expr0 (expr (floor $x)))
+  (inlet1 (inlet "number" "value"))
+  (outlet2 (outlet "number" "largest integer not above the value"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
 (graph fold
   (expr0 (expr (list/fold $f $init $list) #:require "gantz/list"))
   (inlet1 (inlet "function" "combines, called as (f acc item)"))
@@ -777,6 +791,13 @@
   (-> inlet2 (expr0 1))
   (-> inlet3 (expr0 2))
   (-> expr0 outlet4))
+
+(graph fract
+  (expr0 (expr (- $x (floor $x))))
+  (inlet1 (inlet "number" "value"))
+  (outlet2 (outlet "number" "the value minus its floor, from 0 up to 1"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
 
 (graph gt
   (expr0 (expr (> $l $r)))
@@ -810,6 +831,17 @@
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
+(graph lerp
+  (expr0 (expr (+ $a (* (- $b $a) $t))))
+  (inlet1 (inlet "number" "value at t = 0"))
+  (inlet2 (inlet "number" "value at t = 1"))
+  (inlet3 (inlet "number" "position t between the two values"))
+  (outlet4 (outlet "number" "a + (b - a) * t"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> expr0 outlet4))
+
 (graph list-ref
   (expr0 (expr (list-ref $list (exact (round $index)))))
   (inlet1 (inlet "list" "input list"))
@@ -823,6 +855,13 @@
   (expr0 (expr (list? $x)))
   (inlet1 (inlet "value" "value to test"))
   (outlet2 (outlet "boolean" "true if a list"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(graph ln
+  (expr0 (expr (if (> $x 0) (log (exact->inexact $x)) '())))
+  (inlet1 (inlet "number" "value"))
+  (outlet2 (outlet "number" "natural log, or the empty list when the value is not positive"))
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
@@ -849,6 +888,24 @@
   (inlet1 (inlet "function" "item mapping"))
   (inlet2 (inlet "list" "input list"))
   (outlet3 (outlet "list" "list of mapped items"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph max
+  (expr0 (expr (if (< $l $r) $r $l)))
+  (inlet1 (inlet "number" "left operand"))
+  (inlet2 (inlet "number" "right operand"))
+  (outlet3 (outlet "number" "the larger operand"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph min
+  (expr0 (expr (if (< $r $l) $r $l)))
+  (inlet1 (inlet "number" "left operand"))
+  (inlet2 (inlet "number" "right operand"))
+  (outlet3 (outlet "number" "the smaller operand"))
   (-> inlet1 expr0)
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
@@ -913,6 +970,27 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph pow
+  (expr0 (expr (expt $base $exp)))
+  (inlet1 (inlet "number" "base"))
+  (inlet2 (inlet "number" "exponent"))
+  (outlet3 (outlet "number" "base raised to the exponent, exact for exact inputs"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
+(graph quotient
+  (expr0 (expr (let
+  ((n (exact (round $l)))
+   (d (exact (round $r))))
+  (if (zero? d) 0 (quotient n d)))))
+  (inlet1 (inlet "number" "left operand"))
+  (inlet2 (inlet "number" "right operand"))
+  (outlet3 (outlet "number" "integer quotient truncated toward zero, or 0 for a zero divisor"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (graph range
   (expr0 (expr (list/range $start $end) #:require "gantz/list"))
   (inlet1 (inlet "number" "first integer, 0 when unset"))
@@ -933,6 +1011,13 @@
   (expr0 (expr (reverse $list)))
   (inlet1 (inlet "list" "input list"))
   (outlet2 (outlet "list" "reversed list"))
+  (-> inlet1 expr0)
+  (-> expr0 outlet2))
+
+(graph round
+  (expr0 (expr (round $x)))
+  (inlet1 (inlet "number" "value"))
+  (outlet2 (outlet "number" "nearest integer, with ties to even"))
   (-> inlet1 expr0)
   (-> expr0 outlet2))
 
@@ -1192,6 +1277,28 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph until
+  (expr0 (expr (let
+  ((done? $done)
+   (step $step)
+   (x $init)
+   (n (if (number? $max) (round $max) 0)))
+  (if (if (function? done?) (function? step) #f)
+      (let ((go (lambda (go x i)
+                  (if (done? x) x (if (< i n) (go go (step x) (+ i 1)) x)))))
+        (go go x 0))
+      x))))
+  (inlet1 (inlet "function" "predicate that ends the steps"))
+  (inlet2 (inlet "function" "step, called as (step value)"))
+  (inlet3 (inlet "value" "initial value"))
+  (inlet4 (inlet "number" "most steps"))
+  (outlet5 (outlet "value" "the first value that satisfies the predicate, or the value after the most steps"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> inlet4 (expr0 3))
+  (-> expr0 outlet5))
+
 (graph zip
   (expr0 (expr (list/zip $l $r) #:require "gantz/list"))
   (inlet1 (inlet "list" "left list"))
@@ -1208,6 +1315,7 @@
   (and "Logical AND of two booleans")
   (any "Whether any item of a list satisfies a predicate")
   (append "Concatenate two lists")
+  (ceil "Round a number up to an integer")
   (concat "Join a list of lists into one list")
   (cons "Prepend an item to a list")
   (demo.all "Demo: a tour of the base nodes")
@@ -1227,16 +1335,22 @@
   (find "The first item of a list that satisfies a predicate")
   (first "The first item of a list")
   (flat-map "Map each item of a list to a list and join the lists")
+  (floor "Round a number down to an integer")
   (fold "Combine the items of a list into one value")
+  (fract "The fractional part of a number")
   (gt "Whether the left is greater than the right")
   (gte "Whether the left is greater than or equal to the right")
   (last "The last item of a list")
   (length "The number of items in a list")
+  (lerp "Interpolate linearly between two numbers")
   (list-ref "The list item at an index")
   (list? "Whether a value is a list")
+  (ln "Natural logarithm of a number")
   (lt "Whether the left is less than the right")
   (lte "Whether the left is less than or equal to the right")
   (map "Apply a function to each item of a list")
+  (max "The larger of two numbers")
+  (min "The smaller of two numbers")
   (mod "Remainder after division")
   (mul "Multiply two numbers")
   (neg "Negate a number")
@@ -1244,9 +1358,12 @@
   (not "Logical NOT of a boolean")
   (number? "Whether a value is a number")
   (or "Logical OR of two booleans")
+  (pow "Raise a number to a power")
+  (quotient "Integer division truncated toward zero")
   (range "A list of integers from start up to end")
   (rest "A list without its first item")
   (reverse "Reverse a list")
+  (round "Round a number to the nearest integer")
   (select "Choose between two values by a condition")
   (sort "Sort a list with a less-than function")
   (string? "Whether a value is a string")
@@ -1270,6 +1387,7 @@
   (ui.space "GUI: empty space")
   (ui.toggle "GUI: a checkbox editing a boolean node")
   (ui.value "GUI: show a node's state")
+  (until "Apply a step to a value until a predicate holds, for at most a number of steps")
   (zip "Pair the items of two lists by index"))
 
 (layout abs

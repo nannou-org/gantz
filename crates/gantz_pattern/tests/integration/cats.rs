@@ -49,6 +49,28 @@ fn rate_and_concatenation_events() {
             "(pin-events (pat/query (pat/fastcat (list (pat/pure 'a) (pat/pure 'b))) \
                (pat/span 0 5/4)))",
         ),
+        // Each pattern plays its own cycles in turn, so a nested
+        // alternation steps once each time it plays, before cycle 0 too.
+        (
+            "slowcat_nested",
+            "(a b a c)",
+            "(pin-map pat/event-value (pat/query (pat/slowcat (list (pat/pure 'a) \
+               (pat/slowcat (list (pat/pure 'b) (pat/pure 'c))))) (pat/span 0 4)))",
+        ),
+        (
+            "slowcat_nested_negative",
+            "(a b a c)",
+            "(pin-map pat/event-value (pat/query (pat/slowcat (list (pat/pure 'a) \
+               (pat/slowcat (list (pat/pure 'b) (pat/pure 'c))))) (pat/span -4 0)))",
+        ),
+        // Each step of a fastcat plays the cycle of the fastcat, so an
+        // alternation steps once per cycle at any step.
+        (
+            "fastcat_alternation",
+            "(a b c e a b d e)",
+            "(pin-map pat/event-value (pat/query (pat/fastcat (list (pat/pure 'a) (pat/pure 'b) \
+               (pat/slowcat (list (pat/pure 'c) (pat/pure 'd))) (pat/pure 'e))) (pat/span 0 2)))",
+        ),
         // Weighted sub-spans, where every event's whole becomes its
         // pattern's sub-span.
         (

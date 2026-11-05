@@ -35,6 +35,29 @@ fn map_patterns() {
             "()",
             "(pat/query (pat/with (pat/key 'a (pat/pure 1)) pat/silence) (pat/span 0 1))",
         ),
+        // `pat/get` undoes `pat/key`.
+        (
+            "get_undoes_key",
+            "(((1 2) ((0 1) (1 2)) ((0 1) (1 2))) ((3 2) ((1 2) (1 1)) ((1 2) (1 1))))",
+            "(pin-events (pat/query
+               (pat/get 'n (pat/key 'n (pat/fastcat (list (pat/pure 1/2) (pat/pure 3/2)))))
+               (pat/span 0 1)))",
+        ),
+        // An event whose value is not a map, or lacks the key, is dropped.
+        (
+            "get_drops_other_values",
+            "(((1 1) ((0 1) (1 3)) ((0 1) (1 3))))",
+            "(pin-events (pat/query
+               (pat/get 'n (pat/fastcat (list (pat/pure (hash 'n 1))
+                                              (pat/pure (hash 'm 2))
+                                              (pat/pure 3))))
+               (pat/span 0 1)))",
+        ),
+        (
+            "get_of_junk_is_silent",
+            "()",
+            "(pin-events (pat/query (pat/get 'n '()) (pat/span 0 1)))",
+        ),
     ];
     for (case, expected, expr) in rows {
         assert_pinned(&mut vm, case, expected, expr);

@@ -50,6 +50,9 @@
          pat/map-events
          pat/filter
          pat/filter-events
+         pat/map-len
+         pat/scale-len
+         pat/segment
          pat/degrade-by
          pat/join
          pat/inner-join
@@ -58,7 +61,10 @@
          pat/appl
          pat/appr
          pat/merge-with
+         pat/merge-withl
+         pat/merge-withr
          pat/key
+         pat/get
          pat/with
          pat/euclid-bools
          pat/euclid
@@ -70,6 +76,8 @@
          pat/events->secs
          pat/at
          pat/nudge
+         pat/secs
+         pat/len-secs
          pat/euclid-with
          pat/as-span
          pat/plot-data)
@@ -258,7 +266,9 @@
                  e))
               (pat//events p (pat/span-map (lambda (t) (- t amount)) span)))))
 
-;; Concatenate the patterns, one pattern per cycle.
+;; Concatenate the patterns, one pattern per cycle. As in Tidal's `cat`,
+;; each pattern plays its own cycles in turn: cycle `c` plays cycle
+;; `(c - ix) / n` of the pattern at `ix = c mod n`.
 (define (pat/slowcat ps)
   (let ((n (length ps)))
     (if (zero? n)
@@ -266,8 +276,11 @@
         (lambda (span)
           (list/flat-map
            (lambda (cyc)
-             (let ((ix (modulo (floor (car cyc)) n)))
-               (pat//events (list-ref ps ix) cyc)))
+             (let ((c (floor (car cyc))))
+               (let ((ix (modulo c n)))
+                 (pat//events
+                  (pat/shift (- c (quotient (- c ix) n)) (list-ref ps ix))
+                  cyc))))
            (pat/span-cycles span))))))
 
 ;; Concatenate the patterns so they all fit within a single cycle.
@@ -372,6 +385,86 @@
   (lambda (span)
     (list/filter keep? (pat//events p span))))
 
+;; The cycles before a query in which [`pat//map-len-by`] looks for the last
+;; part of an event that grows into the query.
+(define pat//len-lookback 1)
+
+;; A new length of an event, in cycles. A positive number snaps to the
+;; grid, as [`pat/rationalize`] does. Anything else, and a number that snaps
+;; to 0, is #f.
+(define (pat//len x)
+  (if (number? x)
+      (let ((r (pat/rationalize x)))
+        (if (> r 0) r #f))
+      #f))
+
+;; Give each event of `p` the length `(g e)` in cycles, with its start kept.
+;; A length that is not a positive number drops the event. An event with no
+;; whole, a signal, passes through.
+;;
+;; Each part of an event that a query chops keeps its active span, clipped
+;; to the new whole. The last part, the one that ends with the whole,
+;; moves its end with the whole. An event that grows can reach into a query
+;; from before it, so the query looks back `pat//len-lookback` cycles for
+;; such last parts. An event that grows by that or more can miss a query
+;; that starts after its old end by that much, so its output then depends
+;; on the query span.
+(define (pat//map-len-by g p)
+  (lambda (span)
+    (let ((back (cons (- (car span) pat//len-lookback) (car span))))
+      (append
+       (list/flat-map
+        (lambda (e) (if (pat/event-whole e) (pat//relen g e span) (list e)))
+        (pat//events p span))
+       (list/flat-map
+        (lambda (e) (if (pat/event-whole e) (pat//relen g e span) '()))
+        (pat//events p back))))))
+
+;; The part of event `e` within `span` once its whole has the length that
+;; `g` gives it, as a list of no events or one.
+(define (pat//relen g e span)
+  (let ((len (pat//len (g e))))
+    (if len
+        (let ((w (pat/event-whole e))
+              (a (pat/event-active e)))
+          (let ((nw (cons (car w) (+ (car w) len))))
+            (let ((na (if (= (cdr a) (cdr w)) (cons (car a) (cdr nw)) a)))
+              (let ((clip (pat/span-intersect na nw)))
+                (let ((in (if clip (pat/span-intersect clip span) #f)))
+                  (if in (list (pat/event (pat/event-value e) in nw)) '()))))))
+        '())))
+
+;; The length of the whole of `e`, in cycles.
+(define (pat//whole-len e)
+  (pat/span-len (pat/event-whole e)))
+
+;; Give each event of `p` the length `(f len)`, where `len` is the length
+;; of its whole in cycles. See [`pat//map-len-by`]. A non-fn `f` yields
+;; silence.
+(define (pat/map-len f p)
+  (if (function? f)
+      (pat//map-len-by (lambda (e) (f (pat//whole-len e))) p)
+      pat/silence))
+
+;; Multiply the length of each event of `p` by `k`, a number or a pattern
+;; of numbers. A pattern factor is the first number of `k` at the start of
+;; each event's whole, so the structure comes from `p`. An event with no
+;; factor at its start keeps its length, as does every event when `k` is
+;; neither a number nor a pattern. See [`pat//map-len-by`].
+(define (pat/scale-len k p)
+  (if (number? k)
+      (pat//map-len-by (lambda (e) (* k (pat//whole-len e))) p)
+      (if (function? k)
+          (pat//map-len-by
+           (lambda (e)
+             (let ((len (pat//whole-len e))
+                   (f (list/find number?
+                                 (list/map pat/event-value
+                                           (pat/at k (car (pat/event-whole e)))))))
+               (if f (* f len) len)))
+           p)
+          p)))
+
 ;; Drop each event of `p` with the probability `prob`, drawn from `seed`.
 ;; The draw keys on the midpoint of the event's whole, or of its active
 ;; span when it has no whole. So all fragments of an event agree, and an
@@ -443,42 +536,62 @@
           (pat//events (pat/event-value oe) (cons start start)))))
      (pat//events pp q-span))))
 
+;; `(list (f v))`, or no values when `f` is not a function.
+(define (pat//applied f v)
+  (if (function? f) (list (f v)) '()))
+
 ;; Apply a pattern of functions `pf` to a pattern of values `pv`. Both
-;; sides are queried with the original query span. Each intersection of
-;; active spans yields an event. Its whole is `(structure left-whole
-;; right-whole)` when both wholes are present, else #f.
-(define (pat//apply pv pf structure)
+;; sides are queried with the query span. Each intersection of active
+;; spans yields an event. Its whole is the intersection of both wholes
+;; when both are present, else #f. A value of `pf` that is not a function
+;; yields no event.
+(define (pat/app pv pf)
   (lambda (span)
     (list/flat-map
      (lambda (ev)
        (list/flat-map
         (lambda (ef)
           (let ((active (pat/span-intersect (pat/event-active ev)
-                                            (pat/event-active ef)))
-                (f (pat/event-value ef)))
+                                            (pat/event-active ef))))
             (if active
-                (if (function? f)
-                    (let ((lw (pat/event-whole ev))
-                          (rw (pat/event-whole ef)))
-                      (list (pat/event (f (pat/event-value ev))
+                (list/map (lambda (v)
+                            (pat/event v
                                        active
-                                       (if lw (if rw (structure lw rw) #f) #f))))
-                    '())
+                                       (pat//whole-intersect (pat/event-whole ev)
+                                                             (pat/event-whole ef))))
+                          (pat//applied (pat/event-value ef) (pat/event-value ev)))
                 '())))
         (pat//events pf span)))
      (pat//events pv span))))
 
-;; Apply with structure from the intersection of both wholes.
-(define (pat/app pv pf)
-  (pat//apply pv pf pat/span-intersect))
+;; Join the events of `ps`, the side with the structure, with the events
+;; of `po` that meet them, as Tidal's `<*` and `*>` do. Each event of `ps`
+;; queries `po` over its whole, or over its active span when it has none,
+;; so a signal gives one value however a query chops the event. Each
+;; intersection of active spans yields an event with the whole of the
+;; `ps` event for each value in `(combine s-value o-value)`.
+(define (pat//app-side ps po combine)
+  (lambda (span)
+    (list/flat-map
+     (lambda (es)
+       (list/flat-map
+        (lambda (eo)
+          (let ((active (pat/span-intersect (pat/event-active es)
+                                            (pat/event-active eo))))
+            (if active
+                (list/map (lambda (v) (pat/event v active (pat/event-whole es)))
+                          (combine (pat/event-value es) (pat/event-value eo)))
+                '())))
+        (pat//events po (pat/event-whole-or-active es))))
+     (pat//events ps span))))
 
 ;; Apply with structure from the value pattern `pv`.
 (define (pat/appl pv pf)
-  (pat//apply pv pf (lambda (l r) l)))
+  (pat//app-side pv pf (lambda (v f) (pat//applied f v))))
 
 ;; Apply with structure from the function pattern `pf`.
 (define (pat/appr pv pf)
-  (pat//apply pv pf (lambda (l r) r)))
+  (pat//app-side pf pv pat//applied))
 
 ;; Merge two patterns by calling `(f a-value b-value)` at every
 ;; intersection of active spans. Structure is the intersection of both
@@ -488,9 +601,41 @@
       (pat/app pa (pat/map (lambda (bv) (lambda (av) (f av bv))) pb))
       pat/silence))
 
+;; [`pat/merge-with`] with structure from `pa`, as [`pat/appl`] has.
+(define (pat/merge-withl f pa pb)
+  (if (function? f)
+      (pat/appl pa (pat/map (lambda (bv) (lambda (av) (f av bv))) pb))
+      pat/silence))
+
+;; [`pat/merge-with`] with structure from `pb`, as [`pat/appr`] has.
+(define (pat/merge-withr f pa pb)
+  (if (function? f)
+      (pat/appr pa (pat/map (lambda (bv) (lambda (av) (f av bv))) pb))
+      pat/silence))
+
+;; Sample `p` into `n` events per cycle, as Tidal's `segment` does. Each
+;; event takes the values of `p` where they meet it, so a signal gives each
+;; event one value. An `n` that is not a positive number yields silence.
+(define (pat/segment n p)
+  (if (if (number? n) (> n 0) #f)
+      (pat/appr p (pat/fast (pat/rationalize n) (pat/pure (lambda (v) v))))
+      pat/silence))
+
 ;; A pattern of one-key maps, with each value of `p` under `key`.
 (define (pat/key key p)
   (pat/map (lambda (v) (hash key v)) p))
+
+;; The value under `key` of each map of `p`, the inverse of [`pat/key`]. An
+;; event whose value is not a map, or has no `key`, is dropped.
+(define (pat/get key p)
+  (lambda (span)
+    (list/flat-map
+     (lambda (e)
+       (let ((m (pat/event-value e)))
+         (if (if (hash? m) (hash-contains? m key) #f)
+             (list (pat/event-map-value (lambda (m) (hash-ref m key)) e))
+             '())))
+     (pat//events p span))))
 
 ;; Union two event values. A key in both takes its value from `b`. A
 ;; value that is not a map gives way to one that is.
@@ -500,25 +645,10 @@
       b))
 
 ;; Add the values of `pb` to the maps of `pa`, as Tidal's `#` does.
-;; Structure comes from `pa`. Each event queries `pb` over its whole, so
-;; a signal gives an event one value however a window chops it. An event
-;; with nothing from `pb` is dropped.
+;; Structure comes from `pa`, as [`pat/appl`] has. An event with nothing
+;; from `pb` is dropped.
 (define (pat/with pa pb)
-  (lambda (span)
-    (list/flat-map
-     (lambda (ea)
-       (list/flat-map
-        (lambda (eb)
-          (let ((active (pat/span-intersect (pat/event-active ea)
-                                            (pat/event-active eb))))
-            (if active
-                (list (pat/event (pat//union (pat/event-value ea)
-                                             (pat/event-value eb))
-                                 active
-                                 (pat/event-whole ea)))
-                '())))
-        (pat//events pb (pat/event-whole-or-active ea))))
-     (pat//events pa span))))
+  (pat//app-side pa pb (lambda (a b) (list (pat//union a b)))))
 
 (define (pat//repeat v n acc)
   (if (<= n 0) acc (pat//repeat v (- n 1) (cons v acc))))
@@ -831,6 +961,49 @@
               (pat//seek-back p x (- 0 secs) r)
               (pat//seek-ahead p x secs r)))
         x)))
+
+;; The seconds from cycle point `from` to cycle point `to` at `cps`, the
+;; inverse of [`pat/nudge`]. They are negative when `to` is before `from`.
+;; A cps change between the two points counts. `held` is the cps at `from`,
+;; which a gap in `cps` holds. A partial eval with a missing input gives
+;; #f.
+(define (pat/secs from to cps held)
+  (let ((p (pat//cps-pattern cps))
+        (r (pat//cps held)))
+    (if (if (number? from) (if (number? to) (if p r #f) #f) #f)
+        (let ((a (pat/rationalize from))
+              (b (pat/rationalize to)))
+          (if (< b a)
+              (- 0.0 (pat//span-secs p (cons b a) r))
+              (pat//span-secs p (cons a b) r)))
+        #f)))
+
+;; The seconds that `span` takes to play at `cps`, where `r` is the cps
+;; that a gap holds.
+(define (pat//span-secs cps span r)
+  (pat//segs-secs (pat//cps-segs cps span r)))
+
+;; The maps of `p`, each with the seconds of its event's whole at `cps`
+;; under `key`. Tidal sends this value to SuperDirt as `delta`. A cps
+;; change inside an event counts. `held` is the cps that a gap in `cps`
+;; holds. A value that is not a map becomes a map of the one key, as
+;; [`pat/with`] does. A signal has no whole, so it passes through as it
+;; is, as does each event of a partial eval with a missing cps.
+(define (pat/len-secs key p cps held)
+  (let ((c (pat//cps-pattern cps))
+        (r (pat//cps held)))
+    (if (if c r #f)
+        (pat/map-events
+         (lambda (e)
+           (let ((w (pat/event-whole e)))
+             (if w
+                 (pat/event-map-value
+                  (lambda (v)
+                    (hash-insert (if (hash? v) v (hash)) key (pat//span-secs c w r)))
+                  e)
+                 e)))
+         p)
+        p)))
 
 ;; Each cycle has its own query, as in `pat//cps-segs`.
 (define (pat//seek-ahead cps x secs r)

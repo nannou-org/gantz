@@ -1,7 +1,14 @@
-//! Embedded base node export for gantz.
+//! The base node set of gantz.
 //!
 //! Ships the `base.gantz` file as a compile-time constant. Downstream crates
-//! do not need fragile relative `include_bytes!` paths.
+//! do not need fragile relative `include_bytes!` paths. The graphs build on
+//! the core nodes and on the nodes of [`node`], which are defined as data.
+
+pub use node::{Get, Literal, Set, builtins};
+pub use sugar::BaseSugar;
+
+pub mod node;
+pub mod sugar;
 
 /// Raw bytes of the baked-in base `.gantz` export, embedded at compile time.
 pub const BYTES: &[u8] = include_bytes!("../base.gantz");

@@ -215,3 +215,96 @@ fn test_fn_apply_graph() {
     vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
+
+// Fn binds the value of a connected input of the inner graph when it makes
+// the lambda, and the lambda takes the inputs left open.
+//
+//    --------
+//    | bang |  -----
+//    -+------  | 1 |
+//     |        -+---
+//     |   ------
+//     |   |
+//    -+---+---
+//    |  fn   |  ------
+//    | (sub) |  | 43 |
+//    -+-------  -+----
+//     |          |
+//     |      -----
+//     |      |
+//    -+------+-
+//    |  apply  |
+//    -+---------
+//     |
+//     |
+//    ----------
+//    | result |  (should be 42)
+//    ----------
+#[test]
+fn test_fn_captures_connected_inputs() {
+    let inlet_node = graph::Inlet::default();
+    let sub_node = node::expr("(- $l $r)").unwrap();
+    let outlet_node = graph::Outlet::default();
+
+    // The "sub" graph subtracts its second inlet from its first.
+    let mut sub_data = gantz_ca::DataGraph::default();
+    let d_a = sub_data.add_node(gantz_core::data::erase_node_typed(&inlet_node).unwrap());
+    let d_b = sub_data.add_node(gantz_core::data::erase_node_typed(&inlet_node).unwrap());
+    let d_sub = sub_data.add_node(gantz_core::data::erase_node_typed(&sub_node).unwrap());
+    let d_outlet = sub_data.add_node(gantz_core::data::erase_node_typed(&outlet_node).unwrap());
+    sub_data.add_edge(d_a, d_sub, Edge::from((0, 0)));
+    sub_data.add_edge(d_b, d_sub, Edge::from((0, 1)));
+    sub_data.add_edge(d_sub, d_outlet, Edge::from((0, 0)));
+
+    let mut sub_graph = graph::Graph::<Box<dyn DebugNode>>::default();
+    let a = sub_graph.add_node(Box::new(inlet_node.clone()) as Box<dyn DebugNode>);
+    let b = sub_graph.add_node(Box::new(inlet_node) as Box<_>);
+    let sub = sub_graph.add_node(Box::new(sub_node) as Box<_>);
+    let outlet = sub_graph.add_node(Box::new(outlet_node) as Box<_>);
+    sub_graph.add_edge(a, sub, Edge::from((0, 0)));
+    sub_graph.add_edge(b, sub, Edge::from((0, 1)));
+    sub_graph.add_edge(sub, outlet, Edge::from((0, 0)));
+
+    let sub_ca: gantz_ca::ContentAddr = gantz_ca::graph_addr(&sub_data).into();
+    let get_node = |ca: &gantz_ca::ContentAddr| -> Option<&dyn Node> {
+        (*ca == sub_ca).then_some(&sub_graph as &dyn Node)
+    };
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let fn_node = Fn::new(Ref::new(sub_ca));
+    let ctx = node::MetaCtx::new(&get_node);
+    assert_eq!(fn_node.n_inputs(ctx), 3, "a bang, then each inlet of sub");
+
+    let bang = g.add_node(Box::new(node_bang()) as Box<dyn DebugNode>);
+    let one = g.add_node(Box::new(node_int(1)) as Box<_>);
+    let fn_node = g.add_node(Box::new(fn_node) as Box<_>);
+    let apply_node = g.add_node(Box::new(Apply) as Box<_>);
+    let value = g.add_node(Box::new(node_int(43)) as Box<_>);
+    let list = g.add_node(Box::new(node_list_single()) as Box<_>);
+    let expected = g.add_node(Box::new(node_int(42)) as Box<_>);
+    let assert_eq = g.add_node(Box::new(node_assert_eq().with_pull_eval()) as Box<_>);
+
+    g.add_edge(bang, fn_node, Edge::from((0, 0)));
+    // The 1 binds the second inlet of sub, so the lambda takes the first.
+    g.add_edge(one, fn_node, Edge::from((0, 2)));
+    g.add_edge(fn_node, apply_node, Edge::from((0, 0)));
+    g.add_edge(value, list, Edge::from((0, 0)));
+    g.add_edge(list, apply_node, Edge::from((0, 1)));
+    g.add_edge(apply_node, assert_eq, Edge::from((0, 0)));
+    g.add_edge(expected, assert_eq, Edge::from((0, 1)));
+
+    let eps = push_pull_entrypoints(&get_node, &g);
+    let module = gantz_core::compile::module(&get_node, &g, &eps, &Default::default()).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&get_node, &g, &[], &mut vm);
+
+    for expr in module {
+        vm.run(expr.to_pretty(80)).unwrap();
+    }
+
+    let ep = entrypoint::pull(vec![assert_eq.index()], g[assert_eq].n_inputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+}

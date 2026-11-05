@@ -19,6 +19,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 pub mod import;
+pub mod key;
 
 /// A node of a type that a domain defines as data. See the crate docs.
 pub trait NodeDef: Serialize + DeserializeOwned + Send + Sync + 'static {

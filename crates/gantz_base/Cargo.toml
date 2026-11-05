@@ -1,9 +1,16 @@
 [package]
 name = "gantz_base"
 version = "0.3.1"
-description = "Embedded base node export for gantz"
+description = "The base node set of gantz"
 authors.workspace = true
 edition.workspace = true
 homepage.workspace = true
 license = "MIT OR Apache-2.0"
 repository.workspace = true
+
+[dependencies]
+gantz_core.workspace = true
+gantz_format.workspace = true
+gantz_nodedef.workspace = true
+gantz_ui = { workspace = true, default-features = false }
+serde.workspace = true
