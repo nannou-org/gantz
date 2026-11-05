@@ -999,6 +999,30 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph ui.canvas
+  (expr0 (expr (ui-elem 'canvas '()
+  (list (list 'bind $?bind)
+        (list 'grid $?grid)
+        (list 'axes $?axes)
+        (list 'interactive $?interactive)
+        (list 'w $?w)
+        (list 'h $?h))
+  (None)) #:require "gantz/ui"))
+  (inlet1 (inlet "path" "path of the node whose state holds the panels"))
+  (inlet2 (inlet "boolean" "show the grid"))
+  (inlet3 (inlet "boolean" "show the axes"))
+  (inlet4 (inlet "boolean" "allow zoom and pan"))
+  (inlet5 (inlet "number" "width"))
+  (inlet6 (inlet "number" "height"))
+  (outlet7 (outlet "element" "canvas element"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> inlet3 (expr0 2))
+  (-> inlet4 (expr0 3))
+  (-> inlet5 (expr0 4))
+  (-> inlet6 (expr0 5))
+  (-> expr0 outlet7))
+
 (graph ui.choice
   (expr0 (expr (ui-elem 'choice '() (list (list 'bind $?bind) (list 'options $?options)) (None)) #:require "gantz/ui"))
   (inlet1 (inlet "path" "path of the state node whose option to set"))
@@ -1230,6 +1254,7 @@
   (take "The first n items of a list")
   (ui.bound "GUI: an optional number, set or cleared by a checkbox")
   (ui.button "GUI: a button that push-evals a node")
+  (ui.canvas "GUI: draw the figures in a node's state")
   (ui.choice "GUI: a pill per option, editing a state node")
   (ui.col "GUI: stack children vertically")
   (ui.color "GUI: a colour editing a state node")
@@ -1939,6 +1964,17 @@
   (inlet2 60.002 -75.78125)
   (outlet3 -39.625 106.59375)
   (camera 26.5 26.5 1))
+
+(layout ui.canvas
+  (expr0 -238.879 13.40625)
+  (inlet1 -238.879 -75.78125)
+  (inlet2 -139.252 -75.78125)
+  (inlet3 -39.625 -75.78125)
+  (inlet4 60.002 -75.78125)
+  (inlet5 159.629 -75.78125)
+  (inlet6 259.256 -75.78125)
+  (outlet7 -238.879 216.59375)
+  (camera 40 70 1))
 
 (layout ui.choice
   (expr0 0 60)

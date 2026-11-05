@@ -149,46 +149,46 @@ fn combinators_wrapping_junk_are_silent() {
 fn junk_window_and_delivery_inputs() {
     let mut vm = new_pin_engine();
     let rows: &[(&str, &str, &str)] = &[
-        // The clock holds on a junk time, tick or tempo, leaving state
-        // alone.
+        // The clock holds on a junk time, tick or cps, leaving state
+        // alone. Its span is empty at the playhead.
         (
             "window_with_junk_time_holds",
-            "(((0 1) (0 1)) (1 2))",
+            "(((1 2) (1 2)) (1 2))",
             "(let ((r (pat/window (list 1/2 0.0 1.0 0.0) '() 0.1 1)))
-               (list (pin-span (car r)) (pin-num (car (list-ref r 2)))))",
+               (list (pin-span (car r)) (pin-num (car (list-ref r 4)))))",
         ),
         (
             "window_with_junk_tick_holds",
-            "(((0 1) (0 1)) (1 2))",
+            "(((1 2) (1 2)) (1 2))",
             "(let ((r (pat/window (list 1/2 0.0 1.0 0.0) 0.5 '() 1)))
-               (list (pin-span (car r)) (pin-num (car (list-ref r 2)))))",
+               (list (pin-span (car r)) (pin-num (car (list-ref r 4)))))",
         ),
         (
-            "window_with_junk_tempo_holds",
-            "(((0 1) (0 1)) (1 2))",
+            "window_with_junk_cps_holds",
+            "(((1 2) (1 2)) (1 2))",
             "(let ((r (pat/window (list 1/2 0.0 1.0 0.0) 0.5 0.1 '())))
-               (list (pin-span (car r)) (pin-num (car (list-ref r 2)))))",
+               (list (pin-span (car r)) (pin-num (car (list-ref r 4)))))",
         ),
         // Delivery with junk inputs emits nothing.
         (
             "events_to_secs_with_empty_events",
             "()",
-            "(pat/events->secs '() (list 0.0 (list (list 0 1 1.0)) 1))",
+            "(pat/events->secs '() 0.0 (list (list 0 1 1.0)))",
         ),
         (
             "events_to_secs_with_junk_events",
             "()",
-            "(pat/events->secs 'junk (list 0.0 (list (list 0 1 1.0)) 1))",
+            "(pat/events->secs 'junk 0.0 (list (list 0 1 1.0)))",
         ),
         (
-            "events_to_secs_with_junk_timing",
+            "events_to_secs_with_junk_seconds",
             "()",
-            "(pat/events->secs (pat/query (pat/pure 1) (pat/span 0 1)) '())",
+            "(pat/events->secs (pat/query (pat/pure 1) (pat/span 0 1)) '() (list (list 0 1 1.0)))",
         ),
         (
-            "events_to_secs_with_a_span_as_timing",
+            "events_to_secs_with_junk_rates",
             "()",
-            "(pat/events->secs (pat/query (pat/pure 1) (pat/span 0 1)) (pat/span 0 1))",
+            "(pat/events->secs (pat/query (pat/pure 1) (pat/span 0 1)) 0.0 'junk)",
         ),
     ];
     for (case, expected, expr) in rows {
@@ -200,4 +200,53 @@ fn junk_window_and_delivery_inputs() {
         "rationalize_passes_junk_through",
         "(equal? '() (pat/rationalize '()))",
     );
+}
+
+// A map of a schedule with a missing input gives no pairs.
+#[test]
+fn junk_schedule_inputs_are_silent() {
+    let mut vm = new_pin_engine();
+    for junk in JUNK {
+        for (name, expr) in [
+            (
+                "function",
+                format!("(sched/map {junk} (list (list 1.0 1)))"),
+            ),
+            ("schedule", format!("(sched/map (lambda (v) v) {junk})")),
+        ] {
+            assert_pinned(&mut vm, &format!("{name} of {junk}"), "()", &expr);
+        }
+    }
+}
+
+// A reader with a missing input reads nothing.
+#[test]
+fn junk_reader_inputs_are_silent() {
+    let mut vm = new_pin_engine();
+    for junk in JUNK {
+        let expr = format!("(pat/at {junk} 1/4)");
+        assert_pinned(&mut vm, &format!("pattern of {junk}"), "()", &expr);
+    }
+    // A number is a valid cycle point.
+    for junk in JUNK.iter().filter(|junk| **junk != "7") {
+        let expr = format!("(pat/at (pat/pure 1) {junk})");
+        assert_pinned(&mut vm, &format!("point of {junk}"), "()", &expr);
+    }
+}
+
+// A nudge with a missing input gives its cycle point back.
+#[test]
+fn junk_nudge_inputs_keep_the_point() {
+    let mut vm = new_pin_engine();
+    // A number is a valid number of seconds, cps and held cps.
+    for junk in JUNK.iter().filter(|junk| **junk != "7") {
+        for (name, expr) in [
+            ("seconds", format!("(pat/nudge 1/4 {junk} 1 1)")),
+            ("cps", format!("(pat/nudge 1/4 0.25 {junk} 1)")),
+            ("held cps", format!("(pat/nudge 1/4 0.25 1 {junk})")),
+        ] {
+            let expr = format!("(pin-num {expr})");
+            assert_pinned(&mut vm, &format!("{name} of {junk}"), "(1 4)", &expr);
+        }
+    }
 }
