@@ -971,7 +971,7 @@
   (-> expr0 outlet3))
 
 (graph pow
-  (expr0 (expr (expt $base $exp)))
+  (expr0 (expr (if (if (exact? $base) (not (integer? $base)) #f) (/ (expt (numerator $base) $exp) (expt (denominator $base) $exp)) (expt $base $exp))))
   (inlet1 (inlet "number" "base"))
   (inlet2 (inlet "number" "exponent"))
   (outlet3 (outlet "number" "base raised to the exponent, exact for exact inputs"))
