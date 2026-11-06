@@ -169,6 +169,13 @@ fn state_wrapped(node: node::Id, call_expr: Sexp) -> Sexp {
 /// The statements of a body. Its steps followed by exactly one tail
 /// expression, which is the body's value.
 pub(crate) fn body_sexps(cx: &Cx, body: &Body) -> Vec<Sexp> {
+    let mut stmts = steps_sexps(cx, body);
+    stmts.push(tail_sexp(&body.tail));
+    stmts
+}
+
+/// The statements of the steps of a body, without its tail.
+pub(crate) fn steps_sexps(cx: &Cx, body: &Body) -> Vec<Sexp> {
     let mut stmts = Vec::with_capacity(body.steps.len() + 1);
     for step in &body.steps {
         match step {
@@ -219,7 +226,6 @@ pub(crate) fn body_sexps(cx: &Cx, body: &Body) -> Vec<Sexp> {
             }
         }
     }
-    stmts.push(tail_sexp(&body.tail));
     stmts
 }
 
@@ -368,12 +374,72 @@ pub(crate) fn level_result_sexp(
 }
 
 /// Assemble a top-level fn definition from glue statements.
-pub(crate) fn fn_def(name: &str, params: &[String], stmts: Vec<Sexp>) -> ExprKind {
+///
+/// A body that ends by returning the var its last statement defines calls
+/// in tail position instead. A body that only calls a generated fn with the
+/// params in order becomes an alias of that fn.
+pub(crate) fn fn_def(name: &str, params: &[String], mut stmts: Vec<Sexp>) -> ExprKind {
+    tail_call(&mut stmts);
+    if let [Sexp::L(call)] = stmts.as_slice()
+        && let Some(f) = eta_target(params, call)
+    {
+        return parse_one(&format!("(define {name} {f})"));
+    }
     let mut sig = vec![a(name)];
     sig.extend(params.iter().map(|p| a(p.clone())));
     let mut items = vec![a("define"), Sexp::L(sig)];
     items.extend(stmts);
     parse_one(&Sexp::L(items).to_string())
+}
+
+/// Rewrite a trailing `(define x e) x` to `e`.
+fn tail_call(stmts: &mut Vec<Sexp>) {
+    let n = stmts.len();
+    if n < 2 {
+        return;
+    }
+    let (Sexp::L(def), Sexp::A(ret)) = (&stmts[n - 2], &stmts[n - 1]) else {
+        return;
+    };
+    let [Sexp::A(kw), Sexp::A(var), _] = def.as_slice() else {
+        return;
+    };
+    if kw != "define" || var != ret {
+        return;
+    }
+    stmts.pop();
+    let Some(Sexp::L(mut def)) = stmts.pop() else {
+        unreachable!()
+    };
+    stmts.push(def.pop().expect("define has a value"));
+}
+
+/// The generated fn that the parsed `expr` applies to exactly `params`, in
+/// order.
+pub(crate) fn eta_target_expr(params: &[String], expr: &ExprKind) -> Option<String> {
+    let ExprKind::List(list) = expr else {
+        return None;
+    };
+    let call = list
+        .args
+        .iter()
+        .map(|arg| arg.atom_identifier().map(|s| a(s.resolve())))
+        .collect::<Option<Vec<_>>>()?;
+    eta_target(params, &call).map(str::to_string)
+}
+
+/// The generated fn that `call` applies to exactly `params`, in order.
+fn eta_target<'a>(params: &[String], call: &'a [Sexp]) -> Option<&'a str> {
+    let (Sexp::A(f), args) = call.split_first()? else {
+        return None;
+    };
+    let generated = f.starts_with("graph-fn-") || f.starts_with("node-fn-");
+    let same = args.len() == params.len()
+        && args
+            .iter()
+            .zip(params)
+            .all(|(arg, p)| matches!(arg, Sexp::A(s) if s == p));
+    (generated && same).then_some(f.as_str())
 }
 
 /// Parse one emitted top-level definition into the Steel AST.

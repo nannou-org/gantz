@@ -12,7 +12,7 @@
 use crate::{
     Edge,
     compile::{
-        NodeConf, NodeConns, RoseTree,
+        NodeConf, NodeConns, RoseTree, emit,
         error::{NestedGraphNotFound, NodeExprError, NodeFnError, NodeFnErrors},
         names::node_fn_name,
     },
@@ -134,7 +134,11 @@ pub(crate) fn node_fn<'a>(
 
     let fn_name = node_fn_name(node_path, &conns.inputs, &conns.outputs);
     let meta_ctx = node::MetaCtx::new(get_node);
-    let fn_body = if node.stateful(meta_ctx) {
+    let stateful = node.stateful(meta_ctx);
+    if !stateful && let Some(f) = emit::eta_target_expr(&input_args, &node_expr) {
+        return node::parse_expr(&format!("(define {fn_name} {f})"));
+    }
+    let fn_body = if stateful {
         input_args.push(STATE.to_string());
         format!("(let ((output {node_expr})) (list output state))")
     } else {
