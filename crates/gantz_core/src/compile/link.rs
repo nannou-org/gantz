@@ -97,7 +97,7 @@ where
         ])];
         if let Some((glue, out)) = builder.ep_level_stmts(ep_id, &meta_tree, &[])? {
             stmts.extend(glue);
-            stmts.extend(emit::body_sexps(&emit::Cx { path: &[] }, &out.body));
+            stmts.extend(emit::steps_sexps(&emit::Cx { path: &[] }, &out.body));
         }
         stmts.push(emit::l([
             emit::a("set!"),
@@ -500,7 +500,7 @@ impl ModuleBuilder<'_> {
             vec![]
         };
         body.extend(glue);
-        body.extend(emit::body_sexps(&emit::Cx { path }, &out.body));
+        body.extend(emit::steps_sexps(&emit::Cx { path }, &out.body));
         if stateful {
             body.push(l([a("list"), result, a(crate::GRAPH_STATE)]));
         } else {
@@ -564,7 +564,7 @@ impl ModuleBuilder<'_> {
             params.push("%lvl-state".to_string());
             stmts.push(l([a("define"), a(crate::GRAPH_STATE), a("%lvl-state")]));
         }
-        stmts.extend(emit::body_sexps(&ecx, &out.body));
+        stmts.extend(emit::steps_sexps(&ecx, &out.body));
         if stateful {
             stmts.push(l([a("list"), result, a(crate::GRAPH_STATE)]));
         } else {
