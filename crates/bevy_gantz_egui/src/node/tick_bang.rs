@@ -3,13 +3,15 @@
 //! `update!` bangs once per update. Each `tick!` node entity has a repeating
 //! [`TickTimer`] fed from Bevy `Time`, and fires once for every whole tick
 //! duration elapsed since the last update. This keeps the tick count correct
-//! even when the app updates more slowly than the tick rate. The
+//! even when the app updates more slowly than the tick rate. When an eval
+//! takes longer than a tick, each missed tick adds more work than it
+//! removes. The node then fires only its latest tick and drops the rest. The
 //! [`drive_tick_bangs`] Bevy system drives evaluation, not the node's `ui()`
 //! method, so it continues when the graph tab is not visible.
 
 use bevy_ecs::prelude::*;
 use bevy_egui::egui;
-use bevy_gantz::node::PushEval;
+use bevy_gantz::node::{NodePath, PushEval};
 use bevy_time::prelude::*;
 use gantz_core::node::{self, EvalConf, ExprCtx, ExprResult, MetaCtx};
 use gantz_egui::widget::kit;
@@ -150,6 +152,7 @@ impl Hash for Interval {
 /// effective tick duration in seconds as `f64` on each tick. The driver fires
 /// it once for every whole interval elapsed since the last update, so the
 /// tick count stays correct even when updates are slower than the tick rate.
+/// It drops the missed ticks while an eval takes longer than a tick.
 #[derive(Clone, Component, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, NodeTag)]
 #[require(TickTimer)]
 pub struct TickBang {
@@ -157,10 +160,16 @@ pub struct TickBang {
     interval: Interval,
 }
 
-/// The repeating timer of a `tick!` node entity. [`drive_tick_bangs`] keeps
-/// its duration equal to the node's.
+/// The repeating timer of a `tick!` node entity, with the time its last eval
+/// took. [`drive_tick_bangs`] keeps the timer duration equal to the node's.
 #[derive(Component, Debug)]
-pub struct TickTimer(pub Timer);
+pub struct TickTimer {
+    timer: Timer,
+    /// How long the last eval of the node took.
+    cost: Duration,
+    /// Whether the last update dropped missed ticks.
+    dropping: bool,
+}
 
 fn is_default_interval(interval: &Interval) -> bool {
     *interval == Interval::default()
@@ -195,7 +204,11 @@ impl Default for TickBang {
 impl Default for TickTimer {
     fn default() -> Self {
         let duration = Duration::from_secs_f64(DEFAULT_DURATION);
-        TickTimer(Timer::new(duration, TimerMode::Repeating))
+        TickTimer {
+            timer: Timer::new(duration, TimerMode::Repeating),
+            cost: Duration::ZERO,
+            dropping: false,
+        }
     }
 }
 
@@ -225,7 +238,8 @@ impl gantz_egui::NodeUi for TickBang {
     fn description(&self) -> Option<&'static str> {
         Some(
             "Bangs once per tick, with the tick duration in seconds. Set the tick \
-             as a duration or a rate. A slow update fires each tick it missed.",
+             as a duration or a rate. A slow update fires each tick it missed, \
+             unless an eval takes longer than a tick.",
         )
     }
 
@@ -341,16 +355,18 @@ impl gantz_egui::NodeUi for TickBang {
 ///
 /// Advances each `tick!` node's timer by the update delta time and triggers
 /// one push evaluation for every whole tick duration elapsed. Catch-up is
-/// capped by `MAX_CATCHUP_TICKS`. Any backlog beyond the cap is dropped.
+/// capped by `MAX_CATCHUP_TICKS`, or to the latest tick when the last eval
+/// took longer than a tick. Any backlog beyond the cap is dropped, with an
+/// error logged when the node starts to drop ticks.
 pub fn drive_tick_bangs(
     time: Res<Time>,
     epoch: Res<bevy_gantz::EvalEpoch>,
-    mut ticks: Query<(Entity, Ref<TickBang>, &mut TickTimer)>,
+    mut ticks: Query<(Entity, Ref<TickBang>, &mut TickTimer, Option<&NodePath>)>,
     mut cmds: Commands,
 ) {
     // The frame's monotonic now. Each tick's exact firing time derives from it.
     let now = epoch.now_secs();
-    for (node, tick, mut timer) in ticks.iter_mut() {
+    for (node, tick, mut timer, path) in ticks.iter_mut() {
         // The inspector clamps to `MIN_DURATION`, but stored data may hold
         // any duration.
         let dur = tick.duration();
@@ -361,12 +377,29 @@ pub fn drive_tick_bangs(
             continue;
         };
         if tick.is_changed() {
-            timer.0.set_duration(duration);
+            timer.timer.set_duration(duration);
         }
-        timer.0.tick(time.delta());
-        let n = timer.0.times_finished_this_tick().min(MAX_CATCHUP_TICKS);
+        timer.timer.tick(time.delta());
+        let missed = timer.timer.times_finished_this_tick();
+        let cap = if timer.cost > duration {
+            1
+        } else {
+            MAX_CATCHUP_TICKS
+        };
+        let n = missed.min(cap);
+        let dropping = n < missed;
+        if dropping && !timer.dropping {
+            let path = path.map(|p| p.0.as_slice()).unwrap_or_default();
+            bevy_log::error!(
+                "tick! {path:?}: dropped {} of {missed} missed ticks. Its last eval took {:?} \
+                 for a {duration:?} tick.",
+                missed - n,
+                timer.cost,
+            );
+        }
+        timer.dropping = dropping;
         // The time since the most recent tick boundary.
-        let since = timer.0.elapsed_secs_f64();
+        let since = timer.timer.elapsed_secs_f64();
         // Trigger one eval per elapsed tick, oldest first. Each is stamped
         // with the exact monotonic time it should fire. The i-th most recent
         // tick fired at `now - since - i*dur`, with i = 0 the latest.
@@ -374,7 +407,21 @@ pub fn drive_tick_bangs(
         // across the interval rather than bunched at the frame boundary.
         for i in (0..n).rev() {
             let time = Some(now - since - f64::from(i) * dur);
-            cmds.trigger(PushEval { entity: node, time });
+            cmds.queue(timed_push(node, time));
+        }
+    }
+}
+
+/// Push an evaluation of the `tick!` node at `time`, and keep the time it
+/// takes on the node's [`TickTimer`].
+fn timed_push(node: Entity, time: Option<f64>) -> impl Command {
+    move |world: &mut World| {
+        let start = web_time::Instant::now();
+        world.trigger(PushEval { entity: node, time });
+        world.flush();
+        let cost = start.elapsed();
+        if let Some(mut timer) = world.get_mut::<TickTimer>(node) {
+            timer.cost = cost;
         }
     }
 }
@@ -389,6 +436,10 @@ mod tests {
     #[derive(Default, Resource)]
     struct Pushes(Vec<f64>);
 
+    /// How long each push evaluation takes.
+    #[derive(Default, Resource)]
+    struct Cost(Duration);
+
     /// An app that drives one `tick!` node of `secs` per tick, and records
     /// its pushes.
     fn app(secs: f64) -> App {
@@ -396,11 +447,15 @@ mod tests {
         app.add_plugins(bevy_time::TimePlugin)
             .insert_resource(bevy_gantz::EvalEpoch(web_time::Instant::now()))
             .init_resource::<Pushes>()
+            .init_resource::<Cost>()
             .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO))
             .add_systems(Update, drive_tick_bangs)
-            .add_observer(|on: On<PushEval>, mut pushes: ResMut<Pushes>| {
-                pushes.0.extend(on.time);
-            });
+            .add_observer(
+                |on: On<PushEval>, mut pushes: ResMut<Pushes>, cost: Res<Cost>| {
+                    std::thread::sleep(cost.0);
+                    pushes.0.extend(on.time);
+                },
+            );
         let mut tick = TickBang::default();
         tick.set_interval(Interval::Duration(secs));
         app.world_mut().spawn(tick);
@@ -436,5 +491,18 @@ mod tests {
         let mut app = app(MIN_DURATION);
         assert_eq!(advance(&mut app, 0.2).len(), MAX_CATCHUP_TICKS as usize);
         assert!(advance(&mut app, 0.0).is_empty());
+    }
+
+    /// While an eval takes longer than a tick, an update fires only its
+    /// latest tick. Catch-up resumes once an eval is faster than a tick.
+    #[test]
+    fn slow_evals_fire_only_the_latest_tick() {
+        let mut app = app(0.01);
+        app.insert_resource(Cost(Duration::from_millis(15)));
+        assert_eq!(advance(&mut app, 0.035).len(), 3, "no eval was slow yet");
+        assert_eq!(advance(&mut app, 0.035).len(), 1);
+        app.insert_resource(Cost(Duration::ZERO));
+        assert_eq!(advance(&mut app, 0.03).len(), 1, "the last eval was slow");
+        assert_eq!(advance(&mut app, 0.03).len(), 3, "the last eval was fast");
     }
 }

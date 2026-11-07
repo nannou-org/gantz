@@ -94,6 +94,26 @@ pub fn parse_export_seeded_at(
     crate::format::from_str_seeded(text, now, seed, codec).map_err(ParseExportError::Format)
 }
 
+/// Parse the raw bytes of a `.gantz` file to merge into `registry`.
+///
+/// A name that the file uses but does not define resolves to the head graph
+/// of that name in `registry`. The names that the file defines shadow those
+/// names. An old name in `renames` resolves to the head graph of its new
+/// name. Each old name in the file then takes its new name.
+pub fn parse_import(
+    bytes: &[u8],
+    now: gantz_ca::Timestamp,
+    registry: &gantz_ca::Registry,
+    renames: &[(Name, Name)],
+    codec: &DataCodec,
+) -> Result<gantz_ca::Registry, ParseExportError> {
+    let names: crate::base::Names = registry.heads().map(|(n, ca)| (n.clone(), ca)).collect();
+    let seed = crate::base::seed_graph_addrs(&names, renames, registry);
+    let mut import = parse_export_seeded_at(bytes, now, &seed, codec)?;
+    crate::resync::rename(&mut import, now, renames);
+    Ok(import)
+}
+
 /// The current time as a [`gantz_ca::Timestamp`], the duration since the Unix
 /// epoch.
 fn now() -> gantz_ca::Timestamp {
@@ -689,6 +709,50 @@ mod tests {
         let restored = gantz_ca::section_get::<Snapshots>(&fresh, &root_ca);
         assert_eq!(restored, Some(state), "node state survives");
         assert!(gantz_ca::section_get::<Snapshots>(&fresh, &leaf_ca).is_none());
+    }
+
+    /// An import resolves a name that the file does not define to its head
+    /// graph in the registry, and an old name to the graph of its new name.
+    /// A name that the file defines shadows the registry.
+    #[test]
+    fn import_resolves_names_through_the_registry() {
+        use crate::test_node::codec;
+
+        let mut reg = gantz_ca::Registry::default();
+        let lib = parse_export_at(b"(graph lib (x (expr 1)))", Duration::ZERO, &codec()).unwrap();
+        reg.merge(lib);
+        let lib_ga = reg.commits()[&reg.head(&name("lib")).unwrap()].graph;
+        let renames = [(name("old"), name("lib"))];
+        let import = |text: &str| {
+            parse_import(
+                text.as_bytes(),
+                Duration::from_secs(1),
+                &reg,
+                &renames,
+                &codec(),
+            )
+        };
+        let user_refs = |import: &gantz_ca::Registry| -> Vec<(Name, GraphAddr)> {
+            let ca = import.head(&name("user")).unwrap();
+            let graph = import.commit_graph_ref(&ca).unwrap();
+            crate::resync::named_refs(graph)
+                .map(|(n, ga, _)| (n, ga))
+                .collect()
+        };
+
+        let by_name = import("(graph user (r (ref lib)))").unwrap();
+        assert_eq!(user_refs(&by_name), [(name("lib"), lib_ga)]);
+
+        let by_old_name = import("(graph user (r (ref old)))").unwrap();
+        assert_eq!(user_refs(&by_old_name), [(name("lib"), lib_ga)]);
+
+        let own = import("(graph lib (x (expr 2)))\n(graph user (r (ref lib)))").unwrap();
+        let own_ga = own.commits()[&own.head(&name("lib")).unwrap()].graph;
+        assert_ne!(own_ga, lib_ga);
+        assert_eq!(user_refs(&own), [(name("lib"), own_ga)]);
+
+        let missing = import("(graph user (r (ref nowhere)))").unwrap_err();
+        assert!(missing.is_missing_dependency(), "{missing}");
     }
 
     /// A base write-back carries the node state of a name that keeps it and
