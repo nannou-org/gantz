@@ -41,7 +41,11 @@ fn cache_gives_the_events_of_its_pattern() {
     );
     for p in PATTERNS {
         for n in [1, 4, 7] {
-            eval(&mut vm, "define", &format!("(define c (pat/cache {n} {p}))"));
+            eval(
+                &mut vm,
+                "define",
+                &format!("(define c (pat/cache {n} {p}))"),
+            );
             for span in SPANS {
                 let case = format!("{p} n {n} span {span}");
                 let check = format!(
@@ -88,7 +92,10 @@ fn cache_queries_each_cycle_once() {
         SteelVal::IntV(n) => n,
         v => panic!("{case}: {v:?}"),
     };
-    assert_eq!(calls(&mut vm, "parts", "(q 0 1/3) (q 1/3 1/2) (q 1/2 1) calls"), 1);
+    assert_eq!(
+        calls(&mut vm, "parts", "(q 0 1/3) (q 1/3 1/2) (q 1/2 1) calls"),
+        1
+    );
     assert_eq!(calls(&mut vm, "across", "(q 1/2 3/2) calls"), 2);
     assert_eq!(calls(&mut vm, "more", "(q 2 5) calls"), 5);
     assert_eq!(calls(&mut vm, "kept", "(q 1 5) calls"), 5);
