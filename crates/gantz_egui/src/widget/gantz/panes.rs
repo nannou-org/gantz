@@ -1879,7 +1879,8 @@ mod tests {
 
     /// Each inspected node draws its table in its own id scope. egui paints a
     /// "use of ... ID" warning over widgets whose ids clash, such as the
-    /// column resize handles of two tables with one id.
+    /// column resize handles of two tables with one id. The test turns the
+    /// warning on, as egui leaves it off in release builds.
     #[test]
     fn inspected_nodes_have_their_own_ids() {
         let parts = EnvParts::new();
@@ -1892,7 +1893,7 @@ mod tests {
         let head = gantz_ca::Head::Branch("test".parse().unwrap());
 
         let ctx = egui::Context::default();
-        assert!(ctx.options(|o| o.warn_on_id_clash));
+        ctx.options_mut(|o| o.warn_on_id_clash = true);
         let mut texts = Vec::new();
         // Tables size their columns over the first passes.
         for _ in 0..3 {

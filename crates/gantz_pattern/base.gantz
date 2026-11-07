@@ -464,6 +464,15 @@
   (-> inlet2 (expr0 1))
   (-> expr0 outlet3))
 
+(graph pat.cache
+  (expr0 (expr (pat/cache $n $p) #:require "gantz/pattern"))
+  (inlet1 (inlet "number" "slices per cycle, 1 when unset"))
+  (inlet2 (inlet "pattern" "input pattern"))
+  (outlet3 (outlet "pattern" "the pattern, with the events of each cycle kept"))
+  (-> inlet1 expr0)
+  (-> inlet2 (expr0 1))
+  (-> expr0 outlet3))
+
 (graph pat.degradeby
   (expr0 (expr (pat/degrade-by $seed $prob $p) #:require "gantz/pattern"))
   (inlet1 (inlet "seed" "seed for the drops"))
@@ -947,6 +956,7 @@
   (pat.appl "Apply a pattern of functions to a pattern of values, with the structure of the values.")
   (pat.appr "Apply a pattern of functions to a pattern of values, with the structure of the functions.")
   (pat.at "The events of a pattern that are alive at a cycle point. `pat.eventphase` gives how far the point is through each of them.")
+  (pat.cache "Keep the events of each cycle of a pattern after its first query. A later query of the cycle reads the kept events of the slices it overlaps. The kept events live as long as the pattern does. Build the pattern only when its inputs change. A pattern built again on each eval fills its cache again each time.")
   (pat.degradeby "Drop events at random with a given probability.")
   (pat.euclid "K onsets distributed over N slots per cycle.")
   (pat.euclidfull "Euclidean onsets elongated to fill the gaps.")

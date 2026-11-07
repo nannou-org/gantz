@@ -104,6 +104,11 @@ impl<N: Node> Node for Fn<N> {
         let path = ctx.path();
         let ectx = node::ExprCtx::new(get_node, path, &input_refs, &outputs);
         let expr = node.expr(ectx)?;
+        if binds.is_empty()
+            && let Some(f) = crate::compile::eta_target_expr(&params, &expr)
+        {
+            return node::parse_expr(&f);
+        }
 
         let expr_str = expr.to_pretty(80);
         let lambda_expr = format!("(lambda ({}) {})", params.join(" "), expr_str);
