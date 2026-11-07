@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0](https://github.com/nannou-org/gantz/compare/gantz_pattern-v0.1.3...gantz_pattern-v0.2.0) - 2026-11-07
+
+### Added
+
+- *(gantz_pattern)* Add pat.cache
+- *(gantz_pattern)* add a schedule demo and build demos from nodes
+- *(gantz_pattern)* add pattern and schedule nodes
+- *(gantz_pattern)* label the key of pat.key and sched.pick
+- *(gantz_pattern)* add a demo of voices
+- *(gantz_pattern)* add a demo that plays and draws one pattern
+- *(gantz_pattern)* nudge a cycle point by seconds
+- *(gantz_pattern)* read the events alive at a cycle point
+- *(gantz_pattern)* add sched.map
+- *(gantz_pattern)* add control maps
+- *(gantz_pattern)* [**breaking**] drive windows from a tempo pattern
+- [**breaking**] define the pattern nodes as data
+- rework the demos for the new nodes and edges
+- *(gantz_pattern)* [**breaking**] rename pmini and pplot to pat.mini and pat.plot
+- [**breaking**] move base graphs into dot namespaces
+
+### Fixed
+
+- *(gantz_pattern)* play each slowcat pattern in its own cycles
+- *(gantz_pattern)* apply one side as Tidal's <* and *> do
+- *(gantz_pattern)* smooth the level of the maps demo
+
+### Other
+
+- *(gantz_pattern)* Format the pat.cache tests
+- *(gantz_pattern)* reword and rearrange the pattern demos
+- *(gantz_pattern)* name the timed pairs a schedule
+- *(gantz_pattern)* give each part of a window its own outlet
+- *(gantz_pattern)* read the cps from numbers only
+- *(gantz_pattern)* give the tick to the numbers as a bang
+- *(gantz_pattern)* call the cycles per second cps throughout
+- *(nix)* bump nixpkgs
+
 ## [0.1.3](https://github.com/nannou-org/gantz/compare/gantz_pattern-v0.1.2...gantz_pattern-v0.1.3) - 2026-10-17
 
 ### Other
