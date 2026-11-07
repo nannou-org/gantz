@@ -2589,6 +2589,80 @@ fn base_list_nodes_evaluate() {
     fire_push(&mut vm, &eps, bang.index());
 }
 
+/// The base `hold` node keeps the value from its right inlet and outputs it
+/// only when its left inlet fires. It outputs nothing while it is empty. It
+/// keeps `'()` like any other value. A value and a bang in one eval output
+/// that value.
+#[test]
+fn base_hold_node_evaluates() {
+    use std::time::Duration;
+
+    const TEST_GRAPH: &str = "
+(graph hold-test
+  (hot bang)
+  (cold bang)
+  (both bang)
+  (count (expr (begin $b (set! state (if (number? state) (+ state 1) 1)) state)))
+  (count-both (expr (begin $b (set! state (if (number? state) (+ state 1) 1)) state)))
+  (unit (expr (begin $b '())))
+  (h (ref hold))
+  (h-unit (ref hold))
+  (h-both (ref hold))
+  (seen (expr (begin (set! state (cons $x (if (list? state) state '()))) state)))
+  (seen-unit (expr (begin (set! state (cons $x (if (list? state) state '()))) state)))
+  (seen-both (expr (begin (set! state (cons $x (if (list? state) state '()))) state)))
+  (-> cold count) (-> count (h 1)) (-> hot h) (-> h seen)
+  (-> cold unit) (-> unit (h-unit 1)) (-> hot h-unit) (-> h-unit seen-unit)
+  (-> both count-both) (-> count-both (h-both 1)) (-> both h-both) (-> h-both seen-both))";
+    const HOT: usize = 0;
+    const COLD: usize = 1;
+    const BOTH: usize = 2;
+    const SEEN: usize = 9;
+    const SEEN_UNIT: usize = 10;
+    const SEEN_BOTH: usize = 11;
+
+    let base = std::str::from_utf8(gantz_base::BYTES).expect("utf8");
+    let text = format!("{base}\n{TEST_GRAPH}");
+    let registry: DataReg =
+        gantz_edit::format::from_str(&text, Duration::from_secs(0), crate::node::codec().data())
+            .expect("from_str");
+    let reified = reify_all(&registry);
+    let builtins = builtins_with_instances(&crate::conf());
+    let codec = crate::node::codec();
+    let reg_env = env(&registry, &reified, &builtins, &codec);
+    let get_node = |ca: &gantz_ca::ContentAddr| reg_env.node(ca);
+
+    let head = gantz_ca::Head::Branch(name("hold-test"));
+    let graph = head_graph(&reified, &registry, &head).expect("head graph");
+    let eps = gantz_core::compile::push_pull_entrypoints(&get_node, graph);
+    let (mut vm, _compiled) = gantz_core::vm::init_with_modules(
+        &get_node,
+        graph,
+        &eps,
+        &Default::default(),
+        &crate::node::steel_modules(),
+    )
+    .unwrap_or_else(|e| panic!("init: {}", gantz_core::vm::error_chain(&e)));
+    let seen = |vm: &gantz_core::steel::steel_vm::engine::Engine, ix: usize| {
+        let val = gantz_core::node::state::extract_value(vm, &[ix])
+            .expect("extract")
+            .expect("state present");
+        val.to_string()
+    };
+
+    fire_push(&mut vm, &eps, HOT);
+    assert_eq!(seen(&vm, SEEN), "#<void>");
+    assert_eq!(seen(&vm, SEEN_UNIT), "#<void>");
+    for _ in 0..2 {
+        fire_push(&mut vm, &eps, COLD);
+        fire_push(&mut vm, &eps, HOT);
+    }
+    fire_push(&mut vm, &eps, BOTH);
+    assert_eq!(seen(&vm, SEEN), "(2 1)");
+    assert_eq!(seen(&vm, SEEN_UNIT), "(() ())");
+    assert_eq!(seen(&vm, SEEN_BOTH), "(1)");
+}
+
 /// The `pat.join`, `pat.mergewith` and `pat.timecat` base nodes give the expected
 /// patterns through `ref`s. `pat.mergewith` takes an `fn-ref` over the base
 /// `add` graph. `pat.timecat` takes float weights, as `number` nodes emit
