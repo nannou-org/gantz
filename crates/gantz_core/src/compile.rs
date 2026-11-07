@@ -40,6 +40,7 @@
 //! written where its input is produced.
 
 pub(crate) use analysis::level_branch_patterns;
+pub(crate) use emit::eta_target_expr;
 #[doc(inline)]
 pub use entrypoint::{
     Entrypoint, EntrypointId, EvalKind, EvalSource, pull_source, push_pull_entrypoints, push_source,

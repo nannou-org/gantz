@@ -46,6 +46,7 @@
          pat/stack
          pat/fit-span
          pat/fit-cycle
+         pat/cache
          pat/map
          pat/map-events
          pat/filter
@@ -356,6 +357,113 @@
 ;; [`pat/fit-span`] with a single-cycle `src`.
 (define (pat/fit-cycle dst p)
   (pat/fit-span (cons 0 1) dst p))
+
+;; The events of `p`, kept per cycle. The first query of a cycle queries `p`
+;; over the whole cycle once. Later queries of the cycle read the kept
+;; events and clip them to the query. The kept events go in `n` slices of
+;; 1/n cycle each, and a query reads only the slices that it overlaps. The
+;; latest `pat//cache-cycles` cycles are kept.
+;;
+;; The events are those of `p` when a query of part of a cycle gives the
+;; events of the query of the whole cycle, clipped to the part. Patterns
+;; from the combinators of this module do. A cycle with an event that has
+;; no whole, as from a signal, is not kept. Its queries go to `p`, as do
+;; zero-width queries. A query across a cycle boundary gives the events of
+;; each cycle apart, and an event across the boundary comes in two parts.
+(define (pat/cache n p)
+  (let ((n (if (if (integer? n) (> n 0) #f) (exact n) 1))
+        (kept (hash))
+        (order '()))
+    (lambda (span)
+      (if (< (car span) (cdr span))
+          (list/flat-map
+           (lambda (cyc)
+             (let ((c (floor (car cyc))))
+               (let ((slices (if (hash-contains? kept c)
+                                 (hash-ref kept c)
+                                 (let ((slices (pat//cache-cycle n p c)))
+                                   (set! kept (hash-insert kept c slices))
+                                   (set! order (cons c order))
+                                   (if (> (length order) pat//cache-cycles)
+                                       (begin
+                                         (set! kept (hash-remove kept (list-ref order pat//cache-cycles)))
+                                         (set! order (list/take order pat//cache-cycles)))
+                                       #f)
+                                   slices))))
+                 (if slices
+                     (pat//cache-read n c slices cyc)
+                     (pat//events p cyc)))))
+           (pat/span-cycles span))
+          (pat//events p span)))))
+
+;; How many cycles a [`pat/cache`] keeps.
+(define pat//cache-cycles 4)
+
+;; The events of `p` over cycle `c` in `n` slices, or #f when an event has no
+;; whole. An event goes in each slice that its active span overlaps.
+(define (pat//cache-cycle n p c)
+  (let ((evs (pat//events p (cons c (+ c 1)))))
+    (if (list/all pat/event-whole evs)
+        (pat//cache-fill n c (make-vector n '()) (reverse evs))
+        #f)))
+
+(define (pat//cache-fill n c slices evs)
+  (if (empty? evs)
+      slices
+      (let ((a (pat/event-active (car evs))))
+        (let ((first (pat//cache-slice n c (car a))))
+          (pat//cache-add! slices (car evs) first (pat//max2 first (pat//cache-last n c (cdr a))))
+          (pat//cache-fill n c slices (cdr evs))))))
+
+(define (pat//cache-add! slices e i last)
+  (if (> i last)
+      slices
+      (begin
+        (vector-set! slices i (cons e (vector-ref slices i)))
+        (pat//cache-add! slices e (+ i 1) last))))
+
+;; The slice of cycle `c` that holds the time `t`.
+(define (pat//cache-slice n c t)
+  (pat//min2 (- n 1) (pat//max2 0 (exact (floor (* (- t c) n))))))
+
+;; The last slice of cycle `c` that a span ending at `t` overlaps.
+(define (pat//cache-last n c t)
+  (pat//min2 (- n 1) (pat//max2 0 (- (exact (ceiling (* (- t c) n))) 1))))
+
+;; The kept events of cycle `c` that overlap `span`, clipped to it. A slice
+;; after the first gives only the events that start in it, so each event
+;; comes once.
+(define (pat//cache-read n c slices span)
+  (let ((first (pat//cache-slice n c (car span))))
+    (pat//cache-gather n c slices span first first
+                       (pat//max2 first (pat//cache-last n c (cdr span)))
+                       '())))
+
+(define (pat//cache-gather n c slices span first i last acc)
+  (if (> i last)
+      (reverse acc)
+      (let ((start (+ c (/ i n))))
+        (pat//cache-gather
+         n c slices span first (+ i 1) last
+         (pat//cache-clip (vector-ref slices i) span (if (= i first) #f start) acc)))))
+
+;; Push each event of `evs` that starts at or after `from` onto `acc`, with
+;; its active span clipped to `span`. A #f `from` takes every event.
+(define (pat//cache-clip evs span from acc)
+  (if (empty? evs)
+      acc
+      (let ((e (car evs)))
+        (let ((a (pat/event-active e)))
+          (pat//cache-clip
+           (cdr evs) span from
+           (if (if from (< (car a) from) #f)
+               acc
+               (if (if (>= (car a) (car span)) (<= (cdr a) (cdr span)) #f)
+                   (cons e acc)
+                   (let ((clipped (pat/span-intersect a span)))
+                     (if clipped
+                         (cons (pat/event (pat/event-value e) clipped (pat/event-whole e)) acc)
+                         acc)))))))))
 
 ;; Map event values with `f`. A non-fn `f` yields silence.
 (define (pat/map f p)
