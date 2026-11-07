@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.9.0...gantz_core-v0.10.0) - 2026-11-07
+
+### Added
+
+- *(gantz_core)* let fn bind its connected inputs
+- keep node state only for graphs that opt in
+- carry node state through copy and paste
+- add a keep toggle and a reset for node state
+- keep node state across sessions
+- give the nodes of open heads entities
+
+### Fixed
+
+- *(bevy_gantz)* load a head into a tab with its own state
+
+### Other
+
+- *(gantz_core)* Emit fewer calls for nested graph calls
+- [**breaking**] make Datum the one data form
+
 ## [0.9.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.8.0...gantz_core-v0.9.0) - 2026-10-17
 
 ### Fixed

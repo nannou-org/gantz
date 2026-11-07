@@ -1,6 +1,6 @@
 [package]
 name = "gantz_edit"
-version = "0.1.0"
+version = "0.2.0"
 description = "The GUI-independent editing model of gantz, an environment for creative systems."
 authors.workspace = true
 edition.workspace = true

@@ -1,6 +1,6 @@
 [package]
 name = "gantz_nodedef"
-version = "0.1.0"
+version = "0.1.1"
 description = "Node types defined as data, for the domains of gantz."
 authors.workspace = true
 edition.workspace = true
