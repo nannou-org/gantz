@@ -39,14 +39,14 @@
     machine.fail("journalctl -u gantz-vault | grep -q 'Failed to read the system.s DNS config'")
 
     with subtest("the journal stamps the lines, so the vault does not"):
-        machine.succeed("journalctl -u gantz-vault -o cat | grep -q '^ *INFO gantz '")
+        machine.wait_until_succeeds("journalctl -u gantz-vault -o cat | grep -q '^ *INFO gantz '")
         machine.fail("journalctl -u gantz-vault -o cat | grep -qE '^[0-9]{4}-'")
 
     with subtest("the vault hands its ticket to its own user"):
         ticket = machine.wait_until_succeeds("gantz-vault ticket").strip()
         assert ticket.startswith("gantzvault"), ticket
         machine.succeed("test \"$(stat -c '%U %a' /var/lib/gantz-vault/ticket.sock)\" = 'gantz-vault 600'")
-        machine.succeed("journalctl -u gantz-vault | grep -q 'issued a link ticket'")
+        machine.wait_until_succeeds("journalctl -u gantz-vault | grep -q 'issued a link ticket'")
 
     with subtest("no other user can ask for the ticket"):
         gantz = machine.succeed("grep -o '/nix/store/[^ ]*/bin/gantz' $(command -v gantz-vault)").strip()
@@ -64,7 +64,7 @@
     with subtest("a stop ends the vault cleanly"):
         machine.succeed("systemctl stop gantz-vault")
         assert machine.succeed("systemctl show -P Result gantz-vault").strip() == "success"
-        machine.succeed("journalctl -u gantz-vault | grep -q 'INFO stopped'")
+        machine.wait_until_succeeds("journalctl -u gantz-vault | grep -q 'INFO stopped'")
         machine.succeed("test ! -e /var/lib/gantz-vault/ticket.sock")
         out = machine.fail("gantz-vault ticket 2>&1")
         assert "not running" in out, out
@@ -77,7 +77,7 @@
         first, second = vault_ids()
         assert first == second, (first, second)
         machine.wait_until_succeeds("test ! -e /var/lib/gantz-vault/ticket")
-        machine.succeed("journalctl -u gantz-vault | grep -q 'deleted /var/lib/gantz-vault/ticket'")
+        machine.wait_until_succeeds("journalctl -u gantz-vault | grep -q 'deleted /var/lib/gantz-vault/ticket'")
 
     with subtest("the log filter decides what the vault logs"):
         quiet.wait_for_unit("gantz-vault.service")
