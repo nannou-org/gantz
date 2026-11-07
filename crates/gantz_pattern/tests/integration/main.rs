@@ -2,6 +2,7 @@
 //! dependency graph links once. Add new test files as modules here.
 
 mod apply;
+mod cache;
 mod cats;
 mod common;
 mod constructors;
