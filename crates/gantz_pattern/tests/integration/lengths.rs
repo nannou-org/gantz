@@ -1,7 +1,8 @@
 //! Tests of the length combinators `pat/map-len` and `pat/scale-len`, and of
 //! `pat/segment`.
 
-use crate::common::{assert_pinned, assert_steel_true, new_pin_engine};
+use crate::common::{assert_pinned, assert_steel_true, eval, new_pin_engine};
+use gantz_core::steel::SteelVal;
 
 /// Steel helpers for the split invariance checks. `split-same?` checks that
 /// each half of a span queries to the events of the whole span, clipped to
@@ -94,9 +95,50 @@ fn scale_len() {
             "((a ((0 1) (1 2)) ((0 1) (1 2))) (b ((1 2) (1 1)) ((1 2) (1 1))))",
             format!("(pin-events (pat/query (pat/scale-len '() {AB}) (pat/span 0 1)))"),
         ),
+        // A float factor of 1 keeps a length of 3/7. The length is not on
+        // the grid, and the snapped length would be longer than 3/7.
+        (
+            "float_one_keeps_off_grid_lengths",
+            "((a ((0 1) (3 7)) ((0 1) (3 7))) \
+              (a ((3 7) (6 7)) ((3 7) (6 7))) \
+              (a ((6 7) (1 1)) ((6 7) (9 7))))",
+            "(pin-events (pat/query (pat/scale-len 1.0 (pat/slow 3/7 (pat/pure 'a)))
+               (pat/span 0 1)))"
+                .into(),
+        ),
     ];
     for (case, expected, expr) in rows {
         assert_pinned(&mut vm, case, expected, expr);
+    }
+}
+
+// A query of a length combinator queries its pattern once more over the
+// cycle before, unless no event can grow.
+#[test]
+fn lengths_look_back_only_when_events_can_grow() {
+    let mut vm = new_pin_engine();
+    eval(
+        &mut vm,
+        "define",
+        &format!(
+            "(define calls 0)
+             (define counted (lambda (span) (set! calls (+ calls 1)) ({AB} span)))
+             (define (queries p) (set! calls 0) (pat/query p (pat/span 0 1)) calls)"
+        ),
+    );
+    let rows = [
+        ("(pat/scale-len 1/2 counted)", 1),
+        ("(pat/scale-len 1 counted)", 1),
+        ("(pat/scale-len 0.5 counted)", 1),
+        ("(pat/scale-len 3/2 counted)", 2),
+        ("(pat/scale-len (pat/pure 1/2) counted)", 2),
+        ("(pat/map-len (lambda (l) l) counted)", 2),
+    ];
+    for (p, expected) in rows {
+        match eval(&mut vm, p, &format!("(queries {p})")) {
+            SteelVal::IntV(n) => assert_eq!(n, expected, "{p}"),
+            v => panic!("{p}: {v:?}"),
+        }
     }
 }
 

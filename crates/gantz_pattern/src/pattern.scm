@@ -512,34 +512,44 @@
 ;;
 ;; Each part of an event that a query chops keeps its active span, clipped
 ;; to the new whole. The last part, the one that ends with the whole,
-;; moves its end with the whole. An event that grows can reach into a query
-;; from before it, so the query looks back `pat//len-lookback` cycles for
-;; such last parts. An event that grows by that or more can miss a query
-;; that starts after its old end by that much, so its output then depends
-;; on the query span.
-(define (pat//map-len-by g p)
+;; moves its end with the whole.
+;;
+;; When `grows?` is true, an event that grows can reach into a query from
+;; before it. The query then looks back `pat//len-lookback` cycles for such
+;; last parts. An event that grows by that or more can miss a query that
+;; starts after its old end by that much. Its output then depends on the
+;; query span.
+;;
+;; When `grows?` is false, a new length longer than the old one is cut to
+;; the old one. No event can then reach past its old whole, and the query
+;; skips the lookback.
+(define (pat//map-len-by g grows? p)
   (lambda (span)
-    (let ((back (cons (- (car span) pat//len-lookback) (car span))))
-      (append
-       (list/flat-map
-        (lambda (e) (if (pat/event-whole e) (pat//relen g e span) (list e)))
-        (pat//events p span))
-       (list/flat-map
-        (lambda (e) (if (pat/event-whole e) (pat//relen g e span) '()))
-        (pat//events p back))))))
+    (let ((now (list/flat-map
+                (lambda (e) (if (pat/event-whole e) (pat//relen g grows? e span) (list e)))
+                (pat//events p span))))
+      (if grows?
+          (append
+           now
+           (list/flat-map
+            (lambda (e) (if (pat/event-whole e) (pat//relen g grows? e span) '()))
+            (pat//events p (cons (- (car span) pat//len-lookback) (car span)))))
+          now))))
 
 ;; The part of event `e` within `span` once its whole has the length that
-;; `g` gives it, as a list of no events or one.
-(define (pat//relen g e span)
+;; `g` gives it, as a list of no events or one. When `grows?` is false, the
+;; new whole ends no later than the old one.
+(define (pat//relen g grows? e span)
   (let ((len (pat//len (g e))))
     (if len
         (let ((w (pat/event-whole e))
               (a (pat/event-active e)))
-          (let ((nw (cons (car w) (+ (car w) len))))
-            (let ((na (if (= (cdr a) (cdr w)) (cons (car a) (cdr nw)) a)))
-              (let ((clip (pat/span-intersect na nw)))
-                (let ((in (if clip (pat/span-intersect clip span) #f)))
-                  (if in (list (pat/event (pat/event-value e) in nw)) '()))))))
+          (let ((end (+ (car w) len)))
+            (let ((nw (cons (car w) (if grows? end (pat//min2 end (cdr w))))))
+              (let ((na (if (= (cdr a) (cdr w)) (cons (car a) (cdr nw)) a)))
+                (let ((clip (pat/span-intersect na nw)))
+                  (let ((in (if clip (pat/span-intersect clip span) #f)))
+                    (if in (list (pat/event (pat/event-value e) in nw)) '())))))))
         '())))
 
 ;; The length of the whole of `e`, in cycles.
@@ -551,7 +561,7 @@
 ;; silence.
 (define (pat/map-len f p)
   (if (function? f)
-      (pat//map-len-by (lambda (e) (f (pat//whole-len e))) p)
+      (pat//map-len-by (lambda (e) (f (pat//whole-len e))) #t p)
       pat/silence))
 
 ;; Multiply the length of each event of `p` by `k`, a number or a pattern
@@ -559,9 +569,13 @@
 ;; each event's whole, so the structure comes from `p`. An event with no
 ;; factor at its start keeps its length, as does every event when `k` is
 ;; neither a number nor a pattern. See [`pat//map-len-by`].
+;;
+;; A number factor of 1 or less only shortens events. A query then skips
+;; the lookback. A pattern factor can grow events, and a query of it looks
+;; back.
 (define (pat/scale-len k p)
   (if (number? k)
-      (pat//map-len-by (lambda (e) (* k (pat//whole-len e))) p)
+      (pat//map-len-by (lambda (e) (* k (pat//whole-len e))) (> k 1) p)
       (if (function? k)
           (pat//map-len-by
            (lambda (e)
@@ -570,6 +584,7 @@
                                  (list/map pat/event-value
                                            (pat/at k (car (pat/event-whole e)))))))
                (if f (* f len) len)))
+           #t
            p)
           p)))
 
