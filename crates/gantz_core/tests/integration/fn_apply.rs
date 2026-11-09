@@ -1,7 +1,7 @@
 // Tests for the Fn and Apply nodes. They provide first-class functions in gantz.
 
 use gantz_core::compile::{entry_fn_name, entrypoint, push_pull_entrypoints};
-use gantz_core::node::{self, Apply, Fn, Node, Ref, WithPullEval, graph};
+use gantz_core::node::{self, Apply, Fn, Node, Ref, WithPullEval, WithPushEval, graph};
 use gantz_core::{Edge, ROOT_STATE};
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -305,6 +305,77 @@ fn test_fn_captures_connected_inputs() {
     }
 
     let ep = entrypoint::pull(vec![assert_eq.index()], g[assert_eq].n_inputs(ctx) as u8);
+    vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
+        .unwrap();
+}
+
+// A connected input of fn that does not fire binds `'()`. The lambda takes the
+// same arguments as in an eval where every input fires. Here a push from `go`
+// leaves the `2` unfired, so the lambda still takes one argument.
+//
+//    --------          -------
+//    |  go  |          | set |
+//    -+------          -+-----
+//     |                 |
+//     |                -+---
+//     |                | 2 |
+//     |                -+---
+//     |   --------------
+//     |   |
+//    -+---+-----------
+//    |      fn       |  ------
+//    | (list $l $r)  |  | 43 |
+//    -+---------------  -+----
+//     |                  |
+//     |      -------------
+//     |      |
+//    -+------+-
+//    |  apply  |
+//    -+---------
+//     |
+//     |
+//    ------------------
+//    | result (43 ()) |
+//    ------------------
+#[test]
+fn test_fn_binds_unfired_connected_inputs() {
+    let no_lookup = |_: &gantz_ca::ContentAddr| -> Option<&dyn Node> { None };
+    let ctx = node::MetaCtx::new(&no_lookup);
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let go = g.add_node(Box::new(node_bang().with_push_eval()) as Box<dyn DebugNode>);
+    let set = g.add_node(Box::new(node_bang().with_push_eval()) as Box<_>);
+    let two = node::expr("(begin $x 2)").unwrap();
+    let two = g.add_node(Box::new(two) as Box<_>);
+    let fn_node = Fn::new(node::expr("(list $l $r)").unwrap());
+    assert_eq!(fn_node.n_inputs(ctx), 3, "a bang, then l and r");
+    let fn_node = g.add_node(Box::new(fn_node) as Box<_>);
+    let args = node::expr("(begin $x (list 43))").unwrap();
+    let args = g.add_node(Box::new(args) as Box<_>);
+    let apply_node = g.add_node(Box::new(Apply) as Box<_>);
+    let check = node::expr("(assert! (equal? $x (list 43 '())))").unwrap();
+    let check = g.add_node(Box::new(check) as Box<_>);
+
+    g.add_edge(go, fn_node, Edge::from((0, 0)));
+    g.add_edge(set, two, Edge::from((0, 0)));
+    g.add_edge(two, fn_node, Edge::from((0, 2)));
+    g.add_edge(go, args, Edge::from((0, 0)));
+    g.add_edge(fn_node, apply_node, Edge::from((0, 0)));
+    g.add_edge(args, apply_node, Edge::from((0, 1)));
+    g.add_edge(apply_node, check, Edge::from((0, 0)));
+
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+
+    for expr in module {
+        vm.run(expr.to_pretty(80)).unwrap();
+    }
+
+    let ep = entrypoint::push(vec![go.index()], g[go].n_outputs(ctx) as u8);
     vm.call_function_by_name_with_args(&entry_fn_name(&ep.id()), vec![])
         .unwrap();
 }
