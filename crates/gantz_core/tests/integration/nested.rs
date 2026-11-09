@@ -1653,10 +1653,12 @@ fn test_graph_nested_inner_reconvergence_outer_branching() {
     assert_eq!(build(1, 0), [Some(119), Some(42), None]); // A=99+20, B
 }
 
-// A static inlet used at branch depth 3. `value` feeds `depth3`, which sits
-// on Select3's arm 0. `value` must stay in scope inside that arm even though
-// it enters from outside the arm. Sequential, so 4 branches.
-// branches: [{A}, {B}, {C}, {D}]
+// Static inlets at each depth of a cascade of three selects. Each pass node
+// reads the select before it and an inlet. The inlets fire on every
+// evaluation. Each pass node runs whichever arm its select takes, and `value`
+// reaches `depth3` and C every time. The other outlets each fire on their
+// own.
+// branches: C with each subset of {A, B, D}
 #[test]
 fn test_graph_nested_static_inlet_at_depth_three() {
     let make_inner = || {
@@ -1690,7 +1692,20 @@ fn test_graph_nested_static_inlet_at_depth_three() {
         inner.add_edge(s3, od, Edge::from((1, 0)));
         inner
     };
-    assert_inner_branches(&make_inner(), 4, &[&[0], &[1], &[2], &[3]]);
+    assert_inner_branches(
+        &make_inner(),
+        4,
+        &[
+            &[2],
+            &[0, 2],
+            &[1, 2],
+            &[2, 3],
+            &[0, 1, 2],
+            &[0, 2, 3],
+            &[1, 2, 3],
+            &[0, 1, 2, 3],
+        ],
+    );
     let build = |a: i32, b: i32, c: i32, v: i32| {
         let mut g = petgraph::graph::DiGraph::new();
         let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
@@ -1715,10 +1730,10 @@ fn test_graph_nested_static_inlet_at_depth_three() {
         let vm = compile_and_push(&g, push);
         st.iter().map(|&s| store_val(&vm, s)).collect::<Vec<_>>()
     };
-    assert_eq!(build(0, 9, 9, 7), [Some(42), None, None, None]); // f1==0 -> A
-    assert_eq!(build(9, 0, 9, 7), [None, Some(42), None, None]); // f2==0 -> B
-    assert_eq!(build(9, 9, 0, 7), [None, None, Some(7), None]); // f3==0 -> depth3 = value 7
-    assert_eq!(build(9, 9, 9, 7), [None, None, None, Some(99)]); // all !=0 -> D
+    assert_eq!(build(0, 9, 9, 7), [Some(42), None, Some(7), Some(99)]); // f1==0 -> A
+    assert_eq!(build(9, 0, 9, 7), [None, Some(42), Some(7), Some(99)]); // f2==0 -> B
+    assert_eq!(build(9, 9, 0, 7), [None, None, Some(7), None]); // f3==0 -> no D
+    assert_eq!(build(9, 9, 9, 7), [None, None, Some(7), Some(99)]); // all !=0 -> D
 }
 
 // Three independent parallel branches give 2^3 = 8 external branches in a
@@ -2212,6 +2227,53 @@ fn test_nested_branch_join_external_inlet() {
     assert_eq!(build(1), Some(119));
 }
 
+// Inside a nested graph, `pick` takes output 0 of a select and the `bang`
+// inlet. The select activates nothing on arm 1. `pick` runs on both arms. The
+// outlet always fires and the graph node does not branch.
+//
+//   INNER: [sel]->[select] o0 -> pick.$?v ;  [bang] -> pick.$bang ;  pick -> outlet
+//   OUTER: [push]->[int sel]->sel ;  [push]->bang ;  inner -> store
+#[test]
+fn test_nested_branch_outside_inlet() {
+    let make_inner = || {
+        let mut inner = Nested::default();
+        let sel = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+        let bang = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<_>);
+        let select = node::branch(
+            "(if (= 0 $x) (list 0 7) (list 1 '()))",
+            vec![
+                node::Conns::try_from([true]).unwrap(),
+                node::Conns::try_from([false]).unwrap(),
+            ],
+        )
+        .unwrap();
+        let select = inner.add_node(Box::new(select) as Box<_>);
+        let pick = node::expr("(begin $bang (if (Some? $?v) (Some->value $?v) -1))").unwrap();
+        let pick = inner.add_node(Box::new(pick) as Box<_>);
+        let outlet = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        inner.add_edge(sel, select, Edge::from((0, 0)));
+        inner.add_edge(select, pick, Edge::from((0, 1)));
+        inner.add_edge(bang, pick, Edge::from((0, 0)));
+        inner.add_edge(pick, outlet, Edge::from((0, 0)));
+        inner
+    };
+    assert_inner_branches(&make_inner(), 1, &[]);
+    let build = |sel: i32| {
+        let mut g = petgraph::graph::DiGraph::new();
+        let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let int = g.add_node(Box::new(node_int(sel)) as Box<_>);
+        let inner_node = g.add_node(Box::new(make_inner()) as Box<_>);
+        let store = g.add_node(Box::new(node_number()) as Box<_>);
+        g.add_edge(push, int, Edge::from((0, 0)));
+        g.add_edge(int, inner_node, Edge::from((0, 0)));
+        g.add_edge(push, inner_node, Edge::from((0, 1)));
+        g.add_edge(inner_node, store, Edge::from((0, 0)));
+        store_val(&compile_and_push(&g, push), store)
+    };
+    assert_eq!(build(0), Some(7));
+    assert_eq!(build(1), Some(-1));
+}
+
 // An `Outlet` at the root level has no enclosing graph node. It must compile
 // and be ignored. There is no parent to read its value, so it is a no-op
 // while the rest of the graph still evaluates. A disconnected root `Outlet`
@@ -2495,6 +2557,50 @@ fn test_pd_plus_top_level_vs_nested_equivalence() {
     assert_eq!(hot_n, hot_t);
     assert_eq!(cold_n, None);
     assert_eq!(hot_n, Some(15));
+}
+
+// A pd+ node below a branch. Its hot inlet takes the push value and its cold
+// inlet takes 5 from arm 0 of a select. The select activates nothing on arm
+// 1. pd+ runs on both arms. On arm 1 its cold inlet is inactive and it adds
+// the 5 stored on arm 0. pd+ branches itself, and `store` lowers after its
+// own dispatch.
+//
+//   push_0 (emits 0) --\
+//                       +--> select --(arm 0)--> [5] --> pd.cold
+//   push_1 (emits 1) --/
+//
+//   push_0, push_1 --> pd.hot ;  pd --> store
+#[test]
+fn test_nested_pd_plus_below_branch() {
+    let (inner, _branch_ix) = pd_plus();
+    let select = node::branch(
+        "(if (= 0 $x) (list 0 '()) (list 1 '()))",
+        vec![
+            node::Conns::try_from([true]).unwrap(),
+            node::Conns::try_from([false]).unwrap(),
+        ],
+    )
+    .unwrap();
+    let mut g = petgraph::graph::DiGraph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let select = g.add_node(Box::new(select) as Box<_>);
+    let five = g.add_node(Box::new(node_int(5)) as Box<_>);
+    let pd = g.add_node(Box::new(inner) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    for push in [push_0, push_1] {
+        g.add_edge(push, select, Edge::from((0, 0)));
+        g.add_edge(push, pd, Edge::from((0, 0))); // -> hot
+    }
+    g.add_edge(select, five, Edge::from((0, 0)));
+    g.add_edge(five, pd, Edge::from((0, 1))); // -> cold
+    g.add_edge(pd, store, Edge::from((0, 0)));
+
+    let mut vm = compile_only(&g);
+    push_from(&mut vm, &g, push_0); // cold 5, hot 0: 0 + 5
+    assert_eq!(store_val(&vm, store), Some(5));
+    push_from(&mut vm, &g, push_1); // hot 1 only: 1 + 5
+    assert_eq!(store_val(&vm, store), Some(6));
 }
 
 // The reduced inner-branch variants must be defined in the module, not just

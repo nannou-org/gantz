@@ -25,7 +25,7 @@ use crate::{
 use std::fmt;
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
-/// The sentinel value marking an outlet that did not fire. See
+/// The sentinel value marking a value that did not fire. See
 /// [`Atom::Unfired`].
 const UNFIRED: &str = "'%gantz-unfired";
 
@@ -85,11 +85,77 @@ fn atom_sexp(atom: &Atom) -> Sexp {
     }
 }
 
-fn arg_sexp(arg: &Arg) -> Sexp {
-    match arg {
-        Arg::One(atom) => atom_sexp(atom),
-        Arg::List(atoms) => l(std::iter::once(a("list")).chain(atoms.iter().map(atom_sexp))),
+fn list_sexp(atoms: &[Atom]) -> Sexp {
+    l(std::iter::once(a("list")).chain(atoms.iter().map(atom_sexp)))
+}
+
+/// The test that `atom` is the unfired sentinel.
+fn unfired_test(atom: &Atom) -> Sexp {
+    l([a("equal?"), atom_sexp(atom), a(UNFIRED)])
+}
+
+/// How a call passes one argument.
+struct Input {
+    /// `let` bindings to evaluate before the call, in order.
+    lets: Vec<(String, Sexp)>,
+    /// The value passed when the input is connected.
+    value: Sexp,
+    /// A test that is true when no source fired and the input is left
+    /// unconnected. `None` when the input is always connected.
+    unfired: Option<Sexp>,
+}
+
+/// How a call passes `arg` as input `ix`. An [`Arg::Maybe`] with several
+/// sources collects the ones that fired into a list at runtime. Its value is
+/// the only item of that list, or else the list.
+fn input(ix: usize, arg: &Arg) -> Input {
+    let fixed = |value| Input {
+        lets: vec![],
+        value,
+        unfired: None,
+    };
+    let srcs = match arg {
+        Arg::One(atom) => return fixed(atom_sexp(atom)),
+        Arg::List(atoms) => return fixed(list_sexp(atoms)),
+        Arg::Maybe(srcs) => srcs,
+    };
+    if let [(atom, true)] = srcs.as_slice() {
+        return Input {
+            lets: vec![],
+            value: atom_sexp(atom),
+            unfired: Some(unfired_test(atom)),
+        };
     }
+    let name = format!("%fired-{ix}");
+    let fired = || a(name.clone());
+    let mut lets = vec![(name.clone(), unit())];
+    for (atom, maybe) in srcs.iter().rev() {
+        let cons = l([a("cons"), atom_sexp(atom), fired()]);
+        let next = if *maybe {
+            l([a("if"), unfired_test(atom), fired(), cons])
+        } else {
+            cons
+        };
+        lets.push((name.clone(), next));
+    }
+    let only = l([a("null?"), l([a("cdr"), fired()])]);
+    let value = l([a("if"), only, l([a("car"), fired()]), fired()]);
+    let unfired = srcs
+        .iter()
+        .all(|&(_, maybe)| maybe)
+        .then(|| l([a("null?"), fired()]));
+    Input {
+        lets,
+        value,
+        unfired,
+    }
+}
+
+/// `body` within nested lets binding each of `lets` in order.
+fn let_sexp(lets: Vec<(String, Sexp)>, body: Sexp) -> Sexp {
+    lets.into_iter().rev().fold(body, |body, (name, value)| {
+        l([a("let"), l([l([a(name), value])]), body])
+    })
 }
 
 /// Bind `dst` from `value`. One var gets a plain define. Several vars get a
@@ -117,22 +183,57 @@ fn define_sexps(dst: &[Var], value: Sexp) -> Vec<Sexp> {
     }
 }
 
-/// The call expression for a node fn, state-wrapped when stateful.
+/// The call expression for a node fn, state-wrapped when stateful. With an
+/// [`Arg::Maybe`], the expression tests which inputs got a source and calls
+/// the variant that fits.
 fn call_sexp(cx: &Cx, call: &NodeCall) -> Sexp {
-    let inputs = node::Conns::try_from_iter(call.args.iter().map(Option::is_some))
-        .expect("validated NodeCall arg count exceeds Conns::MAX");
-    let node_path: Vec<node::Id> = cx.path.iter().copied().chain([call.node]).collect();
-    let fn_name = node_fn_name(&node_path, &inputs, &call.outputs);
-    let mut items = vec![a(fn_name)];
-    items.extend(call.args.iter().flatten().map(arg_sexp));
-    if call.stateful {
-        items.push(a("state"));
-    }
-    let call_expr = Sexp::L(items);
+    let inputs: Vec<Option<Input>> = call
+        .args
+        .iter()
+        .enumerate()
+        .map(|(ix, arg)| arg.as_ref().map(|arg| input(ix, arg)))
+        .collect();
+    let lets: Vec<(String, Sexp)> = inputs
+        .iter()
+        .flatten()
+        .flat_map(|input| input.lets.iter().cloned())
+        .collect();
+    let tree = variant_sexp(cx, call, &inputs, vec![]);
+    let call_expr = let_sexp(lets, tree);
     if call.stateful {
         state_wrapped(call.node, call_expr)
     } else {
         call_expr
+    }
+}
+
+/// The call of the node fn variant with the inputs that got a source. Each
+/// input after the `connected` ones that may get none is tested in turn.
+fn variant_sexp(cx: &Cx, call: &NodeCall, inputs: &[Option<Input>], connected: Vec<bool>) -> Sexp {
+    let Some(input) = inputs.get(connected.len()) else {
+        let mask = node::Conns::try_from_iter(connected.iter().copied())
+            .expect("validated NodeCall arg count exceeds Conns::MAX");
+        let node_path: Vec<node::Id> = cx.path.iter().copied().chain([call.node]).collect();
+        let mut items = vec![a(node_fn_name(&node_path, &mask, &call.outputs))];
+        let args = inputs.iter().zip(&connected).filter(|&(_, &c)| c);
+        items.extend(args.filter_map(|(input, _)| input.as_ref().map(|i| i.value.clone())));
+        if call.stateful {
+            items.push(a("state"));
+        }
+        return Sexp::L(items);
+    };
+    let with = |c: bool| {
+        let mut connected = connected.clone();
+        connected.push(c);
+        variant_sexp(cx, call, inputs, connected)
+    };
+    match input {
+        Some(Input {
+            unfired: Some(test),
+            ..
+        }) => l([a("if"), test.clone(), with(false), with(true)]),
+        Some(_) => with(true),
+        None => with(false),
     }
 }
 
@@ -194,16 +295,16 @@ pub(crate) fn steps_sexps(cx: &Cx, body: &Body) -> Vec<Sexp> {
                 ]));
             }
             Step::DelayWrite { node, arg } => {
-                stmts.push(l([
-                    a("set!"),
-                    a(GRAPH_STATE),
-                    l([
-                        a("hash-insert"),
-                        a(GRAPH_STATE),
-                        a(format!("'{node}")),
-                        arg_sexp(arg),
-                    ]),
-                ]));
+                let input = input(0, arg);
+                let key = a(format!("'{node}"));
+                let insert = l([a("hash-insert"), a(GRAPH_STATE), key, input.value]);
+                let write = l([a("set!"), a(GRAPH_STATE), insert]);
+                // An input with no source fired writes nothing.
+                let stmt = match input.unfired {
+                    Some(test) => l([a("if"), test, unit(), write]),
+                    None => write,
+                };
+                stmts.push(let_sexp(input.lets, stmt));
             }
             Step::Join(join) => {
                 let mut sig = vec![a(join_name(join.id))];
@@ -319,7 +420,7 @@ pub(crate) fn level_result_sexp(
             (Some(_), false) => base += 1 << i,
             (Some(atom), true) => terms.push(l([
                 a("if"),
-                l([a("equal?"), atom_sexp(&atom), a(UNFIRED)]),
+                unfired_test(&atom),
                 a("0"),
                 a((1u128 << i).to_string()),
             ])),

@@ -1910,6 +1910,283 @@ fn test_graph_two_branch_shared_join() {
     assert_eq!(val, 15);
 }
 
+/// A node fed by a branch and by a value from outside the branch runs
+/// whichever arm the branch takes. On an arm that does not feed it, its
+/// input from the branch is inactive and `$?v` reads `(None)`.
+///
+/// ```text
+///   push_0 (emits 0) ---\                /--(out 0)--> [seven] --> pick.$?v
+///                         branch -------<
+///   push_1 (emits 1) ---/                \--(out 1)--> store_b
+///
+///   push_0, push_1 --> pick.$bang
+///   pick --> number
+/// ```
+///
+/// Arm 1 activates out 1, or nothing at all. `seven` sits between the branch
+/// and `pick`, or the branch feeds `pick` directly.
+#[test]
+fn test_graph_branch_outside_input() {
+    for (dead_arm, through_node) in [(true, false), (true, true), (false, false), (false, true)] {
+        let (arm_1, arm_1_val) = match dead_arm {
+            true => ([false, false], "'()"),
+            false => ([false, true], "99"),
+        };
+        let branch = node::Branch::new(
+            format!("(if (equal? 0 $x) (list 0 7) (list 1 {arm_1_val}))"),
+            vec![
+                node::Conns::try_from([true, false]).unwrap(),
+                node::Conns::try_from(arm_1).unwrap(),
+            ],
+        )
+        .unwrap();
+        let pick = node::expr("(begin $bang (if (Some? $?v) (Some->value $?v) -1))").unwrap();
+
+        let mut g = petgraph::graph::DiGraph::new();
+        let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+        let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+        let branch = g.add_node(Box::new(branch) as Box<_>);
+        let pick = g.add_node(Box::new(pick) as Box<_>);
+        let number = g.add_node(Box::new(node_number()) as Box<_>);
+        let store_b = g.add_node(Box::new(node_number()) as Box<_>);
+        for push in [push_0, push_1] {
+            g.add_edge(push, branch, Edge::from((0, 0)));
+            g.add_edge(push, pick, Edge::from((0, 0)));
+        }
+        if through_node {
+            let seven = g.add_node(Box::new(node::expr("(begin $x 7)").unwrap()) as Box<_>);
+            g.add_edge(branch, seven, Edge::from((0, 0)));
+            g.add_edge(seven, pick, Edge::from((0, 1)));
+        } else {
+            g.add_edge(branch, pick, Edge::from((0, 1)));
+        }
+        g.add_edge(branch, store_b, Edge::from((1, 0)));
+        g.add_edge(pick, number, Edge::from((0, 0)));
+
+        let ctx = node::MetaCtx::new(&no_lookup);
+        let eps = push_pull_entrypoints(&no_lookup, &g);
+        let ep = |push: petgraph::graph::NodeIndex| {
+            entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8)
+        };
+        let (ep_0, ep_1) = (ep(push_0), ep(push_1));
+        let read = |calls: &[&Entrypoint]| {
+            let vm = compile_and_call(&g, &eps, calls);
+            let val = |n: petgraph::graph::NodeIndex| {
+                node::state::extract::<i32>(&vm, &[n.index()])
+                    .ok()
+                    .flatten()
+            };
+            (val(number), val(store_b))
+        };
+        let case = format!("dead arm: {dead_arm}, through node: {through_node}");
+        assert_eq!(read(&[&ep_0]), (Some(7), None), "{case}");
+        let store_b = (!dead_arm).then_some(99);
+        assert_eq!(read(&[&ep_0, &ep_1]), (Some(-1), store_b), "{case}");
+    }
+}
+
+/// As above, with branch `b` inside the region of branch `a`. `keep` stores
+/// the last value it reads and outputs it on each bang from outside both
+/// branches. When `a` takes arm 0 and `b` skips the value, the value input of
+/// `keep` stays inactive and the stored value is still 7.
+///
+/// ```text
+///   push_n (emits n) --> a --(out 0, n < 2)--> b --(n == 0)--> keep.$?v
+///   push_n ---------------------------------------------------> keep.$bang
+///   keep --> count
+/// ```
+///
+/// Arm 1 of `a` activates out 1 to `store_a`, or nothing at all.
+#[test]
+fn test_graph_nested_branch_outside_input() {
+    for dead_arm in [true, false] {
+        let (arm_1, arm_1_val) = match dead_arm {
+            true => ([false, false], "'()"),
+            false => ([false, true], "99"),
+        };
+        let a = node::Branch::new(
+            format!("(if (< $x 2) (list 0 $x) (list 1 {arm_1_val}))"),
+            vec![
+                node::Conns::try_from([true, false]).unwrap(),
+                node::Conns::try_from(arm_1).unwrap(),
+            ],
+        )
+        .unwrap();
+        let b = node::Branch::new(
+            "(if (= $x 0) (list 0 7) (list 1 '()))",
+            vec![
+                node::Conns::try_from([true]).unwrap(),
+                node::Conns::try_from([false]).unwrap(),
+            ],
+        )
+        .unwrap();
+        let keep = "(begin $bang (if (Some? $?v) (set! state (Some->value $?v)) '()) state)";
+        let count = "(begin $x (set! state (+ 1 (if (number? state) state 0))) state)";
+
+        let mut g = petgraph::graph::DiGraph::new();
+        let pushes: Vec<_> = (0..3)
+            .map(|n| g.add_node(Box::new(node_int(n).with_push_eval()) as Box<dyn DebugNode>))
+            .collect();
+        let a = g.add_node(Box::new(a) as Box<_>);
+        let b = g.add_node(Box::new(b) as Box<_>);
+        let keep = g.add_node(Box::new(node::expr(keep).unwrap()) as Box<_>);
+        let count = g.add_node(Box::new(node::expr(count).unwrap()) as Box<_>);
+        let store_a = g.add_node(Box::new(node_number()) as Box<_>);
+        for &push in &pushes {
+            g.add_edge(push, a, Edge::from((0, 0)));
+            g.add_edge(push, keep, Edge::from((0, 0)));
+        }
+        g.add_edge(a, b, Edge::from((0, 0)));
+        g.add_edge(b, keep, Edge::from((0, 1)));
+        g.add_edge(a, store_a, Edge::from((1, 0)));
+        g.add_edge(keep, count, Edge::from((0, 0)));
+
+        let ctx = node::MetaCtx::new(&no_lookup);
+        let eps = push_pull_entrypoints(&no_lookup, &g);
+        let calls: Vec<Entrypoint> = pushes
+            .iter()
+            .map(|&push| entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8))
+            .collect();
+        let vm = compile_and_call(&g, &eps, &calls.iter().collect::<Vec<_>>());
+        let val = |n: petgraph::graph::NodeIndex| {
+            node::state::extract::<i32>(&vm, &[n.index()])
+                .ok()
+                .flatten()
+        };
+        // push_0 takes arm 0 of both and stores 7. push_1 takes arm 1 of `b`
+        // and push_2 arm 1 of `a`. `keep` runs on all three.
+        let case = format!("dead arm: {dead_arm}");
+        assert_eq!(val(keep), Some(7), "{case}");
+        assert_eq!(val(count), Some(3), "{case}");
+        assert_eq!(val(store_a), (!dead_arm).then_some(99), "{case}");
+    }
+}
+
+/// As above, with several sources on the value input of `keep`. The input
+/// gets the sources that fired, as it would inside the branch. None leaves it
+/// inactive, one passes alone and several pass as a list.
+///
+/// ```text
+///   push_n (emits n) --> branch --(out 0, n == 0)--> [x] (7), [y] (8)
+///   push_n --> [w] (5)
+///   x, then y or w --> keep.$?v
+///   push_n --> keep.$bang ;  keep --> count
+/// ```
+///
+/// Arm 1 of `branch` activates out 1 to `store_b`, or nothing at all.
+#[test]
+fn test_graph_branch_outside_input_many_sources() {
+    for (outside, dead_arm) in [(false, true), (false, false), (true, true), (true, false)] {
+        let (arm_1, arm_1_val) = match dead_arm {
+            true => ([false, false], "'()"),
+            false => ([false, true], "99"),
+        };
+        let branch = node::Branch::new(
+            format!("(if (equal? 0 $x) (list 0 0) (list 1 {arm_1_val}))"),
+            vec![
+                node::Conns::try_from([true, false]).unwrap(),
+                node::Conns::try_from(arm_1).unwrap(),
+            ],
+        )
+        .unwrap();
+        let keep = "(begin $bang (if (Some? $?v) (set! state (Some->value $?v)) '()) state)";
+        let count = "(begin $x (set! state (+ 1 (if (number? state) state 0))) state)";
+        let int = |i: i32| node::expr(format!("(begin $t {i})")).unwrap();
+
+        let mut g = petgraph::graph::DiGraph::new();
+        let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+        let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+        let branch = g.add_node(Box::new(branch) as Box<_>);
+        let x = g.add_node(Box::new(int(7)) as Box<_>);
+        let y = g.add_node(Box::new(int(8)) as Box<_>);
+        let w = g.add_node(Box::new(int(5)) as Box<_>);
+        let keep = g.add_node(Box::new(node::expr(keep).unwrap()) as Box<_>);
+        let count = g.add_node(Box::new(node::expr(count).unwrap()) as Box<_>);
+        let store_b = g.add_node(Box::new(node_number()) as Box<_>);
+        for push in [push_0, push_1] {
+            g.add_edge(push, branch, Edge::from((0, 0)));
+            g.add_edge(push, keep, Edge::from((0, 0)));
+            g.add_edge(push, w, Edge::from((0, 0)));
+        }
+        g.add_edge(branch, x, Edge::from((0, 0)));
+        g.add_edge(branch, y, Edge::from((0, 0)));
+        g.add_edge(x, keep, Edge::from((0, 1)));
+        g.add_edge(if outside { w } else { y }, keep, Edge::from((0, 1)));
+        g.add_edge(branch, store_b, Edge::from((1, 0)));
+        g.add_edge(keep, count, Edge::from((0, 0)));
+
+        let ctx = node::MetaCtx::new(&no_lookup);
+        let eps = push_pull_entrypoints(&no_lookup, &g);
+        let ep = |push: petgraph::graph::NodeIndex| {
+            entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8)
+        };
+        let (ep_0, ep_1) = (ep(push_0), ep(push_1));
+        let case = format!("outside: {outside}, dead arm: {dead_arm}");
+        let vm = compile_and_call(&g, &eps, &[&ep_0, &ep_1]);
+        let state = node::state::extract_value(&vm, &[keep.index()]).unwrap();
+        // push_0 fires `x` and `y` or `w`, and `keep` stores the list. On
+        // push_1 neither `x` nor `y` fires. Two of them leave `keep` with the
+        // list. With `w`, `keep` stores 5 alone.
+        let state = state.map(|v| v.to_string());
+        let expected = if outside { "5" } else { "(7 8)" };
+        assert_eq!(state.as_deref(), Some(expected), "{case}");
+        let count = node::state::extract::<i32>(&vm, &[count.index()]).unwrap();
+        assert_eq!(count, Some(2), "{case}");
+        let store_b = node::state::extract::<i32>(&vm, &[store_b.index()])
+            .ok()
+            .flatten();
+        assert_eq!(store_b, (!dead_arm).then_some(99), "{case}");
+    }
+}
+
+/// As above, with 24 sources from the same arm on the value input of `keep`.
+/// The call collects the sources that fired at runtime. The emitted code
+/// grows with the number of sources, never with the number of their subsets.
+#[test]
+fn test_graph_branch_outside_input_source_count() {
+    let branch = node::Branch::new(
+        "(if (equal? 0 $x) (list 0 0) (list 1 '()))",
+        vec![
+            node::Conns::try_from([true]).unwrap(),
+            node::Conns::try_from([false]).unwrap(),
+        ],
+    )
+    .unwrap();
+    let keep = "(begin $bang (if (Some? $?v) (set! state (Some->value $?v)) '()) state)";
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let branch = g.add_node(Box::new(branch) as Box<_>);
+    let keep = g.add_node(Box::new(node::expr(keep).unwrap()) as Box<_>);
+    for push in [push_0, push_1] {
+        g.add_edge(push, branch, Edge::from((0, 0)));
+        g.add_edge(push, keep, Edge::from((0, 0)));
+    }
+    for i in 0..24 {
+        let src = node::expr(format!("(begin $t {i})")).unwrap();
+        let src = g.add_node(Box::new(src) as Box<_>);
+        g.add_edge(branch, src, Edge::from((0, 0)));
+        g.add_edge(src, keep, Edge::from((0, 1)));
+    }
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
+    let text: String = module.iter().map(|f| f.to_pretty(100)).collect();
+    // Two variants of `keep`, each defined once and called from each of the
+    // two entry fns.
+    let variant = format!("node-fn-{}-i", keep.index());
+    assert!(text.matches(&variant).count() <= 6, "{text}");
+
+    let ep = |push: petgraph::graph::NodeIndex| {
+        entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8)
+    };
+    let vm = compile_and_call(&g, &eps, &[&ep(push_0), &ep(push_1)]);
+    let state = node::state::extract::<Vec<i32>>(&vm, &[keep.index()]).unwrap();
+    assert_eq!(state, Some((0..24).collect()));
+}
+
 /// The classic feedback accumulator. `add` sums its input with the delayed
 /// previous sum. The cycle is legal because it passes through the delay. The
 /// value crosses between evaluations.
