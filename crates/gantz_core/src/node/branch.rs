@@ -437,7 +437,8 @@ mod tests {
 
         // Verify expr with unconnected optional input produces `(None)`.
         let outputs = Conns::try_from([true, false]).unwrap();
-        let expr_ctx = node::ExprCtx::new(&|_| None, &[0], &[None], &outputs);
+        let connected = Conns::unconnected(1).unwrap();
+        let expr_ctx = node::ExprCtx::new(&|_| None, &[0], &[None], &connected, &outputs);
         let expr = b.expr(expr_ctx).unwrap();
         let s = format!("{expr}");
         assert!(s.contains("(None)"), "expected (None) in expr: {s}");

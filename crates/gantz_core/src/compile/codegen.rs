@@ -85,7 +85,8 @@ impl Visitor for NodeFns<'_> {
         let range = (Included(start), Excluded(end));
         let input_confs = tree.elem.range(range);
         for conf in input_confs {
-            match node_fn(ctx.get_node(), node, node_path, &conf.conns) {
+            let connected = connected_inputs(conf.conns.inputs, ctx.inputs());
+            match node_fn(ctx.get_node(), node, node_path, &conf.conns, &connected) {
                 Ok(fn_expr) => self.fns.push((plan_path.len(), fn_expr)),
                 Err(error) => self.errors.push(
                     NodeExprError {
@@ -99,12 +100,25 @@ impl Visitor for NodeFns<'_> {
     }
 }
 
-/// Generate a function for a single node with the given set of connected inputs.
+/// The inputs of a node that an edge targets, whether or not they fire.
+///
+/// `active` gives the length. An edge to an input index out of range never
+/// reaches the node.
+fn connected_inputs(active: node::Conns, edges: &[(node::Id, Edge)]) -> node::Conns {
+    let mut connected = active;
+    for (_, edge) in edges {
+        connected.set(edge.input.0 as usize, true).ok();
+    }
+    connected
+}
+
+/// Generate a function for a single node with the given set of active inputs.
 pub(crate) fn node_fn<'a>(
     get_node: node::GetNode<'a>,
     node: &dyn Node,
     node_path: &[node::Id],
     conns: &NodeConns,
+    connected: &node::Conns,
 ) -> Result<ExprKind, node::ExprError> {
     // The binding used to receive the node's state as an argument, and whose
     // resulting value is returned from the body of the function and used to
@@ -129,7 +143,7 @@ pub(crate) fn node_fn<'a>(
         .map(|(i, b)| b.then(|| input_name(i)))
         .collect();
 
-    let ctx = node::ExprCtx::new(get_node, node_path, &input_exprs, &conns.outputs);
+    let ctx = node::ExprCtx::new(get_node, node_path, &input_exprs, connected, &conns.outputs);
     let node_expr = node.expr(ctx)?;
 
     let fn_name = node_fn_name(node_path, &conns.inputs, &conns.outputs);

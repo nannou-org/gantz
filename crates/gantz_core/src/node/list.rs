@@ -75,7 +75,8 @@ mod tests {
 
     fn expr_of(list: &List, inputs: &[Option<String>]) -> String {
         let outputs = Conns::connected(1).unwrap();
-        let ctx = ExprCtx::new(&no_lookup, &[0], inputs, &outputs);
+        let connected = Conns::try_from_iter(inputs.iter().map(Option::is_some)).unwrap();
+        let ctx = ExprCtx::new(&no_lookup, &[0], inputs, &connected, &outputs);
         list.expr(ctx).unwrap().to_string()
     }
 

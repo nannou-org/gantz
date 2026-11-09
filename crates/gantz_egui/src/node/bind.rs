@@ -174,7 +174,8 @@ mod tests {
     #[test]
     fn expr_is_the_quoted_path() {
         let outputs = node::Conns::connected(1).unwrap();
-        let ctx = ExprCtx::new(&no_lookup, &[0], &[], &outputs);
+        let connected = node::Conns::empty();
+        let ctx = ExprCtx::new(&no_lookup, &[0], &[], &connected, &outputs);
         let expr = Bind::new(vec![1, 2]).expr(ctx).unwrap();
         assert_eq!(expr.to_string(), "(quote (1 2))");
     }
@@ -182,7 +183,8 @@ mod tests {
     #[test]
     fn empty_path_fails_to_compile() {
         let outputs = node::Conns::connected(1).unwrap();
-        let ctx = ExprCtx::new(&no_lookup, &[0], &[], &outputs);
+        let connected = node::Conns::empty();
+        let ctx = ExprCtx::new(&no_lookup, &[0], &[], &connected, &outputs);
         assert!(Bind::default().expr(ctx).is_err());
     }
 

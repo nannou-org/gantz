@@ -384,7 +384,8 @@ fn invalid_expr_source_is_rejected() {
     // therefore error rather than emit broken Steel.
     let bad: Expr = serde_json::from_str(r#"{"src":"(+ 1","outputs":1}"#).unwrap();
     let outputs = node::Conns::try_from([true]).unwrap();
-    let ctx = node::ExprCtx::new(&|_| None, &[], &[None], &outputs);
+    let connected = node::Conns::unconnected(1).unwrap();
+    let ctx = node::ExprCtx::new(&|_| None, &[], &[None], &connected, &outputs);
     assert!(bad.expr(ctx).is_err(), "malformed src must fail to compile");
 }
 

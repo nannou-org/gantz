@@ -49,12 +49,13 @@ impl<N: Node> Node for Fn<N> {
     /// node's expression.
     ///
     /// A connected input of the inner node binds its value when the lambda is
-    /// made. The lambda takes the inner node's other inputs as its arguments,
-    /// in order.
+    /// made. A connected input that does not fire in an eval binds `'()`. The
+    /// lambda takes the unconnected inputs of the inner node as its arguments,
+    /// in order. Its arity is then the same in every eval.
     fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
         // Only emit a lambda when an input is connected. Otherwise emit an
         // empty list.
-        if ctx.inputs().iter().all(Option::is_none) {
+        if !ctx.connected().iter().any(|c| c) {
             return node::parse_expr("'()");
         }
 
@@ -86,23 +87,24 @@ impl<N: Node> Node for Fn<N> {
         let mut params = vec![];
         let mut input_refs = vec![];
         for i in 0..n_inputs {
-            let name = match ctx.inputs().get(1 + i).and_then(Option::as_ref) {
-                Some(value) => {
-                    let name = format!("cap{i}");
-                    binds.push(format!("({name} {value})"));
-                    name
-                }
-                None => {
-                    let name = format!("arg{i}");
-                    params.push(name.clone());
-                    name
-                }
+            let value = ctx.inputs().get(1 + i).and_then(Option::as_deref);
+            let connected = ctx.connected().get(1 + i) == Some(true);
+            let name = if value.is_some() || connected {
+                let name = format!("cap{i}");
+                binds.push(format!("({name} {})", value.unwrap_or("'()")));
+                name
+            } else {
+                let name = format!("arg{i}");
+                params.push(name.clone());
+                name
             };
             input_refs.push(Some(name));
         }
+        let inner_connected = node::Conns::connected(n_inputs)
+            .map_err(|_| node::ExprError::custom("the inner node has too many inputs"))?;
         let outputs = node::Conns::connected(n_outputs).unwrap();
         let path = ctx.path();
-        let ectx = node::ExprCtx::new(get_node, path, &input_refs, &outputs);
+        let ectx = node::ExprCtx::new(get_node, path, &input_refs, &inner_connected, &outputs);
         let expr = node.expr(ectx)?;
         if binds.is_empty()
             && let Some(f) = crate::compile::eta_target_expr(&params, &expr)

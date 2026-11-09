@@ -80,7 +80,7 @@ pub trait Node: std::any::Any {
     ///
     /// The given `inputs` slice is guaranteed to match the length of a call to
     /// [`Node::n_inputs`] immediately prior. Inputs are `Some` in the case that
-    /// they are connected, and `None` otherwise.
+    /// they fire in this eval, and `None` otherwise. See [`ExprCtx::inputs`].
     ///
     /// At runtime, each connected input binding holds a single value when
     /// exactly one edge targets that input index. When multiple unconditional
@@ -259,6 +259,8 @@ pub struct ExprCtx<'env, 'data> {
     path: &'data [Id],
     /// See [`ExprCtx::inputs`].
     inputs: &'data [Option<String>],
+    /// See [`ExprCtx::connected`].
+    connected: &'data Conns,
     /// See [`ExprCtx::outputs`].
     outputs: &'data Conns,
 }
@@ -325,12 +327,14 @@ impl<'env, 'data> ExprCtx<'env, 'data> {
         get_node: GetNode<'env>,
         path: &'data [Id],
         inputs: &'data [Option<String>],
+        connected: &'data Conns,
         outputs: &'data Conns,
     ) -> Self {
         Self {
             get_node,
             path,
             inputs,
+            connected,
             outputs,
         }
     }
@@ -353,12 +357,21 @@ impl<'env, 'data> ExprCtx<'env, 'data> {
 
     /// An element for each input to the node.
     ///
-    /// If the input is connected, it is `Some(name)` where `name` is a binding
-    /// to the incoming value. When multiple unconditional edges target the same
-    /// input index, the binding holds a `(list ...)` of all incoming values
-    /// rather than a single value.
+    /// If the input fires in this eval, it is `Some(name)` where `name` is a
+    /// binding to the incoming value. When multiple unconditional edges target
+    /// the same input index, the binding is a `(list ...)` of all incoming
+    /// values rather than a single value.
     pub fn inputs(&self) -> &'data [Option<String>] {
         self.inputs
+    }
+
+    /// An element for each input to the node.
+    ///
+    /// An input is `true` when an edge targets it, whether or not it fires in
+    /// this eval. A connected input that is `None` in [`ExprCtx::inputs`] did
+    /// not fire.
+    pub fn connected(&self) -> &'data Conns {
+        self.connected
     }
 
     /// An element for each output from the node.
@@ -458,6 +471,7 @@ impl<'env, 'data> Clone for ExprCtx<'env, 'data> {
             get_node: self.get_node,
             path: self.path,
             inputs: self.inputs,
+            connected: self.connected,
             outputs: self.outputs,
         }
     }
