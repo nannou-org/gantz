@@ -21,6 +21,15 @@
 //! "did not fire" from "fired with `'()`". Reconvergent work thus runs only
 //! when a live arm jumps.
 //!
+//! A node in the region that also reads a value fired before the branch runs
+//! whichever arm the branch takes. Unless every arm reaches it already, it
+//! moves out of the region with the work downstream of it. The moved nodes
+//! lower after the branch statement. Each source they read from the region
+//! exports alone, and is the unfired sentinel on a path that did not produce
+//! it, also through a branch nested in the region. An input reading such an
+//! export is an [`Arg::Maybe`]. It gets the sources that fired, and the call
+//! picks its variant from them.
+//!
 //! A level is lowered the same way whether entered from an entrypoint
 //! ([`LevelSources::Eval`]) or as a graph fn ([`LevelSources::Inlets`]).
 //! Inlets resolve as pre-bound parameter values. Outlet values are returned
@@ -121,6 +130,17 @@ struct Env {
     /// Maps `(node, input)` to the atom standing in for all of that input's
     /// sources.
     inputs: BTreeMap<(node::Id, usize), Atom>,
+    /// The values in `vals` that fired on every path to this point. A branch
+    /// export may be `'()` from an arm that did not produce it. A delay read
+    /// fires nothing. Neither is in the set.
+    fired: BTreeSet<(node::Id, usize)>,
+    /// Nodes moved out of the region of an enclosing branch. Each source they
+    /// read from a branch exports alone, with the unfired sentinel when it did
+    /// not fire.
+    sentinel: BTreeSet<node::Id>,
+    /// The export vars in `vals` that may be the unfired sentinel. An input
+    /// reading one resolves to an [`Arg::Maybe`].
+    maybe: BTreeSet<Var>,
 }
 
 impl<'a> Cx<'a> {
@@ -198,18 +218,19 @@ pub(crate) fn level_body(cx: &Cx, sources: &LevelSources) -> Result<LevelOut, Lo
     // Enclosing glue binds the outputs of pre-bound non-branching nodes.
     let mut env = Env::default();
     if let LevelSources::Inlets(active) = sources {
-        for &i in active {
-            let var = Var::Output { node: i, output: 0 };
-            env.vals.insert((i, 0), Atom::Var(var));
-        }
+        let vars: Vec<Var> = active
+            .iter()
+            .map(|&i| Var::Output { node: i, output: 0 })
+            .collect();
+        bind_fired(&mut env, &vars);
     }
     for &n in &cx.prebound {
         if cx.branches(n).is_none() {
             let n_outputs = meta.outputs.get(&n).copied().unwrap_or(0);
-            for o in 0..n_outputs {
-                let var = Var::Output { node: n, output: o };
-                env.vals.insert((n, o), Atom::Var(var));
-            }
+            let vars: Vec<Var> = (0..n_outputs)
+                .map(|o| Var::Output { node: n, output: o })
+                .collect();
+            bind_fired(&mut env, &vars);
         }
     }
 
@@ -330,28 +351,43 @@ fn resolve_outlet(dag: &MetaGraph, env: &Env, o: node::Id) -> Result<OutletVal, 
 
 /// Collect the node variants called anywhere in `body`.
 pub(crate) fn collect_confs(body: &Body, confs: &mut BTreeSet<NodeConf>) {
-    fn conf(call: &NodeCall) -> NodeConf {
-        let inputs = node::Conns::try_from_iter(call.args.iter().map(Option::is_some))
-            .expect("arg count exceeds Conns::MAX");
-        NodeConf {
-            id: call.node,
-            conns: NodeConns {
-                inputs,
-                outputs: call.outputs,
-            },
+    // The variants a call may pick. An `Arg::Maybe` input with only sources
+    // that may not fire is unconnected in some of them.
+    fn call_confs(call: &NodeCall) -> Vec<NodeConf> {
+        let mut masks: Vec<Vec<bool>> = vec![vec![]];
+        for arg in &call.args {
+            let connected: &[bool] = match arg {
+                None => &[false],
+                Some(Arg::Maybe(srcs)) if srcs.iter().all(|&(_, maybe)| maybe) => &[false, true],
+                Some(Arg::One(_) | Arg::List(_) | Arg::Maybe(_)) => &[true],
+            };
+            masks = masks
+                .iter()
+                .flat_map(|mask| connected.iter().map(|&c| [&mask[..], &[c]].concat()))
+                .collect();
         }
+        masks
+            .into_iter()
+            .map(|mask| NodeConf {
+                id: call.node,
+                conns: NodeConns {
+                    inputs: node::Conns::try_from_iter(mask).expect("arg count exceeds Conns::MAX"),
+                    outputs: call.outputs,
+                },
+            })
+            .collect()
     }
     for step in &body.steps {
         match step {
             Step::Node { call, .. } => {
-                confs.insert(conf(call));
+                confs.extend(call_confs(call));
             }
             // Delays are intrinsics and have no node fn.
             Step::DelayRead { .. } | Step::DelayWrite { .. } => {}
             Step::Join(join) => collect_confs(&join.body, confs),
             Step::Branch { subject, arms, .. } => {
                 if let Subject::Call(call) = subject {
-                    confs.insert(conf(call));
+                    confs.extend(call_confs(call));
                 }
                 for arm in arms {
                     collect_confs(&arm.body, confs);
@@ -388,16 +424,22 @@ fn lower_steps(
                 .enumerate()
                 .filter_map(|(o, b)| b.then_some(Var::Output { node: n, output: o }))
                 .collect();
-            for &var in &dst {
-                let Var::Output { node, output } = var else {
-                    unreachable!()
-                };
-                env.vals.insert((node, output), Atom::Var(var));
-            }
+            bind_fired(env, &dst);
             steps.push(Step::Node { dst, call });
         }
     }
     Ok(steps)
+}
+
+/// Bind each of the output `vars` in `env` as a fired value.
+fn bind_fired(env: &mut Env, vars: &[Var]) {
+    for &var in vars {
+        let Var::Output { node, output } = var else {
+            unreachable!("only node outputs fire")
+        };
+        env.vals.insert((node, output), Atom::Var(var));
+        env.fired.insert((node, output));
+    }
 }
 
 /// The next node to lower. Among pending nodes whose in-dag predecessors are
@@ -443,7 +485,8 @@ fn node_call(cx: &Cx, dag: &MetaGraph, env: &Env, n: node::Id) -> Result<NodeCal
 /// Resolve input `i` of node `n`. Use the merged override if one was
 /// installed, that is a join param or branch export. Else use the in-scope
 /// source atoms. One source passes directly. Several pass as a `(list ...)`
-/// in source order. None means unconnected.
+/// in source order. None means unconnected. When a source atom may be the
+/// unfired sentinel, they pass as an [`Arg::Maybe`] instead.
 ///
 /// A source with no in-scope binding is dropped. It lives in a scope that
 /// can never be live at the same time as this one, for example a sibling
@@ -458,10 +501,15 @@ fn resolve_input(
     if let Some(&atom) = env.inputs.get(&(n, i)) {
         return Ok(Some(Arg::One(atom)));
     }
-    let atoms: Vec<Atom> = input_sources(dag, n, i)
+    let srcs: Vec<(Atom, bool)> = input_sources(dag, n, i)
         .into_iter()
         .filter_map(|s| env.vals.get(&s).copied())
+        .map(|atom| (atom, matches!(atom, Atom::Var(v) if env.maybe.contains(&v))))
         .collect();
+    if srcs.iter().any(|&(_, maybe)| maybe) {
+        return Ok(Some(Arg::Maybe(srcs)));
+    }
+    let atoms: Vec<Atom> = srcs.into_iter().map(|(atom, _)| atom).collect();
     Ok(match atoms.len() {
         0 => None,
         1 => Some(Arg::One(atoms[0])),
@@ -594,6 +642,47 @@ fn unconditional_reach(
     reached
 }
 
+/// The nodes in the region of branch `b` that also read a value fired before
+/// the branch. Each must run whichever arm the branch takes. A node every arm
+/// reaches already is left out. So is a node that waits on unevaluated work
+/// outside the region.
+fn fed_nodes(
+    cx: &Cx,
+    dag: &MetaGraph,
+    env: &Env,
+    b: node::Id,
+    pending: &BTreeSet<node::Id>,
+    r_all: &BTreeSet<node::Id>,
+    ext_desc: &BTreeSet<node::Id>,
+) -> BTreeSet<node::Id> {
+    let fed: BTreeSet<node::Id> = r_all
+        .iter()
+        .copied()
+        .filter(|&n| !ext_desc.contains(&n) && fired_input(dag, env, n))
+        .collect();
+    if fed.is_empty() {
+        return fed;
+    }
+    let arm_masks = cx.branches(b).expect("caller checked branching");
+    let mut reach = arm_masks
+        .iter()
+        .map(|mask| unconditional_reach(cx, dag, arm_seeds(dag, b, mask, pending), pending));
+    let first = reach.next().unwrap_or_default();
+    let every_arm = reach.fold(first, |acc, r| acc.intersection(&r).copied().collect());
+    fed.difference(&every_arm).copied().collect()
+}
+
+/// Whether an input of `n` reads a value that fired on every path to this
+/// point.
+fn fired_input(dag: &MetaGraph, env: &Env, n: node::Id) -> bool {
+    dag.edges_directed(n, petgraph::Incoming).any(|e_ref| {
+        e_ref.weight().iter().any(|(edge, _)| {
+            let src = (e_ref.source(), edge.output.0 as usize);
+            !env.inputs.contains_key(&(n, edge.input.0 as usize)) && env.fired.contains(&src)
+        })
+    })
+}
+
 /// An export slot bound by a branch dispatch statement. It records how the
 /// join body's final scope yields it, and the atom a dead arm yields instead.
 #[derive(Clone, Copy)]
@@ -621,6 +710,8 @@ enum SlotRet {
 
 /// Lower branch node `b` and its whole region. That is the arm bodies, the
 /// reconvergence join if any, and the branch statement binding its exports.
+/// The nodes that run on every arm move out of the region. See
+/// [`fed_nodes`].
 fn lower_branch(
     cx: &Cx,
     dag: &MetaGraph,
@@ -644,6 +735,29 @@ fn lower_branch(
         .map(|mask| descendants(cx, dag, arm_seeds(dag, b, mask, pending), pending, &no_stop))
         .collect();
     let r_all: BTreeSet<node::Id> = r_arms.iter().flatten().copied().collect();
+
+    // Nodes in the region that also depend on unevaluated work outside it.
+    let ext = pending
+        .iter()
+        .copied()
+        .filter(|n| !r_all.contains(n) && *n != b);
+    let ext_desc = descendants(cx, dag, ext, pending, &no_stop);
+
+    // Nodes fed by a value fired before the branch move out of the region,
+    // with the work downstream of them. They lower after the branch
+    // statement and read its exports.
+    let fed = fed_nodes(cx, dag, env, b, pending, &r_all, &ext_desc);
+    let moved = descendants(cx, dag, fed.iter().copied(), pending, &no_stop);
+    let region: BTreeSet<node::Id> = r_all.difference(&moved).copied().collect();
+    let r_arms: Vec<BTreeSet<node::Id>> = r_arms
+        .iter()
+        .map(|r| r.intersection(&region).copied().collect())
+        .collect();
+    // The consumers that read each source exported alone, with the unfired
+    // sentinel when it did not fire. These are the moved nodes of this and
+    // every enclosing branch.
+    let sentinel = |t: node::Id| moved.contains(&t) || env.sentinel.contains(&t);
+
     // An arm is live when it propagates anywhere. That is into its
     // pending-local region, or via an active output straight to a consumer
     // outside the current lowering scope, for example an outlet.
@@ -671,20 +785,13 @@ fn lower_branch(
         .iter()
         .zip(&live)
         .filter(|&(_, &l)| l)
-        .map(|(mask, _)| unconditional_reach(cx, dag, arm_seeds(dag, b, mask, pending), pending));
+        .map(|(mask, _)| unconditional_reach(cx, dag, arm_seeds(dag, b, mask, &region), &region));
     let mut cont_cand = live_ucr.next().unwrap_or_default();
     for ucr in live_ucr {
         cont_cand = cont_cand.intersection(&ucr).copied().collect();
     }
 
-    // Nodes in the region that also depend on unevaluated work outside it.
-    let ext: BTreeSet<node::Id> = pending
-        .iter()
-        .copied()
-        .filter(|n| !r_all.contains(n) && *n != b)
-        .collect();
-    let ext_desc = descendants(cx, dag, ext.iter().copied(), pending, &no_stop);
-    if let Some(&bad) = r_all
+    if let Some(&bad) = region
         .iter()
         .find(|n| !cont_cand.contains(n) && ext_desc.contains(n))
     {
@@ -706,8 +813,8 @@ fn lower_branch(
             descendants(
                 cx,
                 dag,
-                arm_seeds(dag, b, mask, pending),
-                pending,
+                arm_seeds(dag, b, mask, &region),
+                &region,
                 &cont_cand,
             )
             .difference(&cont_cand)
@@ -716,7 +823,7 @@ fn lower_branch(
         })
         .collect();
     let in_armed: BTreeSet<node::Id> = arm_regions.iter().flatten().copied().collect();
-    let cont: BTreeSet<node::Id> = r_all
+    let cont: BTreeSet<node::Id> = region
         .iter()
         .copied()
         .filter(|n| !deferred.contains(n) && !in_armed.contains(n))
@@ -752,6 +859,9 @@ fn lower_branch(
     // Maps `(consumer, input)` to its param var, for inputs with arm-varying
     // sources.
     let mut params: BTreeMap<(node::Id, usize), Var> = BTreeMap::new();
+    // The arm-varying sources exported alone. Each is a join param named
+    // after the source.
+    let mut src_params: BTreeSet<(node::Id, usize)> = BTreeSet::new();
     // Everything the branch statement binds, in deterministic Var order.
     let mut slots: BTreeMap<Var, Slot> = BTreeMap::new();
     for &(t, i) in &consumer_inputs {
@@ -769,13 +879,50 @@ fn lower_branch(
         let outlet = meta.outlets.contains(&t);
         let missing = if outlet { Atom::Unfired } else { Atom::Unit };
         let outside = !cont.contains(&t);
-        if !arm_s.is_empty() {
+        let lexical = sources.iter().any(|s| env.vals.contains_key(s));
+        // A source moved by this or an enclosing branch binds after this
+        // construct. An export standing in for the whole input would hide it.
+        let later = sources
+            .iter()
+            .any(|(s, _)| moved.contains(s) || env.sentinel.contains(s));
+        let merged = env.inputs.contains_key(&(t, i));
+        if sentinel(t) {
+            // Each source in this construct exports alone. The consumer later
+            // passes the sources that fired, as it would get them here. Every
+            // branch nested in this one exports them the same way. An earlier
+            // export standing in for the whole input would hide them.
+            if merged {
+                return Err(LowerError::MixedInputSources { node: t, input: i });
+            }
+            for &(s, o) in &arm_s {
+                let var = Var::Output { node: s, output: o };
+                src_params.insert((s, o));
+                let ret = SlotRet::Param(var);
+                slots.insert(
+                    var,
+                    Slot {
+                        ret,
+                        missing: Atom::Unfired,
+                    },
+                );
+            }
+            for &(s, o) in &cont_s {
+                let ret = SlotRet::Val((s, o));
+                let var = Var::Output { node: s, output: o };
+                slots.insert(
+                    var,
+                    Slot {
+                        ret,
+                        missing: Atom::Unfired,
+                    },
+                );
+            }
+        } else if !arm_s.is_empty() {
             // Arm-varying sources merge into one scalar param. Mixing them
             // with simultaneously-alive sources is unsupported. Sources
             // visible in neither the region nor the current scope belong to
             // enclosing scopes and merge there.
-            let lexical = sources.iter().any(|s| env.vals.contains_key(s));
-            if !cont_s.is_empty() || lexical || env.inputs.contains_key(&(t, i)) {
+            if !cont_s.is_empty() || lexical || later || merged {
                 return Err(LowerError::MixedInputSources { node: t, input: i });
             }
             let param = Var::Input { node: t, input: i };
@@ -793,8 +940,7 @@ fn lower_branch(
             if outlet {
                 // A dedicated slot carrying the outlet's single cont source,
                 // so a bypassing arm yields the unfired sentinel.
-                let lexical = sources.iter().any(|s| env.vals.contains_key(s));
-                if cont_s.len() > 1 || lexical || env.inputs.contains_key(&(t, i)) {
+                if cont_s.len() > 1 || lexical || later || merged {
                     return Err(LowerError::MixedInputSources { node: t, input: i });
                 }
                 slots.insert(
@@ -808,15 +954,13 @@ fn lower_branch(
                     },
                 );
             } else {
+                // A sentinel consumer of the same source keeps the sentinel.
                 for (s, o) in cont_s {
                     let var = Var::Output { node: s, output: o };
-                    slots.insert(
-                        var,
-                        Slot {
-                            ret: SlotRet::Val((s, o)),
-                            missing: Atom::Unit,
-                        },
-                    );
+                    slots.entry(var).or_insert(Slot {
+                        ret: SlotRet::Val((s, o)),
+                        missing: Atom::Unit,
+                    });
                 }
             }
         }
@@ -828,11 +972,16 @@ fn lower_branch(
     let join_id = cont.first().copied().unwrap_or(b);
     let join = if !cont.is_empty() || !slots.is_empty() {
         let mut join_env = env.clone();
+        join_env.sentinel.extend(moved.iter().copied());
         let mut param_vars: Vec<Var> = Vec::new();
         for (&(n, i), &param) in &params {
             join_env.inputs.insert((n, i), Atom::Var(param));
             param_vars.push(param);
         }
+        let src_vars = src_params
+            .iter()
+            .map(|&(s, o)| Var::Output { node: s, output: o });
+        param_vars.extend(src_vars);
         let join_steps = lower_steps(cx, dag, cont.clone(), &mut join_env)?;
         let ret = slots
             .values()
@@ -866,20 +1015,16 @@ fn lower_branch(
     let mut arms = Vec::with_capacity(arm_masks.len());
     for (k, mask) in arm_masks.iter().enumerate() {
         let mut arm_env = env.clone();
+        arm_env.sentinel.extend(moved.iter().copied());
         let binds: Vec<Var> = mask
             .iter()
             .enumerate()
             .filter_map(|(o, active)| active.then_some(Var::Output { node: b, output: o }))
             .collect();
-        for &var in &binds {
-            let Var::Output { node, output } = var else {
-                unreachable!()
-            };
-            arm_env.vals.insert((node, output), Atom::Var(var));
-        }
+        bind_fired(&mut arm_env, &binds);
         let arm_steps = lower_steps(cx, dag, arm_regions[k].clone(), &mut arm_env)?;
         let tail = if live[k] && join.is_some() {
-            let mut args = Vec::with_capacity(params.len());
+            let mut args = Vec::with_capacity(params.len() + src_params.len());
             for &(n, i) in params.keys() {
                 let missing = if meta.outlets.contains(&n) {
                     Atom::Unfired
@@ -897,6 +1042,11 @@ fn lower_branch(
                     missing,
                 )?);
             }
+            // A source this arm does not produce passes the unfired sentinel.
+            let src_args = src_params
+                .iter()
+                .map(|src| arm_env.vals.get(src).copied().unwrap_or(Atom::Unfired));
+            args.extend(src_args);
             Tail::Jump {
                 join: join_id,
                 args,
@@ -915,15 +1065,19 @@ fn lower_branch(
     }
 
     // Consume the region. Deferred nodes stay pending and read the exports.
-    for n in r_all.iter() {
+    // So do the moved nodes.
+    for n in region.iter() {
         if !deferred.contains(n) {
             pending.remove(n);
         }
     }
-    for &var in &export_vars {
+    for (&var, slot) in &slots {
         match var {
             Var::Output { node, output } => {
                 env.vals.insert((node, output), Atom::Var(var));
+                if slot.missing == Atom::Unfired {
+                    env.maybe.insert(var);
+                }
             }
             Var::Input { node, input } => {
                 env.inputs.insert((node, input), Atom::Var(var));

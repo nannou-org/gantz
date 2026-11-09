@@ -30,10 +30,10 @@ pub(crate) enum Atom {
     /// The empty list `'()`. The "no value" placeholder, for example the
     /// export of a branch arm that does not produce it.
     Unit,
-    /// The sentinel marking an outlet value that was never produced. It
-    /// distinguishes "did not fire" from "fired with `'()`". It only flows
-    /// into outlet-feeding exports and the fired-signature tests that read
-    /// them.
+    /// The sentinel marking a value that was never produced. It distinguishes
+    /// "did not fire" from "fired with `'()`". It only flows into the exports
+    /// read by outlets or by [`Arg::Maybe`] inputs, and into the tests that
+    /// read them.
     Unfired,
 }
 
@@ -60,6 +60,11 @@ pub(crate) enum Arg {
     /// Multiple sources target the same input. Passed as `(list ...)` in
     /// topological source order.
     List(Vec<Atom>),
+    /// The sources of an input when some may be [`Atom::Unfired`] at runtime,
+    /// in source order. Each is paired with whether it may be. The input gets
+    /// the sources that fired, as an input with only those sources would. None
+    /// leaves it unconnected, one passes alone and several pass as a list.
+    Maybe(Vec<(Atom, bool)>),
 }
 
 /// A call to a generated node fn.
@@ -68,7 +73,8 @@ pub(crate) struct NodeCall {
     pub node: node::Id,
     /// One element per node input. `None` means unconnected for this
     /// variant. The variant's input mask is derived from which elements are
-    /// `Some`.
+    /// `Some`. An [`Arg::Maybe`] is connected only when one of its sources
+    /// fired, and the call picks its variant at runtime.
     pub args: Vec<Option<Arg>>,
     /// The connected-outputs mask. It selects the variant and the result
     /// shape.
@@ -219,6 +225,7 @@ impl Scope {
         match arg {
             Arg::One(a) => self.check_atom(a),
             Arg::List(atoms) => atoms.iter().try_for_each(|a| self.check_atom(a)),
+            Arg::Maybe(srcs) => srcs.iter().try_for_each(|(a, _)| self.check_atom(a)),
         }
     }
 
