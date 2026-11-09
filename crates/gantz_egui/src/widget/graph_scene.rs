@@ -797,6 +797,7 @@ fn nodes(
         // Whether this node's UI or context menu marked a CA-affecting change.
         // See the `changed` contract on `NodeUi`.
         let mut node_changed = false;
+        let mut moved_inputs = None;
         let mut node = egui_graph::node::Node::from_id(node_id)
             .inputs(inputs)
             .outputs(outputs)
@@ -824,6 +825,7 @@ fn nodes(
                 .read_only(locked);
                 let r = entry.inst.node.ui(node_ctx, nui_ctx);
                 node_changed |= r.changed;
+                moved_inputs = r.moved_inputs;
                 responses.extend(r.payloads);
                 r.framed
             }
@@ -1103,6 +1105,14 @@ fn nodes(
             let weight = &mut graph[n_id];
             *changed |= instances.restore(n_ix, entry, weight, node_changed, validate);
         }
+        if let Some(moves) = moved_inputs
+            && move_input_edges(graph, n_id, &moves)
+        {
+            // Removing edges shifts edge indices and leaves the edge selection
+            // stale.
+            state.interaction.selection.edges.clear();
+            *changed = true;
+        }
 
         responses.extend(crate::action::state_written(&mut writes));
         node_responses.push((n_id, response));
@@ -1154,6 +1164,45 @@ fn placeholder_socket_counts(graph: &DataGraph, n: NodeIndex) -> (usize, usize) 
         .max()
         .unwrap_or(0);
     (inputs, outputs)
+}
+
+/// Move the edges into node `n` as `moves` gives. See
+/// [`NodeUiResponse::moved_inputs`](crate::NodeUiResponse::moved_inputs).
+///
+/// The edges into an input past the end of `moves` stay. Returns whether
+/// any edge changed.
+pub(crate) fn move_input_edges(
+    graph: &mut DataGraph,
+    n: NodeIndex,
+    moves: &[Option<usize>],
+) -> bool {
+    let incoming: Vec<EdgeIndex> = graph
+        .edges_directed(n, petgraph::Direction::Incoming)
+        .map(|e| e.id())
+        .collect();
+    let mut moved = false;
+    let mut removed = vec![];
+    for e in incoming {
+        let input = usize::from(graph[e].input.0);
+        let Some(&to) = moves.get(input) else {
+            continue;
+        };
+        match to.map(u16::try_from) {
+            Some(Ok(to)) if usize::from(to) != input => {
+                graph[e].input = node::Input(to);
+                moved = true;
+            }
+            Some(Ok(_)) => (),
+            Some(Err(_)) | None => removed.push(e),
+        }
+    }
+    // `remove_edge` swap-removes. Removing from the highest index down keeps
+    // the lower indices valid.
+    removed.sort_unstable_by_key(|e| std::cmp::Reverse(e.index()));
+    for &e in &removed {
+        graph.remove_edge(e);
+    }
+    moved || !removed.is_empty()
 }
 
 /// Mark a locked node with a glyph by its top right corner. Hovering the
@@ -1718,5 +1767,78 @@ mod tests {
         state.pending_align = Some(egui_graph::AlignBy::Center);
         assert!(pass(&mut state, false), "an align");
         assert!(!pass(&mut state, false), "a plain pass after the edits");
+    }
+
+    /// An edit that moves the `$var` names of an expr moves its edges once the
+    /// edit ends. The edges of a removed name go.
+    #[test]
+    fn expr_edges_follow_their_names() {
+        use super::{GraphScene, GraphSceneState, NodeIndex};
+        use crate::{impls::expr::ExprEdit, test_node::replace_text};
+        use gantz_core::Edge;
+        use petgraph::visit::EdgeRef;
+        let registry = gantz_ca::Registry::default();
+        let graphs = gantz_core::data::ReifiedGraphs::new();
+        let builtins = gantz_core::Builtins::default();
+        let ui_builtins = crate::node::UiBuiltins::default();
+        let codec = crate::test_node::codec();
+        let env = crate::Env {
+            registry: &registry,
+            builtins: &builtins,
+            codec: &codec,
+            graphs: &graphs,
+            instances: &ui_builtins,
+        };
+        let mut graph = gantz_ca::DataGraph::default();
+        let a = graph.add_node(crate::test_node::expr("1"));
+        let b = graph.add_node(crate::test_node::expr("2"));
+        let e = graph.add_node(crate::test_node::expr("(list $a $b)"));
+        graph.add_edge(a, e, Edge::from((0, 0)));
+        graph.add_edge(b, e, Edge::from((0, 1)));
+        let mut instances = crate::node::NodeInstances::default();
+        let mut vm = steel::steel_vm::engine::Engine::new_base();
+        let mut view = gantz_edit::SceneView::default();
+        let mut state = GraphSceneState::default();
+        let ctx = egui::Context::default();
+        let editor = egui::Id::new("ExprEdit").with([e.index()]);
+        let mut pass = |graph: &mut gantz_ca::DataGraph, events: Vec<egui::Event>, blur: bool| {
+            let input = egui::RawInput {
+                events,
+                ..Default::default()
+            };
+            let _ = ctx.run_ui(input, |ui| {
+                if blur {
+                    ui.memory_mut(|m| m.request_focus(egui::Id::new("other")));
+                }
+                let scene = GraphScene::new(&env, &codec, graph, &mut instances);
+                scene.show(&mut view, &mut state, &mut vm, ui);
+            });
+        };
+        let inputs = |graph: &gantz_ca::DataGraph| -> Vec<(NodeIndex, u16)> {
+            let mut inputs: Vec<_> = graph
+                .edges_directed(e, petgraph::Direction::Incoming)
+                .map(|edge| (edge.source(), edge.weight().input.0))
+                .collect();
+            inputs.sort();
+            inputs
+        };
+
+        pass(&mut graph, vec![], false);
+        ExprEdit::open(&ctx, editor);
+        pass(&mut graph, vec![], false);
+        pass(&mut graph, replace_text("(list $b $a)"), false);
+        assert_eq!(
+            inputs(&graph),
+            [(a, 0), (b, 1)],
+            "edges wait for the edit to end"
+        );
+        pass(&mut graph, vec![], true);
+        assert_eq!(inputs(&graph), [(a, 1), (b, 0)], "edges follow their names");
+
+        ExprEdit::open(&ctx, editor);
+        pass(&mut graph, vec![], false);
+        pass(&mut graph, replace_text("(list $b)"), false);
+        pass(&mut graph, vec![], true);
+        assert_eq!(inputs(&graph), [(b, 0)], "the edges of a removed name go");
     }
 }

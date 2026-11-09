@@ -150,6 +150,13 @@ pub struct NodeUiResponse {
     /// Payloads emitted by the node for the application to handle after the
     /// GUI pass.
     pub payloads: Vec<DynResponse>,
+    /// Where each input of the node went, when an edit of the node moved its
+    /// inputs.
+    ///
+    /// Element `i` is the new index of input `i`, or `None` when the edit
+    /// removed the input. The edges into input `i` move to its new index.
+    /// The edges into a removed input go.
+    pub moved_inputs: Option<Vec<Option<usize>>>,
 }
 
 impl NodeUiResponse {
@@ -159,6 +166,7 @@ impl NodeUiResponse {
             framed,
             changed: false,
             payloads: Vec::new(),
+            moved_inputs: None,
         }
     }
 }
@@ -195,6 +203,8 @@ pub struct NodeViewResponse {
     pub changed: bool,
     /// Payloads emitted by the node for the application to handle.
     pub payloads: Vec<DynResponse>,
+    /// See [`NodeUiResponse::moved_inputs`].
+    pub moved_inputs: Option<Vec<Option<usize>>>,
 }
 
 /// The response from [`NodeUi::context_menu`][crate::NodeUi::context_menu].
