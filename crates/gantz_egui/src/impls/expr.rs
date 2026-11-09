@@ -23,6 +23,12 @@ struct ExprEditState {
     /// Why the working code does not parse, if it does not.
     error: Option<String>,
     edit: Edit,
+    /// The `$var` names when the focused edit first changed the node. The
+    /// edges into the node keep the input indices of these names until the
+    /// edit ends.
+    base: Option<Vec<String>>,
+    /// See [`ExprEdit::take_moved_inputs`].
+    moved: Option<Vec<Option<usize>>>,
 }
 
 /// Whether an in-graph [`ExprEdit`] shows its field.
@@ -132,9 +138,13 @@ impl<'a> egui::Widget for ExprEdit<'a> {
                 ui.add(edit)
             })
             .inner;
+        if response.gained_focus() {
+            state.base = None;
+        }
         if response.changed() {
             match gantz_core::node::expr(&state.code) {
                 Ok(new_expr) => {
+                    state.base.get_or_insert_with(|| expr.vars().to_vec());
                     // Preserve the user-set output count across text edits. Only
                     // the source, and thus the `$var` inputs, follows the edit.
                     *expr = new_expr.with_outputs(expr.outputs());
@@ -142,6 +152,14 @@ impl<'a> egui::Widget for ExprEdit<'a> {
                 }
                 Err(e) => state.error = Some(e.to_string()),
             }
+        }
+        // Edges move only once the edit ends. A name that is gone for a
+        // moment then keeps its edges. A name is gone for a moment while it
+        // is half typed, or cut to be pasted elsewhere.
+        if response.lost_focus()
+            && let Some(base) = state.base.take()
+        {
+            state.moved = moved_inputs(&base, expr.vars());
         }
         match state.edit {
             Edit::Opening => {
@@ -199,8 +217,10 @@ impl NodeUi for gantz_core::node::Expr {
         if let Some(error) = ExprEdit::error(&node.ctx, id) {
             unparsed_tag(node, &error);
         }
+        let moved_inputs = ExprEdit::take_moved_inputs(&node.ctx, id);
         let mut resp = NodeUiResponse::new(framed);
         resp.set_changed(expr_hash(self) != before);
+        resp.moved_inputs = moved_inputs;
         resp
     }
 
@@ -212,6 +232,7 @@ impl NodeUi for gantz_core::node::Expr {
         let id = ui.id().with("expr-view");
         let res = ui.add(ExprEdit::new(self, id).fill(true));
         let mut resp = NodeViewResponse::default();
+        resp.moved_inputs = ExprEdit::take_moved_inputs(&res.ctx, id);
         resp.inner = Some(res);
         resp.set_changed(expr_hash(self) != before);
         resp
@@ -309,6 +330,39 @@ impl<'a> ExprEdit<'a> {
         ctx.data(|d| d.get_temp::<ExprEditState>(id.with("code")))
             .is_some_and(|state| state.edit != Edit::Rest)
     }
+
+    /// Take where each input went in the last edit of the editor `id`, if
+    /// the edit ended and changed the `$var` names.
+    ///
+    /// Element `i` is the new index of input `i`, or `None` when the edit
+    /// removed its name. See [`NodeUiResponse::moved_inputs`].
+    pub fn take_moved_inputs(ctx: &egui::Context, id: egui::Id) -> Option<Vec<Option<usize>>> {
+        ctx.data_mut(|d| {
+            d.get_temp_mut_or_default::<ExprEditState>(id.with("code"))
+                .moved
+                .take()
+        })
+    }
+}
+
+/// Where each input of an expr goes when its `$var` names change from
+/// `from` to `to`, or `None` when the names stay the same.
+///
+/// An input keeps its edges under its name, at the index of that name in
+/// `to`. The edges of a name that `to` lacks go. The trigger input of an
+/// expr with no `$var` has no name. Its edges go too.
+fn moved_inputs(from: &[String], to: &[String]) -> Option<Vec<Option<usize>>> {
+    if from == to {
+        return None;
+    }
+    if from.is_empty() {
+        return Some(vec![None]);
+    }
+    Some(
+        from.iter()
+            .map(|v| to.iter().position(|t| t == v))
+            .collect(),
+    )
 }
 
 /// The code as the node's text, in the code colours and with its own lines.
@@ -361,4 +415,101 @@ fn unparsed_tag(node: &egui::Response, error: &str) {
         text,
     );
     node.clone().on_hover_text(format!("not applied: {error}"));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ExprEdit, moved_inputs};
+    use crate::test_node::replace_text as replace;
+
+    fn names(vars: &[&str]) -> Vec<String> {
+        vars.iter().map(|v| v.to_string()).collect()
+    }
+
+    #[test]
+    fn inputs_move_with_their_names() {
+        let moved = |from: &[&str], to: &[&str]| moved_inputs(&names(from), &names(to));
+        assert_eq!(moved(&["$a", "$b"], &["$a", "$b"]), None);
+        assert_eq!(
+            moved(&["$a", "$b"], &["$b", "$a"]),
+            Some(vec![Some(1), Some(0)])
+        );
+        assert_eq!(
+            moved(&["$a", "$b"], &["$a", "$c", "$b"]),
+            Some(vec![Some(0), Some(2)])
+        );
+        // A removed name loses its edges.
+        assert_eq!(moved(&["$a", "$b"], &["$b"]), Some(vec![None, Some(0)]));
+        assert_eq!(
+            moved(&["$a", "$b"], &["$c", "$b"]),
+            Some(vec![None, Some(1)])
+        );
+        // The trigger input of an expr with no `$var` has no name.
+        assert_eq!(moved(&[], &["$a"]), Some(vec![None]));
+        assert_eq!(moved(&["$a"], &[]), Some(vec![None]));
+        assert_eq!(moved(&[], &[]), None);
+    }
+
+    /// Run one pass of the editor over `expr`. `blur` gives the focus to
+    /// another widget before the editor draws.
+    fn pass(
+        ctx: &egui::Context,
+        expr: &mut gantz_core::node::Expr,
+        events: Vec<egui::Event>,
+        blur: bool,
+    ) -> Option<Vec<Option<usize>>> {
+        let id = egui::Id::new("expr");
+        let input = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run_ui(input, |ui| {
+            if blur {
+                ui.memory_mut(|m| m.request_focus(egui::Id::new("other")));
+            }
+            ui.add(ExprEdit::new(expr, id).fill(true));
+        });
+        ExprEdit::take_moved_inputs(ctx, id)
+    }
+
+    /// A focused editor over `src`.
+    fn focused(src: &str) -> (egui::Context, gantz_core::node::Expr) {
+        let ctx = egui::Context::default();
+        let mut expr = gantz_core::node::expr(src).unwrap();
+        pass(&ctx, &mut expr, vec![], false);
+        ctx.memory_mut(|m| m.request_focus(egui::Id::new("expr")));
+        assert_eq!(pass(&ctx, &mut expr, vec![], false), None);
+        (ctx, expr)
+    }
+
+    /// The inputs move once the edit ends, and only once.
+    #[test]
+    fn inputs_move_when_the_edit_ends() {
+        let (ctx, mut expr) = focused("(list $a $b)");
+        assert_eq!(pass(&ctx, &mut expr, replace("(list $b $a)"), false), None);
+        assert_eq!(expr.src(), "(list $b $a)");
+        let moved = pass(&ctx, &mut expr, vec![], true);
+        assert_eq!(moved, Some(vec![Some(1), Some(0)]));
+        assert_eq!(pass(&ctx, &mut expr, vec![], false), None);
+    }
+
+    /// A name cut and pasted back within one edit keeps its edges.
+    #[test]
+    fn a_name_gone_for_a_moment_keeps_its_edges() {
+        let (ctx, mut expr) = focused("(list $a $b)");
+        assert_eq!(pass(&ctx, &mut expr, replace("(list $b)"), false), None);
+        assert_eq!(expr.vars(), ["$b"]);
+        assert_eq!(pass(&ctx, &mut expr, replace("(list $b $a)"), false), None);
+        let moved = pass(&ctx, &mut expr, vec![], true);
+        assert_eq!(moved, Some(vec![Some(1), Some(0)]));
+    }
+
+    /// An edit that ends with the names it began with moves nothing.
+    #[test]
+    fn an_edit_back_to_the_same_names_moves_nothing() {
+        let (ctx, mut expr) = focused("(list $a $b)");
+        assert_eq!(pass(&ctx, &mut expr, replace("(list $b $a)"), false), None);
+        assert_eq!(pass(&ctx, &mut expr, replace("(+ $a $b)"), false), None);
+        assert_eq!(pass(&ctx, &mut expr, vec![], true), None);
+    }
 }

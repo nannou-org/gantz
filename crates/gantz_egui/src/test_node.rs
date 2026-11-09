@@ -39,3 +39,15 @@ pub fn with_unknown_field(mut node_data: NodeData) -> NodeData {
 pub fn has_unknown_field(node_data: &NodeData) -> bool {
     node_data.data.get("future").is_some()
 }
+
+/// The events that replace all the text of a focused text edit with `text`.
+pub fn replace_text(text: &str) -> Vec<egui::Event> {
+    let select_all = egui::Event::Key {
+        key: egui::Key::A,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    };
+    vec![select_all, egui::Event::Text(text.to_string())]
+}

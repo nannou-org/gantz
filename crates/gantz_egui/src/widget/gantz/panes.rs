@@ -639,6 +639,7 @@ fn render_node_view<Access>(
 {
     let PaneCtx {
         gantz,
+        state,
         access,
         response: gantz_response,
         ..
@@ -723,13 +724,21 @@ fn render_node_view<Access>(
                         let changed = data
                             .instances
                             .restore(n_ix, entry, weight, r.changed, validate);
-                        Some((changed, r.payloads))
+                        let edges_moved = r.moved_inputs.is_some_and(|moves| {
+                            graph_scene::move_input_edges(data.graph, n_id, &moves)
+                        });
+                        Some((changed, edges_moved, r.payloads))
                     })
                 })
                 .inner;
             match result {
-                Some(Some((changed, payloads))) => {
-                    if changed {
+                Some(Some((changed, edges_moved, payloads))) => {
+                    if edges_moved && let Some(head_state) = state.open_heads.get_mut(&head) {
+                        // Removing edges shifts edge indices and leaves the
+                        // edge selection stale.
+                        head_state.scene.interaction.selection.edges.clear();
+                    }
+                    if changed || edges_moved {
                         gantz_response.changed_heads.push(head.clone());
                     }
                     gantz_response.responses.extend(Some(&head), payloads);

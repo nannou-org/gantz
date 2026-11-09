@@ -3,7 +3,7 @@
 mod apply;
 mod branch;
 mod delay;
-mod expr;
+pub(crate) mod expr;
 mod identity;
 mod inlet;
 mod list;
