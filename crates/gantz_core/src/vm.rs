@@ -9,8 +9,10 @@ use crate::{
     node,
 };
 use petgraph::visit::{Data, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, Visitable};
+use std::collections::{HashMap, HashSet};
 use steel::{
     SteelErr, SteelVal,
+    gc::Gc,
     parser::{ast::ExprKind, span::Span},
     steel_vm::{builtin::BuiltInModule, engine::Engine},
 };
@@ -71,6 +73,10 @@ pub struct SteelModule {
     /// Constructs the Rust builtin module that the source requires, if any.
     pub builtin: Option<fn() -> BuiltInModule>,
 }
+
+/// The global that records the top-level forms of the module that the engine
+/// has run, as a map from the key of each form to its text. See [`compile`].
+const LOADED: &str = "%gantz-loaded";
 
 /// The Steel modules provided by `gantz_core` itself.
 ///
@@ -201,10 +207,16 @@ where
 
 /// Compile the graph into a Steel module and run it in the VM.
 ///
-/// The module runs as a single program so that the engine registers
-/// [`Compiled::src`] verbatim as one source. Subsequent steel errors then
-/// carry spans whose offsets index into it directly. See
-/// [`steel_err_node`].
+/// Only the forms that changed since the engine last ran them run again,
+/// along with the forms that call them. A definition under a name that the
+/// engine has already takes a new slot, and the earlier callers keep the old
+/// one. Every caller of a form that runs again therefore runs again too. A
+/// form with the same text as before, and with no such callee, is left as the
+/// engine has it.
+///
+/// The program that runs is [`Compiled::src`] with the other forms blanked
+/// out, so the span of a steel error from it indexes [`Compiled::src`]
+/// directly. See [`steel_err_node`] for the errors of later evaluations.
 pub fn compile<'a, G>(
     get_node: node::GetNode<'a>,
     graph: G,
@@ -230,14 +242,120 @@ where
     let compiled = Compiled { exprs, src, map };
 
     let run_start = web_time::Instant::now();
-    let result = vm.run(compiled.src.clone());
-    log::debug!("Compiled steel ({:?})", run_start.elapsed());
+    let run = forms_to_run(&compiled.src, &compiled.map, &loaded_forms(vm));
+    let n_run = run.iter().filter(|&&run| run).count();
+    let result = match n_run {
+        0 => Ok(()),
+        _ => vm
+            .run(program(&compiled.src, &compiled.map, &run))
+            .map(|_| ()),
+    };
+    let n_forms = run.len();
+    log::debug!(
+        "Compiled steel ({:?}, {n_run} of {n_forms} forms)",
+        run_start.elapsed()
+    );
     match result {
-        Ok(_) => Ok(compiled),
-        Err(err) => Err(CompileError::Eval {
-            err,
-            module: Box::new(compiled),
-        }),
+        Ok(()) => {
+            let forms = compiled.map.defs().iter();
+            set_loaded_forms(vm, forms.map(|def| form(&compiled.src, def)));
+            Ok(compiled)
+        }
+        Err(err) => {
+            // The engine may have run some of the forms. With no record, the
+            // next compile runs them all.
+            set_loaded_forms(vm, std::iter::empty());
+            Err(CompileError::Eval {
+                err,
+                module: Box::new(compiled),
+            })
+        }
+    }
+}
+
+/// The key and the text of a top-level form of a module source. A definition
+/// has the name it defines as its key. Any other form has its text.
+fn form<'a>(src: &'a str, def: &crate::compile::source_map::Def) -> (&'a str, &'a str) {
+    let text = &src[def.range.clone()];
+    match def.name_range.is_empty() {
+        true => (text, text),
+        false => (&src[def.name_range.clone()], text),
+    }
+}
+
+/// Whether each top-level form of the module source has to run, given the
+/// text of each form that the engine has run, by key.
+///
+/// A form runs when its text is new, or when it names a form that runs. The
+/// module defines a form before the forms that call it.
+fn forms_to_run(src: &str, map: &SourceMap, loaded: &HashMap<String, String>) -> Vec<bool> {
+    let mut rerun: HashSet<&str> = HashSet::new();
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut occs = map.occs().iter().peekable();
+    let mut run = Vec::with_capacity(map.defs().len());
+    for (ix, def) in map.defs().iter().enumerate() {
+        let (key, text) = form(src, def);
+        let mut calls_rerun = false;
+        while let Some(occ) = occs.next_if(|occ| occ.def_ix == ix) {
+            calls_rerun |= rerun.contains(&src[occ.range.clone()]);
+        }
+        // A second form with the same key has no record of its own.
+        let repeated = !seen.insert(key);
+        let unchanged = loaded.get(key).is_some_and(|loaded| loaded == text);
+        let runs = calls_rerun || repeated || !unchanged;
+        if runs {
+            rerun.insert(key);
+        }
+        run.push(runs);
+    }
+    run
+}
+
+/// The module source with each form that does not run blanked out. Every
+/// byte of a form that runs keeps its offset.
+fn program(src: &str, map: &SourceMap, run: &[bool]) -> String {
+    let mut program = String::with_capacity(src.len());
+    let mut end = 0;
+    for (def, &run) in map.defs().iter().zip(run) {
+        program.push_str(&src[end..def.range.start]);
+        let form = &src[def.range.clone()];
+        match run {
+            true => program.push_str(form),
+            false => program.extend(form.bytes().map(|b| if b == b'\n' { '\n' } else { ' ' })),
+        }
+        end = def.range.end;
+    }
+    program.push_str(&src[end..]);
+    program
+}
+
+/// The text of each form that the engine has run, by key. Empty for an
+/// engine that has compiled no module.
+fn loaded_forms(vm: &Engine) -> HashMap<String, String> {
+    let Ok(SteelVal::HashMapV(loaded)) = vm.extract_value(LOADED) else {
+        return HashMap::new();
+    };
+    let strings = loaded.iter().filter_map(|(key, text)| match (key, text) {
+        (SteelVal::StringV(key), SteelVal::StringV(text)) => {
+            Some((key.as_str().to_string(), text.as_str().to_string()))
+        }
+        _ => None,
+    });
+    strings.collect()
+}
+
+/// Record the forms that the engine has run, as `(key, text)` pairs.
+fn set_loaded_forms<'a>(vm: &mut Engine, forms: impl Iterator<Item = (&'a str, &'a str)>) {
+    let string = |s: &str| SteelVal::StringV(s.into());
+    let loaded: steel::HashMap<SteelVal, SteelVal> = forms
+        .map(|(key, text)| (string(key), string(text)))
+        .collect();
+    let loaded = SteelVal::HashMapV(Gc::new(loaded).into());
+    // `register_value` takes a new global slot each time, so it runs once.
+    if vm.extract_value(LOADED).is_ok() {
+        vm.update_value(LOADED, loaded);
+    } else {
+        vm.register_value(LOADED, loaded);
     }
 }
 
@@ -255,25 +373,45 @@ pub fn fmt_module(module: &[ExprKind]) -> String {
 
 /// The byte range into [`Compiled::src`] best attributed to a steel error.
 ///
-/// Uses the error's own span when it points into the compiled module's
-/// source, otherwise the innermost stack-trace frame that does. A span
-/// belongs to the module when its source text is exactly [`Compiled::src`].
-/// The text is looked up in the engine by the span's source id. Spans from
-/// other sources and span-less errors yield `None`. Other sources include
-/// snippets run by node UIs and modules from before a recompile.
+/// Uses the error's own span when it points into a form of the compiled
+/// module, otherwise the innermost stack-trace frame that does. The source
+/// text of a span is looked up in the engine by the span's source id. It is
+/// the program of the [`compile`] that last ran the form, an earlier one when
+/// the form has not changed since. The span belongs to the module when the
+/// form around it has the same text in [`Compiled::src`]. Spans from other
+/// sources and span-less errors yield `None`. Other sources include snippets
+/// run by node UIs and forms that a recompile has replaced.
 pub fn steel_err_span(
     err: &SteelErr,
     vm: &Engine,
     compiled: &Compiled,
 ) -> Option<std::ops::Range<usize>> {
-    let in_module = |span: &Span| {
-        span.source_id()
-            .and_then(|id| vm.get_source(&id))
-            .is_some_and(|text| text.as_ref().as_ref() == compiled.src)
+    steel_err_spans(err).find_map(|span| {
+        let text = vm.get_source(&span.source_id()?)?;
+        module_range(text.as_ref().as_ref(), span.usize_range(), compiled)
+    })
+}
+
+/// The range of [`Compiled::src`] with the same form text as `range` of
+/// `text`, a source that the engine ran.
+fn module_range(
+    text: &str,
+    range: std::ops::Range<usize>,
+    compiled: &Compiled,
+) -> Option<std::ops::Range<usize>> {
+    if text == compiled.src {
+        return Some(range);
+    }
+    let ran = SourceMap::parse(text);
+    let around = |def: &&crate::compile::source_map::Def| {
+        def.range.start <= range.start && range.end <= def.range.end
     };
-    steel_err_spans(err)
-        .find(in_module)
-        .map(|span| span.usize_range())
+    let def = ran.defs().iter().find(around)?;
+    let ran_form = form(text, def);
+    let mut defs = compiled.map.defs().iter();
+    let now = defs.find(|now| form(&compiled.src, now) == ran_form)?;
+    let start = now.range.start + (range.start - def.range.start);
+    Some(start..start + range.len())
 }
 
 /// The first span attached to a steel error, without verifying which
@@ -320,7 +458,8 @@ fn steel_err_spans(err: &SteelErr) -> impl Iterator<Item = Span> + '_ {
 
 #[cfg(test)]
 mod tests {
-    use super::new_engine;
+    use super::{SourceMap, form, forms_to_run, new_engine, program};
+    use std::collections::HashMap;
     use steel::SteelVal;
 
     /// Values a partial graph eval can pass in place of a list or fn.
@@ -495,5 +634,64 @@ mod tests {
             &non_fns,
         ));
         assert_list_evals(&all);
+    }
+
+    /// A module of two node fns, a graph fn that calls the first, and an
+    /// entry fn that calls the graph fn and the second.
+    fn module_src(node_0: &str) -> String {
+        [
+            "(require \"gantz/list\")",
+            &format!("(define node-fn-2:0-i1-o1 (λ (input0) {node_0}))"),
+            "(define node-fn-1-i1-o1 (λ (input0) (- input0 1)))",
+            "(define graph-fn-2-i1 (λ (node-0-o0) (node-fn-2:0-i1-o1 node-0-o0)))",
+            "(define entry-fn-01234567 (λ () (node-fn-1-i1-o1 (graph-fn-2-i1 1))))",
+        ]
+        .join("\n\n")
+    }
+
+    /// The forms of `src` that run in an engine that has run `loaded`.
+    fn runs(loaded: Option<&str>, src: &str) -> Vec<bool> {
+        let record = |src: &str| -> HashMap<String, String> {
+            let map = SourceMap::parse(src);
+            let forms = map.defs().iter().map(|def| form(src, def));
+            forms.map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        };
+        let loaded = loaded.map(record).unwrap_or_default();
+        forms_to_run(src, &SourceMap::parse(src), &loaded)
+    }
+
+    #[test]
+    fn every_form_runs_in_a_new_engine() {
+        assert_eq!(runs(None, &module_src("(+ input0 1)")), [true; 5]);
+    }
+
+    #[test]
+    fn no_form_runs_again_unchanged() {
+        let src = module_src("(+ input0 1)");
+        assert_eq!(runs(Some(&src), &src), [false; 5]);
+    }
+
+    #[test]
+    fn a_changed_form_runs_with_its_callers() {
+        let old = module_src("(+ input0 1)");
+        let new = module_src("(+ input0 2)");
+        // The first node fn, the graph fn that calls it and the entry fn.
+        assert_eq!(runs(Some(&old), &new), [false, true, false, true, true]);
+    }
+
+    #[test]
+    fn a_program_keeps_the_offsets_of_the_forms_that_run() {
+        let src = module_src("(+ input0 1)");
+        let map = SourceMap::parse(&src);
+        let run = [false, true, false, true, true];
+        let program = program(&src, &map, &run);
+        assert_eq!(program.len(), src.len());
+        for (def, run) in map.defs().iter().zip(run) {
+            let form = &program[def.range.clone()];
+            match run {
+                true => assert_eq!(form, &src[def.range.clone()]),
+                false => assert!(form.trim().is_empty(), "{form}"),
+            }
+        }
     }
 }
