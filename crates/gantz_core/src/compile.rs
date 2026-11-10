@@ -34,6 +34,13 @@
 //! branching, the result is a `(list branch-ix vals)` pair. The parent level
 //! continues from it as a pre-bound source.
 //!
+//! The state of a graph level is one hashmap keyed by node id. The map of a
+//! nested level is the state of its graph node. A stateful node fn takes the
+//! state of its node as its last argument. A fn with an expr that assigns
+//! `state` returns `(list output state)`, and its call stores the returned
+//! state unless it is the value that was passed in. A fn that only reads
+//! `state` returns its output alone, and its call stores nothing.
+//!
 //! Cycles are legal when they pass through a [`crate::node::Delay`].
 //! Ordering and reachability never propagate through a delay. Its value
 //! crosses between evaluations. It is read at the top of a level body and

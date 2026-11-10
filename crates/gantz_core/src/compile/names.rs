@@ -1,8 +1,8 @@
 //! The emitted Steel identifier naming scheme.
 //!
-//! Every identifier the compiler emits is produced by a formatter in this
-//! module. [`parse`] is its inverse. It maps an emitted identifier back to
-//! the node, graph level, entrypoint or join it was generated for. Keeping
+//! Every emitted identifier that names a node, graph level, entrypoint or
+//! join is produced by a formatter in this module. [`parse`] is its inverse.
+//! It maps such an identifier back to the entity it was generated for. Keeping
 //! both directions here stops them drifting apart. If a formatter changes,
 //! the roundtrip tests below fail.
 
@@ -46,6 +46,10 @@ pub enum Name {
     /// A join point fn. `join-{id}`.
     Join { id: node::Id },
 }
+
+/// The binding for the state of a node, within its node fn and at its call.
+/// A [`Node::expr`](crate::node::Node::expr) reads and assigns it.
+pub(crate) const STATE: &str = "state";
 
 /// The string used to represent a path in a fn name.
 pub(crate) fn path_string(path: &[node::Id]) -> String {
@@ -338,7 +342,8 @@ mod tests {
             "results",
             "graph-state",
             "%root-state",
-            "%lvl-state",
+            "%graph-state",
+            "%lvl-s-3",
             "%lvl-r-3",
             "%gantz-sig",
             "%vals-node-0-o0",

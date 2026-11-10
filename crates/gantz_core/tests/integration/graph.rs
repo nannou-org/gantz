@@ -1985,6 +1985,93 @@ fn test_graph_branch_outside_input() {
     }
 }
 
+/// Stores input 1 when it fires and outputs the stored value. Only the
+/// variant with input 1 active assigns `state`.
+#[derive(Debug)]
+struct Latch;
+
+impl Node for Latch {
+    fn n_inputs(&self, _ctx: node::MetaCtx) -> usize {
+        2
+    }
+
+    fn n_outputs(&self, _ctx: node::MetaCtx) -> usize {
+        1
+    }
+
+    fn expr(&self, ctx: node::ExprCtx<'_, '_>) -> node::ExprResult {
+        match &ctx.inputs()[1] {
+            Some(value) => node::parse_expr(&format!("(begin (set! state {value}) state)")),
+            None => node::parse_expr("(if (number? state) state -1)"),
+        }
+    }
+
+    fn stateful(&self, _ctx: node::MetaCtx) -> bool {
+        true
+    }
+
+    fn register(&self, ctx: node::RegCtx<'_, '_>) {
+        let (_, path, vm) = ctx.into_parts();
+        node::state::init_value_if_absent(vm, path, || SteelVal::Void).unwrap();
+    }
+}
+
+/// One call picks between a node fn variant that assigns `state` and one
+/// that only reads it. The first returns its state for the write-back. The
+/// second returns its output alone.
+///
+/// ```text
+///   push_0 (emits 0) ---\                /--(out 0)--> latch.1
+///                         branch -------<
+///   push_1 (emits 1) ---/                \--(out 1)--> (nothing)
+///
+///   push_0, push_1 --> latch.0
+///   latch --> number
+/// ```
+#[test]
+fn test_graph_call_variants_differ_in_state_use() {
+    let branch = node::Branch::new(
+        "(if (equal? 0 $x) (list 0 7) (list 1 '()))",
+        vec![
+            node::Conns::try_from([true, false]).unwrap(),
+            node::Conns::try_from([false, false]).unwrap(),
+        ],
+    )
+    .unwrap();
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let push_0 = g.add_node(Box::new(node_int(0).with_push_eval()) as Box<dyn DebugNode>);
+    let push_1 = g.add_node(Box::new(node_int(1).with_push_eval()) as Box<_>);
+    let branch = g.add_node(Box::new(branch) as Box<_>);
+    let latch = g.add_node(Box::new(Latch) as Box<_>);
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    for push in [push_0, push_1] {
+        g.add_edge(push, branch, Edge::from((0, 0)));
+        g.add_edge(push, latch, Edge::from((0, 0)));
+    }
+    g.add_edge(branch, latch, Edge::from((0, 1)));
+    g.add_edge(latch, number, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let ep = |push: petgraph::graph::NodeIndex| {
+        entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8)
+    };
+    let (ep_0, ep_1) = (ep(push_0), ep(push_1));
+    let read = |calls: &[&Entrypoint]| {
+        let vm = compile_and_call(&g, &eps, calls);
+        let val = |n: petgraph::graph::NodeIndex| {
+            node::state::extract::<i32>(&vm, &[n.index()])
+                .ok()
+                .flatten()
+        };
+        (val(latch), val(number))
+    };
+    assert_eq!(read(&[&ep_1]), (None, Some(-1)));
+    assert_eq!(read(&[&ep_0]), (Some(7), Some(7)));
+    assert_eq!(read(&[&ep_0, &ep_1]), (Some(7), Some(7)));
+}
+
 /// As above, with branch `b` inside the region of branch `a`. `keep` stores
 /// the last value it reads and outputs it on each bang from outside both
 /// branches. When `a` takes arm 0 and `b` skips the value, the value input of

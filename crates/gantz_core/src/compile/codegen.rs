@@ -14,14 +14,41 @@ use crate::{
     compile::{
         NodeConf, NodeConns, RoseTree, emit,
         error::{NestedGraphNotFound, NodeExprError, NodeFnError, NodeFnErrors},
-        names::node_fn_name,
+        names::{STATE, node_fn_name},
     },
     node::{self, Node},
     visit::{self, Visitor},
 };
 use petgraph::visit::{Data, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, Visitable};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use steel::parser::ast::ExprKind;
+
+/// How a node fn variant uses the state of its node.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum StateUse {
+    /// The fn takes the state as its last argument and returns its output.
+    Read,
+    /// The fn takes the state as its last argument and returns
+    /// `(list output state)`, with the state it leaves behind.
+    Write,
+}
+
+/// The node fns generated for a tree of nested gantz graphs.
+#[derive(Default)]
+pub(crate) struct NodeFns {
+    /// Each fn with the depth of the level of its node.
+    pub fns: Vec<(usize, ExprKind)>,
+    /// The state use of each stateful variant, by level path.
+    pub state: StateUses,
+}
+
+/// A visitor used to collect all node functions from a tree of nested gantz
+/// graphs.
+struct NodeFnsVisitor<'a> {
+    tree: &'a RoseTree<NodeConfs>,
+    fns: NodeFns,
+    errors: Vec<NodeFnError>,
+}
 
 /// The set of all node input/output configurations for a single graph.
 ///
@@ -29,25 +56,10 @@ use steel::parser::ast::ExprKind;
 /// node.
 type NodeConfs = BTreeSet<NodeConf>;
 
-/// A visitor used to collect all node functions from a tree of nested gantz
-/// graphs.
-struct NodeFns<'a> {
-    tree: &'a RoseTree<NodeConfs>,
-    fns: Vec<(usize, ExprKind)>,
-    errors: Vec<NodeFnError>,
-}
+/// The state use of every stateful node fn variant, by level path.
+pub(crate) type StateUses = BTreeMap<Vec<node::Id>, BTreeMap<NodeConf, StateUse>>;
 
-impl<'a> NodeFns<'a> {
-    fn new(tree: &'a RoseTree<NodeConfs>) -> Self {
-        Self {
-            tree,
-            fns: vec![],
-            errors: vec![],
-        }
-    }
-}
-
-impl Visitor for NodeFns<'_> {
+impl Visitor for NodeFnsVisitor<'_> {
     // `visit_post` generates nested node fns before their parents.
     fn visit_post(&mut self, ctx: visit::Ctx<'_, '_>, node: &dyn Node) {
         // Inlet and outlet nodes get no node fn. Their values resolve as
@@ -87,7 +99,13 @@ impl Visitor for NodeFns<'_> {
         for conf in input_confs {
             let connected = connected_inputs(conf.conns.inputs, ctx.inputs());
             match node_fn(ctx.get_node(), node, node_path, &conf.conns, &connected) {
-                Ok(fn_expr) => self.fns.push((plan_path.len(), fn_expr)),
+                Ok((fn_expr, state)) => {
+                    self.fns.fns.push((plan_path.len(), fn_expr));
+                    if let Some(state) = state {
+                        let level = self.fns.state.entry(plan_path.to_vec()).or_default();
+                        level.insert(*conf, state);
+                    }
+                }
                 Err(error) => self.errors.push(
                     NodeExprError {
                         path: node_path.to_vec(),
@@ -112,56 +130,95 @@ fn connected_inputs(active: node::Conns, edges: &[(node::Id, Edge)]) -> node::Co
     connected
 }
 
+/// Whether `expr` may assign the `state` binding of its node fn.
+///
+/// True when a `(set! state ...)` form appears anywhere in the expr. A macro
+/// definition also counts, as its expansion is unknown here.
+fn writes_state(expr: &ExprKind) -> bool {
+    fn any(exprs: &[ExprKind]) -> bool {
+        exprs.iter().any(writes_state)
+    }
+    match expr {
+        ExprKind::Atom(_) | ExprKind::Require(_) => false,
+        ExprKind::Macro(_) | ExprKind::SyntaxRules(_) => true,
+        ExprKind::Set(set) => {
+            let state = set.variable.atom_identifier();
+            state.is_some_and(|ident| ident.resolve() == STATE) || writes_state(&set.expr)
+        }
+        ExprKind::If(f) => {
+            writes_state(&f.test_expr) || writes_state(&f.then_expr) || writes_state(&f.else_expr)
+        }
+        ExprKind::Let(l) => {
+            l.bindings.iter().any(|(_, value)| writes_state(value)) || writes_state(&l.body_expr)
+        }
+        ExprKind::Define(d) => writes_state(&d.body),
+        ExprKind::LambdaFunction(f) => writes_state(&f.body),
+        ExprKind::Begin(b) => any(&b.exprs),
+        ExprKind::Return(r) => writes_state(&r.expr),
+        ExprKind::Quote(q) => writes_state(&q.expr),
+        // A `set!` under a quote stays a plain list. It counts as a write, as
+        // the quote may be code that a macro splices.
+        ExprKind::List(l) => {
+            let set = l
+                .args
+                .first()
+                .is_some_and(|head| head.to_string() == "set!");
+            let state = l.args.get(1).and_then(ExprKind::atom_identifier);
+            (set && state.is_some_and(|ident| ident.resolve() == STATE)) || any(&l.args)
+        }
+        ExprKind::Vector(v) => any(&v.args),
+    }
+}
+
 /// Generate a function for a single node with the given set of active inputs.
+///
+/// Also returns how the fn uses the state of the node, or `None` for a node
+/// without state.
 pub(crate) fn node_fn<'a>(
     get_node: node::GetNode<'a>,
     node: &dyn Node,
     node_path: &[node::Id],
     conns: &NodeConns,
     connected: &node::Conns,
-) -> Result<ExprKind, node::ExprError> {
-    // The binding used to receive the node's state as an argument, and whose
-    // resulting value is returned from the body of the function and used to
-    // update the state map.
-    const STATE: &str = "state";
-
-    fn input_name(i: usize) -> String {
-        format!("input{i}")
-    }
-
-    let mut input_args = conns
-        .inputs
-        .iter()
-        .enumerate()
-        .filter_map(|(i, b)| b.then(|| input_name(i)))
-        .collect::<Vec<_>>();
-
+) -> Result<(ExprKind, Option<StateUse>), node::ExprError> {
     let input_exprs: Vec<Option<String>> = conns
         .inputs
         .iter()
         .enumerate()
-        .map(|(i, b)| b.then(|| input_name(i)))
+        .map(|(i, b)| b.then(|| format!("input{i}")))
         .collect();
+    let mut params: Vec<String> = input_exprs.iter().flatten().cloned().collect();
 
     let ctx = node::ExprCtx::new(get_node, node_path, &input_exprs, connected, &conns.outputs);
     let node_expr = node.expr(ctx)?;
 
     let fn_name = node_fn_name(node_path, &conns.inputs, &conns.outputs);
     let meta_ctx = node::MetaCtx::new(get_node);
-    let stateful = node.stateful(meta_ctx);
-    if !stateful && let Some(f) = emit::eta_target_expr(&input_args, &node_expr) {
-        return node::parse_expr(&format!("(define {fn_name} {f})"));
+    let state = node
+        .stateful(meta_ctx)
+        .then(|| match writes_state(&node_expr) {
+            true => StateUse::Write,
+            false => StateUse::Read,
+        });
+    if state.is_none()
+        && let Some(f) = emit::eta_target_expr(&params, &node_expr)
+    {
+        return Ok((node::parse_expr(&format!("(define {fn_name} {f})"))?, None));
     }
-    let fn_body = if stateful {
-        input_args.push(STATE.to_string());
-        format!("(let ((output {node_expr})) (list output state))")
-    } else {
-        format!("{node_expr}")
+    let fn_body = match state {
+        None => format!("{node_expr}"),
+        Some(StateUse::Read) => {
+            params.push(STATE.to_string());
+            format!("{node_expr}")
+        }
+        Some(StateUse::Write) => {
+            params.push(STATE.to_string());
+            format!("(let ((output {node_expr})) (list output {STATE}))")
+        }
     };
-    let fn_args = input_args.join(" ");
-    let fn_def = format!("(define ({fn_name} {fn_args}) {fn_body})");
-
-    node::parse_expr(&fn_def)
+    let params = params.join(" ");
+    let fn_def = format!("(define ({fn_name} {params}) {fn_body})");
+    Ok((node::parse_expr(&fn_def)?, state))
 }
 
 /// Given a gantz graph and a rose tree with the associated node configs,
@@ -170,15 +227,63 @@ pub(crate) fn node_fns<'a, G>(
     get_node: node::GetNode<'a>,
     g: G,
     node_confs_tree: &RoseTree<NodeConfs>,
-) -> Result<Vec<(usize, ExprKind)>, NodeFnErrors>
+) -> Result<NodeFns, NodeFnErrors>
 where
     G: Data<EdgeWeight = Edge> + IntoEdgesDirected + IntoNodeReferences + NodeIndexable + Visitable,
     G::NodeWeight: Node,
 {
-    let mut node_fns = NodeFns::new(node_confs_tree);
-    crate::graph::visit(get_node, g, &[], &mut node_fns);
-    if !node_fns.errors.is_empty() {
-        return Err(NodeFnErrors(node_fns.errors));
+    let mut visitor = NodeFnsVisitor {
+        tree: node_confs_tree,
+        fns: NodeFns::default(),
+        errors: vec![],
+    };
+    crate::graph::visit(get_node, g, &[], &mut visitor);
+    if !visitor.errors.is_empty() {
+        return Err(NodeFnErrors(visitor.errors));
     }
-    Ok(node_fns.fns)
+    Ok(visitor.fns)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::writes_state;
+    use crate::node::parse_expr;
+
+    #[test]
+    fn set_of_state_is_a_write() {
+        let writes = [
+            "(set! state 1)",
+            "(begin (set! state (+ state 1)) state)",
+            "(begin (if (number? x) (set! state x) void) state)",
+            "(let ((r (f state))) (set! state (car r)) (cdr r))",
+            "(lambda (x) (set! state x))",
+            "(f (list 1 (set! state 2)))",
+            "(set! other (set! state 1))",
+        ];
+        for src in writes {
+            assert!(writes_state(&parse_expr(src).unwrap()), "{src}");
+        }
+    }
+
+    #[test]
+    fn read_of_state_is_no_write() {
+        let reads = [
+            "state",
+            "(+ state 1)",
+            "(begin (set! other state) state)",
+            "(let ((estate 1)) (set! estate 2))",
+            "(if (number? state) state 0)",
+            "(lambda (x) (+ x state))",
+        ];
+        for src in reads {
+            assert!(!writes_state(&parse_expr(src).unwrap()), "{src}");
+        }
+    }
+
+    #[test]
+    fn unknown_expansion_is_a_write() {
+        let src = "(begin (define-syntax put! (syntax-rules () [(_ v) (set! state v)])) (put! 1))";
+        assert!(writes_state(&parse_expr(src).unwrap()));
+        assert!(writes_state(&parse_expr("'(set! state 1)").unwrap()));
+    }
 }
