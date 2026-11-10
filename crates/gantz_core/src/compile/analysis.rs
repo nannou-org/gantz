@@ -4,9 +4,10 @@
 //! Computed by abstract interpretation of the lowered IR itself. The only
 //! question is whether each outlet's value is real or the unfired sentinel.
 //! Bodies are walked with every binding abstracted to fired or unfired. The
-//! walk forks at each branch dispatch. Nested dispatches fork only when
-//! their arm is taken. The walk runs over exactly the code that is emitted,
-//! so the patterns cannot drift from runtime behaviour.
+//! walk forks at each branch dispatch and keeps one outcome per distinct set
+//! of unfired bindings. Nested dispatches fork only when their arm is taken.
+//! The walk runs over exactly the code that is emitted, so the patterns
+//! cannot drift from runtime behaviour.
 //!
 //! Backs `Graph::branches` via [`level_branch_patterns`]. These are the
 //! masks a nested graph reports to its parent. Also backs the
@@ -25,18 +26,32 @@ use crate::{
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Whether a binding holds a real value or the unfired sentinel.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 enum Fire {
     Fired,
     Unfired,
 }
 
-/// The abstract environment. Bindings not present default to fired. Inlet
-/// params, pre-bound values and node outputs are always real values.
-type Env = BTreeMap<Var, Fire>;
+/// The state shared by one walk of a level body.
+#[derive(Default)]
+struct Walk {
+    /// The vars that an outlet or a tail reads. Only these can change which
+    /// outlets fire, so the envs track no other var.
+    read: BTreeSet<Var>,
+    /// The yields of each join body already walked, by the env it started
+    /// from. The key is the address of the join, as two joins in sibling
+    /// scopes can have the same id.
+    joined: BTreeMap<(*const Join, Env), BTreeSet<Vec<Fire>>>,
+}
 
-/// The join definitions lexically in scope.
-type Joins<'a> = BTreeMap<JoinId, &'a Join>;
+/// The abstract environment. The bindings that hold the unfired sentinel.
+/// Every other binding holds a real value. Inlet params, pre-bound values and
+/// node outputs always do.
+type Env = BTreeSet<Var>;
+
+/// The join definitions lexically in scope. Each comes with the unfired
+/// bindings that its body can read, those in an env at its definition.
+type Joins<'a> = BTreeMap<JoinId, (&'a Join, Env)>;
 
 /// The all-active external branch masks for one level. The distinct
 /// outlet-activation patterns over the level's outputs in ascending outlet
@@ -70,8 +85,16 @@ pub(crate) fn outlet_patterns(
     outlets: &[OutletVal],
 ) -> Result<Vec<node::Conns>, TooManyConns> {
     let n = outlets.len();
+    let mut walk = Walk::default();
+    let outlet_vars = outlets.iter().filter_map(|o| match o.atom {
+        Some(Atom::Var(var)) => Some(var),
+        _ => None,
+    });
+    walk.read.extend(outlet_vars);
+    read_vars(body, &mut walk.read);
+
     let mut masks: BTreeSet<node::Conns> = BTreeSet::new();
-    for (_, env) in walk(&body.steps, &body.tail, Env::new(), &Joins::new()) {
+    for env in steps_envs(&body.steps, Env::new(), &mut Joins::new(), &mut walk) {
         let mut conns = node::Conns::unconnected(n).map_err(|_| TooManyConns(n))?;
         for (i, o) in outlets.iter().enumerate() {
             let fired = match o.atom {
@@ -90,92 +113,110 @@ pub(crate) fn outlet_patterns(
     Ok(masks.into_iter().collect())
 }
 
+/// Add the vars that a tail of `body` reads, at any depth.
+fn read_vars(body: &Body, read: &mut BTreeSet<Var>) {
+    for step in &body.steps {
+        match step {
+            Step::Node { .. } | Step::DelayRead { .. } | Step::DelayWrite { .. } => {}
+            Step::Join(join) => read_vars(&join.body, read),
+            Step::Branch { arms, .. } => arms.iter().for_each(|arm| read_vars(&arm.body, read)),
+        }
+    }
+    let (Tail::Ret(atoms) | Tail::Jump { args: atoms, .. }) = &body.tail;
+    read.extend(atoms.iter().filter_map(|atom| match atom {
+        Atom::Var(var) => Some(*var),
+        Atom::Unit | Atom::Unfired => None,
+    }));
+}
+
 /// The abstract value of `atom` under `env`.
 fn fire_of(env: &Env, atom: &Atom) -> Fire {
     match atom {
         Atom::Unfired => Fire::Unfired,
         Atom::Unit => Fire::Fired,
-        Atom::Var(v) => env.get(v).copied().unwrap_or(Fire::Fired),
+        Atom::Var(v) if env.contains(v) => Fire::Unfired,
+        Atom::Var(_) => Fire::Fired,
     }
 }
 
-/// Every `(yield, final env)` outcome of evaluating `steps` then `tail`.
-/// One per combination of branch arms taken along the way.
-fn walk<'a>(
+/// The distinct envs that `steps` can end in when they start from `env`.
+/// There is one per set of unfired exports that the branch arms taken along
+/// the way can leave. `joins` gains the joins that the steps define.
+fn steps_envs<'a>(
     steps: &'a [Step],
-    tail: &'a Tail,
+    env: Env,
+    joins: &mut Joins<'a>,
+    walk: &mut Walk,
+) -> BTreeSet<Env> {
+    let mut envs = BTreeSet::from([env]);
+    for step in steps {
+        match step {
+            // A node fn call and a delay read always bind real values.
+            Step::Node { .. } | Step::DelayRead { .. } | Step::DelayWrite { .. } => {}
+            Step::Join(join) => {
+                let scope = envs.iter().flatten().copied().collect();
+                joins.insert(join.id, (join, scope));
+            }
+            // Each arm yields the exports. The vars an arm binds are out of
+            // scope after it, so each outcome is the env from before the
+            // branch with the unfired exports added.
+            Step::Branch { dst, arms, .. } => {
+                let mut next = BTreeSet::new();
+                for env in &envs {
+                    for arm in arms {
+                        for yields in body_yields(&arm.body, env.clone(), joins, walk) {
+                            let mut env = env.clone();
+                            let unfired = dst.iter().zip(yields).filter_map(|(var, fire)| {
+                                (fire == Fire::Unfired && walk.read.contains(var)).then_some(*var)
+                            });
+                            env.extend(unfired);
+                            next.insert(env);
+                        }
+                    }
+                }
+                envs = next;
+            }
+        }
+    }
+    envs
+}
+
+/// The distinct yields of `body` when it starts from `env`. For a jump, they
+/// are the yields of the join body with its params bound from the args.
+fn body_yields<'a>(
+    body: &'a Body,
     env: Env,
     joins: &Joins<'a>,
-) -> Vec<(Vec<Fire>, Env)> {
-    let Some((step, rest)) = steps.split_first() else {
-        return finish(tail, env, joins);
-    };
-    match step {
-        // A node fn call always yields real values.
-        Step::Node { dst, .. } => {
-            let mut env = env;
-            for &v in dst {
-                env.insert(v, Fire::Fired);
+    walk: &mut Walk,
+) -> BTreeSet<Vec<Fire>> {
+    let mut joins = joins.clone();
+    let mut yields = BTreeSet::new();
+    for env in steps_envs(&body.steps, env, &mut joins, walk) {
+        let (join, args) = match &body.tail {
+            Tail::Ret(atoms) => {
+                yields.insert(atoms.iter().map(|a| fire_of(&env, a)).collect());
+                continue;
             }
-            walk(rest, tail, env, joins)
+            Tail::Jump { join, args } => (join, args),
+        };
+        let (join, scope) = &joins[join];
+        // The lowering does not produce `rec` joins yet. Their self-jumps
+        // would need fixpoint handling here rather than unbounded recursion.
+        assert!(!join.rec, "outlet analysis cannot walk rec joins yet");
+        // The join body reads its params and the vars bound before the join.
+        let mut join_env: Env = env.intersection(scope).copied().collect();
+        let unfired = join
+            .params
+            .iter()
+            .zip(args)
+            .filter_map(|(param, arg)| (fire_of(&env, arg) == Fire::Unfired).then_some(*param));
+        join_env.extend(unfired);
+        let key = (std::ptr::from_ref::<Join>(join), join_env);
+        if !walk.joined.contains_key(&key) {
+            let found = body_yields(&join.body, key.1.clone(), &joins, walk);
+            walk.joined.insert(key.clone(), found);
         }
-        Step::DelayRead { node } => {
-            let mut env = env;
-            let var = Var::Output {
-                node: *node,
-                output: 0,
-            };
-            env.insert(var, Fire::Fired);
-            walk(rest, tail, env, joins)
-        }
-        Step::DelayWrite { .. } => walk(rest, tail, env, joins),
-        Step::Join(join) => {
-            let mut joins = joins.clone();
-            joins.insert(join.id, join);
-            walk(rest, tail, env, &joins)
-        }
-        // Fork. Each arm's outcomes bind the exports, then the remaining
-        // steps continue per outcome.
-        Step::Branch { dst, arms, .. } => {
-            let mut outcomes = Vec::new();
-            for arm in arms {
-                let mut arm_env = env.clone();
-                for &b in &arm.binds {
-                    arm_env.insert(b, Fire::Fired);
-                }
-                for (yields, arm_env) in walk(&arm.body.steps, &arm.body.tail, arm_env, joins) {
-                    let mut env = arm_env;
-                    for (&v, f) in dst.iter().zip(yields) {
-                        env.insert(v, f);
-                    }
-                    outcomes.extend(walk(rest, tail, env, joins));
-                }
-            }
-            outcomes
-        }
+        yields.extend(walk.joined[&key].iter().cloned());
     }
-}
-
-/// The outcomes of a body's tail. The yielded values. For a jump, the
-/// outcomes of the join body with its params bound from the args.
-fn finish<'a>(tail: &'a Tail, env: Env, joins: &Joins<'a>) -> Vec<(Vec<Fire>, Env)> {
-    match tail {
-        Tail::Ret(atoms) => {
-            let yields = atoms.iter().map(|a| fire_of(&env, a)).collect();
-            vec![(yields, env)]
-        }
-        Tail::Jump { join, args } => {
-            let join = joins[join];
-            // The lowering does not produce `rec` joins yet. Their self-jumps
-            // would need fixpoint handling here rather than unbounded
-            // recursion.
-            assert!(!join.rec, "outlet analysis cannot walk rec joins yet");
-            let mut env = env;
-            for (&param, arg) in join.params.iter().zip(args) {
-                let fire = fire_of(&env, arg);
-                env.insert(param, fire);
-            }
-            walk(&join.body.steps, &join.body.tail, env, joins)
-        }
-    }
+    yields
 }

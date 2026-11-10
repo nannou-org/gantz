@@ -58,7 +58,7 @@ pub use link::module;
 pub(crate) use lower::{NodeConf, NodeConns};
 use meta::MetaTree;
 #[doc(inline)]
-pub use meta::{EdgeKind, Meta, MetaGraph};
+pub use meta::{Meta, MetaGraph};
 pub(crate) use names::graph_fn_name;
 #[doc(inline)]
 pub use names::{Name, entry_fn_name};

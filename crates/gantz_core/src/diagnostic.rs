@@ -4,7 +4,7 @@
 
 use crate::{
     compile::ModuleError,
-    compile::error::{LowerError, NodeConnsError, NodeFnError},
+    compile::error::{LowerError, NodeConnsError},
     node, vm,
 };
 use std::ops::Range;
@@ -81,15 +81,16 @@ pub fn from_module_error(err: &ModuleError) -> Vec<Diagnostic> {
     match err {
         ModuleError::NodeConns { path, error } => vec![conns_diag(path.clone(), error)],
         ModuleError::Lower { path, error } => lower_diags(path, error),
-        ModuleError::NestedGraphNotFound(error) => {
-            vec![Diagnostic::compile(error.0.clone(), error.to_string())]
-        }
         ModuleError::MetaErrors(errors) => errors
             .0
             .iter()
             .map(|e| conns_diag(e.path.clone(), &e.error))
             .collect(),
-        ModuleError::NodeFnErrors(errors) => errors.0.iter().map(node_fn_diag).collect(),
+        ModuleError::NodeFnErrors(errors) => errors
+            .0
+            .iter()
+            .map(|e| Diagnostic::compile(e.path.clone(), e.to_string()))
+            .collect(),
         ModuleError::InvalidIr { path, .. } => {
             vec![Diagnostic::compile(path.clone(), err.to_string())]
         }
@@ -157,13 +158,5 @@ fn lower_diags(level: &[node::Id], error: &LowerError) -> Vec<Diagnostic> {
             producer.outputs.push(*output);
             vec![producer, Diagnostic::compile(full(*consumer), message)]
         }
-    }
-}
-
-/// The diagnostic for a node fn generation error.
-fn node_fn_diag(error: &NodeFnError) -> Diagnostic {
-    match error {
-        NodeFnError::NestedGraphNotFound(e) => Diagnostic::compile(e.0.clone(), e.to_string()),
-        NodeFnError::Expr(e) => Diagnostic::compile(e.path.clone(), e.to_string()),
     }
 }

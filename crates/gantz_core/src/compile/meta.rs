@@ -42,21 +42,12 @@ pub struct Meta {
     pub requires: BTreeSet<String>,
 }
 
-/// Whether an edge is known to always be traversed, or whether it is
-/// conditional.
-#[derive(Clone, Debug)]
-pub enum EdgeKind {
-    /// The edge is known to always be connected.
-    Static,
-    /// The edge is conditional on node branching.
-    Conditional,
-}
-
 /// The graph of a single level.
 ///
 /// The edge weight is a `Vec` so that multiple edges between the same two
-/// nodes are represented.
-pub type MetaGraph = petgraph::graphmap::DiGraphMap<node::Id, Vec<(Edge, EdgeKind)>>;
+/// nodes are represented. An edge from an output that no branch of its
+/// source activates is left out, as it never carries a value.
+pub type MetaGraph = petgraph::graphmap::DiGraphMap<node::Id, Vec<Edge>>;
 
 /// A rose tree of [`Meta`] with error accumulation during visitation.
 ///
@@ -92,6 +83,9 @@ impl Meta {
     }
 
     /// Add the node with the given ID and inputs to the `Meta`.
+    ///
+    /// The result is the same for every order in which the nodes of a graph
+    /// are added.
     pub fn add_node(
         &mut self,
         ctx: node::MetaCtx,
@@ -101,16 +95,16 @@ impl Meta {
     ) -> Result<(), NodeConnsError> {
         self.graph.add_node(id);
 
+        // A source added after this node checks its edges when it is added.
         for (n, edge) in inputs {
             let n_branches = self.branches.get(&n).map(|bs| &bs[..]);
-            // Skip edges from outputs that are unreachable through all branches.
-            let Some(kind) = edge_kind(n_branches, edge.output.0 as usize)? else {
+            if !output_live(n_branches, edge.output.0 as usize)? {
                 continue;
-            };
+            }
             if let Some(edges) = self.graph.edge_weight_mut(n, id) {
-                edges.push((edge, kind));
+                edges.push(edge);
             } else {
-                self.graph.add_edge(n, id, vec![(edge, kind)]);
+                self.graph.add_edge(n, id, vec![edge]);
             }
         }
 
@@ -125,13 +119,29 @@ impl Meta {
 
         let branches = node.branches(ctx);
         if !branches.is_empty() {
-            self.branches.insert(
-                id,
-                branches
-                    .iter()
-                    .map(|conf| conns_from_eval_conf(conf, outputs))
-                    .collect::<Result<_, _>>()?,
-            );
+            let branches: Vec<node::Conns> = branches
+                .iter()
+                .map(|conf| conns_from_eval_conf(conf, outputs))
+                .collect::<Result<_, _>>()?;
+            // The edges to the nodes added before this one.
+            let targets: Vec<node::Id> = self
+                .graph
+                .neighbors_directed(id, petgraph::Direction::Outgoing)
+                .collect();
+            for target in targets {
+                let edges = self.graph.edge_weight_mut(id, target).expect("edge exists");
+                let mut live = Vec::with_capacity(edges.len());
+                for edge in edges.drain(..) {
+                    if output_live(Some(&branches), edge.output.0 as usize)? {
+                        live.push(edge);
+                    }
+                }
+                *edges = live;
+                if edges.is_empty() {
+                    self.graph.remove_edge(id, target);
+                }
+            }
+            self.branches.insert(id, branches);
         }
 
         match node.role(ctx) {
@@ -176,12 +186,6 @@ impl Visitor for MetaTree {
     }
 }
 
-impl super::Edges for Vec<(Edge, EdgeKind)> {
-    fn edges(&self) -> impl Iterator<Item = Edge> {
-        self.iter().map(|(e, _k)| *e)
-    }
-}
-
 /// Given an eval conf and a known number of connections, convert the conf to
 /// the set of conns.
 pub(crate) fn conns_from_eval_conf(
@@ -195,29 +199,18 @@ pub(crate) fn conns_from_eval_conf(
     }
 }
 
-/// Given the branching of the source node and the output index of a connected
-/// edge, returns the `EdgeKind` of that edge, or `None` if there is no branch
-/// under which the edge can be reached.
-fn edge_kind(
-    confs: Option<&[node::Conns]>,
-    out_ix: usize,
-) -> Result<Option<EdgeKind>, InvalidOutputIndex> {
+/// Whether any branch of a source node activates its output `out_ix`. An
+/// output of a node with no branches is always active.
+fn output_live(confs: Option<&[node::Conns]>, out_ix: usize) -> Result<bool, InvalidOutputIndex> {
     let Some(confs) = confs else {
-        return Ok(Some(EdgeKind::Static));
+        return Ok(true);
     };
-    let mut reachable = false;
-    let mut conditional = false;
+    let mut live = false;
     for branch in confs {
-        let active = branch.get(out_ix).ok_or_else(|| InvalidOutputIndex {
+        live |= branch.get(out_ix).ok_or_else(|| InvalidOutputIndex {
             index: out_ix,
             n_outputs: branch.len(),
         })?;
-        reachable |= active;
-        conditional |= !active;
     }
-    Ok(match (reachable, conditional) {
-        (false, _) => None,
-        (true, true) => Some(EdgeKind::Conditional),
-        (true, false) => Some(EdgeKind::Static),
-    })
+    Ok(live)
 }

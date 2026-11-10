@@ -34,8 +34,8 @@ pub struct EvalSource {
 ///
 /// Sources may span multiple graph nesting levels. During compilation,
 /// sources are grouped by level and each level lowers its own body. The
-/// resulting eval fn concatenates all levels' statements. This is safe
-/// because each level's statements access distinct parts of the state tree.
+/// entry fn has the body of the root level. Each nested level with a source
+/// gets a level fn of its own, called from the fn of its parent.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, CaHash)]
 #[cahash("gantz.entrypoint")]
 pub struct Entrypoint(pub BTreeSet<EvalSource>);

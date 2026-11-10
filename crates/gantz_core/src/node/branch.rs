@@ -258,7 +258,7 @@ impl Node for Branch {
 
     /// Only generate the state binding if the expr references `state`.
     fn stateful(&self, _ctx: node::MetaCtx) -> bool {
-        self.src().contains("state")
+        node::expr::names_state(self.src())
     }
 
     /// Registers a state slot in case the expr references `state`.
