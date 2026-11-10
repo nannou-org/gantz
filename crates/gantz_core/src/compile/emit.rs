@@ -11,18 +11,25 @@
 //!   it returns a `(list ...)` of its connected outputs in ascending index.
 //! - A branching node fn returns `(list branch-ix value)`. The selected
 //!   arm's active output count shapes `value`.
-//! - A stateful node fn takes `state` as its trailing arg and returns
-//!   `(list output state')`.
+//! - A stateful node fn takes `state` as its trailing arg. A fn that may
+//!   assign `state` returns `(list output state')`. One that only reads it
+//!   returns its output alone. See [`StateUse`].
+//!
+//! The state of a level is a hashmap in the `graph-state` binding of its fn,
+//! keyed by node id. A write puts the new value of one key into the map and
+//! assigns the map back. See [`state_insert`].
 
 use crate::{
     GRAPH_STATE,
     compile::{
+        NodeConf, NodeConns,
+        codegen::StateUse,
         ir::{Arg, Arm, Atom, Body, NodeCall, Step, Subject, Tail, Var},
-        names::{join_name, node_fn_name, pair_name, var_name},
+        names::{STATE, join_name, node_fn_name, pair_name, var_name},
     },
     node,
 };
-use std::fmt;
+use std::{collections::BTreeMap, fmt};
 use steel::{parser::ast::ExprKind, steel_vm::engine::Engine};
 
 /// The sentinel value marking a value that did not fire. See
@@ -42,6 +49,8 @@ pub(crate) enum Sexp {
 pub(crate) struct Cx<'a> {
     /// The path of the graph level being emitted, for node fn naming.
     pub path: &'a [node::Id],
+    /// The state use of each stateful node fn variant of the level.
+    pub state: &'a BTreeMap<NodeConf, StateUse>,
 }
 
 impl fmt::Display for Sexp {
@@ -161,9 +170,7 @@ fn let_sexp(lets: Vec<(String, Sexp)>, body: Sexp) -> Sexp {
 /// Bind `dst` from `value`. One var gets a plain define. Several vars get a
 /// temporary bound to the `(list ...)` value, destructured by index.
 ///
-/// `define-values` is deliberately avoided. The steel-core 0.7 analysis pass
-/// panics on fn bodies that mix several `define-values` with local fn
-/// defines, which the join points are.
+/// `define-values` is not used. The base engine has no `values` to give it.
 fn define_sexps(dst: &[Var], value: Sexp) -> Vec<Sexp> {
     match dst {
         [] => vec![value],
@@ -183,7 +190,8 @@ fn define_sexps(dst: &[Var], value: Sexp) -> Vec<Sexp> {
     }
 }
 
-/// The call expression for a node fn, state-wrapped when stateful. With an
+/// The call expression for a node fn. A stateful call passes the state of
+/// the node and writes back the state that the fn returns. With an
 /// [`Arg::Maybe`], the expression tests which inputs got a source and calls
 /// the variant that fits.
 fn call_sexp(cx: &Cx, call: &NodeCall) -> Sexp {
@@ -198,18 +206,32 @@ fn call_sexp(cx: &Cx, call: &NodeCall) -> Sexp {
         .flatten()
         .flat_map(|input| input.lets.iter().cloned())
         .collect();
-    let tree = variant_sexp(cx, call, &inputs, vec![]);
-    let call_expr = let_sexp(lets, tree);
-    if call.stateful {
-        state_wrapped(call.node, call_expr)
-    } else {
-        call_expr
+    if !call.stateful {
+        return let_sexp(lets, variant_sexp(cx, call, &inputs, vec![], None));
     }
+    // A call of one variant that only reads the state takes it straight from
+    // the map.
+    let connected: Vec<bool> = inputs.iter().map(Option::is_some).collect();
+    let one_variant = inputs.iter().flatten().all(|input| input.unfired.is_none());
+    if one_variant && state_use(cx, call, &connected) == StateUse::Read {
+        let state = state_ref(call.node);
+        return let_sexp(lets, variant_sexp(cx, call, &inputs, vec![], Some(&state)));
+    }
+    let tree = variant_sexp(cx, call, &inputs, vec![], Some(&a(STATE)));
+    let bind = l([a(STATE), state_ref(call.node)]);
+    l([a("let"), l([bind]), let_sexp(lets, tree)])
 }
 
 /// The call of the node fn variant with the inputs that got a source. Each
 /// input after the `connected` ones that may get none is tested in turn.
-fn variant_sexp(cx: &Cx, call: &NodeCall, inputs: &[Option<Input>], connected: Vec<bool>) -> Sexp {
+/// `state` is the expression of the state to pass, for a stateful call.
+fn variant_sexp(
+    cx: &Cx,
+    call: &NodeCall,
+    inputs: &[Option<Input>],
+    connected: Vec<bool>,
+    state: Option<&Sexp>,
+) -> Sexp {
     let Some(input) = inputs.get(connected.len()) else {
         let mask = node::Conns::try_from_iter(connected.iter().copied())
             .expect("validated NodeCall arg count exceeds Conns::MAX");
@@ -217,15 +239,19 @@ fn variant_sexp(cx: &Cx, call: &NodeCall, inputs: &[Option<Input>], connected: V
         let mut items = vec![a(node_fn_name(&node_path, &mask, &call.outputs))];
         let args = inputs.iter().zip(&connected).filter(|&(_, &c)| c);
         items.extend(args.filter_map(|(input, _)| input.as_ref().map(|i| i.value.clone())));
-        if call.stateful {
-            items.push(a("state"));
-        }
-        return Sexp::L(items);
+        let Some(state) = state else {
+            return Sexp::L(items);
+        };
+        items.push(state.clone());
+        return match state_use(cx, call, &connected) {
+            StateUse::Read => Sexp::L(items),
+            StateUse::Write => written_back(call.node, Sexp::L(items)),
+        };
     };
     let with = |c: bool| {
         let mut connected = connected.clone();
         connected.push(c);
-        variant_sexp(cx, call, inputs, connected)
+        variant_sexp(cx, call, inputs, connected, state)
     };
     match input {
         Some(Input {
@@ -237,33 +263,67 @@ fn variant_sexp(cx: &Cx, call: &NodeCall, inputs: &[Option<Input>], connected: V
     }
 }
 
-/// Wrap a stateful node's call. Read its state from the graph-state hashmap,
-/// run the call, write the returned state back, and yield the output.
-fn state_wrapped(node: node::Id, call_expr: Sexp) -> Sexp {
-    let key = a(format!("'{node}"));
+/// How the node fn variant of `call` with the `connected` inputs uses its
+/// state.
+fn state_use(cx: &Cx, call: &NodeCall, connected: &[bool]) -> StateUse {
+    let inputs = node::Conns::try_from_iter(connected.iter().copied())
+        .expect("validated NodeCall arg count exceeds Conns::MAX");
+    let conf = NodeConf {
+        id: call.node,
+        conns: NodeConns {
+            inputs,
+            outputs: call.outputs,
+        },
+    };
+    // Every stateful variant that a body calls has a recorded use. Without
+    // one there is no node fn either, and Steel rejects the call.
+    cx.state.get(&conf).copied().unwrap_or(StateUse::Write)
+}
+
+/// Wrap the call of a node fn that returns `(list output state')`. Write the
+/// returned state back and yield the output. `state` must be bound to the
+/// state passed to the call.
+fn written_back(node: node::Id, call_expr: Sexp) -> Sexp {
+    let newstate = l([a("car"), l([a("cdr"), a("results")])]);
     l([
         a("let"),
-        l([l([
-            a("state"),
-            l([a("hash-ref"), a(GRAPH_STATE), key.clone()]),
-        ])]),
+        l([l([a("results"), call_expr])]),
         l([
             a("let"),
-            l([l([a("results"), call_expr])]),
-            l([
-                a("let"),
-                l([
-                    l([a("output"), l([a("car"), a("results")])]),
-                    l([a("newstate"), l([a("car"), l([a("cdr"), a("results")])])]),
-                ]),
-                l([
-                    a("set!"),
-                    a(GRAPH_STATE),
-                    l([a("hash-insert"), a(GRAPH_STATE), key, a("newstate")]),
-                ]),
-                a("output"),
-            ]),
+            l([l([a("newstate"), newstate])]),
+            state_update(node, a(STATE), a("newstate")),
+            l([a("car"), a("results")]),
         ]),
+    ])
+}
+
+/// The state of `node` in the state map of the level.
+pub(crate) fn state_ref(node: node::Id) -> Sexp {
+    l([a("hash-ref"), a(GRAPH_STATE), a(format!("'{node}"))])
+}
+
+/// The statement that makes `new` the state of `node`, unless it is the
+/// value `old` that the map has already. Both must be cheap to evaluate
+/// twice, and neither may read the state map.
+pub(crate) fn state_update(node: node::Id, old: Sexp, new: Sexp) -> Sexp {
+    let same = l([a("eq?"), new.clone(), old]);
+    l([a("if"), same, unit(), state_insert(node, new)])
+}
+
+/// The statement that inserts `value` as the state of `node`. `value` must
+/// not read the state map.
+///
+/// The map moves out of `graph-state` for the insert. Steel inserts in place
+/// only when nothing else refers to the map, and copies the map otherwise.
+fn state_insert(node: node::Id, value: Sexp) -> Sexp {
+    let taken = "%graph-state";
+    let key = a(format!("'{node}"));
+    let insert = l([a("hash-insert"), a(taken), key, value]);
+    l([
+        a("let"),
+        l([l([a(taken), a(GRAPH_STATE)])]),
+        l([a("set!"), a(GRAPH_STATE), a("#f")]),
+        l([a("set!"), a(GRAPH_STATE), insert]),
     ])
 }
 
@@ -288,17 +348,11 @@ pub(crate) fn steps_sexps(cx: &Cx, body: &Body) -> Vec<Sexp> {
                     node: *node,
                     output: 0,
                 };
-                stmts.push(l([
-                    a("define"),
-                    a(var_name(&var)),
-                    l([a("hash-ref"), a(GRAPH_STATE), a(format!("'{node}"))]),
-                ]));
+                stmts.push(l([a("define"), a(var_name(&var)), state_ref(*node)]));
             }
             Step::DelayWrite { node, arg } => {
                 let input = input(0, arg);
-                let key = a(format!("'{node}"));
-                let insert = l([a("hash-insert"), a(GRAPH_STATE), key, input.value]);
-                let write = l([a("set!"), a(GRAPH_STATE), insert]);
+                let write = state_insert(*node, input.value);
                 // An input with no source fired writes nothing.
                 let stmt = match input.unfired {
                     Some(test) => l([a("if"), test, unit(), write]),
@@ -575,7 +629,11 @@ mod tests {
     /// run it in a base VM, and return the result.
     fn run(node_fns: &[&str], body: &Body) -> SteelVal {
         ir::validate(body, 1, &[]).unwrap();
-        let cx = Cx { path: &[] };
+        let state = BTreeMap::new();
+        let cx = Cx {
+            path: &[],
+            state: &state,
+        };
         let mut src = node_fns.join(" ");
         // A test driver without state threading. Only the body statements.
         let mut items = vec![a("define"), l([a("test-fn")])];

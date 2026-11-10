@@ -387,6 +387,70 @@ fn stateful_eval_does_not_leak() {
     );
 }
 
+// A node whose expr never assigns `state` gets its state as an argument and
+// returns its output alone. Its call writes nothing back.
+//
+//    --------
+//    | push |
+//    -+------
+//     |
+//    -+--------
+//    | reader |
+//    -+--------
+//     |
+//    -+------
+//    | sink |
+//    --------
+#[test]
+fn a_node_that_only_reads_state_is_not_written_back() {
+    let reader = node::expr("(begin $push (if (number? state) (+ state 1) 0))").unwrap();
+    let sink = node::expr("(begin (set! state $x) state)").unwrap();
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let reader = g.add_node(Box::new(reader) as Box<_>);
+    let sink = g.add_node(Box::new(sink) as Box<_>);
+    g.add_edge(push, reader, Edge::from((0, 0)));
+    g.add_edge(reader, sink, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let module = gantz_core::compile::module(&no_lookup, &g, &eps, &Default::default()).unwrap();
+    let defs: Vec<String> = module.iter().map(|f| f.to_string()).collect();
+
+    let def = |prefix: &str| {
+        let mut found = defs.iter().filter(|d| d.starts_with(prefix));
+        let def = found.next().unwrap_or_else(|| panic!("no `{prefix}`"));
+        assert!(found.next().is_none(), "more than one `{prefix}`");
+        def
+    };
+    let reader_fn = def(&format!("(define node-fn-{}-", reader.index()));
+    let sink_fn = def(&format!("(define node-fn-{}-", sink.index()));
+    assert!(!reader_fn.contains("(list output state)"), "{reader_fn}");
+    assert!(sink_fn.contains("(list output state)"), "{sink_fn}");
+    let entry_fn = def("(define entry-fn-");
+    assert_eq!(entry_fn.matches("hash-insert").count(), 1, "{entry_fn}");
+
+    let mut vm = Engine::new_base();
+    vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    for def in defs {
+        vm.run(def).unwrap();
+    }
+    node::state::update(&mut vm, &[reader.index()], 41i32).unwrap();
+
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    let fn_name = entry_fn_name(&ep.id());
+    for _ in 0..2 {
+        vm.call_function_by_name_with_args(&fn_name, vec![])
+            .unwrap();
+        let state =
+            |n: petgraph::graph::NodeIndex| node::state::extract::<i32>(&vm, &[n.index()]).unwrap();
+        assert_eq!(state(reader), Some(41));
+        assert_eq!(state(sink), Some(42));
+    }
+}
+
 // Two `Ref`s to the same nested graph commit, at different positions in the
 // parent, must keep independent runtime state. State is keyed by the ref's
 // positional path through `graph-fn-{path}` and a per-path state slot, not by

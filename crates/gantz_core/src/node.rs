@@ -129,6 +129,12 @@ pub trait Node: std::any::Any {
     ///
     /// Nodes returning `true` will have a special `state` variable accessible
     /// within their [`Node::expr`] provided during compilation.
+    ///
+    /// An expr replaces the state of its node with a `(set! state ...)` form
+    /// written in the expr itself. The compiler stores the state back after
+    /// the call only for an expr with such a form. A `set!` that comes from
+    /// the expansion of a macro defined elsewhere is not seen. A state value
+    /// changed in place, for example a mutable struct, needs no `set!`.
     fn stateful(&self, _ctx: MetaCtx) -> bool {
         false
     }
