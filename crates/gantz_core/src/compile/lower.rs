@@ -522,7 +522,7 @@ fn resolve_input(
 fn input_sources(dag: &MetaGraph, n: node::Id, i: usize) -> Vec<(node::Id, usize)> {
     let mut sources = Vec::new();
     for e_ref in dag.edges_directed(n, petgraph::Incoming) {
-        for (edge, _kind) in e_ref.weight() {
+        for edge in e_ref.weight() {
             if edge.input.0 as usize == i {
                 sources.push((e_ref.source(), edge.output.0 as usize));
             }
@@ -543,7 +543,7 @@ fn node_outputs(meta: &Meta, dag: &MetaGraph, n: node::Id) -> Result<node::Conns
     let mut outputs = node::Conns::unconnected(n_outputs)
         .map_err(|_| conns_err(TooManyConns(n_outputs).into()))?;
     for e_ref in dag.edges_directed(n, petgraph::Outgoing) {
-        for (edge, _kind) in e_ref.weight() {
+        for edge in e_ref.weight() {
             let index = edge.output.0 as usize;
             outputs
                 .set(index, true)
@@ -590,7 +590,7 @@ fn arm_seeds(
 ) -> Vec<node::Id> {
     let mut seeds = Vec::new();
     for e_ref in dag.edges_directed(b, petgraph::Outgoing) {
-        for (edge, _kind) in e_ref.weight() {
+        for edge in e_ref.weight() {
             if mask.get(edge.output.0 as usize).unwrap_or(false) && within.contains(&e_ref.target())
             {
                 seeds.push(e_ref.target());
@@ -606,11 +606,17 @@ fn arm_seeds(
 /// reaches nothing and blocks the crossing entirely. Unlike
 /// [`descendants`], a node reached only through some arms of a nested
 /// branch is conditional and excluded.
+///
+/// `shared` keeps the nodes that every arm of a nested branch reaches, by
+/// branch node. They depend on `within` alone, so calls with the same
+/// `within` pass the same map. A chain of branches then costs time linear in
+/// its length.
 fn unconditional_reach(
     cx: &Cx,
     dag: &MetaGraph,
     seeds: impl IntoIterator<Item = node::Id>,
     within: &BTreeSet<node::Id>,
+    shared: &mut BTreeMap<node::Id, BTreeSet<node::Id>>,
 ) -> BTreeSet<node::Id> {
     let mut reached = BTreeSet::new();
     let mut stack: Vec<node::Id> = seeds.into_iter().filter(|n| within.contains(n)).collect();
@@ -618,26 +624,28 @@ fn unconditional_reach(
         if !reached.insert(n) || cx.meta.delays.contains(&n) {
             continue;
         }
-        match cx.branches(n) {
-            None => {
-                for e_ref in dag.edges_directed(n, petgraph::Outgoing) {
-                    let t = e_ref.target();
-                    if within.contains(&t) && !reached.contains(&t) {
-                        stack.push(t);
-                    }
+        let Some(masks) = cx.branches(n) else {
+            for e_ref in dag.edges_directed(n, petgraph::Outgoing) {
+                let t = e_ref.target();
+                if within.contains(&t) && !reached.contains(&t) {
+                    stack.push(t);
                 }
             }
-            Some(masks) => {
-                let mut arms = masks.iter().map(|mask| {
-                    unconditional_reach(cx, dag, arm_seeds(dag, n, mask, within), within)
+            continue;
+        };
+        if !shared.contains_key(&n) {
+            let mut every_arm: Option<BTreeSet<node::Id>> = None;
+            for mask in masks {
+                let seeds = arm_seeds(dag, n, mask, within);
+                let arm = unconditional_reach(cx, dag, seeds, within, shared);
+                every_arm = Some(match every_arm {
+                    Some(acc) => acc.intersection(&arm).copied().collect(),
+                    None => arm,
                 });
-                let mut shared = arms.next().unwrap_or_default();
-                for arm in arms {
-                    shared = shared.intersection(&arm).copied().collect();
-                }
-                stack.extend(shared.into_iter().filter(|t| !reached.contains(t)));
             }
+            shared.insert(n, every_arm.unwrap_or_default());
         }
+        stack.extend(shared[&n].iter().copied().filter(|t| !reached.contains(t)));
     }
     reached
 }
@@ -664,9 +672,16 @@ fn fed_nodes(
         return fed;
     }
     let arm_masks = cx.branches(b).expect("caller checked branching");
-    let mut reach = arm_masks
-        .iter()
-        .map(|mask| unconditional_reach(cx, dag, arm_seeds(dag, b, mask, pending), pending));
+    let mut shared = BTreeMap::new();
+    let mut reach = arm_masks.iter().map(|mask| {
+        unconditional_reach(
+            cx,
+            dag,
+            arm_seeds(dag, b, mask, pending),
+            pending,
+            &mut shared,
+        )
+    });
     let first = reach.next().unwrap_or_default();
     let every_arm = reach.fold(first, |acc, r| acc.intersection(&r).copied().collect());
     fed.difference(&every_arm).copied().collect()
@@ -676,7 +691,7 @@ fn fed_nodes(
 /// point.
 fn fired_input(dag: &MetaGraph, env: &Env, n: node::Id) -> bool {
     dag.edges_directed(n, petgraph::Incoming).any(|e_ref| {
-        e_ref.weight().iter().any(|(edge, _)| {
+        e_ref.weight().iter().any(|edge| {
             let src = (e_ref.source(), edge.output.0 as usize);
             !env.inputs.contains_key(&(n, edge.input.0 as usize)) && env.fired.contains(&src)
         })
@@ -772,7 +787,7 @@ fn lower_branch(
                 e_ref
                     .weight()
                     .iter()
-                    .any(|(edge, _)| mask.get(edge.output.0 as usize).unwrap_or(false))
+                    .any(|edge| mask.get(edge.output.0 as usize).unwrap_or(false))
             })
         })
         .collect();
@@ -781,11 +796,20 @@ fn lower_branch(
     // Set-reachability is not enough. A node reached only through some arms
     // of a nested branch is conditional and must stay inside that branch's
     // own lowering.
+    let mut shared = BTreeMap::new();
     let mut live_ucr = arm_masks
         .iter()
         .zip(&live)
         .filter(|&(_, &l)| l)
-        .map(|(mask, _)| unconditional_reach(cx, dag, arm_seeds(dag, b, mask, &region), &region));
+        .map(|(mask, _)| {
+            unconditional_reach(
+                cx,
+                dag,
+                arm_seeds(dag, b, mask, &region),
+                &region,
+                &mut shared,
+            )
+        });
     let mut cont_cand = live_ucr.next().unwrap_or_default();
     for ucr in live_ucr {
         cont_cand = cont_cand.intersection(&ucr).copied().collect();
@@ -851,7 +875,7 @@ fn lower_branch(
             if t == b || in_arms(t) {
                 continue;
             }
-            for (edge, _kind) in e_ref.weight() {
+            for edge in e_ref.weight() {
                 consumer_inputs.insert((t, edge.input.0 as usize));
             }
         }

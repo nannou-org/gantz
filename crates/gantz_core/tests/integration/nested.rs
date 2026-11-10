@@ -2833,3 +2833,121 @@ fn test_graph_nested_push_through_delay_feedback() {
     // The accumulating value propagates through the outlet each push.
     assert_eq!(store_val(&vm, number), Some(15));
 }
+
+// An edge from a branch output that no arm activates never carries a value.
+// The graph compiles the same whether the branch node has a lower or a
+// higher index than the node the edge targets. `five` then has no live
+// input and runs before the branch. `add` reads it and runs on both arms.
+// branches: [{A}, {A, B}]
+//
+//        [In]
+//         |
+//       [Sel]--o2--[five]
+//      o0/  \o1      |
+//     [add]--\-------'
+//       |     \
+//    [Out A]  [Out B]
+#[test]
+fn test_graph_nested_edge_from_dead_branch_output() {
+    let select = || {
+        node::branch(
+            "(if (= 0 $x) (list 0 42) (list 1 99))",
+            vec![
+                node::Conns::try_from([true, false, false]).unwrap(),
+                node::Conns::try_from([false, true, false]).unwrap(),
+            ],
+        )
+        .unwrap()
+    };
+    let make_inner = |select_first: bool| {
+        let mut inner = Nested::default();
+        let inlet = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+        let first = select_first.then(|| inner.add_node(Box::new(select()) as Box<_>));
+        let five = inner.add_node(Box::new(node::expr("(begin $x 5)").unwrap()) as Box<_>);
+        let add = node::expr("(if (Some? $?a) (+ (Some->value $?a) $b) $b)").unwrap();
+        let add = inner.add_node(Box::new(add) as Box<_>);
+        let outlet_a = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let outlet_b = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+        let select = first.unwrap_or_else(|| inner.add_node(Box::new(select()) as Box<_>));
+        inner.add_edge(inlet, select, Edge::from((0, 0)));
+        inner.add_edge(select, add, Edge::from((0, 0)));
+        inner.add_edge(select, outlet_b, Edge::from((1, 0)));
+        inner.add_edge(select, five, Edge::from((2, 0)));
+        inner.add_edge(five, add, Edge::from((0, 1)));
+        inner.add_edge(add, outlet_a, Edge::from((0, 0)));
+        inner
+    };
+    let build = |inner: Nested, sel: i32| {
+        let mut g = petgraph::graph::DiGraph::new();
+        let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+        let int = g.add_node(Box::new(node_int(sel)) as Box<_>);
+        let inner_node = g.add_node(Box::new(inner) as Box<_>);
+        let store_a = g.add_node(Box::new(node_number()) as Box<_>);
+        let store_b = g.add_node(Box::new(node_number()) as Box<_>);
+        g.add_edge(push, int, Edge::from((0, 0)));
+        g.add_edge(int, inner_node, Edge::from((0, 0)));
+        g.add_edge(inner_node, store_a, Edge::from((0, 0)));
+        g.add_edge(inner_node, store_b, Edge::from((1, 0)));
+        let vm = compile_and_push(&g, push);
+        (store_val(&vm, store_a), store_val(&vm, store_b))
+    };
+    for select_first in [true, false] {
+        let case = format!("select first: {select_first}");
+        assert_inner_branches(&make_inner(select_first), 2, &[&[0], &[0, 1]]);
+        assert_eq!(
+            build(make_inner(select_first), 0),
+            (Some(47), None),
+            "{case}"
+        );
+        assert_eq!(
+            build(make_inner(select_first), 1),
+            (Some(5), Some(99)),
+            "{case}"
+        );
+    }
+}
+
+// A chain of branches that each reconverge, in a nested graph. The outlet
+// always fires, so the graph does not branch for its parent. The outlet
+// analysis walks each join once. A walk for each combination of arms would
+// never finish here.
+//
+//   [In] --> [Sel]--o0--\
+//              \--o1--[+1] --> [Sel] ... --> [Out]
+#[test]
+fn test_graph_nested_branch_chain() {
+    const LEN: usize = 48;
+    let mut inner = Nested::default();
+    let inlet = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+    let mut last = inlet;
+    for _ in 0..LEN {
+        let select = node::branch(
+            "(if (< $x 0) (list 0 $x) (list 1 $x))",
+            vec![
+                node::Conns::try_from([true, false]).unwrap(),
+                node::Conns::try_from([false, true]).unwrap(),
+            ],
+        )
+        .unwrap();
+        let select = inner.add_node(Box::new(select) as Box<_>);
+        let inc = inner.add_node(Box::new(node::expr("(+ $x 1)").unwrap()) as Box<_>);
+        inner.add_edge(last, select, Edge::from((0, 0)));
+        inner.add_edge(select, inc, Edge::from((0, 0)));
+        inner.add_edge(select, inc, Edge::from((1, 0)));
+        last = inc;
+    }
+    let outlet = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+    inner.add_edge(last, outlet, Edge::from((0, 0)));
+    assert_inner_branches(&inner, 1, &[]);
+
+    let mut g = petgraph::graph::DiGraph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let int = g.add_node(Box::new(node_int(0)) as Box<_>);
+    let inner_node = g.add_node(Box::new(inner) as Box<_>);
+    let store = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(push, int, Edge::from((0, 0)));
+    g.add_edge(int, inner_node, Edge::from((0, 0)));
+    g.add_edge(inner_node, store, Edge::from((0, 0)));
+    let vm = compile_and_push(&g, push);
+    assert_eq!(store_val(&vm, store), Some(LEN as i32));
+}

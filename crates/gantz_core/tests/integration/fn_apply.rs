@@ -27,6 +27,28 @@ fn node_assert_eq() -> node::expr::Expr {
 trait DebugNode: Debug + Node {}
 impl<T> DebugNode for T where T: Debug + Node {}
 
+/// Fails when the module defines a graph fn that no other definition names.
+fn assert_every_graph_fn_is_called(module: &[steel::parser::ast::ExprKind]) {
+    let defs: Vec<String> = module.iter().map(|def| def.to_string()).collect();
+    for def in &defs {
+        let Some(rest) = def.strip_prefix("(define graph-fn-") else {
+            continue;
+        };
+        let name = format!("graph-fn-{}", rest.split(' ').next().unwrap());
+        let named = |other: &&String| {
+            let ends = |c: char| c == ' ' || c == ')';
+            *other != def
+                && other
+                    .match_indices(&name)
+                    .any(|(i, _)| other[i + name.len()..].starts_with(ends))
+        };
+        assert!(
+            defs.iter().any(|other| named(&other)),
+            "no definition names `{name}`"
+        );
+    }
+}
+
 // Fn wraps the identity function and Apply calls it.
 //
 //    --------
@@ -96,6 +118,7 @@ fn test_fn_apply_identity() {
     let ctx = node::MetaCtx::new(&get_node);
     let eps = push_pull_entrypoints(&get_node, &g);
     let module = gantz_core::compile::module(&get_node, &g, &eps, &Default::default()).unwrap();
+    assert_every_graph_fn_is_called(&module);
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -202,6 +225,7 @@ fn test_fn_apply_graph() {
     let ctx = node::MetaCtx::new(&get_node);
     let eps = push_pull_entrypoints(&get_node, &g);
     let module = gantz_core::compile::module(&get_node, &g, &eps, &Default::default()).unwrap();
+    assert_every_graph_fn_is_called(&module);
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());
@@ -295,6 +319,7 @@ fn test_fn_captures_connected_inputs() {
 
     let eps = push_pull_entrypoints(&get_node, &g);
     let module = gantz_core::compile::module(&get_node, &g, &eps, &Default::default()).unwrap();
+    assert_every_graph_fn_is_called(&module);
 
     let mut vm = Engine::new_base();
     vm.register_value(ROOT_STATE, SteelVal::empty_hashmap());

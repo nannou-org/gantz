@@ -17,11 +17,6 @@ pub struct InvalidOutputIndex {
     pub n_outputs: usize,
 }
 
-/// A nested graph was not found at the expected path.
-#[derive(Debug, Error)]
-#[error("nested graph not found at path {0:?}")]
-pub struct NestedGraphNotFound(pub Vec<node::Id>);
-
 /// Expression generation failed for a node.
 #[derive(Debug)]
 pub struct NodeExprError {
@@ -31,20 +26,9 @@ pub struct NodeExprError {
     pub error: node::ExprError,
 }
 
-/// Error during node function generation.
-#[derive(Debug, Error)]
-pub enum NodeFnError {
-    /// A nested graph was not found.
-    #[error(transparent)]
-    NestedGraphNotFound(#[from] NestedGraphNotFound),
-    /// Expression generation failed.
-    #[error(transparent)]
-    Expr(#[from] NodeExprError),
-}
-
 /// Multiple errors encountered during node function generation.
 #[derive(Debug)]
-pub struct NodeFnErrors(pub Vec<NodeFnError>);
+pub struct NodeFnErrors(pub Vec<NodeExprError>);
 
 /// Error when computing node connections from graph edges.
 #[derive(Debug, Error)]
@@ -126,9 +110,6 @@ pub enum ModuleError {
         #[source]
         error: LowerError,
     },
-    /// A nested graph was not found.
-    #[error(transparent)]
-    NestedGraphNotFound(#[from] NestedGraphNotFound),
     /// Multiple errors during meta collection.
     #[error(transparent)]
     MetaErrors(#[from] MetaErrors),

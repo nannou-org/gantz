@@ -219,6 +219,18 @@ pub(crate) fn vars_from_src(src: &str) -> Vec<String> {
     collect_unique_vars(TokenStream::new(src, true, None))
 }
 
+/// Whether the source names the `state` binding, as a token of its own. A
+/// longer identifier or a string with the word in it does not count.
+pub(crate) fn names_state(src: &str) -> bool {
+    let state = crate::compile::names::STATE;
+    // Most sources have no such text at all, and need no lexing.
+    src.contains(state)
+        && TokenStream::new(src, true, None).any(|token| match &token {
+            Ok(token) => token.source == state,
+            Err(error) => error.source == state,
+        })
+}
+
 /// Replace each `$var` with the corresponding input expression based on variable name.
 ///
 /// Variables with a `$?` prefix are optional inputs. When connected,
@@ -298,7 +310,7 @@ impl Node for Expr {
 
     /// Only generate the state binding if the expr references `state`.
     fn stateful(&self, _ctx: node::MetaCtx) -> bool {
-        self.src().contains("state")
+        names_state(self.src())
     }
 
     /// Registers a state slot in case the expr references `state`.
@@ -496,5 +508,26 @@ fn test_interpolate_tokens() {
         for s in must_not {
             assert!(!result.contains(s), "{label}: unexpected {s} in: {result}");
         }
+    }
+}
+
+#[test]
+fn test_names_state() {
+    for src in [
+        "state",
+        "(+ state 1)",
+        "(begin (set! state $x) state)",
+        "'state",
+    ] {
+        assert!(names_state(src), "{src}");
+    }
+    for src in [
+        "(+ $x 1)",
+        "(estate $x)",
+        "(my-state $x)",
+        "(state-of $x)",
+        "\"state\"",
+    ] {
+        assert!(!names_state(src), "{src}");
     }
 }

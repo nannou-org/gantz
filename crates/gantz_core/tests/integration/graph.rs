@@ -2344,3 +2344,44 @@ fn test_graph_delay_read_and_write_in_separate_entrypoints() {
         .unwrap();
     assert_eq!(val, 7, "read after a write sees the stored value");
 }
+
+// A chain of branches that each reconverge. Lowering and the outlet analysis
+// visit each branch a fixed number of times. A visit for each combination of
+// arms would never finish here.
+//
+//   push --> int --> [b]--o0--\
+//                     \--o1--[+1] --> [b] ... --> number
+#[test]
+fn test_graph_branch_chain_compiles() {
+    const LEN: usize = 48;
+    let mut g = petgraph::graph::DiGraph::new();
+    let push = g.add_node(Box::new(node_push()) as Box<dyn DebugNode>);
+    let int = g.add_node(Box::new(node_int(0)) as Box<_>);
+    g.add_edge(push, int, Edge::from((0, 0)));
+    let mut last = int;
+    for _ in 0..LEN {
+        let branch = node::Branch::new(
+            "(if (< $x 0) (list 0 $x) (list 1 $x))",
+            vec![
+                node::Conns::try_from([true, false]).unwrap(),
+                node::Conns::try_from([false, true]).unwrap(),
+            ],
+        )
+        .unwrap();
+        let branch = g.add_node(Box::new(branch) as Box<_>);
+        let inc = g.add_node(Box::new(node::expr("(+ $x 1)").unwrap()) as Box<_>);
+        g.add_edge(last, branch, Edge::from((0, 0)));
+        g.add_edge(branch, inc, Edge::from((0, 0)));
+        g.add_edge(branch, inc, Edge::from((1, 0)));
+        last = inc;
+    }
+    let number = g.add_node(Box::new(node_number()) as Box<_>);
+    g.add_edge(last, number, Edge::from((0, 0)));
+
+    let ctx = node::MetaCtx::new(&no_lookup);
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let ep = entrypoint::push(vec![push.index()], g[push].n_outputs(ctx) as u8);
+    let vm = compile_and_call(&g, &eps, &[&ep]);
+    let val = node::state::extract::<i32>(&vm, &[number.index()]).unwrap();
+    assert_eq!(val, Some(LEN as i32));
+}

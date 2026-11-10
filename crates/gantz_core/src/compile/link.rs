@@ -2,11 +2,12 @@
 
 use super::{
     Config, Entrypoint, EntrypointId, EvalKind, EvalSource, Meta, MetaTree, ModuleError, NodeConf,
-    NodeConns, RoseTree, analysis, codegen, emit, error, ir, lower, names,
+    NodeConns, RoseTree, SourceMap, analysis, codegen, emit, error, ir, lower, names,
 };
 use crate::{
     Edge,
     node::{self, Node},
+    visit::{self, Visitor},
 };
 use petgraph::visit::{Data, IntoEdgesDirected, IntoNodeReferences, NodeIndexable, Visitable};
 use std::collections::{BTreeMap, BTreeSet};
@@ -82,6 +83,11 @@ where
         confs: BTreeMap::new(),
         graph_fns: Vec::new(),
         fns: Vec::new(),
+        lowered: BTreeSet::new(),
+        node_fns: Vec::new(),
+        state: BTreeMap::new(),
+        node_errors: Vec::new(),
+        lower_error: None,
     };
 
     // One entry fn per entrypoint. The recursive level walk lowers any nested
@@ -109,68 +115,26 @@ where
         });
     }
 
-    // Every nested level compiles its all-active variant unconditionally.
-    // Wrapper nodes without graph-call semantics, for example `Fn`, inline an
-    // expression that calls it. Its interior node fns must exist either way.
-    let mut emitted: BTreeSet<(Vec<node::Id>, node::Conns)> = BTreeSet::new();
-    let mut levels = Vec::new();
-    collect_levels(&meta_tree, &mut Vec::new(), &mut levels);
-    for (gpath, n_inlets) in levels {
-        let imask = node::Conns::connected(n_inlets).map_err(|_| ModuleError::NodeConns {
-            path: gpath.clone(),
-            error: error::TooManyConns(n_inlets).into(),
-        })?;
-        if emitted.insert((gpath.clone(), imask)) {
-            builder.graph_fn(&gpath, &imask)?;
-        }
-    }
-
     // With `emit_all_node_fns`, every node contributes its all-connected
     // variant. Its node fn is then emitted even when nothing reachable from
-    // an entrypoint calls it. This runs before the fixpoint below so the
-    // graph fns these variants call are generated too.
+    // an entrypoint calls it.
     if config.emit_all_node_fns {
         all_connected_confs(&meta_tree, &mut Vec::new(), &mut builder.confs)?;
     }
 
-    // Generate a graph fn per nested level and active-inlet variant reachable
-    // from the lowered bodies. Iterate to a fixpoint because graph fns may
-    // call deeper variants.
-    loop {
-        let mut queue = Vec::new();
-        for (path, confs) in &builder.confs {
-            let sub = builder.meta_tree.tree(path).expect("conf path exists");
-            for conf in confs {
-                if sub.nested.contains_key(&conf.id) {
-                    let mut gpath = path.clone();
-                    gpath.push(conf.id);
-                    let key = (gpath, conf.conns.inputs);
-                    if !emitted.contains(&key) {
-                        queue.push(key);
-                    }
-                }
-            }
-        }
-        if queue.is_empty() {
-            break;
-        }
-        for (gpath, imask) in queue {
-            if emitted.insert((gpath.clone(), imask)) {
-                builder.graph_fn(&gpath, &imask)?;
-            }
-        }
+    // A node fn per called variant, and a graph fn per variant that a node
+    // fn calls.
+    crate::graph::visit(get_node, g, &[], &mut builder);
+    if let Some(error) = builder.lower_error {
+        return Err(error);
     }
-
-    // A node fn per called variant. The conf tree mirrors the full meta tree
-    // so the generating visitor finds every level.
-    let confs_tree = node_confs_tree(&meta_tree, &builder.confs, &mut Vec::new());
-    let codegen::NodeFns {
-        fns: node_fns,
-        state,
-    } = codegen::node_fns(get_node, g, &confs_tree)?;
+    if !builder.node_errors.is_empty() {
+        return Err(error::NodeFnErrors(builder.node_errors).into());
+    }
 
     // The lowered bodies emit last. A call site follows the state use of the
     // node fn variant it calls.
+    let state = builder.state;
     let emit_fn = |f: LoweredFn| {
         let no_state = BTreeMap::new();
         let state = state.get(&f.path).unwrap_or(&no_state);
@@ -190,7 +154,8 @@ where
     // node fn at depth D may call a graph fn at depth D+1. A graph fn calls
     // its interior node fns and deeper graph fns. Level and entry fns come
     // last.
-    let mut fns: Vec<(usize, usize, ExprKind)> = node_fns
+    let mut fns: Vec<(usize, usize, ExprKind)> = builder
+        .node_fns
         .into_iter()
         .map(|(depth, f)| (depth, 0, f))
         .collect();
@@ -268,20 +233,6 @@ fn all_connected_confs(
     Ok(())
 }
 
-/// Collect every nested level path in the meta tree with its inlet count.
-fn collect_levels(
-    tree: &RoseTree<Meta>,
-    path: &mut Vec<node::Id>,
-    out: &mut Vec<(Vec<node::Id>, usize)>,
-) {
-    for (&id, sub) in &tree.nested {
-        path.push(id);
-        out.push((path.clone(), sub.elem.inlets.len()));
-        collect_levels(sub, path, out);
-        path.pop();
-    }
-}
-
 /// A nested level's contribution to its parent's evaluation of one
 /// entrypoint.
 struct LevelPiece {
@@ -312,20 +263,87 @@ struct LoweredFn {
 }
 
 /// The working state of one [`module`] invocation. It accumulates node
-/// variant confs and lowered fns. The per-entrypoint level recursion and the
-/// per-variant graph fn generation are methods.
+/// variant confs, lowered fns and node fns. The per-entrypoint level
+/// recursion and the per-variant graph fn generation are methods. The node
+/// fn generation is its [`Visitor`] impl.
 struct ModuleBuilder<'a> {
     meta_tree: &'a RoseTree<Meta>,
     level_sources: &'a BTreeMap<Vec<node::Id>, Vec<(EntrypointId, Vec<&'a EvalSource>)>>,
     config: &'a Config,
     /// Node variants called by the lowered bodies, per level path.
     confs: BTreeMap<Vec<node::Id>, BTreeSet<NodeConf>>,
+    /// The graph fn variants lowered so far, by level path and inlet mask.
+    lowered: BTreeSet<(Vec<node::Id>, node::Conns)>,
     /// Lowered graph fns with their level depth. A graph fn calls only
     /// deeper graph fns, so they are defined deepest-first, before all level
     /// and entry fns. Steel resolves free identifiers at definition.
     graph_fns: Vec<(usize, LoweredFn)>,
     /// Lowered level and entry fns, child levels before their parents.
     fns: Vec<LoweredFn>,
+    /// Generated node fns with the depth of the level of their node.
+    node_fns: Vec<(usize, ExprKind)>,
+    /// The state use of each stateful node fn variant, by level path.
+    state: codegen::StateUses,
+    node_errors: Vec<error::NodeExprError>,
+    /// The first error from lowering a graph fn that a node fn calls.
+    lower_error: Option<ModuleError>,
+}
+
+/// Generates the node fns of every called variant. A node fn names the graph
+/// fn variants it calls. Each lowers when first named, and that adds the node
+/// variants its body calls. A node is visited before the nodes of its nested
+/// graph, so their variants are complete when the visit reaches them.
+impl Visitor for ModuleBuilder<'_> {
+    fn visit_pre(&mut self, ctx: visit::Ctx<'_, '_>, node: &dyn Node) {
+        // Inlet and outlet nodes get no node fn. Their values resolve as
+        // bindings.
+        let meta_ctx = node::MetaCtx::new(ctx.get_node());
+        if matches!(node.role(meta_ctx), node::Role::Inlet | node::Role::Outlet) {
+            return;
+        }
+        let node_path = ctx.path();
+        let level = &node_path[..node_path.len() - 1];
+        let id = ctx.id();
+        let confs: Vec<NodeConf> = match self.confs.get(level) {
+            Some(confs) => node_confs(confs, id).copied().collect(),
+            None => return,
+        };
+        for conf in confs {
+            let connected = codegen::connected_inputs(conf.conns.inputs, ctx.inputs());
+            let node_fn =
+                codegen::node_fn(ctx.get_node(), node, node_path, &conf.conns, &connected);
+            let (fn_expr, state) = match node_fn {
+                Ok(node_fn) => node_fn,
+                Err(error) => {
+                    let path = node_path.to_vec();
+                    let error = error::NodeExprError { path, error };
+                    self.node_errors.push(error);
+                    continue;
+                }
+            };
+            // Only a node with a nested graph has graph fns to name.
+            let called = match self.meta_tree.tree(node_path) {
+                Some(_) => SourceMap::parse(&fn_expr.to_string()),
+                None => SourceMap::default(),
+            };
+            for occ in called.occs() {
+                let names::Name::GraphFn { path, inputs } = &occ.name else {
+                    continue;
+                };
+                if path == node_path && self.lowered.insert((path.clone(), *inputs)) {
+                    let lowered = self.graph_fn(path, inputs);
+                    self.lower_error = self.lower_error.take().or(lowered.err());
+                }
+            }
+            self.node_fns.push((level.len(), fn_expr));
+            if let Some(state) = state {
+                self.state
+                    .entry(level.to_vec())
+                    .or_default()
+                    .insert(conf, state);
+            }
+        }
+    }
 }
 
 impl ModuleBuilder<'_> {
@@ -592,27 +610,6 @@ fn state_frame(
     (params, l([a("list"), result, a(crate::GRAPH_STATE)]))
 }
 
-/// Build the node-fn conf tree mirroring the meta tree. Nested-graph node
-/// confs are excluded because they compile to graph fns.
-fn node_confs_tree(
-    meta_node: &RoseTree<Meta>,
-    confs: &BTreeMap<Vec<node::Id>, BTreeSet<NodeConf>>,
-    path: &mut Vec<node::Id>,
-) -> RoseTree<BTreeSet<NodeConf>> {
-    let elem = confs.get(path).cloned().unwrap_or_default();
-    let nested = meta_node
-        .nested
-        .iter()
-        .map(|(&id, sub)| {
-            path.push(id);
-            let t = node_confs_tree(sub, confs, path);
-            path.pop();
-            (id, t)
-        })
-        .collect();
-    RoseTree { elem, nested }
-}
-
 /// The inlet ids active for a parent input-conns mask. Bit `i` maps to
 /// `inlet_ids[i]`. This is the input-to-inlet contract shared with
 /// `node::graph::graph_call_expr`.
@@ -623,4 +620,18 @@ fn active_inlets_from_conns(inlet_ids: &[node::Id], conns: &node::Conns) -> BTre
         .filter(|(i, _)| conns.get(*i).unwrap_or(false))
         .map(|(_, &id)| id)
         .collect()
+}
+
+/// The variants of node `id` among the variants of its level.
+fn node_confs(confs: &BTreeSet<NodeConf>, id: node::Id) -> impl Iterator<Item = &NodeConf> {
+    let first = |id| NodeConf {
+        id,
+        conns: NodeConns {
+            inputs: node::Conns::empty(),
+            outputs: node::Conns::empty(),
+        },
+    };
+    confs
+        .range(first(id)..)
+        .take_while(move |conf| conf.id == id)
 }
