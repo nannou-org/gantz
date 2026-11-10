@@ -142,6 +142,112 @@ fn recompile_redefines_module() {
     assert_eq!(sink_state(&vm, sink), SteelVal::IntV(300));
 }
 
+/// Whether the engine still has the definition of `name` that `keep` saved.
+fn same_def(vm: &mut Engine, name: &str) -> bool {
+    let same = vm.run(format!("(eq? %kept-{name} {name})")).unwrap();
+    same.last() == Some(&SteelVal::BoolV(true))
+}
+
+/// Save the current definition of each name for `same_def`.
+fn keep(vm: &mut Engine, names: &[&str]) {
+    for name in names {
+        vm.run(format!("(define %kept-{name} {name})")).unwrap();
+    }
+}
+
+// A recompile runs the changed node fn again, and the fns that call it. The
+// other definitions stay as the engine has them.
+#[test]
+fn recompile_runs_only_the_changed_forms_and_their_callers() {
+    let (mut g, push, sink) = test_graph();
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let entry = push_fn_name(&g, push);
+    let (mut vm, compiled) =
+        gantz_core::vm::init(&no_lookup, &g, &eps, &Default::default()).unwrap();
+    let names: Vec<&str> = compiled
+        .map
+        .defs()
+        .iter()
+        .filter(|def| !def.name_range.is_empty())
+        .map(|def| &compiled.src[def.name_range.clone()])
+        .collect();
+    let (counter, nested) = (push.index() + 1, push.index() + 2);
+    let counter_fn = *names
+        .iter()
+        .find(|name| name.starts_with(&format!("node-fn-{counter}-")))
+        .unwrap();
+    let inc_fn = *names
+        .iter()
+        .find(|name| name.starts_with(&format!("node-fn-{nested}:")))
+        .unwrap();
+    let graph_fn = *names
+        .iter()
+        .find(|name| name.starts_with(&format!("graph-fn-{nested}-")))
+        .unwrap();
+    vm.call_function_by_name_with_args(&entry, vec![]).unwrap();
+    assert_eq!(sink_state(&vm, sink), SteelVal::IntV(2));
+
+    // A recompile of the same graph runs nothing.
+    keep(&mut vm, &names);
+    gantz_core::vm::compile(&no_lookup, &g, &mut vm, &eps, &Default::default()).unwrap();
+    for name in &names {
+        assert!(same_def(&mut vm, name), "{name}");
+    }
+
+    // Change the node inside the nested graph.
+    let mut inner = Nested::default();
+    let inlet = inner.add_node(Box::new(node::graph::Inlet::default()) as Box<dyn DebugNode>);
+    let inc = inner.add_node(Box::new(node::expr("(+ $x 10)").unwrap()) as Box<_>);
+    let outlet = inner.add_node(Box::new(node::graph::Outlet::default()) as Box<_>);
+    inner.add_edge(inlet, inc, Edge::from((0, 0)));
+    inner.add_edge(inc, outlet, Edge::from((0, 0)));
+    g[petgraph::graph::NodeIndex::new(nested)] = Box::new(inner);
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    gantz_core::vm::compile(&no_lookup, &g, &mut vm, &eps, &Default::default()).unwrap();
+    assert!(!same_def(&mut vm, inc_fn));
+    assert!(!same_def(&mut vm, graph_fn));
+    assert!(!same_def(&mut vm, &entry));
+    assert!(same_def(&mut vm, counter_fn));
+
+    // The entry fn calls the new node fn. The counter kept its state.
+    vm.call_function_by_name_with_args(&entry, vec![]).unwrap();
+    assert_eq!(sink_state(&vm, sink), SteelVal::IntV(12));
+}
+
+// After a compile that Steel rejects, the next compile runs every form
+// again. The engine may have run part of the rejected module.
+#[test]
+fn recompile_after_a_failed_compile_runs_every_form() {
+    let (mut g, push, sink) = test_graph();
+    let eps = push_pull_entrypoints(&no_lookup, &g);
+    let entry = push_fn_name(&g, push);
+    let (mut vm, compiled) =
+        gantz_core::vm::init(&no_lookup, &g, &eps, &Default::default()).unwrap();
+    let names: Vec<&str> = compiled
+        .map
+        .defs()
+        .iter()
+        .filter(|def| !def.name_range.is_empty())
+        .map(|def| &compiled.src[def.name_range.clone()])
+        .collect();
+    keep(&mut vm, &names);
+
+    let good = std::mem::replace(
+        &mut g[sink],
+        Box::new(node::expr("(begin (set! state (no-such-fn $x)) state)").unwrap()),
+    );
+    let failed = gantz_core::vm::compile(&no_lookup, &g, &mut vm, &eps, &Default::default());
+    assert!(failed.is_err());
+
+    g[sink] = good;
+    gantz_core::vm::compile(&no_lookup, &g, &mut vm, &eps, &Default::default()).unwrap();
+    for name in &names {
+        assert!(!same_def(&mut vm, name), "{name}");
+    }
+    vm.call_function_by_name_with_args(&entry, vec![]).unwrap();
+    assert_eq!(sink_state(&vm, sink), SteelVal::IntV(2));
+}
+
 // A runtime steel error maps back to the erroring node's full path via the
 // registered source and the module's source map.
 #[test]
@@ -187,8 +293,23 @@ fn steel_err_node_attribution() {
         .unwrap_err();
     let path = gantz_core::vm::steel_err_node(&err, &vm, &recompiled);
     assert_eq!(path, Some(vec![int.index()]));
-    // The stale pre-recompile error does not attribute to the new module.
-    // Its span belongs to the old source text.
+    let int_err = err;
+
+    // The form of the nested node did not run again. Its error still
+    // attributes, from the source of the first compile.
+    g[int] = Box::new(node_int(8));
+    gantz_core::graph::register(&no_lookup, &g, &[], &mut vm);
+    let recompiled =
+        gantz_core::vm::compile(&no_lookup, &g, &mut vm, &eps, &Default::default()).unwrap();
+    let err = vm
+        .call_function_by_name_with_args(&fn_name, vec![])
+        .unwrap_err();
+    let path = gantz_core::vm::steel_err_node(&err, &vm, &recompiled);
+    assert_eq!(path, Some(vec![nested.index(), boom.index()]));
+
+    // An error from a form that a recompile replaced does not attribute.
+    let path = gantz_core::vm::steel_err_node(&int_err, &vm, &recompiled);
+    assert_eq!(path, None);
 }
 
 // An error inside a closure that a `gantz/list` fn calls maps back to the

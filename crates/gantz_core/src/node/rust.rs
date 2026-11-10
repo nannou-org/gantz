@@ -46,13 +46,19 @@ use steel::{
 
 /// Register a stateless Rust function with the Steel VM.
 ///
-/// Forwards directly to [`Engine::register_fn`]. Type inference resolves
-/// the arity from the function signature.
+/// Forwards to [`Engine::register_fn`]. Type inference resolves the arity
+/// from the function signature.
+///
+/// Does nothing when the engine already has a binding for `name`. A second
+/// registration would take a new global slot, and the compiled code that
+/// already calls `name` would keep the first fn.
 pub fn register<FN, ARGS, RET>(vm: &mut Engine, name: &'static str, f: FN)
 where
     Engine: steel::steel_vm::register_fn::RegisterFn<FN, ARGS, RET>,
 {
-    vm.register_fn(name, f);
+    if vm.extract_value(name).is_err() {
+        vm.register_fn(name, f);
+    }
 }
 
 /// Trait for registering a Rust function that takes `&mut S` state as its last
@@ -94,11 +100,16 @@ pub trait RegisterStatefulNodeFn<ARGS, S, R> {
 /// }
 /// node::rust::register_stateful(vm, "counter", counter);
 /// ```
+///
+/// Does nothing when the engine already has a binding for `name`. See
+/// [`register`].
 pub fn register_stateful<F, ARGS, S, R>(vm: &mut Engine, name: &'static str, f: F)
 where
     F: RegisterStatefulNodeFn<ARGS, S, R>,
 {
-    f.register_node_fn(vm, name);
+    if vm.extract_value(name).is_err() {
+        f.register_node_fn(vm, name);
+    }
 }
 
 /// Generate `RegisterStatefulNodeFn` impls for 0 to N positional args.

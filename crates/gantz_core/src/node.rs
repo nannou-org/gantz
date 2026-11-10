@@ -147,6 +147,11 @@ pub trait Node: std::any::Any {
     /// initializing to avoid resetting existing state. See
     /// [`state::init_value_if_absent`] and [`state::init_if_absent`].
     ///
+    /// Register a fn or a value under a name only when the engine has no
+    /// binding for it yet. A second registration takes a new global slot. A
+    /// recompile leaves the code of an unchanged node as it is, and that code
+    /// would keep the first binding.
+    ///
     /// Nodes returning `true` from their [`Node::stateful`] implementation
     /// must use this to initialise their state.
     ///
