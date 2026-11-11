@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0](https://github.com/nannou-org/gantz/compare/gantz_base-v0.3.1...gantz_base-v0.4.0) - 2026-11-11
+
+### Added
+
+- *(gantz_base)* Add the `hold` node
+- *(gantz_base)* add map, literal and math nodes
+- *(gantz_base)* add a ui.canvas element graph
+- add bound, choice and color GUI elements
+- give numbers a start value and a steady width
+- rework the demos for the new nodes and edges
+- [**breaking**] move base graphs into dot namespaces
+
+### Fixed
+
+- *(gantz_base)* Keep pow exact for a rational base
+
+### Other
+
+- Merge branch 'master' into fix/pow-rational
+
 ## [0.3.1](https://github.com/nannou-org/gantz/compare/gantz_base-v0.3.0...gantz_base-v0.3.1) - 2026-09-28
 
 ### Added
