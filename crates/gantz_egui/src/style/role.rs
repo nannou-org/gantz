@@ -163,6 +163,22 @@ roles! {
         "A vault link that only the user can fix.",
         c(Purple);
 
+    syntax_keyword, SyntaxKeyword, Syntax, "keyword",
+        "The names of special forms in code, for example `define`.",
+        c(Purple);
+    syntax_string, SyntaxString, Syntax, "string",
+        "Strings in code.",
+        c(Green);
+    syntax_literal, SyntaxLiteral, Syntax, "literal",
+        "Numbers, booleans and characters in code.",
+        c(Orange);
+    syntax_comment, SyntaxComment, Syntax, "comment",
+        "Comments in code.",
+        c(N4);
+    syntax_bracket, SyntaxBracket, Syntax, "bracket",
+        "Brackets and quote marks in code.",
+        c(N4);
+
     scrim, Scrim, Chrome, "scrim",
         "The dimming layer over a scene that is busy or awaits a drop.",
         c(N0).with_opacity(0.5);
@@ -179,6 +195,7 @@ pub enum Group {
     Widget,
     Accent,
     Status,
+    Syntax,
     Chrome,
 }
 
@@ -190,6 +207,11 @@ impl Role {
             Self::Error | Self::Warning | Self::Success | Self::Pending | Self::Attention => {
                 Some(Self::Panel)
             }
+            Self::SyntaxKeyword
+            | Self::SyntaxString
+            | Self::SyntaxLiteral
+            | Self::SyntaxComment
+            | Self::SyntaxBracket => Some(Self::Panel),
             Self::WidgetText => Some(Self::WidgetFill),
             Self::HoverText => Some(Self::HoverFill),
             _ => None,
@@ -200,7 +222,7 @@ impl Role {
     /// well. Secondary text may be fainter than body text.
     pub fn min_contrast(self) -> f32 {
         match self {
-            Self::WeakText => 3.0,
+            Self::WeakText | Self::SyntaxComment | Self::SyntaxBracket => 3.0,
             _ => 4.5,
         }
     }
@@ -214,12 +236,13 @@ impl Roles {
 }
 
 impl Group {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Surface,
         Self::Text,
         Self::Widget,
         Self::Accent,
         Self::Status,
+        Self::Syntax,
         Self::Chrome,
     ];
 
@@ -230,6 +253,7 @@ impl Group {
             Self::Widget => "widgets",
             Self::Accent => "accents",
             Self::Status => "status",
+            Self::Syntax => "syntax",
             Self::Chrome => "chrome",
         }
     }

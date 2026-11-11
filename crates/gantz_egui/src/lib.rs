@@ -21,6 +21,7 @@ pub mod reg;
 pub mod response;
 pub mod style;
 pub mod sugar;
+pub mod syntax;
 #[cfg(test)]
 mod test_node;
 pub mod ui_tree;
