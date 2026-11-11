@@ -43,9 +43,6 @@ enum Edit {
     Open,
 }
 
-/// The language the code is highlighted as.
-const LANGUAGE: &str = "scm";
-
 /// The code a field with no code hints at.
 const HINT: &str = "(+ $l $r)";
 
@@ -66,7 +63,7 @@ impl<'a> egui::Widget for ExprEdit<'a> {
             state.error = None;
         }
 
-        let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
+        let theme = crate::syntax::Theme::of(ui);
 
         // At rest in the graph, the code is the node's text.
         if !fill && state.edit == Edit::Rest {
@@ -76,15 +73,7 @@ impl<'a> egui::Widget for ExprEdit<'a> {
         }
 
         let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
-            let mut layout_job = egui_extras::syntax_highlighting::highlight(
-                ui.ctx(),
-                ui.style(),
-                &theme,
-                buf.as_str(),
-                LANGUAGE,
-            );
-            layout_job.wrap.max_width = wrap_width;
-            ui.fonts_mut(|fonts| fonts.layout_job(layout_job))
+            super::code_galley(ui, &theme, buf.as_str(), wrap_width)
         };
 
         // `margin` is passed to both the editor and the width measurement. In
@@ -103,7 +92,7 @@ impl<'a> egui::Widget for ExprEdit<'a> {
             (ui.available_width(), rows)
         } else {
             (
-                super::code_edit_desired_width(ui, &theme, &state.code, LANGUAGE, margin),
+                super::code_edit_desired_width(ui, &theme, &state.code, margin),
                 1,
             )
         };
@@ -367,11 +356,7 @@ fn moved_inputs(from: &[String], to: &[String]) -> Option<Vec<Option<usize>>> {
 
 /// The code as the node's text, in the code colours and with its own lines.
 /// Code with no text shows the hint in the weak text colour.
-fn code_label(
-    ui: &mut egui::Ui,
-    theme: &egui_extras::syntax_highlighting::CodeTheme,
-    code: &str,
-) -> egui::Response {
+fn code_label(ui: &mut egui::Ui, theme: &crate::syntax::Theme, code: &str) -> egui::Response {
     if code.is_empty() {
         let font = egui::FontSelection::from(egui::TextStyle::Monospace).resolve(ui.style());
         let hint = egui::RichText::new(HINT)
@@ -379,10 +364,8 @@ fn code_label(
             .color(ui.visuals().weak_text_color());
         return ui.add(egui::Label::new(hint).selectable(false));
     }
-    let mut job =
-        egui_extras::syntax_highlighting::highlight(ui.ctx(), ui.style(), theme, code, LANGUAGE);
-    job.wrap.max_width = f32::INFINITY;
-    ui.add(egui::Label::new(job).selectable(false))
+    let galley = super::code_galley(ui, theme, code, f32::INFINITY);
+    ui.add(egui::Label::new(galley).selectable(false))
 }
 
 fn expr_hash(expr: &gantz_core::node::Expr) -> u64 {
