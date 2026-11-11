@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.9.0...gantz_core-v0.10.0) - 2026-11-11
+
+### Added
+
+- *(gantz_core)* let fn bind its connected inputs
+- keep node state only for graphs that opt in
+- carry node state through copy and paste
+- add a keep toggle and a reset for node state
+- keep node state across sessions
+- give the nodes of open heads entities
+
+### Fixed
+
+- *(gantz_core)* [**breaking**] Fix four defects in the graph compiler
+- *(gantz_core)* Run a node fed from outside a branch on every arm
+- *(gantz_core)* Keep the arity of a fn lambda the same in every eval
+- *(bevy_gantz)* load a head into a tab with its own state
+
+### Other
+
+- *(gantz_core)* Run only the changed definitions on a recompile
+- *(gantz_core)* Store node state back in place, and only after a write
+- *(gantz_core)* Emit fewer calls for nested graph calls
+- [**breaking**] make Datum the one data form
+
 ## [0.9.0](https://github.com/nannou-org/gantz/compare/gantz_core-v0.8.0...gantz_core-v0.9.0) - 2026-10-17
 
 ### Fixed
