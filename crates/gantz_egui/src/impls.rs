@@ -1,5 +1,7 @@
 //! [`crate::NodeUi`] implementations for nodes defined in other crates.
 
+use crate::syntax;
+
 mod apply;
 mod branch;
 mod delay;
@@ -21,16 +23,24 @@ mod outlet;
 /// Pass the same `margin` that is set on the editor via [`egui::TextEdit::margin`].
 fn code_edit_desired_width(
     ui: &egui::Ui,
-    theme: &egui_extras::syntax_highlighting::CodeTheme,
+    theme: &syntax::Theme,
     code: &str,
-    language: &str,
     margin: egui::Margin,
 ) -> f32 {
-    let mut job =
-        egui_extras::syntax_highlighting::highlight(ui.ctx(), ui.style(), theme, code, language);
-    job.wrap.max_width = f32::INFINITY;
-    let galley = ui.ctx().fonts_mut(|fonts| fonts.layout_job(job));
+    let galley = code_galley(ui, theme, code, f32::INFINITY);
     galley.rect.width().ceil() + margin.sum().x + 1.0
+}
+
+/// Scheme `code` laid out in its syntax colours and wrapped at `wrap_width`.
+fn code_galley(
+    ui: &egui::Ui,
+    theme: &syntax::Theme,
+    code: &str,
+    wrap_width: f32,
+) -> std::sync::Arc<egui::Galley> {
+    let mut job = syntax::job(code, syntax::Mode::Code, theme);
+    job.wrap.max_width = wrap_width;
+    ui.fonts_mut(|fonts| fonts.layout_job(job))
 }
 
 /// The text of an inlet or outlet node, such as `in[0] tick`. The index comes

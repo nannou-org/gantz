@@ -430,9 +430,28 @@ pub fn color(ui: &egui::Ui, role: Role) -> egui::Color32 {
 /// The colour of `role` under `theme` in the config last applied to `ctx`, or
 /// in the default config before any is applied.
 pub fn color_of(ctx: &egui::Context, theme: egui::Theme, role: Role) -> egui::Color32 {
-    ctx.data(|d| d.get_temp::<Colors>(colors_id(theme)))
-        .map(|Colors(colors)| colors[role as usize])
-        .unwrap_or_else(|| StyleConfig::default().resolve(theme, role))
+    let [color] = colors_of(ctx, theme, [role]);
+    color
+}
+
+/// The colours of `roles` in the style of `ui`, in order. See [`color`].
+pub fn colors<const N: usize>(ui: &egui::Ui, roles: [Role; N]) -> [egui::Color32; N] {
+    colors_of(ui.ctx(), theme_of(ui.visuals()), roles)
+}
+
+/// The colours of `roles` under `theme`, in order. See [`color_of`].
+pub fn colors_of<const N: usize>(
+    ctx: &egui::Context,
+    theme: egui::Theme,
+    roles: [Role; N],
+) -> [egui::Color32; N] {
+    match ctx.data(|d| d.get_temp::<Colors>(colors_id(theme))) {
+        Some(Colors(colors)) => roles.map(|role| colors[role as usize]),
+        None => {
+            let cfg = StyleConfig::default();
+            roles.map(|role| cfg.resolve(theme, role))
+        }
+    }
 }
 
 /// The WCAG contrast ratio of `fg` drawn over the opaque `bg`, from 1 to 21.

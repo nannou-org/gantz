@@ -34,19 +34,10 @@ impl<'a> egui::Widget for BranchEdit<'a> {
             state.code = branch.src().to_string();
         }
 
-        let language = "scm";
-        let theme = egui_extras::syntax_highlighting::CodeTheme::from_memory(ui.ctx(), ui.style());
+        let theme = crate::syntax::Theme::of(ui);
 
         let mut layouter = |ui: &egui::Ui, buf: &dyn egui::TextBuffer, wrap_width: f32| {
-            let mut layout_job = egui_extras::syntax_highlighting::highlight(
-                ui.ctx(),
-                ui.style(),
-                &theme,
-                buf.as_str(),
-                language,
-            );
-            layout_job.wrap.max_width = wrap_width;
-            ui.fonts_mut(|fonts| fonts.layout_job(layout_job))
+            super::code_galley(ui, &theme, buf.as_str(), wrap_width)
         };
 
         // `margin` is passed to both the editor and the width measurement.
@@ -60,7 +51,7 @@ impl<'a> egui::Widget for BranchEdit<'a> {
             (ui.available_width(), rows)
         } else {
             (
-                super::code_edit_desired_width(ui, &theme, &state.code, language, margin),
+                super::code_edit_desired_width(ui, &theme, &state.code, margin),
                 1,
             )
         };
